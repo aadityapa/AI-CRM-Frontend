@@ -4,9 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Assessment Center • Admin</title>
+    <!-- Inter (UI typeface) + Space Grotesk (display: h1/page titles + KPI
+         numerals ONLY — --font-display). display=swap + Inter-stack fallback
+         guards FOUT; preconnects keep the swap window short. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Pre-paint shell backgrounds — the theme class is set by the script
+         below BEFORE first paint, but the bundle CSS (Tailwind body classes)
+         arrives later. Without this, dark-theme users get a white flash.
+         Values mirror the v3 page surfaces (--surface-0 light/dark). */
+      html { background-color: #f8fafc; }
+      html.dark { background-color: #050816; color-scheme: dark; }
+    </style>
     <script>
+      // Pre-hydration theme resolution. Must mirror readStored() in
+      // src/theme/ThemeProvider.tsx: karnexTheme -> legacy karnexUiDark -> system preference.
       try {
-        if (localStorage.getItem("karnexTheme") === "dark") document.documentElement.classList.add("dark");
+        var t = String(localStorage.getItem("karnexTheme") || "").toLowerCase();
+        var legacy = localStorage.getItem("karnexUiDark");
+        var dark =
+          t === "dark" ||
+          (t !== "light" &&
+            (legacy === "1" ||
+              (legacy !== "0" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)));
+        if (dark) document.documentElement.classList.add("dark", "kx-dark");
       } catch (e) {}
     </script>
   </head>

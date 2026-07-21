@@ -4,11 +4,13 @@ export function safeText(v: unknown): string {
   return String(v ?? "").trim();
 }
 
-/** Stored scores may be 0–10 or 0–100. */
+/** Stored scores may be 0–10 (legacy report fields) or 0–100 (score_reasons / scoring_summary). */
 export function normalizePercent(raw: unknown, fallback = 0): number {
   const n = Number(raw);
   if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
-  const scaled = n <= 10 && n > 0 ? n * 10 : n;
+  // score_reasons and scoring_summary already use 0–100 integers / floats
+  if (n > 10) return Math.max(0, Math.min(100, Math.round(n)));
+  const scaled = n > 0 ? n * 10 : 0;
   return Math.max(0, Math.min(100, Math.round(scaled)));
 }
 
@@ -61,7 +63,42 @@ export type EnrichedTurn = {
   excludedBy?: string;
   excludedAt?: string;
   excludedReason?: string;
+  isIntroduction?: boolean;
 };
+
+export function introductionTurnFromRecord(record: InterviewRecord | null): EnrichedTurn | null {
+  if (!record?.report || typeof record.report !== "object") return null;
+  const report = record.report as Record<string, unknown>;
+  const intro = report.introduction_turn;
+  if (!intro || typeof intro !== "object") return null;
+  const row = intro as Record<string, unknown>;
+  const question = safeText(row.question);
+  const answer = safeText(row.answer);
+  if (!question && !answer) return null;
+  const evaluation =
+    row.evaluation && typeof row.evaluation === "object"
+      ? (row.evaluation as Record<string, unknown>)
+      : (report.introduction_evaluation as Record<string, unknown> | undefined);
+  const summary = safeText(evaluation?.summary || evaluation?.feedback);
+  return {
+    idx: 0,
+    question: question || "Please introduce yourself.",
+    answer,
+    score: undefined,
+    feedback: summary || "Saved for review only — not included in technical score.",
+    strengths: [],
+    weaknesses: [],
+    correctConcepts: [],
+    improvementAreas: [],
+    followUpQuestions: [],
+    excludedFromScore: true,
+    excludedReason:
+      safeText(row.excluded_reason) || "Introduction warmup (not counted toward overall score).",
+    isIntroduction: true,
+    evaluationSummary: summary || undefined,
+    interviewFeedback: safeText(evaluation?.feedback) || undefined,
+  };
+}
 
 function parseConceptItems(raw: unknown): AssessmentConcept[] {
   if (!Array.isArray(raw)) return [];
@@ -192,6 +229,23 @@ export function enrichedTurnsFromRecord(record: InterviewRecord | null): Enriche
       : Array.isArray(pq.weaknesses)
         ? (pq.weaknesses as unknown[]).map(safeText).filter(Boolean)
         : [];
+    for (const mistakeKey of [
+      "technical_mistakes",
+      "conceptual_mistakes",
+      "wrong_assumptions",
+      "what_missed",
+    ] as const) {
+      const rawMistakes = t[mistakeKey] ?? pq[mistakeKey];
+      if (Array.isArray(rawMistakes)) {
+        for (const item of rawMistakes) {
+          const text = safeText(item);
+          if (text) weaknesses.push(text);
+        }
+      } else {
+        const text = safeText(rawMistakes);
+        if (text) weaknesses.push(text);
+      }
+    }
     const ideal = safeText(
       t.ideal_answer ?? pq.ideal_answer ?? pq.suggested_answer ?? pq.reference_answer ?? pq.model_answer,
     );
@@ -205,7 +259,7 @@ export function enrichedTurnsFromRecord(record: InterviewRecord | null): Enriche
         ? Math.max(0, Math.min(10, Math.round(overallNum * 10) / 10))
         : undefined;
     const evaluationSummary = safeText(
-      t.summary ?? pq.summary ?? pq.evaluation_summary ?? fb,
+      t.candidate_summary ?? pq.candidate_summary ?? t.summary ?? pq.summary ?? pq.evaluation_summary ?? fb,
     );
     const correctConcepts = parseConceptItems(
       t.correct_concepts ?? pq.correct_concepts ?? pq.what_candidate_explained_correctly,
@@ -213,6 +267,25 @@ export function enrichedTurnsFromRecord(record: InterviewRecord | null): Enriche
     const improvementAreas = parseImprovementItems(
       t.improvement_areas ?? pq.improvement_areas ?? pq.areas_for_improvement,
     );
+    const howToImprove = safeText(t.how_to_improve ?? pq.how_to_improve);
+    if (howToImprove) {
+      improvementAreas.push({
+        topic: "How to improve",
+        explanation: howToImprove,
+        correction: "",
+      });
+    }
+    for (const tipKey of ["interview_tips", "recommended_study_topics"] as const) {
+      const rawTips = t[tipKey] ?? pq[tipKey];
+      if (Array.isArray(rawTips)) {
+        for (const tip of rawTips) {
+          const text = safeText(tip);
+          if (text) {
+            improvementAreas.push({ topic: tipKey === "interview_tips" ? "Interview tip" : "Study topic", explanation: text, correction: "" });
+          }
+        }
+      }
+    }
     const interviewFeedback = safeText(
       t.interview_feedback ?? pq.interview_feedback ?? pq.detailed_feedback ?? pq.manager_feedback,
     );
@@ -257,6 +330,10 @@ export function problemSolvingScore(
   s: Pick<CandidateInterviewSummary, "communication_score" | "technical_score" | "confidence_score">,
 ): number {
   if (report) {
+    const reasons = report.score_reasons as Record<string, { score?: unknown }> | undefined;
+    if (reasons?.problem_solving?.score != null) {
+      return normalizePercent(reasons.problem_solving.score, 0);
+    }
     const raw = report.problem_solving_score ?? report.analytical_score ?? report.problem_solving;
     if (raw !== undefined && raw !== null && raw !== "") {
       const ps = Number(raw);

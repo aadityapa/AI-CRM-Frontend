@@ -5,9 +5,11 @@
 
 const VAD_WEB_VERSION = "0.0.22";
 const ONNX_VERSION = "1.14.0";
+export const SILERO_SPEECH_PROB_THRESHOLD = 0.8;
 
 let _micVad = null;
 let _speechActive = false;
+let _lastSpeechProbability = 0;
 let _initPromise = null;
 let _callbacks = null;
 
@@ -40,13 +42,26 @@ export function isSileroSpeechActive() {
   return _speechActive;
 }
 
+export function getSileroSpeechProbability() {
+  return _lastSpeechProbability;
+}
+
+export function sileroProbabilityAcceptable(threshold = SILERO_SPEECH_PROB_THRESHOLD) {
+  return _lastSpeechProbability >= threshold || _speechActive;
+}
+
 export function sileroVadAvailable() {
   return typeof window !== "undefined" && !!(window.AudioContext || window.webkitAudioContext);
 }
 
 /**
  * @param {MediaStream} stream - live microphone stream (cloned track ok)
- * @param {{ onSpeechStart?: () => void, onSpeechEnd?: () => void }} callbacks
+ * @param {{
+ *   onSpeechStart?: () => void,
+ *   onSpeechEnd?: () => void,
+ *   onSpeechEndAudio?: (audio: Float32Array) => void,
+ *   onFrameProbability?: (prob: number) => void,
+ * }} callbacks
  */
 export async function startSileroVad(stream, callbacks = {}) {
   await stopSileroVad();
@@ -54,6 +69,7 @@ export async function startSileroVad(stream, callbacks = {}) {
     return false;
   }
   _callbacks = callbacks;
+  _lastSpeechProbability = 0;
   _initPromise = _initPromise || _loadMicVadClass();
   try {
     const MicVAD = await _initPromise;
@@ -62,21 +78,31 @@ export async function startSileroVad(stream, callbacks = {}) {
       stream,
       onnxWASMBasePath: paths.onnxWASMBasePath,
       baseAssetPath: paths.baseAssetPath,
-      positiveSpeechThreshold: 0.72,
-      negativeSpeechThreshold: 0.55,
+      positiveSpeechThreshold: SILERO_SPEECH_PROB_THRESHOLD,
+      negativeSpeechThreshold: 0.58,
       minSpeechFrames: 3,
       preSpeechPadFrames: 2,
       redemptionFrames: 10,
+      onFrameProcessed: (probs) => {
+        const p = Number(probs?.isSpeech ?? probs?.speech ?? 0);
+        if (Number.isFinite(p)) {
+          _lastSpeechProbability = p;
+          _callbacks?.onFrameProbability?.(p);
+        }
+      },
       onSpeechStart: () => {
         _speechActive = true;
         _callbacks?.onSpeechStart?.();
       },
-      onSpeechEnd: () => {
+      onSpeechEnd: (audio) => {
         _speechActive = false;
         _callbacks?.onSpeechEnd?.();
+        if (audio && audio.length) {
+          _callbacks?.onSpeechEndAudio?.(audio);
+        }
       },
       onVADMisfire: () => {
-        /* short false positive — keep state unless we were never confirmed */
+        /* short false positive */
       },
     });
     await _micVad.start();
@@ -94,6 +120,7 @@ export async function startSileroVad(stream, callbacks = {}) {
 
 export async function stopSileroVad() {
   _speechActive = false;
+  _lastSpeechProbability = 0;
   _callbacks = null;
   if (_micVad) {
     try {

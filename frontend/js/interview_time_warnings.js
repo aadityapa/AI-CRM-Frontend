@@ -61,7 +61,8 @@ export function applyTimeWarningConfig(payload = {}) {
     "1min": Number(th["1min"]) || 60,
     "30sec": Number(th["30sec"]) || 30,
   };
-  state.timeWarningsTts = tw.tts_announcements !== false && payload.time_warnings_tts !== false;
+  // Visual banners only — spoken timer announcements disabled product-wide.
+  state.timeWarningsTts = false;
   if (!state.timeWarningsShown) {
     resetTimeWarningUiState();
   }
@@ -154,8 +155,6 @@ function _showTimeWarningBanner(level) {
     root.classList.add("is-visible");
     if (level.persistent) root.classList.add("is-persistent");
   });
-
-  void _speakTimeWarningOnce(level.tts);
 
   if (!level.persistent && level.durationMs > 0) {
     _hideTimer = window.setTimeout(() => {

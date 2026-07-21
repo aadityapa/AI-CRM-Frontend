@@ -11,8 +11,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { accent, brand, chartPalette, neutral, violet } from "../../design-system/tokens/tokens";
 
-const INDIGO = "#6366f1";
+/* Colors come from the typed token mirrors (design-system/tokens/tokens.ts) —
+ * recharts resolves fills once at render, so static mirrors keep this
+ * deterministic. No ad-hoc hex in chart code. */
 
 export function SkillBarChart({ data }: { data: { skill: string; score: number }[] }) {
   const chartData = (data || []).map((d) => ({
@@ -22,7 +25,7 @@ export function SkillBarChart({ data }: { data: { skill: string; score: number }
   }));
   if (!chartData.length) {
     return (
-      <div className="h-52 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-slate-700 rounded-xl">
+      <div className="flex h-52 items-center justify-center rounded-card border border-dashed border-subtle text-sm text-muted">
         No per-skill breakdown for this interview.
       </div>
     );
@@ -31,16 +34,22 @@ export function SkillBarChart({ data }: { data: { skill: string; score: number }
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}>
-          <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#94a3b8" />
-          <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} stroke="#64748b" />
+          <defs>
+            <linearGradient id="kx-skill-bar" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={brand[500]} />
+              <stop offset="100%" stopColor={violet[500]} />
+            </linearGradient>
+          </defs>
+          <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} stroke={neutral[400]} />
+          <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} stroke={neutral[500]} />
           <Tooltip
             formatter={(v: number) => [`${v}%`, "Score"]}
             labelFormatter={(_, payload) => (payload?.[0]?.payload?.full as string) || ""}
-            contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0" }}
+            contentStyle={{ borderRadius: 10, border: `1px solid ${neutral[200]}` }}
           />
           <Bar dataKey="score" radius={[0, 6, 6, 0]}>
             {chartData.map((_, i) => (
-              <Cell key={i} fill={`hsl(${235 + (i % 5) * 12}, 72%, ${52 - (i % 3) * 4}%)`} />
+              <Cell key={i} fill={i === 0 ? "url(#kx-skill-bar)" : chartPalette[i % chartPalette.length]} />
             ))}
           </Bar>
         </BarChart>
@@ -75,13 +84,24 @@ export function PerformanceRadar({
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart cx="50%" cy="50%" outerRadius="72%" data={data}>
-          <PolarGrid stroke="#cbd5e1" className="dark:stroke-slate-600" />
-          <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: "#64748b" }} />
+          <defs>
+            <linearGradient id="kx-radar-fill" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor={brand[500]} stopOpacity={0.45} />
+              <stop offset="60%" stopColor={violet[500]} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={accent[500]} stopOpacity={0.2} />
+            </linearGradient>
+            <linearGradient id="kx-radar-stroke" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor={brand[500]} />
+              <stop offset="100%" stopColor={violet[500]} />
+            </linearGradient>
+          </defs>
+          <PolarGrid stroke={neutral[300]} />
+          <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: neutral[500] }} />
           <Tooltip
             formatter={(v: number, _n, item) => [`${Math.round(v)}%`, (item?.payload as RadarRow)?.full || ""]}
-            contentStyle={{ borderRadius: 12 }}
+            contentStyle={{ borderRadius: 10 }}
           />
-          <Radar name="Score" dataKey="A" stroke={INDIGO} fill={INDIGO} fillOpacity={0.35} />
+          <Radar name="Score" dataKey="A" stroke="url(#kx-radar-stroke)" strokeWidth={2} fill="url(#kx-radar-fill)" />
         </RadarChart>
       </ResponsiveContainer>
     </div>

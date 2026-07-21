@@ -25,6 +25,8 @@ export function initAuthEnterSubmit(loginHandler, registerHandler) {
 
   wrapper.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
+    // Forgot/Reset panes have their own Enter handling (js/auth/passwordReset.js).
+    if (wrapper.classList.contains("mode-forgot") || wrapper.classList.contains("mode-reset")) return;
     const target = e.target;
     if (!target || target.tagName !== "INPUT") return;
     if (!wrapper.contains(target)) return;

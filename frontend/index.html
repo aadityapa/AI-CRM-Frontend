@@ -3905,13 +3905,23 @@
     }
     .device-test-tile-net { color: #cbd5e1; font-size: 12px; margin: 4px 0 0; }
 
+    /* ================= AUTH SCREEN (July 2026 redesign) =================
+       Bold glossy split-hero auth. Deep indigo -> violet aurora, glass card,
+       gradient hairlines. Vars below are the single source of truth for the
+       auth palette (this page does NOT share the React token pipeline; the
+       --ai-gradient idea from admin-dashboard tokens.css is ported here as
+       --auth-gradient). */
     .auth-screen {
-      --auth-bg: #0d111a;
-      --auth-surface: var(--brand-navy, #1a3652);
-      --auth-accent: var(--brand-gold, #24bfe8);
-      --auth-accent-deep: var(--brand-gold-deep, #1694b8);
-      --auth-text: #e8eef5;
-      --auth-muted: #94a3b8;
+      --auth-bg: #070716;
+      --auth-surface: rgba(15, 15, 40, 0.55);
+      --auth-accent: #818cf8;
+      --auth-accent-deep: #6366f1;
+      --auth-violet: #8b5cf6;
+      --auth-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 60%, #a78bfa 100%);
+      --auth-text: #eef0ff;
+      --auth-muted: #a5adce;
+      --auth-field-bg: rgba(5, 7, 24, 0.62);
+      --auth-field-border: rgba(148, 163, 244, 0.2);
       min-height: 100vh;
       display: none;
       align-items: center;
@@ -3919,7 +3929,10 @@
       padding: 24px;
       position: relative;
       z-index: 2;
-      background: var(--auth-bg);
+      background:
+        radial-gradient(1100px 700px at 8% -12%, rgba(99, 102, 241, 0.22), transparent 60%),
+        radial-gradient(950px 660px at 108% 112%, rgba(139, 92, 246, 0.18), transparent 62%),
+        linear-gradient(160deg, #070716 0%, #0c0b28 52%, #070716 100%);
       overflow: hidden;
       font-family: "Poppins", "Segoe UI", Tahoma, Arial, sans-serif;
     }
@@ -3928,24 +3941,24 @@
       content: "";
       position: absolute;
       border-radius: 999px;
-      filter: blur(18px);
+      filter: blur(26px);
       pointer-events: none;
-      animation: authOrbFloat 9s ease-in-out infinite;
+      animation: authOrbFloat 11s ease-in-out infinite;
     }
     .auth-screen::before {
-      width: 340px;
-      height: 340px;
-      top: -100px;
-      left: -80px;
-      background: radial-gradient(circle, rgba(36, 191, 232, 0.28), transparent 68%);
+      width: 380px;
+      height: 380px;
+      top: -120px;
+      left: -90px;
+      background: radial-gradient(circle at 35% 30%, rgba(129, 140, 248, 0.34), rgba(99, 102, 241, 0.1) 55%, transparent 72%);
     }
     .auth-screen::after {
-      width: 360px;
-      height: 360px;
-      right: -90px;
-      bottom: -120px;
-      background: radial-gradient(circle, rgba(39, 84, 122, 0.35), transparent 70%);
-      animation-delay: 1.8s;
+      width: 420px;
+      height: 420px;
+      right: -110px;
+      bottom: -140px;
+      background: radial-gradient(circle at 60% 60%, rgba(139, 92, 246, 0.3), rgba(139, 92, 246, 0.08) 55%, transparent 72%);
+      animation-delay: 2s;
     }
     .auth-screen.active {
       display: flex;
@@ -3954,324 +3967,566 @@
       position: relative;
       z-index: 1;
       width: 100%;
-      max-width: 860px;
+      max-width: 1120px;
       display: flex;
       flex-direction: column;
       align-items: center;
     }
-    .auth-portal-bar {
-      margin-bottom: 18px;
-      text-align: center;
+    .auth-shell {
+      position: relative;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      border-radius: 26px;
+      overflow: hidden;
+      background: var(--auth-surface);
+      -webkit-backdrop-filter: blur(22px);
+      backdrop-filter: blur(22px);
+      box-shadow:
+        0 40px 90px rgba(3, 4, 18, 0.62),
+        0 12px 34px rgba(3, 4, 18, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    /* Gradient hairline border (indigo -> violet) via masked overlay. */
+    .auth-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(129, 140, 248, 0.85), rgba(139, 92, 246, 0.45) 45%, rgba(129, 140, 248, 0.12));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 5;
+    }
+    /* Soft specular sheen along the top edge of the shell. */
+    .auth-shell::after {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 120px;
+      border-radius: 26px 26px 0 0;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0));
+      pointer-events: none;
+      z-index: 4;
+    }
+    /* ---------- LEFT: brand story hero (aurora + orbs + grid) ---------- */
+    .auth-hero {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 34px;
+      padding: 54px 50px 44px;
+      overflow: hidden;
+      background: linear-gradient(205deg, #1b1747 0%, #141038 45%, #0a0926 100%);
+    }
+    .auth-hero::before {
+      /* Aurora / gradient mesh: layered radials on an oversized canvas,
+         drifting slowly (paused under prefers-reduced-motion below). */
+      content: "";
+      position: absolute;
+      inset: -40%;
+      background:
+        radial-gradient(38% 34% at 26% 24%, rgba(99, 102, 241, 0.55), transparent 70%),
+        radial-gradient(34% 30% at 74% 18%, rgba(139, 92, 246, 0.45), transparent 70%),
+        radial-gradient(42% 38% at 68% 78%, rgba(76, 29, 149, 0.55), transparent 72%),
+        radial-gradient(30% 26% at 18% 82%, rgba(129, 140, 248, 0.35), transparent 70%);
+      filter: blur(46px);
+      animation: authAuroraDrift 26s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+    .auth-hero::after {
+      /* Subtle grid texture, faded out towards the edges. */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 44px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 44px);
+      -webkit-mask-image: radial-gradient(120% 100% at 30% 20%, #000 30%, transparent 78%);
+      mask-image: radial-gradient(120% 100% at 30% 20%, #000 30%, transparent 78%);
+      pointer-events: none;
+    }
+    .auth-hero-orb {
+      position: absolute;
+      border-radius: 999px;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.06) 34%, transparent 46%),
+        radial-gradient(circle at 60% 62%, rgba(165, 180, 252, 0.65), rgba(139, 92, 246, 0.35) 62%, rgba(76, 29, 149, 0.2));
+      box-shadow: 0 18px 44px rgba(76, 29, 149, 0.45), inset 0 1px 8px rgba(255, 255, 255, 0.35);
+      animation: authOrbFloat 10s ease-in-out infinite;
+      opacity: 0.85;
+      z-index: 1;
+    }
+    .auth-hero-orb.orb-a { width: 132px; height: 132px; top: 44px; right: -38px; }
+    .auth-hero-orb.orb-b { width: 74px; height: 74px; bottom: 130px; left: -22px; animation-delay: 1.6s; }
+    .auth-hero-orb.orb-c { width: 44px; height: 44px; top: 42%; right: 18%; animation-delay: 3.1s; opacity: 0.6; }
+    .auth-hero-top {
+      position: relative;
+      z-index: 2;
+    }
+    .auth-hero-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 34px;
+    }
+    .auth-brand-badge {
+      display: inline-grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 11px;
+      background: var(--auth-gradient);
+      color: #fff;
+      font-weight: 800;
+      font-size: 18px;
+      box-shadow: 0 8px 20px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    }
+    .auth-brand-word {
+      color: var(--auth-text);
+      font-weight: 800;
+      font-size: 17px;
+      letter-spacing: 0.14em;
+    }
+    .auth-brand-sub {
+      color: var(--auth-muted);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      border-left: 1px solid rgba(255, 255, 255, 0.18);
+      padding-left: 10px;
+    }
+    .auth-hero-title {
+      margin: 0 0 14px;
+      color: var(--auth-text);
+      font-size: 38px;
+      line-height: 1.16;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    .auth-hero-grad {
+      background: linear-gradient(100deg, #a5b4fc 0%, #c4b5fd 55%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .auth-hero-copy {
+      margin: 0 0 26px;
+      color: rgba(238, 240, 255, 0.82);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 400px;
+    }
+    .auth-hero-points {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 14px;
+    }
+    .auth-hero-points li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: rgba(238, 240, 255, 0.9);
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .auth-hero-points .point-icon {
+      flex-shrink: 0;
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: rgba(129, 140, 248, 0.14);
+      border: 1px solid rgba(129, 140, 248, 0.35);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    }
+    .auth-hero-points .point-icon svg {
+      width: 17px;
+      height: 17px;
+      stroke: #a5b4fc;
+      fill: none;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    /* ---------- RIGHT: glass auth card ---------- */
+    .auth-side {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 40px 44px 30px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015) 40%, rgba(7, 7, 24, 0.25));
+    }
+    .auth-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .auth-card-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--auth-text);
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      font-size: 14px;
+    }
+    .auth-card-brand .auth-brand-badge {
+      width: 30px;
+      height: 30px;
+      font-size: 15px;
+      border-radius: 9px;
     }
     .auth-portal-pill {
-      background: rgba(36, 191, 232, 0.12);
-      border: 1px solid rgba(36, 191, 232, 0.45);
-      color: var(--auth-accent);
+      background: rgba(129, 140, 248, 0.12);
+      border: 1px solid rgba(129, 140, 248, 0.4);
+      color: #c7d2fe;
       border-radius: 999px;
-      padding: 8px 18px;
-      font-size: 13px;
+      padding: 6px 14px;
+      font-size: 12px;
       font-weight: 700;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
       cursor: default;
       min-height: auto;
-      box-shadow: 0 0 18px rgba(36, 191, 232, 0.15);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
     }
     .auth-wrapper {
       position: relative;
       width: 100%;
-      max-width: 800px;
-      height: 520px;
-      border: 2px solid var(--auth-accent);
-      box-shadow: 0 0 25px rgba(36, 191, 232, 0.35);
-      overflow: hidden;
+      flex: 1;
+      display: grid;
+      align-items: stretch;
       color: var(--auth-text);
+      min-height: 460px;
     }
+    /* All panes are stacked in the same grid cell; the wrapper's state class
+       decides which one is visible:
+         (none)       -> .signin      .toggled     -> .signup
+         .mode-forgot -> .forgot      .mode-reset  -> .reset
+       switchAuthMode() keeps driving .toggled; passwordReset.js drives the
+       .mode-* classes. Transitions: 250ms ease-out fade + slide. */
     .auth-wrapper .credentials-panel {
-      position: absolute;
-      top: 0;
-      width: 50%;
-      height: 100%;
+      grid-area: 1 / 1;
       display: flex;
-      justify-content: center;
       flex-direction: column;
-      z-index: 2;
-    }
-    .credentials-panel.signin {
-      left: 0;
-      padding: 0 40px;
-    }
-    .credentials-panel.signin .slide-element {
-      transform: translateX(0%);
-      transition: 0.7s;
-      opacity: 1;
-    }
-    .credentials-panel.signin .slide-element:nth-child(1) { transition-delay: 2.1s; }
-    .credentials-panel.signin .slide-element:nth-child(2) { transition-delay: 2.2s; }
-    .credentials-panel.signin .slide-element:nth-child(3) { transition-delay: 2.3s; }
-    .credentials-panel.signin .slide-element:nth-child(4) { transition-delay: 2.4s; }
-    .credentials-panel.signin .slide-element:nth-child(5) { transition-delay: 2.5s; }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element {
-      transform: translateX(-120%);
+      justify-content: center;
+      width: 100%;
       opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateX(22px);
+      transition: opacity 250ms ease-out, transform 250ms ease-out, visibility 0s linear 250ms;
     }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(1) { transition-delay: 0s; }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(2) { transition-delay: 0.1s; }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(3) { transition-delay: 0.2s; }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(4) { transition-delay: 0.3s; }
-    .auth-wrapper.toggled .credentials-panel.signin .slide-element:nth-child(5) { transition-delay: 0.4s; }
-    .credentials-panel.signup {
-      right: 0;
-      padding: 0 48px;
+    .auth-wrapper .credentials-panel.signin {
+      transform: translateX(-22px);
     }
-    .credentials-panel.signup .slide-element {
-      transform: translateX(120%);
-      transition: 0.7s ease;
-      opacity: 0;
-      filter: blur(10px);
-    }
-    .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 0s; }
-    .credentials-panel.signup .slide-element:nth-child(2) { transition-delay: 0.1s; }
-    .credentials-panel.signup .slide-element:nth-child(3) { transition-delay: 0.2s; }
-    .credentials-panel.signup .slide-element:nth-child(4) { transition-delay: 0.3s; }
-    .credentials-panel.signup .slide-element:nth-child(5) { transition-delay: 0.4s; }
-    .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 0.5s; }
-    .credentials-panel.signup .slide-element:nth-child(7) { transition-delay: 0.55s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element {
-      transform: translateX(0%);
+    .auth-wrapper:not(.toggled):not(.mode-forgot):not(.mode-reset) .credentials-panel.signin,
+    .auth-wrapper.toggled:not(.mode-forgot):not(.mode-reset) .credentials-panel.signup,
+    .auth-wrapper.mode-forgot .credentials-panel.forgot,
+    .auth-wrapper.mode-reset .credentials-panel.reset {
       opacity: 1;
-      filter: blur(0);
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateX(0);
+      transition: opacity 250ms ease-out, transform 250ms ease-out, visibility 0s;
     }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(1) { transition-delay: 1.7s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(2) { transition-delay: 1.8s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(3) { transition-delay: 1.9s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(4) { transition-delay: 1.95s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(5) { transition-delay: 2s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(6) { transition-delay: 2.05s; }
-    .auth-wrapper.toggled .credentials-panel.signup .slide-element:nth-child(7) { transition-delay: 2.1s; }
     .credentials-panel h2 {
-      font-size: 32px;
-      text-align: center;
+      font-size: 27px;
       color: var(--auth-text);
-      font-weight: 700;
-      margin: 0 0 8px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      margin: 0 0 6px;
+    }
+    .auth-pane-sub {
+      margin: 0 0 10px;
+      color: var(--auth-muted);
+      font-size: 14px;
+      line-height: 1.55;
     }
     .auth-wrapper .field-wrapper {
       position: relative;
       width: 100%;
-      height: 50px;
-      margin-top: 22px;
+      margin-top: 16px;
     }
-    .auth-wrapper .field-wrapper input {
-      width: 100%;
-      height: 100%;
-      background: transparent;
-      border: none;
-      outline: none;
-      font-size: 16px;
-      color: var(--auth-text);
-      font-weight: 600;
-      border-bottom: 2px solid rgba(255, 255, 255, 0.85);
-      padding-right: 28px;
-      transition: 0.5s;
-      border-radius: 0;
-      box-shadow: none;
-    }
-    .auth-wrapper .field-wrapper input:focus,
-    .auth-wrapper .field-wrapper input:valid {
-      border-bottom-color: var(--auth-accent);
-    }
-    .auth-wrapper .field-wrapper label {
-      position: absolute;
-      top: 50%;
-      left: 0;
-      transform: translateY(-50%);
-      font-size: 16px;
-      color: var(--auth-muted);
-      transition: 0.5s;
-      pointer-events: none;
-      font-weight: 500;
-    }
-    .auth-wrapper .field-wrapper input:focus ~ label,
-    .auth-wrapper .field-wrapper input:valid ~ label {
-      top: -5px;
-      color: var(--auth-accent);
+    .auth-wrapper .field-wrapper > label {
+      display: block;
+      margin: 0 0 7px 2px;
       font-size: 13px;
+      font-weight: 600;
+      color: #c3c9e8;
+      letter-spacing: 0.01em;
     }
-    .auth-wrapper .field-wrapper i {
+    .auth-wrapper .input-shell {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .auth-wrapper .input-shell .field-icon {
       position: absolute;
-      top: 50%;
-      right: 0;
-      font-size: 18px;
-      transform: translateY(-50%);
+      left: 14px;
+      display: inline-flex;
+      pointer-events: none;
+    }
+    .auth-wrapper .input-shell .field-icon svg {
+      width: 17px;
+      height: 17px;
+      stroke: var(--auth-muted);
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: stroke 200ms ease-out;
+    }
+    .auth-wrapper .input-shell:focus-within .field-icon svg {
+      stroke: var(--auth-accent);
+    }
+    .auth-wrapper .input-shell input {
+      width: 100%;
+      height: 48px;
+      background: var(--auth-field-bg);
+      border: 1px solid var(--auth-field-border);
+      border-radius: 13px;
+      padding: 0 44px 0 42px;
+      color: var(--auth-text);
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 500;
+      outline: none;
+      box-shadow: inset 0 2px 6px rgba(2, 3, 12, 0.5);
+      transition: border-color 200ms ease-out, box-shadow 200ms ease-out, background 200ms ease-out;
+    }
+    .auth-wrapper .input-shell input::placeholder {
+      color: rgba(165, 173, 206, 0.55);
+    }
+    .auth-wrapper .input-shell input:focus {
+      border-color: var(--auth-accent);
+      background: rgba(8, 10, 32, 0.75);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.24), inset 0 2px 6px rgba(2, 3, 12, 0.5);
+    }
+    /* Eye toggle INSIDE password fields (wired by js/auth/passwordReset.js). */
+    .pw-toggle {
+      position: absolute;
+      right: 7px;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
       color: var(--auth-muted);
+      cursor: pointer;
+      min-height: auto;
+      box-shadow: none;
+      transition: background 150ms ease-out, color 150ms ease-out;
     }
-    .auth-wrapper .field-wrapper input:focus ~ i,
-    .auth-wrapper .field-wrapper input:valid ~ i {
-      color: var(--auth-accent);
+    .pw-toggle:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--auth-text);
     }
+    .pw-toggle:focus-visible {
+      outline: 2px solid var(--auth-accent);
+      outline-offset: 1px;
+    }
+    .pw-toggle svg {
+      width: 19px;
+      height: 19px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .pw-toggle .icon-eye-off { display: none; }
+    .pw-toggle.is-revealed .icon-eye { display: none; }
+    .pw-toggle.is-revealed .icon-eye-off { display: block; }
+    .auth-wrapper input[type="password"]::-ms-reveal { display: none; }
+    .auth-row-end {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 9px;
+    }
+    .auth-link {
+      color: #a5b4fc;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .auth-link:hover {
+      color: #c7d2fe;
+      text-decoration: underline;
+    }
+    /* Glossy gradient CTA: brand fill + inner top highlight + hover sheen sweep. */
     .auth-wrapper .submit-button {
       position: relative;
       width: 100%;
-      height: 45px;
-      background: transparent;
-      border-radius: 40px;
+      height: 50px;
+      margin-top: 0;
+      border: none;
+      border-radius: 14px;
+      background: var(--auth-gradient);
+      color: #fff;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
       cursor: pointer;
-      font-size: 16px;
-      font-weight: 600;
-      border: 2px solid var(--auth-accent);
-      color: var(--auth-text);
       overflow: hidden;
       z-index: 1;
       min-height: auto;
-      box-shadow: none;
-      margin-top: 0;
+      box-shadow: 0 12px 28px rgba(99, 102, 241, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -10px 18px rgba(49, 46, 129, 0.35);
+      transition: transform 180ms ease-out, box-shadow 180ms ease-out, filter 180ms ease-out;
+    }
+    .auth-wrapper .submit-button::after {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      border-radius: 13px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 46%);
+      pointer-events: none;
     }
     .auth-wrapper .submit-button::before {
       content: "";
       position: absolute;
-      height: 300%;
-      width: 100%;
-      background: linear-gradient(var(--auth-bg), var(--auth-accent), var(--auth-bg), var(--auth-accent-deep));
-      top: -100%;
-      left: 0;
-      z-index: -1;
-      transition: 0.5s;
+      top: -20%;
+      bottom: -20%;
+      left: -75%;
+      width: 46%;
+      background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+      transform: skewX(-18deg);
+      transition: left 550ms ease-out;
+      pointer-events: none;
+    }
+    .auth-wrapper .submit-button:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.07);
+      box-shadow: 0 16px 36px rgba(99, 102, 241, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -10px 18px rgba(49, 46, 129, 0.3);
     }
     .auth-wrapper .submit-button:hover::before {
-      top: 0;
+      left: 130%;
+    }
+    .auth-wrapper .submit-button:active {
+      transform: translateY(0) scale(0.985);
+      filter: brightness(0.97);
+    }
+    .auth-wrapper .submit-button:focus-visible {
+      outline: 2px solid #c7d2fe;
+      outline-offset: 3px;
+    }
+    .auth-wrapper .submit-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      filter: none;
     }
     .auth-wrapper .switch-link {
       font-size: 14px;
       text-align: center;
-      margin: 18px 0 6px;
+      margin: 18px 0 2px;
       color: var(--auth-muted);
+    }
+    .auth-wrapper .switch-link p {
+      margin: 0;
     }
     .auth-wrapper .switch-link a {
       text-decoration: none;
-      color: var(--auth-accent);
-      font-weight: 600;
+      color: #a5b4fc;
+      font-weight: 700;
     }
     .auth-wrapper .switch-link a:hover,
     .auth-wrapper .switch-link a.active {
       text-decoration: underline;
-      color: var(--auth-accent-deep);
+      color: #c7d2fe;
     }
-    .auth-wrapper .welcome-section {
-      position: absolute;
-      top: 0;
-      height: 100%;
-      width: 50%;
-      display: flex;
-      justify-content: center;
-      flex-direction: column;
-      z-index: 1;
-      pointer-events: none;
+    /* Forgot / Reset pane extras. */
+    .auth-hint {
+      margin: 7px 2px 0;
+      font-size: 12px;
+      color: var(--auth-muted);
     }
-    .welcome-section.signin {
-      right: 0;
-      text-align: right;
-      padding: 0 40px 60px 120px;
-    }
-    .welcome-section.signin .slide-element {
-      transform: translateX(0);
-      transition: 0.7s ease;
-      opacity: 1;
-      filter: blur(0);
-    }
-    .welcome-section.signin .slide-element:nth-child(1) { transition-delay: 2s; }
-    .welcome-section.signin .slide-element:nth-child(2) { transition-delay: 2.1s; }
-    .auth-wrapper.toggled .welcome-section.signin .slide-element {
-      transform: translateX(120%);
-      opacity: 0;
-      filter: blur(10px);
-    }
-    .auth-wrapper.toggled .welcome-section.signin .slide-element:nth-child(1) { transition-delay: 0s; }
-    .auth-wrapper.toggled .welcome-section.signin .slide-element:nth-child(2) { transition-delay: 0.1s; }
-    .welcome-section.signup {
-      left: 0;
-      text-align: left;
-      padding: 0 120px 60px 38px;
-    }
-    .welcome-section.signup .slide-element {
-      transform: translateX(-120%);
-      transition: 0.7s ease;
-      opacity: 0;
-      filter: blur(10px);
-    }
-    .welcome-section.signup .slide-element:nth-child(1) { transition-delay: 0s; }
-    .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 0.1s; }
-    .auth-wrapper.toggled .welcome-section.signup .slide-element {
-      transform: translateX(0%);
-      opacity: 1;
-      filter: blur(0);
-    }
-    .auth-wrapper.toggled .welcome-section.signup .slide-element:nth-child(1) { transition-delay: 1.7s; }
-    .auth-wrapper.toggled .welcome-section.signup .slide-element:nth-child(2) { transition-delay: 1.8s; }
-    .welcome-section h2 {
-      text-transform: uppercase;
-      font-size: 34px;
-      line-height: 1.25;
-      color: var(--auth-text);
-      font-weight: 800;
-      margin: 0;
-    }
-    .auth-welcome-copy {
-      font-size: 15px;
-      color: rgba(232, 238, 245, 0.88);
-      margin-top: 12px;
+    .auth-inline-msg {
+      margin: 14px 0 0;
+      padding: 10px 13px;
+      border-radius: 11px;
+      font-size: 13px;
       line-height: 1.5;
-      max-width: 280px;
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
     }
-    .welcome-section.signin .auth-welcome-copy {
-      margin-left: auto;
+    .auth-inline-actions {
+      margin: 8px 2px 0;
+      font-size: 13px;
     }
-    .auth-wrapper .background-shape {
-      position: absolute;
-      right: 0;
-      top: -5px;
-      height: 600px;
-      width: 850px;
-      background: linear-gradient(45deg, var(--auth-surface), var(--auth-accent));
-      transform: rotate(10deg) skewY(40deg);
-      transform-origin: bottom right;
-      transition: 1.5s ease;
-      transition-delay: 1.6s;
-      z-index: 0;
+    .pane-form[hidden],
+    .pane-success[hidden] {
+      display: none !important;
     }
-    .auth-wrapper.toggled .background-shape {
-      transform: rotate(0deg) skewY(0deg);
-      transition-delay: 0.5s;
+    .pane-success {
+      text-align: center;
+      padding: 12px 0;
     }
-    .auth-wrapper .secondary-shape {
-      position: absolute;
-      left: 250px;
-      top: 100%;
-      height: 700px;
-      width: 850px;
-      background: var(--auth-bg);
-      border-top: 3px solid var(--auth-accent);
-      transform: rotate(0deg) skewY(0deg);
-      transform-origin: bottom left;
-      transition: 1.5s ease;
-      transition-delay: 0.5s;
-      z-index: 0;
+    .auth-success-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 16px;
+      border-radius: 999px;
+      background: rgba(52, 211, 153, 0.14);
+      border: 1px solid rgba(52, 211, 153, 0.45);
+      box-shadow: 0 0 26px rgba(52, 211, 153, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     }
-    .auth-wrapper.toggled .secondary-shape {
-      transform: rotate(-11deg) skewY(-41deg);
-      transition-delay: 1.2s;
+    .auth-success-icon svg {
+      width: 26px;
+      height: 26px;
+      stroke: #6ee7b7;
+      fill: none;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     .auth-pane {
-      display: block;
       width: 100%;
     }
     .auth-status {
       min-height: 22px;
-      margin-top: 16px;
-      color: var(--warn, #f5a623);
+      margin-top: 12px;
+      color: var(--warn, #fbbf24);
       font-size: 13px;
       text-align: center;
       width: 100%;
-      max-width: 800px;
+    }
+    @keyframes authAuroraDrift {
+      0% { transform: translate3d(-3%, -2%, 0) rotate(0deg) scale(1); }
+      50% { transform: translate3d(3%, 2.5%, 0) rotate(4deg) scale(1.06); }
+      100% { transform: translate3d(-2%, 3%, 0) rotate(-3deg) scale(1.02); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .auth-hero::before,
+      .auth-hero-orb,
+      .auth-screen::before,
+      .auth-screen::after {
+        animation: none;
+      }
+      .auth-wrapper .credentials-panel,
+      .auth-wrapper .submit-button,
+      .auth-wrapper .submit-button::before {
+        transition-duration: 0.01ms;
+      }
     }
     /* Invite / legacy card (unchanged layout) */
     .auth-card {
@@ -4530,73 +4785,42 @@
       85% { opacity: 0.9; }
       100% { transform: translateX(-50%) translateY(210%); opacity: 0; }
     }
-    @media (max-width: 768px) {
+    @media (max-width: 900px) {
       .auth-screen {
-        padding: 12px;
+        padding: 16px;
+      }
+      .auth-screen-inner {
+        max-width: 540px;
+      }
+      .auth-shell {
+        grid-template-columns: 1fr;
+      }
+      .auth-hero {
+        display: none;
+      }
+      .auth-side {
+        padding: 30px 26px 22px;
       }
       .auth-wrapper {
-        height: auto;
-        min-height: 520px;
-      }
-      .auth-wrapper .credentials-panel,
-      .auth-wrapper .welcome-section {
-        width: 100%;
-        position: relative;
-      }
-      .credentials-panel.signin,
-      .credentials-panel.signup {
-        padding: 36px 28px;
-        left: 0;
-        right: 0;
-      }
-      .credentials-panel.signin {
-        display: flex;
-      }
-      .credentials-panel.signup {
-        display: none;
-      }
-      .auth-wrapper.toggled .credentials-panel.signin {
-        display: none;
-      }
-      .auth-wrapper.toggled .credentials-panel.signup {
-        display: flex;
-      }
-      .welcome-section {
-        display: none;
-      }
-      .auth-wrapper .background-shape,
-      .auth-wrapper .secondary-shape {
-        display: none;
-      }
-      .credentials-panel.signin .slide-element,
-      .credentials-panel.signup .slide-element {
-        transform: translateY(0);
-        opacity: 1;
-        filter: blur(0);
-      }
-      .auth-wrapper.toggled .credentials-panel.signin .slide-element {
-        transform: translateY(0);
-        opacity: 1;
-      }
-      .credentials-panel h2 {
-        font-size: 26px;
+        min-height: 440px;
       }
     }
     @media (max-width: 480px) {
-      .credentials-panel.signin,
-      .credentials-panel.signup {
-        padding: 28px 18px;
+      .auth-screen {
+        padding: 10px;
+      }
+      .auth-side {
+        padding: 26px 18px 18px;
       }
       .credentials-panel h2 {
-        font-size: 22px;
+        font-size: 23px;
       }
-      .auth-wrapper .field-wrapper input,
-      .auth-wrapper .field-wrapper label {
+      .auth-wrapper .input-shell input {
         font-size: 14px;
       }
       .auth-wrapper .submit-button {
         font-size: 14px;
-        height: 40px;
+        height: 46px;
       }
     }
     @media (max-width: 980px) {
@@ -5710,76 +5934,209 @@
   <canvas id="bg-canvas"></canvas>
   <section id="screenAuth" class="auth-screen">
     <div class="auth-screen-inner">
-      <div class="auth-portal-bar">
-        <button id="authSwitchHr" class="auth-portal-pill active" type="button" onclick="switchAuthPane('hr')">HR Portal</button>
+      <div class="auth-shell">
+
+        <!-- LEFT: brand story hero -->
+        <aside class="auth-hero">
+          <div class="auth-hero-orb orb-a" aria-hidden="true"></div>
+          <div class="auth-hero-orb orb-b" aria-hidden="true"></div>
+          <div class="auth-hero-orb orb-c" aria-hidden="true"></div>
+          <div class="auth-hero-top">
+            <div class="auth-hero-brand">
+              <span class="auth-brand-badge" aria-hidden="true">K</span>
+              <span class="auth-brand-word">KARNEX</span>
+              <span class="auth-brand-sub">AI Hiring OS</span>
+            </div>
+            <h1 class="auth-hero-title">Hire smarter.<br><span class="auth-hero-grad">The AI-powered talent OS.</span></h1>
+            <p class="auth-hero-copy">CRM, scheduling and AI interviews — one pipeline from first call to final evaluation report.</p>
+            <ul class="auth-hero-points">
+              <li>
+                <span class="point-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H11L9.5 22 19 10.5h-6.5L13 2Z"/></svg></span>
+                <span>AI interviews with instant, structured evaluations</span>
+              </li>
+              <li>
+                <span class="point-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 5 5.8v5.4c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V5.8L12 3Z"/><path d="m9.2 11.8 2 2 3.6-3.9"/></svg></span>
+                <span>Secure invite links and proctored sessions</span>
+              </li>
+              <li>
+                <span class="point-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5h16"/><path d="M7 19.5v-6"/><path d="M12 19.5V8.5"/><path d="M17 19.5v-9"/><path d="m6 9 4.2-3.2 3.4 2.4L18.5 4"/></svg></span>
+                <span>Pipeline, scoring and reports in one workspace</span>
+              </li>
+            </ul>
+          </div>
+        </aside>
+
+        <!-- RIGHT: glass auth card -->
+        <div class="auth-side">
+          <div class="auth-card-top">
+            <div class="auth-card-brand">
+              <span class="auth-brand-badge" aria-hidden="true">K</span>
+              <span>KARNEX</span>
+            </div>
+            <button id="authSwitchHr" class="auth-portal-pill active" type="button" onclick="switchAuthPane('hr')">Login Portal</button>
+          </div>
+
+          <div id="authWrapper" class="auth-wrapper">
+
+            <!-- SIGN IN -->
+            <div id="authPaneHr" class="credentials-panel signin auth-pane active">
+              <h2>Welcome back</h2>
+              <p class="auth-pane-sub">Sign in to your Karnex workspace.</p>
+              <div class="field-wrapper">
+                <label for="authHrLoginEmail">Email address</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg></span>
+                  <input id="authHrLoginEmail" type="email" autocomplete="email" placeholder="you@company.com">
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <label for="authHrLoginPassword">Password</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg></span>
+                  <input id="authHrLoginPassword" type="password" autocomplete="current-password" placeholder="Your password">
+                  <button class="pw-toggle" type="button" data-target="authHrLoginPassword" aria-label="Show password" aria-pressed="false">
+                    <svg class="icon-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.9"/></svg>
+                    <svg class="icon-eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16"/><path d="M9.9 5.9a9.4 9.4 0 0 1 2.1-.1c6 0 9.5 6.2 9.5 6.2a17.3 17.3 0 0 1-3.1 3.9M6.3 7.1A16.5 16.5 0 0 0 2.5 12S6 18.2 12 18.2a9.3 9.3 0 0 0 3.2-.6"/><path d="M9.6 9.7a2.9 2.9 0 0 0 4 4.1"/></svg>
+                  </button>
+                </div>
+                <div class="auth-row-end">
+                  <a href="#" id="forgotPasswordLink" class="auth-link">Forgot password?</a>
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <button id="hrActionBtn" class="submit-button" type="button">Sign in</button>
+              </div>
+              <div class="switch-link">
+                <p>Don't have an account? <a href="#" id="modeRegisterBtn" class="register-trigger">Sign Up</a></p>
+              </div>
+            </div>
+
+            <!-- SIGN UP -->
+            <div class="credentials-panel signup register-fields auth-pane active">
+              <h2>Create your account</h2>
+              <p class="auth-pane-sub">Set up your Karnex HR workspace in seconds.</p>
+              <div class="field-wrapper">
+                <label for="authHrFullName">Full name</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.4 3.6-5.2 7-5.2s6.2 1.8 7 5.2"/></svg></span>
+                  <input id="authHrFullName" type="text" autocomplete="name" placeholder="Jane Doe">
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <label for="authHrUsername">Username</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.4 3.6-5.2 7-5.2s6.2 1.8 7 5.2"/></svg></span>
+                  <input id="authHrUsername" type="text" autocomplete="username" placeholder="janedoe">
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <label for="authHrEmail">Email address</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg></span>
+                  <input id="authHrEmail" type="email" autocomplete="email" placeholder="you@company.com">
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <label for="authHrPassword">Password</label>
+                <div class="input-shell">
+                  <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg></span>
+                  <input id="authHrPassword" type="password" autocomplete="new-password" placeholder="Minimum 8 characters">
+                  <button class="pw-toggle" type="button" data-target="authHrPassword" aria-label="Show password" aria-pressed="false">
+                    <svg class="icon-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.9"/></svg>
+                    <svg class="icon-eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16"/><path d="M9.9 5.9a9.4 9.4 0 0 1 2.1-.1c6 0 9.5 6.2 9.5 6.2a17.3 17.3 0 0 1-3.1 3.9M6.3 7.1A16.5 16.5 0 0 0 2.5 12S6 18.2 12 18.2a9.3 9.3 0 0 0 3.2-.6"/><path d="M9.6 9.7a2.9 2.9 0 0 0 4 4.1"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="field-wrapper">
+                <button id="hrRegisterBtn" class="submit-button" type="button">Create account</button>
+              </div>
+              <div class="switch-link">
+                <p>Already have an account? <a href="#" id="modeLoginBtn" class="login-trigger">Sign In</a></p>
+              </div>
+            </div>
+
+            <!-- FORGOT PASSWORD -->
+            <div id="authPaneForgot" class="credentials-panel forgot auth-pane">
+              <div id="forgotFormBlock" class="pane-form">
+                <h2>Reset your password</h2>
+                <p class="auth-pane-sub">Enter your account email and we'll send you a reset link.</p>
+                <div class="field-wrapper">
+                  <label for="authForgotEmail">Email address</label>
+                  <div class="input-shell">
+                    <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/></svg></span>
+                    <input id="authForgotEmail" type="email" autocomplete="email" placeholder="you@company.com">
+                  </div>
+                </div>
+                <p id="forgotError" class="auth-inline-msg" hidden></p>
+                <div class="field-wrapper">
+                  <button id="forgotSubmitBtn" class="submit-button" type="button">Send reset link</button>
+                </div>
+                <div class="switch-link">
+                  <p><a href="#" id="backToLoginFromForgot">Back to sign in</a></p>
+                </div>
+              </div>
+              <div id="forgotSuccessBlock" class="pane-success" hidden>
+                <span class="auth-success-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5.5 12.5 4.2 4.2L18.5 7.5"/></svg></span>
+                <h2>Check your inbox</h2>
+                <p class="auth-pane-sub">If that email exists, a reset link is on its way. Check your inbox.</p>
+                <div class="field-wrapper">
+                  <button id="forgotDoneBtn" class="submit-button" type="button">Back to sign in</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- RESET PASSWORD (opened via ?reset_token=...) -->
+            <div id="authPaneReset" class="credentials-panel reset auth-pane">
+              <div id="resetFormBlock" class="pane-form">
+                <h2>Set a new password</h2>
+                <p class="auth-pane-sub">Choose a strong password for your Karnex account.</p>
+                <div class="field-wrapper">
+                  <label for="authResetPassword">New password</label>
+                  <div class="input-shell">
+                    <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg></span>
+                    <input id="authResetPassword" type="password" autocomplete="new-password" placeholder="New password">
+                    <button class="pw-toggle" type="button" data-target="authResetPassword" aria-label="Show password" aria-pressed="false">
+                      <svg class="icon-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.9"/></svg>
+                      <svg class="icon-eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16"/><path d="M9.9 5.9a9.4 9.4 0 0 1 2.1-.1c6 0 9.5 6.2 9.5 6.2a17.3 17.3 0 0 1-3.1 3.9M6.3 7.1A16.5 16.5 0 0 0 2.5 12S6 18.2 12 18.2a9.3 9.3 0 0 0 3.2-.6"/><path d="M9.6 9.7a2.9 2.9 0 0 0 4 4.1"/></svg>
+                    </button>
+                  </div>
+                  <p class="auth-hint">Minimum 8 characters.</p>
+                </div>
+                <div class="field-wrapper">
+                  <label for="authResetConfirm">Confirm password</label>
+                  <div class="input-shell">
+                    <span class="field-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg></span>
+                    <input id="authResetConfirm" type="password" autocomplete="new-password" placeholder="Repeat new password">
+                    <button class="pw-toggle" type="button" data-target="authResetConfirm" aria-label="Show password" aria-pressed="false">
+                      <svg class="icon-eye" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.9"/></svg>
+                      <svg class="icon-eye-off" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16"/><path d="M9.9 5.9a9.4 9.4 0 0 1 2.1-.1c6 0 9.5 6.2 9.5 6.2a17.3 17.3 0 0 1-3.1 3.9M6.3 7.1A16.5 16.5 0 0 0 2.5 12S6 18.2 12 18.2a9.3 9.3 0 0 0 3.2-.6"/><path d="M9.6 9.7a2.9 2.9 0 0 0 4 4.1"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <p id="resetError" class="auth-inline-msg" hidden></p>
+                <p id="resetErrorActions" class="auth-inline-actions" hidden><a href="#" id="resetRequestNewLink" class="auth-link">Request a new link</a></p>
+                <div class="field-wrapper">
+                  <button id="resetSubmitBtn" class="submit-button" type="button">Update password</button>
+                </div>
+                <div class="switch-link">
+                  <p><a href="#" id="backToLoginFromReset">Back to sign in</a></p>
+                </div>
+              </div>
+              <div id="resetSuccessBlock" class="pane-success" hidden>
+                <span class="auth-success-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5.5 12.5 4.2 4.2L18.5 7.5"/></svg></span>
+                <h2>Password updated</h2>
+                <p class="auth-pane-sub">Password updated — sign in with your new password.</p>
+                <div class="field-wrapper">
+                  <button id="resetSuccessSignInBtn" class="submit-button" type="button">Go to sign in</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div id="authStatus" class="auth-status" role="status" aria-live="polite"></div>
+        </div>
       </div>
-
-      <div id="authWrapper" class="auth-wrapper">
-        <div class="background-shape" aria-hidden="true"></div>
-        <div class="secondary-shape" aria-hidden="true"></div>
-
-        <div id="authPaneHr" class="credentials-panel signin auth-pane active">
-          <h2 class="slide-element">Login</h2>
-          <div class="field-wrapper slide-element">
-            <input id="authHrLoginEmail" type="email" required autocomplete="email">
-            <label for="authHrLoginEmail">Email Address</label>
-            <i class="fa-solid fa-envelope" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <input id="authHrLoginPassword" type="password" required autocomplete="current-password">
-            <label for="authHrLoginPassword">Password</label>
-            <i class="fa-solid fa-lock" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <button id="hrActionBtn" class="submit-button" type="button">Sign in</button>
-          </div>
-          <div class="switch-link slide-element">
-            <p>Don't have an account? <br> <a href="#" id="modeRegisterBtn" class="register-trigger">Sign Up</a></p>
-          </div>
-        </div>
-
-        <div class="welcome-section signin">
-          <h2 class="slide-element">Welcome back!</h2>
-          <p class="slide-element auth-welcome-copy">Karnex AI HR — secure interviews and evaluation.</p>
-        </div>
-
-        <div class="credentials-panel signup register-fields auth-pane active">
-          <h2 class="slide-element">Register</h2>
-          <div class="field-wrapper slide-element">
-            <input id="authHrFullName" type="text" required autocomplete="name">
-            <label for="authHrFullName">Full Name</label>
-            <i class="fa-solid fa-user" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <input id="authHrUsername" type="text" required autocomplete="username">
-            <label for="authHrUsername">Username</label>
-            <i class="fa-solid fa-user" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <input id="authHrEmail" type="email" required autocomplete="email">
-            <label for="authHrEmail">Email Address</label>
-            <i class="fa-solid fa-envelope" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <input id="authHrPassword" type="password" required autocomplete="new-password">
-            <label for="authHrPassword">Password</label>
-            <i class="fa-solid fa-lock" aria-hidden="true"></i>
-          </div>
-          <div class="field-wrapper slide-element">
-            <button id="hrRegisterBtn" class="submit-button" type="button">Register</button>
-          </div>
-          <div class="switch-link slide-element">
-            <p>Already have an account? <br> <a href="#" id="modeLoginBtn" class="login-trigger">Sign In</a></p>
-          </div>
-        </div>
-
-        <div class="welcome-section signup">
-          <h2 class="slide-element">Join Karnex</h2>
-          <p class="slide-element auth-welcome-copy">Create your HR account to schedule and review interviews.</p>
-        </div>
-      </div>
-
-      <div id="authStatus" class="auth-status"></div>
     </div>
   </section>
 
@@ -5805,12 +6162,12 @@
   <section id="screenStartup" class="startup-screen active">
     <div class="startup-container">
       <div class="hero-content">
-        <h1 class="hero-title">Karnex <span class="italic">AI</span> Interview Platform</h1>
-        <p class="hero-desc">Secure role-based interview system with AI-driven technical questioning, response analysis, and HR-ready evaluation flow.</p>
+        <h1 class="hero-title">Karnex CRM <span class="italic">+ AI Hiring</span></h1>
+        <p class="hero-desc">Your staffing CRM and AI-driven interview platform in one place — from sales and sourcing to technical assessment and evaluation.</p>
         <div class="hero-actions">
           <button class="btn-primary" onclick="document.getElementById('screenStartup').classList.remove('active'); document.getElementById('screenAuth').classList.add('active'); switchAuthMode('login');">Login</button>
         </div>
-        <div class="startup-login-card">Use your HR account to continue. Register from the login panel if you are a first-time user.</div>
+        <div class="startup-login-card">Sign in with your Karnex account to continue. Register from the login panel if you are a first-time user.</div>
       </div>
       <div class="hero-visual">
         <div class="bot-vfx-ring" aria-hidden="true"></div>
@@ -6497,15 +6854,6 @@
               <div class="qc-status-tracker-k">Interview Status</div>
               <div id="interviewPhaseTracker" class="qc-status-tracker-v">Waiting For Response...</div>
             </div>
-            <div id="autoAdvanceBanner" class="qc-auto-advance-banner" aria-live="polite">
-              <div id="autoAdvanceTitle" class="qc-auto-advance-title">⚠ No response detected</div>
-              <div id="autoAdvanceMessage" class="qc-auto-advance-msg">Speak now or question will be skipped</div>
-              <div id="autoAdvanceCountdown" class="qc-auto-advance-countdown">3</div>
-              <div class="qc-auto-advance-actions">
-                <button type="button" id="autoAdvanceContinueBtn">Continue Speaking</button>
-                <button type="button" id="autoAdvanceConfirmBtn" class="primary">Skip Question</button>
-              </div>
-            </div>
             <div class="qc-response-card">
               <div class="cand-chat-input">
                 <div id="candidateListenStatus" class="cand-listen-status" role="status" aria-live="polite" title="Microphone is managed automatically after the AI speaks">
@@ -6602,7 +6950,8 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=13"></script>
+  <script type="module" src="js/app.js?v=20"></script>
+  <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
 

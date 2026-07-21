@@ -32,7 +32,11 @@ function CandidateDetailImpl({
   const w = weightedCandidateScore(candidate.interviews || []);
   const ats = atsStatusFromScore(w);
   const atsCls =
-    ats === "Strong Match" ? "text-emerald-700 bg-emerald-50 border-emerald-100 dark:text-emerald-200 dark:bg-emerald-950/50 dark:border-emerald-800" : ats === "Moderate Match" ? "text-amber-700 bg-amber-50 border-amber-100 dark:text-amber-200 dark:bg-amber-950/50 dark:border-amber-800" : "text-rose-700 bg-rose-50 border-rose-100 dark:text-rose-200 dark:bg-rose-950/50 dark:border-rose-800";
+    ats === "Strong Match"
+      ? "text-success bg-success-soft border-subtle"
+      : ats === "Moderate Match"
+        ? "text-warning bg-warning-soft border-subtle"
+        : "text-danger bg-danger-soft border-subtle";
 
   const [toast, setToast] = useState<{ msg: string; variant: "success" | "error" } | null>(null);
 
@@ -75,10 +79,10 @@ function CandidateDetailImpl({
     >
       {toast ? (
         <div
-          className={`fixed bottom-6 right-6 z-[100] rounded-2xl border px-4 py-3 text-sm font-bold shadow-2xl backdrop-blur-md ${
+          className={`fixed bottom-6 right-6 z-50 rounded-card border px-4 py-3 text-sm font-bold shadow-overlay ${
             toast.variant === "success"
-              ? "border-emerald-200 bg-emerald-50/95 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-100"
-              : "border-rose-200 bg-rose-50/95 text-rose-900 dark:border-rose-800 dark:bg-rose-950/90 dark:text-rose-100"
+              ? "border-subtle bg-success-soft text-success"
+              : "border-subtle bg-danger-soft text-danger"
           }`}
           role="status"
         >
@@ -91,18 +95,18 @@ function CandidateDetailImpl({
           <motion.div
             whileHover={{ scale: 1.03, rotate: -1 }}
             transition={{ type: "spring", stiffness: 400, damping: 22 }}
-            className="w-20 h-20 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-3xl font-black border border-white/30 shadow-lg shadow-indigo-500/25 dark:shadow-indigo-900/40"
+            className="fx-glow w-20 h-20 rounded-card bg-gradient-to-br from-brand-600 to-violet-600 flex items-center justify-center text-white text-2xl font-black"
           >
             {candidate.name.charAt(0)}
           </motion.div>
           <div>
-            <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{candidate.name}</h2>
+            <h2 className="text-display text-2xl font-bold text-primary tracking-tight">{candidate.name}</h2>
             <div className="flex items-center gap-3 mt-2 flex-wrap">
-              <span className="text-indigo-600 dark:text-indigo-400 font-bold text-sm uppercase tracking-wider bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-100/80 dark:border-indigo-900/80">
+              <span className="text-brand-600 dark:text-brand-300 font-bold text-sm uppercase tracking-wider bg-brand-50 dark:bg-brand-900 px-3 py-1 rounded-full ring-1 ring-inset ring-subtle">
                 {candidate.role}
               </span>
-              <span className="text-slate-500 dark:text-slate-400 text-sm">{candidate.email}</span>
-              <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${atsCls}`}>ATS: {ats}</span>
+              <span className="text-muted text-sm">{candidate.email}</span>
+              <span className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full border ${atsCls}`}>ATS: {ats}</span>
             </div>
             <CrmMetaLine
               opportunityId={latestCrm.opportunityId}
@@ -117,8 +121,8 @@ function CandidateDetailImpl({
           animate={{ opacity: 1, scale: 1 }}
           transition={{ type: "spring", stiffness: 320, damping: 26, delay: 0.08 }}
         >
-          <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-widest mb-1">Normalized Score</p>
-          <p className="text-3xl font-black bg-gradient-to-br from-slate-900 to-slate-600 bg-clip-text text-transparent dark:from-white dark:to-slate-300">
+          <p className="text-xs font-black uppercase text-muted tracking-widest mb-1">Normalized Score</p>
+          <p className="text-display text-2xl font-bold tabular-nums bg-gradient-to-br from-brand-500 to-violet-500 bg-clip-text text-transparent">
             {w}%
           </p>
         </motion.div>
@@ -126,15 +130,15 @@ function CandidateDetailImpl({
 
       {templates.length > 0 ? (
         <FloatingGlassCard className="px-6 py-4 flex items-start gap-4 flex-wrap">
-          <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
-            <LayoutTemplate className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Candidate interview is for</span>
+          <div className="flex items-center gap-2 text-secondary">
+            <LayoutTemplate className="w-4 h-4 text-brand-500" />
+            <span className="text-xs font-black uppercase tracking-widest text-muted">Candidate interview is for</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {templates.map((t) => (
               <span
                 key={t}
-                className="text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50/90 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-900 px-3 py-1 rounded-full shadow-sm"
+                className="text-xs font-bold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900 ring-1 ring-inset ring-subtle px-3 py-1 rounded-full"
               >
                 {t}
               </span>
@@ -144,20 +148,20 @@ function CandidateDetailImpl({
       ) : null}
 
       <FloatingGlassCard>
-        <div className="px-8 py-5 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-slate-50/80 via-white/50 to-indigo-50/40 dark:from-slate-900/80 dark:via-slate-900/40 dark:to-indigo-950/30">
+        <div className="fx-hairline-b px-8 py-5 flex items-center justify-between bg-surface-2">
           <motion.h3
-            className="font-black text-slate-800 dark:text-slate-100 uppercase text-xs tracking-widest flex items-center gap-2"
+            className="font-black text-primary uppercase text-xs tracking-widest flex items-center gap-2"
             initial={{ opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
           >
-            <TrendingUp className="w-4 h-4 text-indigo-500" /> Complete Interview History
+            <TrendingUp className="w-4 h-4 text-brand-500" /> Complete Interview History
           </motion.h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="text-slate-400 dark:text-slate-500 text-[10px] uppercase font-black tracking-widest border-b border-slate-100 dark:border-slate-800 bg-white/40 dark:bg-slate-950/30">
+              <tr className="text-muted text-xs uppercase font-black tracking-widest border-b border-subtle bg-surface-2">
                 <th className="px-8 py-4">Interview Title</th>
                 <th className="px-8 py-4">Opportunity ID</th>
                 <th className="px-8 py-4">Customer</th>
@@ -169,7 +173,7 @@ function CandidateDetailImpl({
                 {onRequestDeleteInterview ? <th className="px-8 py-4 text-right">Delete</th> : null}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-subtle">
               {(candidate.interviews || []).map((i, idx) => {
                 const skills = Array.from(
                   new Set(
@@ -188,30 +192,30 @@ function CandidateDetailImpl({
                   variants={rowVariants}
                   initial="hidden"
                   animate="show"
-                  className="k-hover-row hover:bg-slate-50/90 dark:hover:bg-slate-800/45 transition-colors hover:shadow-[inset_0_0_0_1px_rgba(148,163,184,0.15)]"
+                  className="row-hover transition-colors duration-micro ease-smooth"
                 >
-                  <td className="px-8 py-6 font-bold text-slate-700 dark:text-slate-200">{i.templateTitle || i.sessionName}</td>
-                  <td className="px-8 py-6 text-sm text-slate-600 dark:text-slate-300">{i.opportunityId || "—"}</td>
-                  <td className="px-8 py-6 text-sm text-slate-600 dark:text-slate-300">{i.customerName || "—"}</td>
-                  <td className="px-8 py-6 text-sm text-slate-500 dark:text-slate-400">{i.date}</td>
+                  <td className="px-8 py-6 font-bold text-secondary">{i.templateTitle || i.sessionName}</td>
+                  <td className="px-8 py-6 text-sm text-secondary">{i.opportunityId || "—"}</td>
+                  <td className="px-8 py-6 text-sm text-secondary">{i.customerName || "—"}</td>
+                  <td className="px-8 py-6 text-sm text-muted">{i.date}</td>
                   <td className="px-8 py-6">
                     {!skills.length ? (
-                      <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+                      <span className="text-xs text-muted">—</span>
                     ) : (
-                      <div className="max-w-[220px]">
+                      <div className="max-w-56">
                         <div className="flex flex-wrap gap-1.5">
                           {visibleSkills.map((s) => (
                             <span
                               key={s}
                               title={s}
-                              className="bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600 dark:text-slate-300 shadow-sm truncate max-w-[200px]"
+                              className="bg-surface-1 ring-1 ring-inset ring-subtle px-2 py-0.5 rounded-control text-xs font-bold text-secondary truncate max-w-48"
                             >
                               {s}
                             </span>
                           ))}
                         </div>
                         {hiddenCount > 0 ? (
-                          <div className="mt-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                          <div className="mt-1 text-xs font-semibold text-muted">
                             +{hiddenCount} more
                           </div>
                         ) : null}
@@ -236,7 +240,7 @@ function CandidateDetailImpl({
                       whileTap={{ scale: 0.97 }}
                       onClick={() => onOpenInterviewReport?.(candidate.id, i.id)}
                       disabled={!onOpenInterviewReport}
-                      className="inline-flex items-center gap-2 h-9 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 hover:bg-slate-50 dark:hover:bg-slate-800 transition font-semibold text-slate-700 dark:text-slate-200 disabled:opacity-50 shadow-sm"
+                      className="inline-flex items-center gap-2 h-9 px-3 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 font-semibold text-secondary disabled:opacity-50 shadow-raised"
                     >
                       <ArrowUpRight className="w-4 h-4" />
                       View
@@ -248,7 +252,7 @@ function CandidateDetailImpl({
                         type="button"
                         onClick={() => onRequestDeleteInterview(candidate.id, i)}
                         disabled={deleteBusyInterviewId === i.id}
-                        className="inline-flex h-9 items-center gap-2 rounded-xl border border-rose-200 dark:border-rose-800 bg-white/90 dark:bg-slate-900/90 px-3 text-xs font-black uppercase tracking-wider text-rose-700 dark:text-rose-300 shadow-sm transition hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-60 disabled:pointer-events-none"
+                        className="inline-flex h-9 items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3 text-xs font-black uppercase tracking-wider text-danger shadow-raised transition-colors duration-micro ease-smooth hover:bg-danger-soft disabled:opacity-60 disabled:pointer-events-none"
                         title="Delete this interview/report"
                       >
                         {deleteBusyInterviewId === i.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -261,7 +265,7 @@ function CandidateDetailImpl({
             })}
               {!candidate.interviews?.length ? (
                 <tr>
-                  <td className="px-8 py-8 text-slate-400 dark:text-slate-500" colSpan={onRequestDeleteInterview ? 9 : 8}>
+                  <td className="px-8 py-8 text-muted" colSpan={onRequestDeleteInterview ? 9 : 8}>
                     No interview records found for this candidate yet.
                   </td>
                 </tr>

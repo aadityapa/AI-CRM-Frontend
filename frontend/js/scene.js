@@ -5,6 +5,7 @@ let mouseX = 0, mouseY = 0;
 let windowHalfX = window.innerWidth / 2;
 let windowHalfY = window.innerHeight / 2;
 let animationId;
+let paused = false;
 
 export function initBackground() {
     const canvas = document.getElementById('bg-canvas');
@@ -36,6 +37,7 @@ export function initBackground() {
 
     document.addEventListener( 'pointermove', onPointerMove );
     window.addEventListener( 'resize', onWindowResize );
+    document.addEventListener( 'visibilitychange', onVisibilityChange );
 
     animate();
 }
@@ -54,9 +56,13 @@ function onPointerMove( event ) {
     mouseY = event.clientY - windowHalfY;
 }
 
+function onVisibilityChange() {
+    paused = document.hidden;
+}
+
 function animate() {
     animationId = requestAnimationFrame( animate );
-    render();
+    if (!paused) render();
 }
 
 function render() {
@@ -73,6 +79,7 @@ function render() {
 
 export function setInterviewMode(isInterview) {
     if (!particles) return;
+    paused = !!isInterview;
     if (isInterview) {
         particles.material.color.setHex(0xf8b228);
     } else {

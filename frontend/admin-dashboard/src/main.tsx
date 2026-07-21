@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import { ThemeProvider } from "./theme/ThemeProvider";
-import { clearAuthSession } from "./lib/authSession";
 
 window.addEventListener("storage", (e: StorageEvent) => {
   if ((e.key === "authToken" || e.key === "authUser") && e.oldValue && !e.newValue) {
@@ -15,19 +14,14 @@ async function maybeAutoClearCache() {
   const key = "karnexAdminVersion";
   try {
     const res = await fetch("/version", { method: "GET", cache: "no-store" });
+    if (!res.ok) return;
     const data = await res.json();
     const ver = String(data?.version || "").trim();
     if (!ver) return;
     const prev = String(window.localStorage.getItem(key) || "").trim();
     if (prev && prev !== ver) {
-      const keep = new Set([key]);
-      for (let i = window.localStorage.length - 1; i >= 0; i--) {
-        const k = window.localStorage.key(i);
-        if (!k) continue;
-        if (keep.has(k)) continue;
-        window.localStorage.removeItem(k);
-      }
-      clearAuthSession();
+      // New deploy: drop Cache API + stale app caches, but KEEP the auth session
+      // so users are not forced to re-login every backend restart / version bump.
       if (window.caches && typeof window.caches.keys === "function") {
         try {
           const keys = await window.caches.keys();
@@ -37,12 +31,13 @@ async function maybeAutoClearCache() {
         }
       }
       window.localStorage.setItem(key, ver);
+      // Soft reload so the new dist assets load; token stays in localStorage.
       window.location.reload();
       return;
     }
     if (!prev) window.localStorage.setItem(key, ver);
   } catch (_) {
-    // ignore
+    // ignore — offline / version endpoint unavailable must not clear login
   }
 }
 

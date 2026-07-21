@@ -23,19 +23,19 @@ function SessionDetailImpl({
 
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
+      <div className="glass p-8 rounded-card shadow-raised flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <div className="w-20 h-20 rounded-2xl bg-violet-50 flex items-center justify-center text-violet-600 text-3xl font-black border border-violet-100">
+          <div className="w-20 h-20 rounded-card bg-surface-2 flex items-center justify-center text-violet-600 ring-1 ring-inset ring-subtle dark:text-violet-300">
             <LayoutTemplate className="w-10 h-10" />
           </div>
           <div>
-            <p className="text-[10px] font-black uppercase text-violet-500 tracking-widest">Interview Template</p>
-            <h2 className="text-3xl font-black text-slate-900 tracking-tight">{session.name}</h2>
+            <p className="text-xs font-black uppercase text-violet-500 tracking-widest">Interview Template</p>
+            <h2 className="text-display text-2xl font-bold text-primary tracking-tight">{session.name}</h2>
             <div className="flex items-center gap-4 mt-1 flex-wrap">
-              <span className="text-violet-600 font-bold text-sm uppercase tracking-wider bg-violet-50 px-3 py-1 rounded-full">
+              <span className="text-violet-600 dark:text-violet-300 font-bold text-sm uppercase tracking-wider bg-surface-2 px-3 py-1 rounded-full ring-1 ring-inset ring-subtle">
                 {session.category || "Template"}
               </span>
-              <span className="text-slate-400 text-sm font-medium flex items-center gap-1">
+              <span className="text-muted text-sm font-medium flex items-center gap-1">
                 <Calendar className="w-4 h-4" /> Latest activity: {session.date || "—"}
               </span>
             </div>
@@ -47,21 +47,21 @@ function SessionDetailImpl({
           </div>
         </div>
         <div className="text-right">
-          <p className="text-3xl font-black text-slate-700">{bench.attendees.length}</p>
-          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Candidates who gave this interview</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-primary">{bench.attendees.length}</p>
+          <p className="text-xs font-black uppercase text-muted tracking-widest">Candidates who gave this interview</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
-          <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+      <div className="bg-surface-1 rounded-card border border-subtle shadow-raised overflow-hidden">
+        <div className="px-8 py-5 border-b border-subtle flex items-center justify-between bg-surface-2">
+          <h3 className="font-black text-secondary uppercase text-xs tracking-widest flex items-center gap-2">
             <Users className="w-4 h-4 text-violet-500" /> Candidates for this Template
           </h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
+              <tr className="text-muted text-xs uppercase font-black tracking-widest border-b border-subtle">
                 <th className="px-8 py-4">Candidate Name</th>
                 <th className="px-8 py-4">Current Role</th>
                 <th className="px-8 py-4 text-center">Score</th>
@@ -70,21 +70,21 @@ function SessionDetailImpl({
                 {onRequestDeleteInterview ? <th className="px-8 py-4 text-right">Delete</th> : null}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-subtle">
               {bench.attendees.map(({ candidate, interview }) => (
-                <tr key={candidate.id} className="group k-hover-row hover:bg-slate-50/50 transition-colors">
+                <tr key={candidate.id} className="group row-hover transition-colors duration-micro ease-smooth">
                   <td className="px-8 py-6">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 border border-slate-200 group-hover:bg-violet-100 group-hover:text-violet-600 group-hover:border-violet-200 transition-colors">
+                      <div className="w-9 h-9 rounded-full bg-surface-2 flex items-center justify-center font-bold text-secondary ring-1 ring-inset ring-subtle">
                         {candidate.name.charAt(0)}
                       </div>
                       <div>
-                        <p className="font-black text-slate-800">{candidate.name}</p>
-                        <p className="text-[10px] text-slate-400 font-medium">{candidate.email}</p>
+                        <p className="font-black text-primary">{candidate.name}</p>
+                        <p className="text-xs text-muted font-medium">{candidate.email}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="px-8 py-6 text-sm font-bold text-slate-500">{candidate.role}</td>
+                  <td className="px-8 py-6 text-sm font-bold text-secondary">{candidate.role}</td>
                   <td className="px-8 py-6 text-center">
                     <ScoreBadge score={interview.score} />
                   </td>
@@ -94,7 +94,7 @@ function SessionDetailImpl({
                   <td className="px-8 py-6 text-right">
                     <button
                       onClick={() => onOpenCandidate(candidate.id)}
-                      className="text-violet-600 hover:text-violet-800 text-[10px] font-black uppercase tracking-widest border border-violet-200 px-3 py-1.5 rounded-lg hover:bg-violet-50 transition-all"
+                      className="text-violet-600 dark:text-violet-300 text-xs font-black uppercase tracking-widest border border-subtle px-3 py-1.5 rounded-control transition-colors duration-micro ease-smooth hover:bg-surface-2 hover:border-strong"
                     >
                       Full Profile
                     </button>
@@ -105,7 +105,7 @@ function SessionDetailImpl({
                         type="button"
                         onClick={() => onRequestDeleteInterview(candidate, interview)}
                         disabled={deleteBusyInterviewId === interview.id}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-rose-700 transition-all hover:bg-rose-50 hover:text-rose-800 disabled:opacity-60 disabled:pointer-events-none"
+                        className="inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-danger transition-colors duration-micro ease-smooth hover:bg-danger-soft disabled:opacity-60 disabled:pointer-events-none"
                         title="Delete this interview/report"
                       >
                         {deleteBusyInterviewId === interview.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -117,7 +117,7 @@ function SessionDetailImpl({
               ))}
               {!bench.attendees.length ? (
                 <tr>
-                  <td className="px-8 py-8 text-slate-400" colSpan={onRequestDeleteInterview ? 6 : 5}>
+                  <td className="px-8 py-8 text-muted" colSpan={onRequestDeleteInterview ? 6 : 5}>
                     No attendees found for this session.
                   </td>
                 </tr>
@@ -129,24 +129,27 @@ function SessionDetailImpl({
 
       {/* Mini analytics cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Session Benchmark</p>
-          <p className="text-2xl font-black text-slate-800">{bench.averageScore}%</p>
-          <p className="text-xs text-slate-500 mt-1">Average across all participants</p>
+        <div className="bg-surface-1 p-6 rounded-card border border-subtle shadow-raised">
+          <p className="text-xs font-black uppercase text-muted tracking-widest mb-1">Session Benchmark</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-primary">{bench.averageScore}%</p>
+          <p className="text-xs text-muted mt-1">Average across all participants</p>
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Top Performer</p>
-          <p className="text-2xl font-black text-emerald-500">{bench.topPerformer || "-"}</p>
-          <p className="text-xs text-slate-500 mt-1">Highest score in this batch</p>
+        <div className="bg-surface-1 p-6 rounded-card border border-subtle shadow-raised">
+          <p className="text-xs font-black uppercase text-muted tracking-widest mb-1">Top Performer</p>
+          <p className="text-display text-2xl font-bold text-success">{bench.topPerformer || "-"}</p>
+          <p className="text-xs text-muted mt-1">Highest score in this batch</p>
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Difficulty Index</p>
+        <div className="bg-surface-1 p-6 rounded-card border border-subtle shadow-raised">
+          <p className="text-xs font-black uppercase text-muted tracking-widest mb-1">Difficulty Index</p>
           <div className="flex gap-1 mt-2">
             {[1, 2, 3, 4, 5].map((star) => (
-              <div key={star} className={`h-2 flex-1 rounded-full ${star <= bench.difficultyIndex ? "bg-indigo-500" : "bg-slate-100"}`} />
+              <div
+                key={star}
+                className={`h-2 flex-1 rounded-full ${star <= bench.difficultyIndex ? "bg-gradient-to-r from-brand-500 to-violet-500" : "bg-surface-2"}`}
+              />
             ))}
           </div>
-          <p className="text-xs text-slate-500 mt-2">Lower avg score ⇒ higher difficulty</p>
+          <p className="text-xs text-muted mt-2">Lower avg score ⇒ higher difficulty</p>
         </div>
       </div>
     </div>
@@ -162,4 +165,3 @@ export const SessionDetail = memo(
     prev.onRequestDeleteInterview === next.onRequestDeleteInterview &&
     prev.deleteBusyInterviewId === next.deleteBusyInterviewId
 );
-

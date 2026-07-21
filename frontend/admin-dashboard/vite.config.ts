@@ -51,8 +51,7 @@ export default defineConfig(({ mode }) => {
       proxy,
     },
     esbuild: {
-      // Smaller admin bundle; keep console for prod diagnostics unless you tighten further.
-      drop: mode === "production" ? ["debugger"] : [],
+      drop: mode === "production" ? ["console", "debugger"] : [],
     },
     build: {
       outDir: "dist",
@@ -61,8 +60,12 @@ export default defineConfig(({ mode }) => {
       minify: "esbuild",
       cssCodeSplit: true,
       reportCompressedSize: false,
-      // Admin targets modern Chromium/Edge; drops legacy modulepreload polyfill weight.
-      modulePreload: { polyfill: false },
+      modulePreload: {
+        polyfill: false,
+        resolveDependencies(_filename, deps) {
+          return deps.filter((dep) => !dep.includes("vendor-pdf"));
+        },
+      },
       rollupOptions: {
         output: {
           manualChunks(id) {
@@ -72,6 +75,12 @@ export default defineConfig(({ mode }) => {
             }
             if (id.includes("/node_modules/lucide-react/")) {
               return "vendor-icons";
+            }
+            if (id.includes("/node_modules/framer-motion/")) {
+              return "vendor-motion";
+            }
+            if (id.includes("/node_modules/recharts/")) {
+              return "vendor-charts";
             }
             if (
               id.includes("/node_modules/html2canvas/") ||

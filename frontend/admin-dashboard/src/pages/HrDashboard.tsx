@@ -15,12 +15,32 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { Candidate, Interview, InterviewStatus } from "../types";
-import { deleteCandidate, getCandidates, getSchedules, type InterviewSchedule } from "../api";
-import { motion, useReducedMotion } from "framer-motion";
-import { listChildMotion } from "../lib/motionPresets";
+import { deleteCandidate, getDashboardData, getSchedules, type InterviewSchedule } from "../api";
+import { motion } from "framer-motion";
 import { normalizeScore, weightedCandidateScore } from "../utils/scoreUtils";
+import { AnimatedNumber } from "../crm/components/motion3d";
+import {
+  btnDanger,
+  btnPrimary,
+  btnSecondary,
+  EmptyState,
+  focusRing,
+  Skeleton,
+} from "../crm/components/ui";
 
 type Trend = { direction: "up" | "down" | "flat"; label: string };
+
+/* Motion tokens mirrored for framer-motion (--motion-micro 150ms, --ease-out).
+ * Rows get a quiet 150ms fade — no entrance movement (calm-premium). */
+const EASE_OUT: [number, number, number, number] = [0.2, 0, 0, 1];
+const rowFade = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  transition: { duration: 0.15, ease: EASE_OUT },
+} as const;
+
+/* Shared card recipe: raised card on the token ladder. */
+const cardCls = "rounded-card border border-subtle bg-surface-1 shadow-raised";
 
 function safeParseDate(value: string): number {
   const t = Date.parse(value || "");
@@ -41,11 +61,17 @@ function latestInterview(c: Candidate): Interview | null {
 function TrendPill({ trend }: { trend: Trend }) {
   const cls =
     trend.direction === "up"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      ? "bg-success-soft text-success"
       : trend.direction === "down"
-        ? "bg-rose-50 text-rose-700 border-rose-200"
-        : "bg-slate-50 text-slate-700 border-slate-200";
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-lg border text-[11px] font-bold ${cls}`}>{trend.label}</span>;
+        ? "bg-danger-soft text-danger"
+        : "bg-surface-2 text-muted";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ring-black/5 dark:ring-white/10 ${cls}`}
+    >
+      {trend.label}
+    </span>
+  );
 }
 
 export function DashboardStatsCard({
@@ -63,22 +89,25 @@ export function DashboardStatsCard({
   subtext?: string;
   loading?: boolean;
 }) {
+  const plainNumber = /^\d+$/.test(value);
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-sm transition-shadow">
+    <div className="glass fx-gradient-border fx-lift relative h-full overflow-hidden rounded-card p-5 shadow-raised">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-slate-500">{title}</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</div>
           {loading ? (
-            <div className="mt-3 h-9 w-28 rounded-lg bg-slate-100 animate-pulse" />
+            <Skeleton className="mt-3 h-8 w-28" />
           ) : (
-            <div className="mt-2 text-3xl font-extrabold tracking-tight text-slate-900">{value}</div>
+            <div className="text-display mt-2 text-2xl font-bold tracking-tight tabular-nums text-primary">
+              {plainNumber ? <AnimatedNumber value={Number(value)} /> : value}
+            </div>
           )}
           <div className="mt-3 flex items-center gap-2">
-            {loading ? <div className="h-5 w-14 rounded-lg bg-slate-100 animate-pulse" /> : <TrendPill trend={trend} />}
-            {subtext ? <span className="text-xs text-slate-400">{subtext}</span> : null}
+            {loading ? <Skeleton className="h-5 w-14" /> : <TrendPill trend={trend} />}
+            {subtext ? <span className="text-xs text-muted">{subtext}</span> : null}
           </div>
         </div>
-        <div className="w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-surface-2 text-brand-600 ring-1 ring-inset ring-black/5 dark:text-brand-300 dark:ring-white/10">
           {icon}
         </div>
       </div>
@@ -97,40 +126,36 @@ export function PipelineStageCard({
   color: "slate" | "amber" | "indigo" | "violet" | "emerald";
   percent: number;
 }) {
-  const bar =
+  /* Single-hue system: stage tones map onto the brand/semantic ramps. */
+  const tone =
     color === "amber"
-      ? "bg-amber-500"
+      ? "bg-warning"
       : color === "indigo"
-        ? "bg-indigo-600"
+        ? "bg-brand-500"
         : color === "violet"
-          ? "bg-violet-600"
+          ? "bg-brand-700"
           : color === "emerald"
-            ? "bg-emerald-600"
-            : "bg-slate-500";
-  const dot =
-    color === "amber"
-      ? "bg-amber-500"
-      : color === "indigo"
-        ? "bg-indigo-600"
-        : color === "violet"
-          ? "bg-violet-600"
-          : color === "emerald"
-            ? "bg-emerald-600"
-            : "bg-slate-500";
+            ? "bg-success"
+            : "bg-neutral-400";
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-sm transition-shadow">
+    <div className={`p-4 transition-shadow duration-micro ease-smooth hover:shadow-overlay ${cardCls}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${dot}`} />
-          <div className="text-sm font-bold text-slate-700">{name}</div>
+          <span className={`h-2 w-2 rounded-full ${tone}`} aria-hidden />
+          <div className="text-sm font-semibold text-secondary">{name}</div>
         </div>
-        <div className="text-sm font-extrabold text-slate-900">{count}</div>
+        <div className="text-sm font-bold tabular-nums text-primary">
+          <AnimatedNumber value={count} />
+        </div>
       </div>
-      <div className="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden border border-slate-200">
-        <div className={`h-full ${bar}`} style={{ width: `${Math.max(4, Math.min(100, percent))}%` }} />
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-surface-2">
+        <div
+          className={`h-full rounded-full ${tone} transition-[width] duration-panel ease-smooth`}
+          style={{ width: `${Math.max(4, Math.min(100, percent))}%` }}
+        />
       </div>
-      <div className="mt-2 text-xs text-slate-400">{percent}% of pipeline</div>
+      <div className="mt-2 text-xs text-muted">{percent}% of pipeline</div>
     </div>
   );
 }
@@ -142,15 +167,17 @@ type PipelineStatus = "Pending" | "In Review" | "Completed" | "Rejected" | "On H
 function PipelineStatusPill({ status }: { status: PipelineStatus }) {
   const styles =
     status === "Completed"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      ? "bg-success-soft text-success"
       : status === "In Review"
-        ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+        ? "bg-info-soft text-info"
         : status === "Rejected"
-          ? "bg-rose-50 text-rose-700 border-rose-200"
-          : status === "On Hold"
-            ? "bg-amber-100 text-amber-800 border-amber-300"
-            : "bg-amber-50 text-amber-700 border-amber-200";
-  return <span className={`inline-flex px-2.5 py-1 rounded-xl text-xs font-bold border ${styles}`}>{status}</span>;
+          ? "bg-danger-soft text-danger"
+          : "bg-warning-soft text-warning"; // Pending + On Hold
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset ring-black/5 dark:ring-white/10 ${styles}`}>
+      {status}
+    </span>
+  );
 }
 
 function mapCandidateStatus(
@@ -223,45 +250,35 @@ function DeleteCandidateModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-slate-900/50" onClick={busy ? undefined : onClose} />
-      <div className="absolute inset-x-0 top-24 mx-auto w-[min(480px,calc(100%-2rem))]">
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div className="absolute inset-0 bg-neutral-900/60" onClick={busy ? undefined : onClose} />
+      <div className="absolute inset-x-0 top-24 mx-auto w-full max-w-md px-4">
+        <div className="overflow-hidden rounded-modal border border-subtle bg-surface-1 shadow-modal">
           <div className="p-6">
             <div className="flex items-start gap-4">
-              <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger-soft text-danger">
+                <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-lg font-extrabold text-slate-900">Delete candidate permanently?</div>
-                <div className="mt-2 text-sm text-slate-600">
+                <div className="text-base font-bold text-primary">Delete candidate permanently?</div>
+                <div className="mt-2 text-sm text-secondary">
                   Are you sure you want to permanently delete{" "}
-                  <span className="font-bold text-slate-900">{candidateName || "this candidate"}</span>{" "}
+                  <span className="font-semibold text-primary">{candidateName || "this candidate"}</span>{" "}
                   and all interview records?
                 </div>
-                <ul className="mt-3 text-xs text-slate-500 space-y-1 list-disc pl-5">
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
                   <li>Profile, interview history, evaluations</li>
                   <li>AI analytics, ATS records, schedules</li>
                   <li>Cached data, session and login data</li>
                 </ul>
-                <div className="mt-3 text-xs font-semibold text-rose-600">This action cannot be undone.</div>
-                {error ? <div className="mt-3 text-xs text-rose-600">{error}</div> : null}
+                <div className="mt-3 text-xs font-semibold text-danger">This action cannot be undone.</div>
+                {error ? <div className="mt-3 text-xs text-danger">{error}</div> : null}
               </div>
             </div>
             <div className="mt-6 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={busy}
-                className="h-10 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition font-semibold text-slate-700 disabled:opacity-60"
-              >
+              <button type="button" onClick={onClose} disabled={busy} className={btnSecondary}>
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={onConfirm}
-                disabled={busy}
-                className="h-10 px-4 rounded-xl bg-rose-600 text-white font-semibold shadow-sm hover:bg-rose-700 transition disabled:opacity-60 inline-flex items-center gap-2"
-              >
+              <button type="button" onClick={onConfirm} disabled={busy} className={btnDanger}>
                 {busy ? "Deleting…" : "Delete permanently"}
               </button>
             </div>
@@ -290,7 +307,6 @@ export function RecentCandidatesTable({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [page, setPage] = useState(1);
-  const reduceMotion = useReducedMotion();
 
   const rows = useMemo(() => {
     return [...(candidates || [])]
@@ -365,8 +381,11 @@ export function RecentCandidatesTable({
     }
   };
 
+  const thBase =
+    "sticky top-0 z-10 whitespace-nowrap bg-surface-1 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted";
+
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+    <div className={`overflow-hidden ${cardCls}`}>
       <DeleteCandidateModal
         open={!!confirmTarget}
         candidateName={confirmTarget?.name || ""}
@@ -375,111 +394,102 @@ export function RecentCandidatesTable({
         onClose={cancelDelete}
         onConfirm={confirmDelete}
       />
-      <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-5 py-4">
         <div>
-          <div className="text-sm font-extrabold tracking-tight">Recent candidates</div>
-          <div className="text-xs text-slate-500 mt-0.5">Latest interview activity and outcomes</div>
+          <div className="text-sm font-bold text-primary">Recent candidates</div>
+          <div className="mt-0.5 text-xs text-muted">Latest interview activity and outcomes</div>
         </div>
-        <button onClick={onViewAll} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 transition inline-flex items-center gap-1">
-          View all <ArrowUpRight className="w-4 h-4" />
-        </button>
+        {onViewAll ? (
+          <button
+            onClick={onViewAll}
+            className={`inline-flex items-center gap-1 rounded-control px-1.5 py-1 text-sm font-semibold text-brand-600 transition-colors duration-micro ease-smooth hover:text-brand-700 dark:text-brand-300 dark:hover:text-brand-200 ${focusRing}`}
+          >
+            View all <ArrowUpRight className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
 
       <div className="overflow-auto">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr className="text-left text-xs font-bold uppercase tracking-widest text-slate-500">
-              <th className="px-5 py-3">Candidate</th>
-              <th className="px-5 py-3">Role</th>
-              <th className="px-5 py-3">Opportunity ID</th>
-              <th className="px-5 py-3">Customer</th>
-              <th className="px-5 py-3">AI Score</th>
-              <th className="px-5 py-3">Status</th>
-              <th className="px-5 py-3">Interview Date</th>
-              <th className="px-5 py-3 text-right w-[180px]">Actions</th>
+        <table className="w-full min-w-max text-sm lg:min-w-0">
+          <thead>
+            <tr className="border-b border-subtle text-left">
+              <th className={thBase}>Candidate</th>
+              <th className={thBase}>Role</th>
+              <th className={thBase}>Opportunity ID</th>
+              <th className={thBase}>Customer</th>
+              <th className={`${thBase} text-right`}>AI Score</th>
+              <th className={thBase}>Status</th>
+              <th className={thBase}>Interview Date</th>
+              <th className={`${thBase} w-44 text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {!rows.length ? (
               <tr>
-                <td className="px-5 py-12" colSpan={8}>
-                  <div className="flex items-center justify-between gap-4 flex-col sm:flex-row">
-                    <div className="min-w-0">
-                      <div className="font-extrabold text-slate-900">No candidates yet</div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        Schedule an interview from HR Setup and this table will auto-populate from the database.
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onOpenInvite("")}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition"
-                    >
-                      <ClipboardList className="w-4 h-4" />
-                      Invite candidate
-                    </button>
-                  </div>
+                <td colSpan={8}>
+                  <EmptyState
+                    icon={<ClipboardList size={22} />}
+                    message="No candidates yet — schedule an interview from HR Setup and this table will auto-populate from the database."
+                    actionLabel="Invite candidate"
+                    onAction={() => onOpenInvite("")}
+                  />
                 </td>
               </tr>
             ) : (
-              pageRows.map((r, i) => (
+              pageRows.map((r) => (
                 <motion.tr
                   key={r.id}
-                  className="group k-hover-row border-b border-slate-100 hover:bg-slate-50/60 transition-colors align-middle"
-                  {...listChildMotion(!!reduceMotion, i)}
+                  className="row-hover h-12 border-b border-subtle align-middle transition-colors duration-micro ease-smooth last:border-b-0"
+                  {...rowFade}
                 >
-                  <td className="px-5 py-4 align-middle">
+                  <td className="px-4 py-2 align-middle">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-extrabold text-slate-700 dark:text-slate-100 shrink-0">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-bold text-secondary ring-1 ring-inset ring-black/5 dark:ring-white/10">
                         {initials(r.name)}
                       </div>
-                      <div className="leading-tight min-w-0">
-                        <div className="font-bold text-slate-900 dark:text-white group-hover:dark:text-white truncate">{r.name}</div>
-                        <div className="text-xs text-slate-500 dark:text-slate-200 group-hover:dark:text-slate-100 truncate">
-                          {r.email || r.id}
-                        </div>
+                      <div className="min-w-0 leading-tight">
+                        <div className="truncate font-semibold text-primary">{r.name}</div>
+                        <div className="truncate text-xs text-muted">{r.email || r.id}</div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-5 py-4 text-slate-700 dark:text-slate-100 group-hover:dark:text-white font-semibold align-middle">{r.role}</td>
-                  <td className="px-5 py-4 text-slate-700 dark:text-slate-100 group-hover:dark:text-white text-sm align-middle">{r.opportunityId || "—"}</td>
-                  <td className="px-5 py-4 text-slate-700 dark:text-slate-100 group-hover:dark:text-white text-sm align-middle">{r.customerName || "—"}</td>
-                  <td className="px-5 py-4 align-middle">
-                    <div className="inline-flex items-center gap-2">
-                      <span className="font-extrabold text-slate-900 dark:text-white group-hover:dark:text-white w-8 text-right">{r.score}</span>
-                      <div className="w-24 h-2 rounded-full bg-slate-100 border border-slate-200 overflow-hidden">
+                  <td className="px-4 py-2 align-middle font-medium text-secondary">{r.role}</td>
+                  <td className="px-4 py-2 align-middle text-secondary">{r.opportunityId || "—"}</td>
+                  <td className="px-4 py-2 align-middle text-secondary">{r.customerName || "—"}</td>
+                  <td className="px-4 py-2 text-right align-middle">
+                    <div className="inline-flex items-center justify-end gap-2">
+                      <span className="w-8 text-right font-semibold tabular-nums text-primary">{r.score}</span>
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-2">
                         <div
-                          className="h-full bg-indigo-600"
+                          className="h-full rounded-full bg-brand-500 transition-[width] duration-panel ease-smooth"
                           style={{ width: `${Math.max(2, Math.min(100, r.score))}%` }}
                         />
                       </div>
                     </div>
                   </td>
-                  <td className="px-5 py-4 align-middle">
+                  <td className="px-4 py-2 align-middle">
                     <PipelineStatusPill status={r.status} />
                   </td>
-                  <td className="px-5 py-4 text-slate-600 dark:text-slate-200 group-hover:dark:text-slate-100 font-medium whitespace-nowrap align-middle">
-                    <div className="text-slate-700 dark:text-slate-100 group-hover:dark:text-white font-semibold">
-                      {fmtDateLabel(r.scheduledAt || r.completedAt || r.date)}
-                    </div>
+                  <td className="whitespace-nowrap px-4 py-2 align-middle font-medium text-secondary">
+                    {fmtDateLabel(r.scheduledAt || r.completedAt || r.date)}
                   </td>
-                  <td className="px-5 py-4 align-middle">
+                  <td className="px-4 py-2 align-middle">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => onViewCandidateReport(r.id, r.interviewId || undefined)}
-                        className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition font-semibold text-slate-700 inline-flex items-center gap-2"
+                        className={`inline-flex h-8 items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-2.5 text-xs font-semibold text-secondary transition-colors duration-micro ease-smooth hover:border-strong hover:bg-surface-2 hover:text-primary active:bg-surface-0 ${focusRing}`}
                       >
-                        <ArrowUpRight className="w-4 h-4" /> View
+                        <ArrowUpRight className="h-4 w-4" /> View
                       </button>
                       <button
                         type="button"
                         onClick={() => requestDelete(r.id, r.name)}
-                        className="h-9 w-9 rounded-xl border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-200 transition flex items-center justify-center text-slate-600 hover:text-rose-700"
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-control border border-subtle bg-surface-1 text-muted transition-colors duration-micro ease-smooth hover:bg-danger-soft hover:text-danger active:bg-surface-0 ${focusRing}`}
                         aria-label="Delete candidate"
                         title="Delete candidate"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
@@ -491,46 +501,45 @@ export function RecentCandidatesTable({
       </div>
 
       {rows.length > 0 ? (
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-slate-600">
-            <span className="font-semibold text-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle bg-surface-2 px-5 py-3">
+          <div className="text-xs text-muted">
+            <span className="font-semibold text-secondary">
               {rangeStart}–{rangeEnd}
             </span>
-            <span className="text-slate-500"> of {rows.length}</span>
+            <span> of {rows.length}</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1.5 transition"
+              className={`inline-flex h-8 items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-2.5 text-xs font-semibold text-secondary transition-colors duration-micro ease-smooth hover:border-strong hover:bg-surface-2 hover:text-primary disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="h-4 w-4" />
               Previous
             </button>
-            <span className="text-xs font-bold text-slate-500 tabular-nums px-2">
+            <span className="px-2 text-xs font-semibold tabular-nums text-muted">
               Page {page} / {totalPages}
             </span>
             <button
               type="button"
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1.5 transition"
+              className={`inline-flex h-8 items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-2.5 text-xs font-semibold text-secondary transition-colors duration-micro ease-smooth hover:border-strong hover:bg-surface-2 hover:text-primary disabled:pointer-events-none disabled:opacity-50 ${focusRing}`}
             >
               Next
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
       ) : null}
 
-      {toast ? <div className="px-5 pb-4 text-xs text-slate-500">{toast}</div> : null}
+      {toast ? <div className="px-5 pb-4 text-xs text-muted">{toast}</div> : null}
     </div>
   );
 }
 
 export function UpcomingInterviewCard({ schedules, onViewAll }: { schedules: InterviewSchedule[]; onViewAll?: () => void }) {
-  const reduceMotion = useReducedMotion();
   const items = useMemo(() => {
     const now = Date.now();
     const next48 = now + 48 * 60 * 60 * 1000;
@@ -552,68 +561,65 @@ export function UpcomingInterviewCard({ schedules, onViewAll }: { schedules: Int
 
   const dot = (status: string) => {
     const s = (status || "").toLowerCase();
-    if (s.includes("scheduled")) return "bg-emerald-500";
-    if (s.includes("resched")) return "bg-amber-500";
-    if (s.includes("cancel")) return "bg-rose-500";
-    return "bg-slate-400";
+    if (s.includes("scheduled")) return "bg-success";
+    if (s.includes("resched")) return "bg-warning";
+    if (s.includes("cancel")) return "bg-danger";
+    return "bg-neutral-400";
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+    <div className={`overflow-hidden ${cardCls}`}>
+      <div className="flex items-start justify-between gap-3 border-b border-subtle px-5 py-4">
         <div>
-          <div className="text-sm font-extrabold tracking-tight">Upcoming interviews</div>
-          <div className="text-xs text-slate-500 mt-0.5">Next 48 hours</div>
+          <div className="text-sm font-bold text-primary">Upcoming interviews</div>
+          <div className="mt-0.5 text-xs text-muted">Next 48 hours</div>
         </div>
         {onViewAll ? (
           <button
             type="button"
             onClick={onViewAll}
-            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1"
+            className={`inline-flex items-center gap-1 rounded-control px-1.5 py-1 text-xs font-semibold text-brand-600 transition-colors duration-micro ease-smooth hover:text-brand-700 dark:text-brand-300 dark:hover:text-brand-200 ${focusRing}`}
           >
-            View all <ArrowUpRight className="w-3.5 h-3.5" />
+            View all <ArrowUpRight className="h-3.5 w-3.5" />
           </button>
         ) : null}
       </div>
-      <div className="p-4 space-y-3">
+      <div className="space-y-3 p-4">
         {!items.length ? (
-          <div className="p-5 rounded-xl border border-slate-200 bg-slate-50/40">
-            <div className="font-extrabold text-slate-900 text-sm">No upcoming interviews</div>
-            <div className="mt-1 text-sm text-slate-500">Once an interview is scheduled in HR Setup, it will appear here automatically.</div>
-          </div>
+          <EmptyState message="No upcoming interviews — once an interview is scheduled in HR Setup, it will appear here automatically." />
         ) : (
-          items.map((it, i) => (
-          <motion.div
-            key={it.id || `${it.name}-${it.when}`}
-            className="p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50/60 transition-colors flex items-center gap-3"
-            {...listChildMotion(!!reduceMotion, i)}
-          >
-            <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-extrabold text-slate-600">
-              {initials(it.name)}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <div className="font-bold text-slate-900 truncate">{it.name}</div>
-                <div className="text-xs text-slate-500 whitespace-nowrap">{fmtDateLabel(it.when)}</div>
+          items.map((it) => (
+            <motion.div
+              key={it.id || `${it.name}-${it.when}`}
+              className="flex items-center gap-3 rounded-card border border-subtle bg-surface-1 p-3 transition-colors duration-micro ease-smooth hover:bg-surface-2"
+              {...rowFade}
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-bold text-secondary ring-1 ring-inset ring-black/5 dark:ring-white/10">
+                {initials(it.name)}
               </div>
-              <div className="mt-0.5 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-500 truncate">{it.role}</div>
-                  {(it.opportunityId || it.customerName) ? (
-                    <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                      {[it.opportunityId ? `Opp: ${it.opportunityId}` : "", it.customerName ? it.customerName : ""]
-                        .filter(Boolean)
-                        .join(" • ")}
-                    </div>
-                  ) : null}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="truncate font-semibold text-primary">{it.name}</div>
+                  <div className="whitespace-nowrap text-xs text-muted">{fmtDateLabel(it.when)}</div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-slate-500 shrink-0">
-                  <span className={`w-2 h-2 rounded-full ${dot(it.status)}`} />
-                  <span className="font-semibold">{it.status}</span>
+                <div className="mt-0.5 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-xs text-muted">{it.role}</div>
+                    {(it.opportunityId || it.customerName) ? (
+                      <div className="mt-0.5 truncate text-xs text-muted">
+                        {[it.opportunityId ? `Opp: ${it.opportunityId}` : "", it.customerName ? it.customerName : ""]
+                          .filter(Boolean)
+                          .join(" • ")}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-muted">
+                    <span className={`h-2 w-2 rounded-full ${dot(it.status)}`} aria-hidden />
+                    <span className="font-semibold">{it.status}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
           ))
         )}
       </div>
@@ -670,71 +676,79 @@ export function AIInsightsCard({ candidates }: { candidates: Candidate[] }) {
   const Bar = ({ pct, tone }: { pct: number; tone: "indigo" | "emerald" | "violet" | "amber" }) => {
     const c =
       tone === "emerald"
-        ? "bg-emerald-600"
+        ? "bg-success"
         : tone === "violet"
-          ? "bg-violet-600"
+          ? "bg-brand-700"
           : tone === "amber"
-            ? "bg-amber-500"
-            : "bg-indigo-600";
+            ? "bg-warning"
+            : "bg-brand-500";
     return (
-      <div className="mt-2 h-2 rounded-full bg-slate-100 border border-slate-200 overflow-hidden">
-        <div className={`h-full ${c}`} style={{ width: `${Math.max(4, Math.min(100, pct))}%` }} />
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2">
+        <div
+          className={`h-full rounded-full ${c} transition-[width] duration-panel ease-smooth`}
+          style={{ width: `${Math.max(4, Math.min(100, pct))}%` }}
+        />
       </div>
     );
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-sm transition-shadow">
+    <div className={`fx-gradient-border p-5 transition-shadow duration-micro ease-smooth hover:shadow-overlay ${cardCls}`}>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-sm font-extrabold tracking-tight">AI hiring insights</div>
-          <div className="text-xs text-slate-500 mt-0.5">Signal quality, completion, and recommendations</div>
+          <div className="flex items-center gap-2 text-sm font-bold text-primary">
+            AI hiring insights
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-accent-600 ring-1 ring-inset ring-subtle dark:text-accent-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
+              AI
+            </span>
+          </div>
+          <div className="mt-0.5 text-xs text-muted">Signal quality, completion, and recommendations</div>
         </div>
-        <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
-          <Sparkles className="w-5 h-5 text-indigo-600" />
+        {/* ai-surface: reserved accent for AI-generated content only */}
+        <div className="ai-surface flex h-10 w-10 items-center justify-center rounded-control">
+          <Sparkles className="h-5 w-5 text-brand-600 dark:text-brand-300" />
         </div>
       </div>
 
       {!candidates?.length ? (
-        <div className="mt-5 p-5 rounded-xl border border-slate-200 bg-slate-50/40">
-          <div className="font-extrabold text-slate-900 text-sm">Waiting for data</div>
-          <div className="mt-1 text-sm text-slate-500">
-            Insights appear automatically after candidates/interviews are created from HR Setup.
-          </div>
-        </div>
+        <EmptyState
+          icon={<Sparkles size={22} />}
+          message="Waiting for data — insights appear automatically after candidates/interviews are created from HR Setup."
+        />
       ) : (
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50/40">
-            <div className="text-xs font-bold uppercase tracking-widest text-slate-500">{insights.topRole.label}</div>
-            <div className="mt-2 font-extrabold text-slate-900">{insights.topRole.value}</div>
-            <div className="mt-2 text-xs text-slate-500">
-              Avg score: <span className="font-bold text-slate-700">{insights.topRole.score}</span>
+        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="rounded-card border border-subtle bg-surface-2 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted">{insights.topRole.label}</div>
+            <div className="mt-2 font-bold text-primary">{insights.topRole.value}</div>
+            <div className="mt-2 text-xs text-muted">
+              Avg score: <span className="font-semibold text-secondary">{insights.topRole.score}</span>
             </div>
             <Bar pct={insights.topRole.score} tone="violet" />
           </div>
-          <div className="rounded-xl border border-slate-200 p-4">
+          <div className="rounded-card border border-subtle p-4">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">{insights.completion.label}</div>
-              <div className="text-sm font-extrabold text-slate-900">{insights.completion.value}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">{insights.completion.label}</div>
+              <div className="text-sm font-bold tabular-nums text-primary">{insights.completion.value}</div>
             </div>
             <Bar pct={insights.completion.pct} tone="emerald" />
-            <div className="mt-2 text-xs text-slate-500">Fewer drop-offs after the first question.</div>
+            <div className="mt-2 text-xs text-muted">Fewer drop-offs after the first question.</div>
           </div>
-          <div className="rounded-xl border border-slate-200 p-4">
+          <div className="rounded-card border border-subtle p-4">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">{insights.recommended.label}</div>
-              <div className="text-sm font-extrabold text-slate-900">{insights.recommended.value}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">{insights.recommended.label}</div>
+              <div className="text-sm font-bold tabular-nums text-primary">{insights.recommended.value}</div>
             </div>
             <Bar pct={insights.recommended.pct} tone="indigo" />
-            <div className="mt-2 text-xs text-slate-500">Calibrated threshold: ≥ 80 AI score.</div>
+            <div className="mt-2 text-xs text-muted">Calibrated threshold: ≥ 80 AI score.</div>
           </div>
-          <div className="rounded-xl border border-slate-200 p-4">
+          <div className="rounded-card border border-subtle p-4">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-bold uppercase tracking-widest text-slate-500">{insights.response.label}</div>
-              <div className="text-sm font-extrabold text-slate-900">{insights.response.value}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">{insights.response.label}</div>
+              <div className="text-sm font-bold tabular-nums text-primary">{insights.response.value}</div>
             </div>
             <Bar pct={insights.response.pct} tone="amber" />
-            <div className="mt-2 text-xs text-slate-500">High coherence and specificity across answers.</div>
+            <div className="mt-2 text-xs text-muted">High coherence and specificity across answers.</div>
           </div>
         </div>
       )}
@@ -761,8 +775,8 @@ export function HrDashboard({
   const [schedules, setSchedules] = useState<InterviewSchedule[]>([]);
 
   const refresh = async () => {
-    const [c, sch] = await Promise.all([getCandidates(), getSchedules()]);
-    setCandidates(c);
+    const [dash, sch] = await Promise.all([getDashboardData(200), getSchedules()]);
+    setCandidates(dash.candidates);
     setSchedules(sch);
   };
 
@@ -772,9 +786,9 @@ export function HrDashboard({
       try {
         setLoading(true);
         setError("");
-        const [c, sch] = await Promise.all([getCandidates(), getSchedules()]);
+        const [dash, sch] = await Promise.all([getDashboardData(200), getSchedules()]);
         if (!alive) return;
-        setCandidates(c);
+        setCandidates(dash.candidates);
         setSchedules(sch);
       } catch (e: any) {
         if (!alive) return;
@@ -829,28 +843,28 @@ export function HrDashboard({
       {
         title: "Total Candidates",
         value: String(list.length),
-        icon: <Users className="w-5 h-5" />,
+        icon: <Users className="h-5 w-5" />,
         trend: { direction: "flat" as const, label: "Live" },
         subtext: "from database",
       },
       {
         title: "Active Interviews",
         value: String(active),
-        icon: <Activity className="w-5 h-5" />,
+        icon: <Activity className="h-5 w-5" />,
         trend: { direction: active ? ("up" as const) : ("flat" as const), label: active ? "In progress" : "None" },
         subtext: "pending review",
       },
       {
         title: "Completed Interviews",
         value: String(completed),
-        icon: <ClipboardCheck className="w-5 h-5" />,
+        icon: <ClipboardCheck className="h-5 w-5" />,
         trend: { direction: "flat" as const, label: "Live" },
         subtext: "evaluated",
       },
       {
         title: "Avg Interview Score",
         value: avgScore ? `${avgScore}%` : "—",
-        icon: <BarChart3 className="w-5 h-5" />,
+        icon: <BarChart3 className="h-5 w-5" />,
         trend: { direction: "flat" as const, label: "Live" },
         subtext: "completed only",
       },
@@ -860,33 +874,27 @@ export function HrDashboard({
   }, [candidates]);
 
   return (
-    <div className="max-w-[1600px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
+    <div className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
+      {/* Header — ONE dominant primary action: Invite Candidate */}
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">HR Dashboard</h1>
-          <p className="text-slate-500 mt-1">Monitor hiring pipeline and AI interview performance</p>
+          <h1 className="text-display text-2xl font-bold tracking-tight text-primary">HR Dashboard</h1>
+          <p className="mt-1 text-sm text-muted">Monitor hiring pipeline and AI interview performance</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onCreateTemplate}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-800 font-semibold hover:bg-slate-50 transition"
-          >
-            <Plus className="w-4 h-4 text-indigo-600" />
+          <button onClick={onCreateTemplate} className={btnSecondary}>
+            <Plus className="h-4 w-4" />
             Create Template
           </button>
-          <button
-            onClick={onInviteCandidate}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition"
-          >
-            <ClipboardList className="w-4 h-4" />
+          <button onClick={onInviteCandidate} className={btnPrimary}>
+            <ClipboardList className="h-4 w-4" />
             Invite Candidate
           </button>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {derived.stats.map((s) => (
           <DashboardStatsCard
             key={s.title}
@@ -900,18 +908,21 @@ export function HrDashboard({
         ))}
       </div>
 
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 space-y-6">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-8">
           {/* Pipeline */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div className={`p-5 ${cardCls}`}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-sm font-extrabold tracking-tight">Hiring pipeline</div>
-                <div className="text-xs text-slate-500 mt-0.5">Stage distribution and throughput</div>
+                <div className="text-sm font-bold text-primary">Hiring pipeline</div>
+                <div className="mt-0.5 text-xs text-muted">Stage distribution and throughput</div>
               </div>
-              <div className="text-xs text-slate-500 font-semibold">{loading ? "Syncing…" : "Live from database"}</div>
+              <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
+                {loading ? "Syncing…" : "Live from database"}
+              </div>
             </div>
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {derived.pipeline.map((p) => (
                 <PipelineStageCard key={p.name} name={p.name} count={p.count} color={p.color} percent={p.percent} />
               ))}
@@ -920,9 +931,9 @@ export function HrDashboard({
 
           {/* Recent candidates table */}
           {error ? (
-            <div className="bg-white border border-rose-200 rounded-2xl p-6 text-rose-700">
-              <div className="font-extrabold">Dashboard error</div>
-              <div className="mt-2 text-sm text-rose-600">{error}</div>
+            <div className="rounded-card border border-subtle bg-danger-soft p-6 text-danger">
+              <div className="font-bold">Dashboard error</div>
+              <div className="mt-2 text-sm">{error}</div>
             </div>
           ) : (
             <RecentCandidatesTable
@@ -943,7 +954,7 @@ export function HrDashboard({
           )}
         </div>
 
-        <div className="lg:col-span-4 space-y-6">
+        <div className="space-y-6 lg:col-span-4">
           <UpcomingInterviewCard schedules={schedules} onViewAll={onViewAllUpcoming} />
           <AIInsightsCard candidates={candidates} />
         </div>
@@ -951,4 +962,3 @@ export function HrDashboard({
     </div>
   );
 }
-

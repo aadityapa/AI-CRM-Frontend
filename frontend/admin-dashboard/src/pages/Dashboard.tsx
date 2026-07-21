@@ -27,12 +27,12 @@ type DeleteTarget = { candidateId: string; interviewId: string; label: string } 
 
 function SkeletonCard() {
   return (
-    <div className="h-full min-h-[600px] flex flex-col items-center justify-center bg-white border-2 border-dashed border-slate-200 rounded-3xl text-slate-400">
-      <div className="bg-slate-50 p-8 rounded-full mb-6 border border-slate-100">
-        <BrainCircuit className="w-16 h-16 text-indigo-200" />
+    <div className="h-full min-h-96 flex flex-col items-center justify-center bg-surface-1 border-2 border-dashed border-subtle rounded-card text-muted">
+      <div className="bg-surface-2 p-8 rounded-full mb-6 ring-1 ring-inset ring-subtle">
+        <BrainCircuit className="w-16 h-16 text-brand-300" />
       </div>
-      <h3 className="text-2xl font-bold text-slate-700">Loading dashboard...</h3>
-      <p className="mt-2 text-slate-400 max-w-sm text-center">Fetching candidates, sessions, and performance analytics.</p>
+      <h3 className="text-display text-xl font-bold text-secondary">Loading dashboard...</h3>
+      <p className="mt-2 text-muted max-w-sm text-center">Fetching candidates, sessions, and performance analytics.</p>
     </div>
   );
 }
@@ -60,13 +60,27 @@ export function Dashboard({
   const detailKey = `${viewMode}:${sel.selectedId || "none"}`;
   const detailMotion = pageSurfaceMotion(`reports-detail:${detailKey}`, !!reduceMotion);
 
+  const reloadDashboardData = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      setError("");
+      const { candidates: c, sessions: s } = await getDashboardData(200);
+      setCandidates(c);
+      setSessions(s);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
         setError("");
-        const { candidates: c, sessions: s } = await getDashboardData(1000);
+        const { candidates: c, sessions: s } = await getDashboardData(200);
         if (!alive) return;
         setCandidates(c);
         setSessions(s);
@@ -151,22 +165,32 @@ export function Dashboard({
 
   const confirmDeleteInterview = useCallback(async () => {
     if (!deleteTarget || deleteBusyId) return;
-    setDeleteBusyId(deleteTarget.interviewId);
+    const { candidateId, interviewId } = deleteTarget;
+    if (!interviewId) {
+      setDeleteError("This record has no ID and cannot be deleted. Please contact support.");
+      return;
+    }
+    setDeleteBusyId(interviewId);
     setDeleteError("");
     try {
-      await deleteInterviewRecord(deleteTarget.interviewId);
-      removeInterviewLocally(deleteTarget.candidateId, deleteTarget.interviewId);
+      const ok = await deleteInterviewRecord(interviewId);
+      if (!ok) throw new Error("Delete returned false — interview ID may be missing or invalid.");
+      // Instantly remove from local state for immediate feedback, then silently
+      // re-fetch from the backend so the sidebar stays consistent with the DB.
+      removeInterviewLocally(candidateId, interviewId);
       setDeleteTarget(null);
-      showToast("Interview/report deleted.");
+      sel.clear();
+      showToast("Record deleted successfully.");
+      void reloadDashboardData(true);
     } catch (e: any) {
       setDeleteError(String(e?.message || e));
     } finally {
       setDeleteBusyId("");
     }
-  }, [deleteBusyId, deleteTarget, removeInterviewLocally, showToast]);
+  }, [deleteBusyId, deleteTarget, reloadDashboardData, removeInterviewLocally, sel, showToast]);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
+    <div className="min-h-screen flex flex-col font-sans text-primary">
       <DeleteInterviewRecordModal
         open={Boolean(deleteTarget)}
         busy={Boolean(deleteBusyId)}
@@ -180,24 +204,24 @@ export function Dashboard({
         onConfirm={() => void confirmDeleteInterview()}
       />
       {toast ? (
-        <div className="fixed bottom-6 right-6 z-[130] rounded-2xl border border-emerald-200 bg-emerald-50/95 px-4 py-3 text-sm font-bold text-emerald-900 shadow-2xl">
+        <div className="fixed bottom-6 right-6 z-50 rounded-card border border-subtle bg-success-soft px-4 py-3 text-sm font-bold text-success shadow-overlay">
           {toast}
         </div>
       ) : null}
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
+      <header className="glass fx-hairline-b px-4 sm:px-8 py-4 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 p-2 rounded-lg shadow-indigo-200 shadow-lg">
+          <div className="fx-glow bg-gradient-to-br from-brand-600 to-violet-600 p-2 rounded-control">
             <BrainCircuit className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">Karnex Admin</h1>
-            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest leading-none">Intelligence Dashboard</p>
+            <h1 className="text-display text-xl font-bold tracking-tight text-primary">Karnex Admin</h1>
+            <p className="text-xs text-muted uppercase font-bold tracking-widest leading-none">Intelligence Dashboard</p>
           </div>
         </div>
 
         {/* Toggle Switch */}
-        <div className="bg-slate-100 p-1 rounded-xl flex gap-1 border border-slate-200">
+        <div className="bg-surface-2 p-1 rounded-control flex flex-wrap gap-1 border border-subtle max-w-full">
           <motion.button
             type="button"
             onClick={() => {
@@ -205,8 +229,8 @@ export function Dashboard({
               sel.clear();
             }}
             {...modeTap}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "candidates" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-control text-sm font-semibold transition-colors duration-micro ease-smooth ${
+              viewMode === "candidates" ? "bg-surface-1 text-brand-600 shadow-raised ring-1 ring-subtle dark:text-brand-300" : "text-muted hover:text-primary"
             }`}
           >
             <Users className="w-4 h-4" /> Candidates
@@ -218,8 +242,8 @@ export function Dashboard({
               sel.clear();
             }}
             {...modeTap}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "sessions" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-control text-sm font-semibold transition-colors duration-micro ease-smooth ${
+              viewMode === "sessions" ? "bg-surface-1 text-brand-600 shadow-raised ring-1 ring-subtle dark:text-brand-300" : "text-muted hover:text-primary"
             }`}
           >
             <ClipboardList className="w-4 h-4" /> Skills/JD
@@ -231,8 +255,8 @@ export function Dashboard({
               sel.clear();
             }}
             {...modeTap}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "opportunity" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-control text-sm font-semibold transition-colors duration-micro ease-smooth ${
+              viewMode === "opportunity" ? "bg-surface-1 text-brand-600 shadow-raised ring-1 ring-subtle dark:text-brand-300" : "text-muted hover:text-primary"
             }`}
           >
             <BriefcaseBusiness className="w-4 h-4" /> Opportunity ID
@@ -244,8 +268,8 @@ export function Dashboard({
               sel.clear();
             }}
             {...modeTap}
-            className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "customer" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-control text-sm font-semibold transition-colors duration-micro ease-smooth ${
+              viewMode === "customer" ? "bg-surface-1 text-brand-600 shadow-raised ring-1 ring-subtle dark:text-brand-300" : "text-muted hover:text-primary"
             }`}
           >
             <Building2 className="w-4 h-4" /> Customer Name
@@ -254,18 +278,18 @@ export function Dashboard({
 
         <div className="flex items-center gap-4">
           <div className="hidden md:block text-right">
-            <p className="text-sm font-bold">Admin Portal</p>
-            <p className="text-xs text-emerald-500 flex items-center justify-end gap-1">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span> System Live
+            <p className="text-sm font-bold text-primary">Admin Portal</p>
+            <p className="text-xs text-accent-600 dark:text-accent-400 flex items-center justify-end gap-1">
+              <span className="w-1.5 h-1.5 bg-accent-500 rounded-full motion-safe:animate-pulse"></span> System Live
             </p>
           </div>
-          <div className="w-10 h-10 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center font-bold text-slate-600 shadow-inner">
+          <div className="w-10 h-10 rounded-full bg-surface-2 ring-1 ring-inset ring-subtle flex items-center justify-center font-bold text-secondary">
             HR
           </div>
         </div>
       </header>
 
-      <main className="flex-1 p-6 max-w-[1600px] mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="flex-1 p-6 mx-auto max-w-screen-2xl w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Sidebar */}
         <div className="lg:col-span-3 space-y-4">
           {viewMode === "candidates" ? (
@@ -304,10 +328,10 @@ export function Dashboard({
           {loading ? (
             <SkeletonCard />
           ) : error ? (
-            <div className="h-full min-h-[600px] flex flex-col items-center justify-center bg-white border border-rose-200 rounded-3xl text-rose-700 p-10">
+            <div className="h-full min-h-96 flex flex-col items-center justify-center bg-danger-soft border border-subtle rounded-card text-danger p-10">
               <div className="font-black text-xl">Dashboard error</div>
-              <div className="text-sm mt-2 text-rose-600">{error}</div>
-              <div className="text-xs mt-4 text-slate-400">Tip: make sure you are logged in as HR in the main app so the token is present.</div>
+              <div className="text-sm mt-2">{error}</div>
+              <div className="text-xs mt-4 text-muted">Tip: make sure you are logged in as HR in the main app so the token is present.</div>
             </div>
           ) : (
             <AnimatePresence mode="wait">
@@ -320,20 +344,20 @@ export function Dashboard({
                 transition={detailMotion.transition}
               >
                 {!sel.selectedId ? (
-                  <div className="h-full min-h-[600px] flex flex-col items-center justify-center bg-white border-2 border-dashed border-slate-200 rounded-3xl text-slate-400">
-                    <div className="bg-slate-50 p-8 rounded-full mb-6 border border-slate-100">
+                  <div className="h-full min-h-96 flex flex-col items-center justify-center bg-surface-1 border-2 border-dashed border-subtle rounded-card text-muted">
+                    <div className="bg-surface-2 p-8 rounded-full mb-6 ring-1 ring-inset ring-subtle">
                       {viewMode === "candidates" ? (
-                        <Users className="w-16 h-16 text-indigo-200" />
+                        <Users className="w-16 h-16 text-brand-300" />
                       ) : viewMode === "sessions" ? (
-                        <ClipboardList className="w-16 h-16 text-indigo-200" />
+                        <ClipboardList className="w-16 h-16 text-brand-300" />
                       ) : viewMode === "opportunity" ? (
-                        <BriefcaseBusiness className="w-16 h-16 text-indigo-200" />
+                        <BriefcaseBusiness className="w-16 h-16 text-brand-300" />
                       ) : (
-                        <Building2 className="w-16 h-16 text-indigo-200" />
+                        <Building2 className="w-16 h-16 text-brand-300" />
                       )}
                     </div>
-                    <h3 className="text-2xl font-bold text-slate-700">Ready to Review</h3>
-                    <p className="mt-2 text-slate-400 max-w-sm text-center">
+                    <h3 className="text-display text-xl font-bold text-secondary">Ready to Review</h3>
+                    <p className="mt-2 text-muted max-w-sm text-center">
                       Select{" "}
                       {viewMode === "candidates"
                         ? "a candidate"
@@ -350,13 +374,17 @@ export function Dashboard({
                     candidate={selectedCandidate}
                     onOpenInterviewReport={onOpenCandidateReport}
                     onInterviewStatusChange={handleInterviewStatus}
-                    onRequestDeleteInterview={(candidateId, interview) =>
+                    onRequestDeleteInterview={(candidateId, interview) => {
+                      if (!interview.id) {
+                        showToast("Cannot delete: this record has no ID. Contact support.");
+                        return;
+                      }
                       setDeleteTarget({
                         candidateId,
                         interviewId: interview.id,
                         label: `${selectedCandidate.name} • ${interview.templateTitle || interview.sessionName || "Interview"}`,
-                      })
-                    }
+                      });
+                    }}
                     deleteBusyInterviewId={deleteBusyId}
                   />
                 ) : viewMode === "sessions" && selectedSession ? (
@@ -367,13 +395,17 @@ export function Dashboard({
                       setViewMode("candidates");
                       sel.setSelectedId(id);
                     }}
-                    onRequestDeleteInterview={(candidate, interview) =>
+                    onRequestDeleteInterview={(candidate, interview) => {
+                      if (!interview.id) {
+                        showToast("Cannot delete: this record has no ID. Contact support.");
+                        return;
+                      }
                       setDeleteTarget({
                         candidateId: candidate.id,
                         interviewId: interview.id,
                         label: `${candidate.name} • ${interview.templateTitle || interview.sessionName || selectedSession.name}`,
-                      })
-                    }
+                      });
+                    }}
                     deleteBusyInterviewId={deleteBusyId}
                   />
                 ) : (viewMode === "opportunity" || viewMode === "customer") ? (
@@ -389,12 +421,12 @@ export function Dashboard({
         </div>
       </main>
 
-      <footer className="py-6 px-8 text-slate-400 text-[10px] font-black uppercase tracking-widest border-t border-slate-200 bg-white flex justify-between items-center">
+      <footer className="glass py-6 px-8 text-muted text-xs font-black uppercase tracking-widest flex justify-between items-center">
         <div>&copy; 2026 AI Recruitment Analytics Engine</div>
         <div className="flex gap-6">
-          <span className="hover:text-slate-600 cursor-pointer">Security Policy</span>
-          <span className="hover:text-slate-600 cursor-pointer">System Logs</span>
-          <span className="hover:text-slate-600 cursor-pointer text-indigo-500">Support Terminal</span>
+          <span className="hover:text-secondary cursor-pointer">Security Policy</span>
+          <span className="hover:text-secondary cursor-pointer">System Logs</span>
+          <span className="hover:text-secondary cursor-pointer text-brand-500">Support Terminal</span>
         </div>
       </footer>
     </div>

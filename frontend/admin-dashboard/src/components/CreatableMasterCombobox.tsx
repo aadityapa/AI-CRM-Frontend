@@ -124,7 +124,7 @@ export function CreatableMasterCombobox({
 
   return (
     <div ref={rootRef} className="relative">
-      <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">{label}</label>
+      <label className="text-xs font-extrabold tracking-widest uppercase text-muted">{label}</label>
       <div className="relative mt-2">
         <input
           value={query}
@@ -153,16 +153,16 @@ export function CreatableMasterCombobox({
           role="combobox"
           aria-expanded={open}
           aria-autocomplete="list"
-          className="w-full h-11 px-4 pr-10 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          className="input-recessed w-full h-11 rounded-control px-4 pr-10 text-sm text-primary"
           placeholder={placeholder}
         />
-        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400">
+        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-muted">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronsUpDown className="w-4 h-4" />}
         </div>
       </div>
 
       {open ? (
-        <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/60">
+        <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-overlay">
           {items.length ? (
             items.map((item, idx) => {
               const val = itemValue(item, kind);
@@ -174,27 +174,27 @@ export function CreatableMasterCombobox({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectValue(val)}
-                  className={`w-full px-4 py-3 text-left text-sm font-semibold transition flex items-center justify-between gap-3 ${
-                    active ? "bg-indigo-50 text-indigo-700" : "text-slate-700 hover:bg-slate-50"
+                  className={`w-full px-4 py-3 text-left text-sm font-semibold transition-colors duration-micro ease-smooth flex items-center justify-between gap-3 ${
+                    active ? "bg-brand-50 text-brand-700 dark:bg-brand-900 dark:text-brand-200" : "text-secondary hover:bg-surface-2"
                   }`}
                 >
                   <span className="truncate">{val}</span>
-                  {selected ? <Check className="w-4 h-4 text-indigo-600" /> : null}
+                  {selected ? <Check className="w-4 h-4 text-brand-600 dark:text-brand-300" /> : null}
                 </button>
               );
             })
           ) : loading ? (
-            <div className="px-4 py-3 text-sm font-semibold text-slate-500">Searching...</div>
+            <div className="px-4 py-3 text-sm font-semibold text-muted">Searching...</div>
           ) : (
-            <div className="px-4 py-3 text-sm font-semibold text-slate-500">No matches found.</div>
+            <div className="px-4 py-3 text-sm font-semibold text-muted">No matches found.</div>
           )}
           {canCreate ? (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => void createValue()}
-              className={`w-full px-4 py-3 text-left text-sm font-extrabold transition flex items-center gap-2 border-t border-slate-100 ${
-                activeIndex === items.length ? "bg-emerald-50 text-emerald-700" : "text-emerald-700 hover:bg-emerald-50"
+              className={`w-full px-4 py-3 text-left text-sm font-extrabold transition-colors duration-micro ease-smooth flex items-center gap-2 border-t border-subtle ${
+                activeIndex === items.length ? "bg-success-soft text-success" : "text-success hover:bg-success-soft"
               }`}
             >
               <Plus className="w-4 h-4" />

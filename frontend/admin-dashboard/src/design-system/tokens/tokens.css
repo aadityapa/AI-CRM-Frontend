@@ -1,0 +1,274 @@
+/* ============================================================================
+   KARNEX DESIGN SYSTEM — PRIMITIVE TOKENS (canonical source)
+   ----------------------------------------------------------------------------
+   "Linear meets Stripe Dashboard": premium, calm, professional.
+
+   This file is the single canonical source of design primitives:
+     color (brand / neutral / semantic), typography, spacing, elevation,
+     radius, motion.
+
+   STRATEGY (pinned): EVOLVE, don't fork. src/styles/tokens.css imports this
+   file FIRST and re-expresses its legacy variables (--brand-*, --surface-*,
+   --e*-shadow, --r-*, --dur-*) as ALIASES of these primitives, so all ~40
+   existing pages keep working without a single page edit.
+
+   Every text/surface pair below is verified by scripts/check-contrast.mjs
+   (WCAG AA, 4.5:1 body / 3.0:1 large-UI). If you change a value, re-run:
+       node scripts/check-contrast.mjs
+   ============================================================================ */
+
+:root {
+  /* ------------------------------------------------------------------ BRAND
+     v3: one hue, INDIGO — anchored at #6366F1 (brand-500). Evolves the old
+     Stripe-blue ramp toward the 2026 AI-SaaS language (OpenAI/Vercel energy).
+     brand-500 = accent (white text held to the 3.0:1 large-UI tier).
+     brand-600 = primary action surface (white text >= 4.5:1 — 6.29 measured).
+     brand-700/800 = hover / active for solid brand buttons (white AA+). */
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-300: #a5b4fc;
+  --brand-400: #818cf8;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+  --brand-800: #3730a3;
+  --brand-900: #312e81;
+
+  /* ----------------------------------------------------------------- VIOLET
+     Secondary hue (promoted from the old inline ai-gradient #8b5cf6). Used
+     ONLY as the far stop of brand gradients (buttons, nav pill, AI surfaces)
+     — never as a standalone action color. White text on violet-600/700/800
+     is AA body (5.71 / 7.11 / 8.97 measured). */
+  --violet-300: #c4b5fd;
+  --violet-400: #a78bfa;
+  --violet-500: #8b5cf6;
+  --violet-600: #7c3aed;
+  --violet-700: #6d28d9;
+  --violet-800: #5b21b6;
+
+  /* ----------------------------------------------------------------- ACCENT
+     Cyan — NEW in v3, used SPARINGLY: live indicators, AI highlights, the far
+     tail of gradient hairlines. Not a text color on light surfaces; on dark
+     surfaces accent-400 is 11.0:1 on the page. Never a button fill. */
+  --accent-300: #67e8f9;
+  --accent-400: #22d3ee;
+  --accent-500: #06b6d4;
+  --accent-600: #0891b2;
+
+  /* ---------------------------------------------------------------- NEUTRAL
+     Full cool-gray scale with a slight blue cast (slate-anchored).
+     This is the only gray in the system; surfaces, borders and text in
+     src/styles/tokens.css alias into this ramp. */
+  --neutral-0:   #ffffff;
+  --neutral-50:  #f8fafc;
+  --neutral-100: #f1f5f9;
+  --neutral-200: #e3e9f0;
+  --neutral-300: #cbd5e1;
+  --neutral-400: #94a3b8;
+  --neutral-500: #64748b;
+  --neutral-600: #475569;
+  --neutral-700: #334155;
+  --neutral-800: #1e293b;
+  --neutral-900: #0f172a;
+
+  /* --------------------------------------------------------------- SEMANTIC
+     Text-grade semantic colors (>= 4.5:1 on their soft background AND on
+     card surfaces). The *-solid trio exists for solid semantic buttons where
+     white text must stay AA in BOTH themes (the plain --danger flips to a
+     light red in dark mode for use as text, so buttons must not use it). */
+  --success: #047857;  --success-soft: #ecfdf5;
+  --warning: #b45309;  --warning-soft: #fffbeb;
+  --danger:  #c81e2c;  --danger-soft:  #fef2f2;
+  --info:    #075985;  --info-soft:    #f0f9ff;
+
+  --danger-solid:        #c81e2c;
+  --danger-solid-hover:  #ad1a26;
+  --danger-solid-active: #96161f;
+
+  /* v3 semantic FAMILY ANCHORS (success #10B981 / warning #F59E0B / danger
+     #EF4444). Decorative + large-UI + chart use ONLY (icons, dots, rings) —
+     they are NOT text-grade on light surfaces (success-500 on white is
+     2.5:1). The AA text-grade tokens above/in .dark stay the text source. */
+  --success-500: #10b981;
+  --warning-500: #f59e0b;
+  --danger-500:  #ef4444;
+
+  /* ------------------------------------------------------------- TYPOGRAPHY
+     Inter for UI (loaded in index.html with preconnect + swap), system-ui
+     fallback stack. Type scale is fixed — consume via Tailwind text-xs..2xl,
+     which map 1:1 onto these tokens.
+     v3: Space Grotesk as --font-display for h1/page titles + KPI numerals
+     ONLY (.text-display utility / font-display Tailwind key). Falls back to
+     the Inter stack, so FOUT under display=swap is metric-benign. */
+  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  32px;
+  --leading-body: 1.5;
+
+  /* ---------------------------------------------------------------- SPACING
+     Strict 4px grid. Tailwind's numeric utilities (p-1, gap-2, m-4 …) already
+     sit exactly on this grid (1 unit = 4px) and are the SANCTIONED way to
+     consume spacing. Arbitrary pixel values (p-[13px], mt-[5px]) are banned. */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* -------------------------------------------------------------- ELEVATION
+     Exactly FOUR levels — flat, raised, overlay, modal. Stripe-like: a small
+     contact shadow plus a soft, low-opacity ambient. Anything else in the
+     legacy layer (--e0..--e3, shadow-glass) is an alias of one of these. */
+  --elev-flat: none;
+  --elev-raised:  0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --elev-overlay: 0 2px 6px rgba(15, 23, 42, 0.06), 0 12px 28px rgba(15, 23, 42, 0.10);
+  --elev-modal:   0 8px 20px rgba(15, 23, 42, 0.10), 0 24px 56px rgba(15, 23, 42, 0.16);
+
+  /* Modal / overlay backdrop — neutral-900 ink at 60%, blurred by --glass-blur.
+     Tailwind `bg-backdrop`. */
+  --backdrop: rgba(15, 23, 42, 0.60);
+
+  /* -------------------------------------------------------- AURORA AMBIENCE
+     v3 evolution of the moonlight layer (`.fx-aurora` in src/styles/tokens.css;
+     `.moonlight` is a kept alias). Layered indigo/violet/cyan radial mesh,
+     mounted once per shell. Pure pre-composited gradients — NO backdrop-filter,
+     NO blur(). Pigments are the system's own: brand-500 (99,102,241), violet-500
+     (139,92,246), accent-400 (34,211,238), neutral-900 ink for the vignette.
+     Per-glow alpha stays capped at 0.15 so it never shifts a verified surface
+     color by a perceptible step (contrast gate tests flat tokens). The
+     -hero variants (login-like hero surfaces ONLY) may go to 0.22.
+     Light theme: white beam + whisper mesh. Dark theme: indigo-led mesh. */
+  --aurora-a: radial-gradient(
+    110% 64% at 50% -12%,
+    rgba(255, 255, 255, 0.50) 0%,
+    rgba(199, 210, 254, 0.15) 38%,
+    rgba(99, 102, 241, 0) 68%
+  );
+  --aurora-b: radial-gradient(
+    64% 48% at 88% 102%,
+    rgba(139, 92, 246, 0.05) 0%,
+    rgba(139, 92, 246, 0) 62%
+  );
+  --aurora-c: radial-gradient(
+    46% 38% at 8% 92%,
+    rgba(34, 211, 238, 0.04) 0%,
+    rgba(34, 211, 238, 0) 60%
+  );
+  --aurora-vignette: radial-gradient(
+    135% 120% at 50% 38%,
+    rgba(15, 23, 42, 0) 60%,
+    rgba(15, 23, 42, 0.05) 100%
+  );
+  /* Hero variant — stronger mesh for login-like hero surfaces only. */
+  --aurora-hero-a: radial-gradient(
+    90% 70% at 30% -10%,
+    rgba(99, 102, 241, 0.16) 0%,
+    rgba(99, 102, 241, 0) 62%
+  );
+  --aurora-hero-b: radial-gradient(
+    70% 56% at 92% 8%,
+    rgba(139, 92, 246, 0.12) 0%,
+    rgba(139, 92, 246, 0) 60%
+  );
+  --aurora-hero-c: radial-gradient(
+    60% 48% at 70% 104%,
+    rgba(34, 211, 238, 0.09) 0%,
+    rgba(34, 211, 238, 0) 58%
+  );
+  /* Legacy names — every existing var keeps working (aliases of aurora). */
+  --moonlight-a: var(--aurora-a);
+  --moonlight-b: var(--aurora-b);
+  --moonlight-vignette: var(--aurora-vignette);
+
+  /* ----------------------------------------------------------------- RADIUS
+     Exactly THREE radii: input/control 6, card 10, modal 16.
+     DOCUMENTED EXCEPTION: --radius-pill (9999px) is allowed ONLY for pills,
+     avatars and status dots — that is a shape, not a corner radius. */
+  --radius-input: 6px;
+  --radius-card:  10px;
+  --radius-modal: 16px;
+  --radius-pill:  9999px;
+
+  /* ----------------------------------------------------------------- MOTION
+     Two durations, one curve. micro = hover/press/fade (150ms),
+     panel = drawers/modals/collapse (250ms). Single decel curve. */
+  --motion-micro: 150ms;
+  --motion-panel: 250ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ================================================================ DARK THEME
+   Same primitives, re-tuned. Brand + neutral scales do NOT flip (they are
+   raw pigments); semantic text colors lighten to hold AA on dark surfaces,
+   elevation deepens (shadows must work against dark backdrops). */
+.dark {
+  --success: #34d399;  --success-soft: rgba(52, 211, 153, 0.14);
+  --warning: #fbbf24;  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger:  #f87171;  --danger-soft:  rgba(248, 113, 113, 0.15);
+  --info:    #7dd3fc;  --info-soft:    rgba(56, 189, 248, 0.15);
+
+  /* Solid semantic buttons keep dark pigment so white text stays AA. */
+  --danger-solid:        #d02936;
+  --danger-solid-hover:  #c81e2c;
+  --danger-solid-active: #ad1a26;
+
+  --elev-raised:  0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.30);
+  --elev-overlay: 0 2px 6px rgba(0, 0, 0, 0.50), 0 12px 28px rgba(0, 0, 0, 0.40);
+  --elev-modal:   0 8px 20px rgba(0, 0, 0, 0.55), 0 24px 56px rgba(0, 0, 0, 0.50);
+
+  /* Deeper ink so the dark page (near-black already) still separates. */
+  --backdrop: rgba(2, 6, 23, 0.65);
+
+  /* Aurora — indigo-led mesh (brand-400/500 pigments), violet secondary,
+     faint cyan tail, deep-ink vignette. Alphas stay ≤ 0.15 per glow. */
+  --aurora-a: radial-gradient(
+    110% 64% at 50% -12%,
+    rgba(129, 140, 248, 0.14) 0%,
+    rgba(99, 102, 241, 0.06) 40%,
+    rgba(99, 102, 241, 0) 70%
+  );
+  --aurora-b: radial-gradient(
+    64% 48% at 88% 102%,
+    rgba(139, 92, 246, 0.09) 0%,
+    rgba(139, 92, 246, 0) 62%
+  );
+  --aurora-c: radial-gradient(
+    46% 38% at 8% 92%,
+    rgba(34, 211, 238, 0.06) 0%,
+    rgba(34, 211, 238, 0) 60%
+  );
+  --aurora-vignette: radial-gradient(
+    135% 120% at 50% 38%,
+    rgba(2, 6, 23, 0) 55%,
+    rgba(2, 6, 23, 0.38) 100%
+  );
+  --aurora-hero-a: radial-gradient(
+    90% 70% at 30% -10%,
+    rgba(99, 102, 241, 0.22) 0%,
+    rgba(99, 102, 241, 0) 62%
+  );
+  --aurora-hero-b: radial-gradient(
+    70% 56% at 92% 8%,
+    rgba(139, 92, 246, 0.16) 0%,
+    rgba(139, 92, 246, 0) 60%
+  );
+  --aurora-hero-c: radial-gradient(
+    60% 48% at 70% 104%,
+    rgba(34, 211, 238, 0.12) 0%,
+    rgba(34, 211, 238, 0) 58%
+  );
+}

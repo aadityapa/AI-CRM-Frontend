@@ -717,7 +717,10 @@ export function initHrSetupUi() {
     initSchedulerToNow();
   }
   refreshHrSetupSkillsUi();
-  loadHrSchedulerSchedules();
+  const isInviteCandidateFlow = Boolean(new URLSearchParams(window.location.search).get("invite"));
+  if (!isInviteCandidateFlow) {
+    loadHrSchedulerSchedules();
+  }
 
   document.addEventListener("kx-hr-setup-skills-updated", refreshHrSetupSkillsUi);
   document.addEventListener("kx-hr-schedules-updated", (e) => {
