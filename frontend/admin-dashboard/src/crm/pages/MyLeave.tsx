@@ -115,5 +115,3 @@ export function MyLeavePage() {
     </div>
   );
 }
-
-export default MyLeavePage;

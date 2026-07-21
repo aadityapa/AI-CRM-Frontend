@@ -8,7 +8,7 @@ import {
   FileText, LayoutDashboard, Menu, Network, Receipt, Settings as SettingsIcon, Target, UserCog, Users, UsersRound, X,
 } from "lucide-react";
 import { crmGet, crmPost, CrmApiError } from "./api";
-import { CrmLink, CrmRouter, readCrmPath, useCrmPathActive } from "./routerHooks";
+import { CrmLink, CrmRouter, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
 import { ErrorBox, Spinner } from "./components/ui";
 import { MOTION_DUR, MOTION_EASE_OUT } from "./components/motion3d";

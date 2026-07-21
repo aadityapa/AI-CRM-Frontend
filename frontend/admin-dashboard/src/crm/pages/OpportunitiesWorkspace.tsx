@@ -120,5 +120,3 @@ export function OpportunitiesWorkspace({
 export function RequirementsListRedirect() {
   return <OpportunitiesWorkspace preferTab="requirements" />;
 }
-
-export default OpportunitiesWorkspace;
