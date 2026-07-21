@@ -304,5 +304,3 @@ export function AccessTemplatesPage() {
     </div>
   );
 }
-
-export default AccessTemplatesPage;

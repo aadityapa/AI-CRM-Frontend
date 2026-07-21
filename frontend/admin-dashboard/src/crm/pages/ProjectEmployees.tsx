@@ -394,5 +394,3 @@ export function ProjectEmployeesPage() {
     </div>
   );
 }
-
-export default ProjectEmployeesPage;

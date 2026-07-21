@@ -1019,5 +1019,3 @@ export function ProjectEmployeeDetailPage() {
     </div>
   );
 }
-
-export default ProjectEmployeeDetailPage;

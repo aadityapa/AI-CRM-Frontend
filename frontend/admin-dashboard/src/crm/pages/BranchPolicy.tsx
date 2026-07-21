@@ -546,5 +546,3 @@ function BranchHolidayModal({
     </Modal>
   );
 }
-
-export default BranchPolicyPage;
