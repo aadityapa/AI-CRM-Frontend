@@ -15,7 +15,7 @@ export const state = {
   /** Timer warning banners (time-limited interviews). */
   timeWarningsEnabled: true,
   timeWarningThresholds: { "5min": 300, "2min": 120, "1min": 60, "30sec": 30 },
-  timeWarningsTts: true,
+  timeWarningsTts: false,
   timeWarningsShown: null,
   aiHostSpeaking: false,
   micAlwaysOn: false,
@@ -28,11 +28,12 @@ export const state = {
   autoAdvance: {
     enabled: false,
     initial_response_wait_sec: 5,
-    silence_detection_sec: 3,
+    no_response_extra_wait_sec: 2.5,
+    silence_detection_sec: 2.5,
     no_response_countdown_sec: 3,
     auto_skip_enabled: true,
     voice_commands_enabled: true,
-    confirmation_before_next_sec: 3,
+    confirmation_before_next_sec: 2.5,
     minimum_answer_words: 5,
     minimum_speech_duration_sec: 2,
     speech_energy_threshold: 0.038,
@@ -41,4 +42,6 @@ export const state = {
   currentQuestionIndex: 0,
   questionSource: "",
   isWarmupTurn: false,
+  /** Silero VAD + Whisper segments (no continuous Whisper / Web Speech when true). */
+  vadWhisperPipeline: true,
 };

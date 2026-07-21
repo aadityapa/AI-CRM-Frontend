@@ -14,8 +14,8 @@ export function CrmMetaLine({
   const cust = String(customerName || "").trim();
   if (!opp && !cust) return null;
 
-  const labelCls = compact ? "font-bold text-slate-500" : "font-bold text-slate-600 dark:text-slate-400";
-  const valueCls = compact ? "text-slate-600" : "text-slate-700 dark:text-slate-300";
+  const labelCls = compact ? "font-bold text-muted" : "font-bold text-secondary";
+  const valueCls = compact ? "text-secondary" : "text-secondary";
 
   return (
     <div className={`flex flex-wrap gap-x-4 gap-y-1 text-xs ${className}`}>

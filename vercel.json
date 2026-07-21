@@ -3,51 +3,216 @@
   "buildCommand": "npm ci --prefix frontend/admin-dashboard && npm run build --prefix frontend/admin-dashboard && node scripts/vercel-build.mjs",
   "outputDirectory": "frontend",
   "rewrites": [
-    { "source": "/admin/hr-code", "destination": "https://ai-interview-backend-u6y0.onrender.com/admin/hr-code" },
-    { "source": "/admin/hr-code/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/admin/hr-code/:path*" },
-    { "source": "/auth/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/auth/:path*" },
-    { "source": "/auth", "destination": "https://ai-interview-backend-u6y0.onrender.com/auth" },
-    { "source": "/hr/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr/:path*" },
-    { "source": "/hr", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr" },
-    { "source": "/job/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/job/:path*" },
-    { "source": "/job", "destination": "https://ai-interview-backend-u6y0.onrender.com/job" },
-    { "source": "/interview/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/interview/:path*" },
-    { "source": "/interview", "destination": "https://ai-interview-backend-u6y0.onrender.com/interview" },
-    { "source": "/api/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/api/:path*" },
-    { "source": "/api", "destination": "https://ai-interview-backend-u6y0.onrender.com/api" },
-    { "source": "/masters/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/masters/:path*" },
-    { "source": "/masters", "destination": "https://ai-interview-backend-u6y0.onrender.com/masters" },
-    { "source": "/ats/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/ats/:path*" },
-    { "source": "/ats", "destination": "https://ai-interview-backend-u6y0.onrender.com/ats" },
-    { "source": "/candidate/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/candidate/:path*" },
-    { "source": "/candidate", "destination": "https://ai-interview-backend-u6y0.onrender.com/candidate" },
-    { "source": "/proctor/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/proctor/:path*" },
-    { "source": "/proctor", "destination": "https://ai-interview-backend-u6y0.onrender.com/proctor" },
-    { "source": "/session-status", "destination": "https://ai-interview-backend-u6y0.onrender.com/session-status" },
-    { "source": "/setup", "destination": "https://ai-interview-backend-u6y0.onrender.com/setup" },
-    { "source": "/extract-skills", "destination": "https://ai-interview-backend-u6y0.onrender.com/extract-skills" },
-    { "source": "/next", "destination": "https://ai-interview-backend-u6y0.onrender.com/next" },
-    { "source": "/answer", "destination": "https://ai-interview-backend-u6y0.onrender.com/answer" },
-    { "source": "/submit", "destination": "https://ai-interview-backend-u6y0.onrender.com/submit" },
-    { "source": "/report", "destination": "https://ai-interview-backend-u6y0.onrender.com/report" },
-    { "source": "/network-info", "destination": "https://ai-interview-backend-u6y0.onrender.com/network-info" },
-    { "source": "/models", "destination": "https://ai-interview-backend-u6y0.onrender.com/models" },
-    { "source": "/candidates/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/candidates/:path*" },
-    { "source": "/candidates", "destination": "https://ai-interview-backend-u6y0.onrender.com/candidates" },
-    { "source": "/health/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/health/:path*" },
-    { "source": "/health", "destination": "https://ai-interview-backend-u6y0.onrender.com/health" },
-    { "source": "/hr-records/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-records/:path*" },
-    { "source": "/hr-records", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-records" },
-    { "source": "/hr-record/:path*", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-record/:path*" },
-    { "source": "/hr-record", "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-record" },
-    { "source": "/version", "destination": "https://ai-interview-backend-u6y0.onrender.com/version" },
-    { "source": "/admin", "destination": "/admin/index.html" },
-    { "source": "/admin/", "destination": "/admin/index.html" }
+    {
+      "source": "/admin/hr-code/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/admin/hr-code/:path*"
+    },
+    {
+      "source": "/admin/hr-code",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/admin/hr-code"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/auth/:path*"
+    },
+    {
+      "source": "/auth",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/auth"
+    },
+    {
+      "source": "/hr/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr/:path*"
+    },
+    {
+      "source": "/hr",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr"
+    },
+    {
+      "source": "/job/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/job/:path*"
+    },
+    {
+      "source": "/job",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/job"
+    },
+    {
+      "source": "/interview/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/interview/:path*"
+    },
+    {
+      "source": "/interview",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/interview"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/api/:path*"
+    },
+    {
+      "source": "/api",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/api"
+    },
+    {
+      "source": "/masters/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/masters/:path*"
+    },
+    {
+      "source": "/masters",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/masters"
+    },
+    {
+      "source": "/ats/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/ats/:path*"
+    },
+    {
+      "source": "/ats",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/ats"
+    },
+    {
+      "source": "/candidate/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/candidate/:path*"
+    },
+    {
+      "source": "/candidate",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/candidate"
+    },
+    {
+      "source": "/proctor/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/proctor/:path*"
+    },
+    {
+      "source": "/proctor",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/proctor"
+    },
+    {
+      "source": "/session-status/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/session-status/:path*"
+    },
+    {
+      "source": "/session-status",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/session-status"
+    },
+    {
+      "source": "/setup/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/setup/:path*"
+    },
+    {
+      "source": "/setup",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/setup"
+    },
+    {
+      "source": "/extract-skills/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/extract-skills/:path*"
+    },
+    {
+      "source": "/extract-skills",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/extract-skills"
+    },
+    {
+      "source": "/next/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/next/:path*"
+    },
+    {
+      "source": "/next",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/next"
+    },
+    {
+      "source": "/answer/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/answer/:path*"
+    },
+    {
+      "source": "/answer",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/answer"
+    },
+    {
+      "source": "/submit/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/submit/:path*"
+    },
+    {
+      "source": "/submit",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/submit"
+    },
+    {
+      "source": "/report/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/report/:path*"
+    },
+    {
+      "source": "/report",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/report"
+    },
+    {
+      "source": "/network-info/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/network-info/:path*"
+    },
+    {
+      "source": "/network-info",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/network-info"
+    },
+    {
+      "source": "/models/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/models/:path*"
+    },
+    {
+      "source": "/models",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/models"
+    },
+    {
+      "source": "/candidates/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/candidates/:path*"
+    },
+    {
+      "source": "/candidates",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/candidates"
+    },
+    {
+      "source": "/health/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/health/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/health"
+    },
+    {
+      "source": "/hr-records/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-records/:path*"
+    },
+    {
+      "source": "/hr-records",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-records"
+    },
+    {
+      "source": "/hr-record/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-record/:path*"
+    },
+    {
+      "source": "/hr-record",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/hr-record"
+    },
+    {
+      "source": "/version/:path*",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/version/:path*"
+    },
+    {
+      "source": "/version",
+      "destination": "https://ai-interview-backend-u6y0.onrender.com/version"
+    },
+    {
+      "source": "/admin",
+      "destination": "/admin/index.html"
+    },
+    {
+      "source": "/admin/",
+      "destination": "/admin/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/assets/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
     }
   ]
 }

@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
-  Loader2,
   MessageSquareQuote,
   Sparkles,
   Target,
@@ -20,21 +19,15 @@ import {
   type ManagerDashboardSnapshot,
   type SkillCard,
 } from "../../utils/managerDashboardView";
+import { AiThinking } from "../../crm/components/ui";
 
 function BulletList({ items, tone }: { items: string[]; tone: "strength" | "weakness" | "neutral" }) {
   const Icon = tone === "strength" ? Check : tone === "weakness" ? X : Target;
-  const iconCls =
-    tone === "strength" ? "text-emerald-500" : tone === "weakness" ? "text-rose-500" : "text-slate-400";
-  const textCls =
-    tone === "strength"
-      ? "text-emerald-900 dark:text-emerald-100"
-      : tone === "weakness"
-        ? "text-rose-900 dark:text-rose-100"
-        : "text-slate-700 dark:text-slate-200";
+  const iconCls = tone === "strength" ? "text-success" : tone === "weakness" ? "text-danger" : "text-muted";
   return (
     <ul className="space-y-1.5">
       {items.map((line, i) => (
-        <li key={i} className={`flex items-start gap-2 text-sm leading-snug ${textCls}`}>
+        <li key={i} className="flex items-start gap-2 text-sm leading-snug text-secondary">
           <Icon className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${iconCls}`} aria-hidden />
           <span>{line.replace(/^[✓✗]\s*/, "")}</span>
         </li>
@@ -46,42 +39,42 @@ function BulletList({ items, tone }: { items: string[]; tone: "strength" | "weak
 function toneStyles(tone: SkillCard["tone"]) {
   if (tone === "green") {
     return {
-      border: "border-emerald-200/90 dark:border-emerald-800",
-      bg: "bg-emerald-50/70 dark:bg-emerald-950/35",
-      badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200",
-      dot: "bg-emerald-500",
+      border: "border-subtle",
+      bg: "bg-success-soft",
+      badge: "bg-surface-1 text-success ring-1 ring-inset ring-subtle",
+      dot: "bg-success-500",
     };
   }
   if (tone === "yellow") {
     return {
-      border: "border-amber-200/90 dark:border-amber-800",
-      bg: "bg-amber-50/70 dark:bg-amber-950/35",
-      badge: "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200",
-      dot: "bg-amber-500",
+      border: "border-subtle",
+      bg: "bg-warning-soft",
+      badge: "bg-surface-1 text-warning ring-1 ring-inset ring-subtle",
+      dot: "bg-warning-500",
     };
   }
   return {
-    border: "border-rose-200/90 dark:border-rose-800",
-    bg: "bg-rose-50/70 dark:bg-rose-950/35",
-    badge: "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200",
-    dot: "bg-rose-500",
+    border: "border-subtle",
+    bg: "bg-danger-soft",
+    badge: "bg-surface-1 text-danger ring-1 ring-inset ring-subtle",
+    dot: "bg-danger-500",
   };
 }
 
 function SkillCardView({ card }: { card: SkillCard }) {
   const s = toneStyles(card.tone);
   return (
-    <div className={`rounded-2xl border ${s.border} ${s.bg} p-4 flex flex-col gap-2`}>
-      <div className="flex items-start justify-between gap-2">
+    <div className={`rounded-card border ${s.border} ${s.bg} p-4 flex flex-col gap-2`}>
+      <div className="fx-hairline-b flex items-start justify-between gap-2 pb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} aria-hidden />
-          <h4 className="font-bold text-slate-900 dark:text-slate-100 truncate">{card.title}</h4>
+          <h4 className="font-bold text-primary truncate">{card.title}</h4>
         </div>
-        <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${s.badge}`}>
+        <span className={`shrink-0 text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${s.badge}`}>
           {card.levelLabel}
         </span>
       </div>
-      <p className="text-xs text-slate-600 dark:text-slate-300">{card.summary}</p>
+      <p className="text-xs text-secondary">{card.summary}</p>
       {card.bullets.length > 0 ? <BulletList items={card.bullets} tone={card.tone === "red" ? "weakness" : "strength"} /> : null}
     </div>
   );
@@ -98,21 +91,21 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-start gap-2.5 mb-4">
-      <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400">
+      <div className="p-2 rounded-control bg-surface-2 text-brand-600 ring-1 ring-inset ring-subtle dark:text-brand-300">
         <Icon className="w-4 h-4" aria-hidden />
       </div>
       <div>
-        <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">{title}</h3>
-        {subtitle ? <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{subtitle}</p> : null}
+        <h3 className="text-xs font-black uppercase tracking-widest text-secondary">{title}</h3>
+        {subtitle ? <p className="text-xs text-muted mt-0.5">{subtitle}</p> : null}
       </div>
     </div>
   );
 }
 
 function confidenceBadge(level: "High" | "Moderate" | "Low") {
-  if (level === "High") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200";
-  if (level === "Moderate") return "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
-  return "bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-200";
+  if (level === "High") return "bg-success-soft text-success";
+  if (level === "Moderate") return "bg-warning-soft text-warning";
+  return "bg-danger-soft text-danger";
 }
 
 export function StrengthsWeaknessesPanel({
@@ -132,18 +125,17 @@ export function StrengthsWeaknessesPanel({
 
   if (busy) {
     return (
-      <div className="flex items-center justify-center gap-2 py-16 text-slate-500 dark:text-slate-400 text-sm">
-        <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
-        Loading manager review dashboard…
+      <div className="flex items-center justify-center py-16">
+        <AiThinking label="Loading manager review dashboard…" />
       </div>
     );
   }
   if (error) {
-    return <div className="p-8 text-center text-rose-600 dark:text-rose-400 text-sm">{error}</div>;
+    return <div className="p-8 text-center text-danger text-sm">{error}</div>;
   }
   if (!dashboard) {
     return (
-      <div className="p-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+      <div className="p-8 text-center text-muted text-sm">
         No evaluation data yet for this interview. Complete the interview and wait for the AI report.
       </div>
     );
@@ -155,28 +147,28 @@ export function StrengthsWeaknessesPanel({
 
   return (
     <div className="space-y-8">
-      {/* SECTION 1 — Candidate Snapshot */}
-      <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/30 p-5 sm:p-6">
+      {/* SECTION 1 — Candidate Snapshot (summary hero — glass allowed) */}
+      <section className="glass rounded-card p-5 shadow-raised sm:p-6">
         <SectionHeader icon={User} title="Candidate Snapshot" subtitle="20-second hiring decision at a glance" />
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Candidate</p>
-            <p className="text-lg font-black text-slate-900 dark:text-white">{snap.candidateName}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Candidate</p>
+            <p className="text-lg font-black text-primary">{snap.candidateName}</p>
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Role</p>
-            <p className="text-sm font-bold text-indigo-700 dark:text-indigo-300">{snap.role}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Role</p>
+            <p className="text-sm font-bold text-brand-700 dark:text-brand-300">{snap.role}</p>
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Score</p>
-            <p className="text-2xl font-black text-slate-900 dark:text-white">{snap.scorePercent}%</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Score</p>
+            <p className="text-display text-2xl font-bold tabular-nums text-primary">{snap.scorePercent}%</p>
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Recommendation</p>
-            <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{snap.hiringRecommendation}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Recommendation</p>
+            <p className="text-sm font-bold text-success">{snap.hiringRecommendation}</p>
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Confidence Level</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Confidence Level</p>
             <span
               className={`inline-block mt-1 text-xs font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${confidenceBadge(snap.confidenceLevel)}`}
             >
@@ -184,18 +176,23 @@ export function StrengthsWeaknessesPanel({
             </span>
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Interview Date</p>
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{snap.interviewDate}</p>
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">Interview Date</p>
+            <p className="text-sm font-semibold text-secondary">{snap.interviewDate}</p>
           </div>
         </div>
-        <div className="mt-5 rounded-xl border border-indigo-200/80 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/40 p-4">
-          <div className="flex items-center gap-2 text-indigo-800 dark:text-indigo-200">
+        {/* AI-generated verdict — animated gradient border + cyan accent label */}
+        <div className="fx-gradient-border-animated mt-5 rounded-card bg-surface-1 p-4">
+          <div className="flex items-center gap-2 text-brand-700 dark:text-brand-200">
             <Sparkles className="w-4 h-4 shrink-0" aria-hidden />
-            <p className="text-[10px] font-black uppercase tracking-widest">AI Verdict</p>
+            <p className="text-xs font-black uppercase tracking-widest">AI Verdict</p>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal text-accent-600 ring-1 ring-inset ring-subtle dark:text-accent-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
+              AI Analysis
+            </span>
           </div>
           <div className="mt-2 space-y-1">
             {verdictLines.map((line, i) => (
-              <p key={i} className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+              <p key={i} className="text-sm text-secondary leading-relaxed">
                 {line}
               </p>
             ))}
@@ -230,23 +227,20 @@ export function StrengthsWeaknessesPanel({
           <div className="space-y-3">
             {topBest.length ? (
               topBest.map((item) => (
-                <div
-                  key={item.question_index}
-                  className="rounded-xl border border-emerald-200/80 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/25 p-4"
-                >
-                  <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                <div key={item.question_index} className="rounded-card border border-subtle bg-success-soft p-4">
+                  <p className="fx-hairline-b pb-2 text-xs font-black uppercase tracking-wider text-success">
                     Best Answer #{item.rank}
                     {item.score_display ? ` · ${item.score_display}` : ""}
                   </p>
-                  <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">{item.question}</p>
-                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                    <span className="font-semibold text-emerald-700 dark:text-emerald-300">Reason: </span>
+                  <p className="mt-2 text-sm font-bold text-primary">{item.question}</p>
+                  <p className="mt-2 text-xs text-secondary">
+                    <span className="font-semibold text-success">Reason: </span>
                     {item.reason}
                   </p>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-slate-500">No scored answers available yet.</p>
+              <p className="text-sm text-muted">No scored answers available yet.</p>
             )}
           </div>
         </section>
@@ -256,30 +250,27 @@ export function StrengthsWeaknessesPanel({
           <div className="space-y-3">
             {topWeakest.length ? (
               topWeakest.map((item) => (
-                <div
-                  key={item.question_index}
-                  className="rounded-xl border border-rose-200/80 dark:border-rose-800 bg-rose-50/40 dark:bg-rose-950/25 p-4"
-                >
-                  <p className="text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                <div key={item.question_index} className="rounded-card border border-subtle bg-danger-soft p-4">
+                  <p className="fx-hairline-b pb-2 text-xs font-black uppercase tracking-wider text-danger">
                     Weak Answer #{item.rank}
                     {item.score_display ? ` · ${item.score_display}` : ""}
                   </p>
-                  <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">{item.question}</p>
-                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                    <span className="font-semibold text-rose-700 dark:text-rose-300">Reason: </span>
+                  <p className="mt-2 text-sm font-bold text-primary">{item.question}</p>
+                  <p className="mt-2 text-xs text-secondary">
+                    <span className="font-semibold text-danger">Reason: </span>
                     {item.reason}
                   </p>
                 </div>
               ))
             ) : (
-              <p className="text-sm text-slate-500">No weak-answer signal yet.</p>
+              <p className="text-sm text-muted">No weak-answer signal yet.</p>
             )}
           </div>
         </section>
       </div>
 
       {/* SECTION 6 — Follow-up questions */}
-      <section className="rounded-2xl border border-indigo-200/80 dark:border-indigo-800 bg-indigo-50/30 dark:bg-indigo-950/25 p-5">
+      <section className="rounded-card border border-subtle bg-surface-2 p-5">
         <SectionHeader
           icon={MessageSquareQuote}
           title="Follow-up Questions for Manager"
@@ -289,13 +280,13 @@ export function StrengthsWeaknessesPanel({
           {followUpQuestions.map((q, i) => (
             <li
               key={i}
-              className="flex items-start gap-3 text-sm text-slate-800 dark:text-slate-200 bg-white/70 dark:bg-slate-900/50 rounded-lg px-3 py-2.5 border border-indigo-100 dark:border-indigo-900"
+              className="flex items-start gap-3 text-sm text-secondary bg-surface-1 rounded-control px-3 py-2.5 border border-subtle"
             >
-              <span className="shrink-0 w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs font-black flex items-center justify-center">
+              <span className="shrink-0 w-6 h-6 rounded-full bg-brand-100 text-brand-700 dark:bg-brand-900 dark:text-brand-200 text-xs font-black flex items-center justify-center">
                 {i + 1}
               </span>
               <span>
-                <span className="font-semibold text-indigo-700 dark:text-indigo-300">Ask candidate: </span>
+                <span className="font-semibold text-brand-700 dark:text-brand-300">Ask candidate: </span>
                 {q}
               </span>
             </li>
@@ -317,23 +308,23 @@ export function StrengthsWeaknessesPanel({
               <motion.div
                 key={q.question_index}
                 layout
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 overflow-hidden"
+                className="rounded-card border border-subtle bg-surface-1 overflow-hidden"
               >
                 <button
                   type="button"
                   onClick={() => setOpenIdx(open ? null : q.question_index)}
-                  className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition"
+                  className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left transition-colors duration-micro ease-smooth hover:bg-surface-2"
                 >
                   <div className="min-w-0 flex items-center gap-2">
                     <ChevronDown
-                      className={`w-4 h-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+                      className={`w-4 h-4 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}
                     />
                     <div>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <span className="text-xs font-black uppercase tracking-widest text-muted">
                         Question {q.question_index}
                         {q.score_display ? ` · ${q.score_display}` : ""}
                       </span>
-                      <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-100 leading-snug">
+                      <p className="mt-0.5 text-sm font-semibold text-primary leading-snug">
                         {q.question || "—"}
                       </p>
                     </div>
@@ -346,25 +337,25 @@ export function StrengthsWeaknessesPanel({
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.18 }}
-                      className="overflow-hidden border-t border-slate-100 dark:border-slate-800"
+                      className="overflow-hidden border-t border-subtle"
                     >
-                      <div className="px-4 py-3 grid sm:grid-cols-2 gap-2.5 bg-slate-50/40 dark:bg-slate-950/30">
-                        <div className="rounded-lg border border-emerald-200/80 dark:border-emerald-900/80 bg-emerald-50/80 dark:bg-emerald-950/40 p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                      <div className="px-4 py-3 grid sm:grid-cols-2 gap-2.5 bg-surface-2">
+                        <div className="rounded-control border border-subtle bg-success-soft p-3">
+                          <p className="text-xs font-black uppercase tracking-wider text-success">
                             Strengths
                           </p>
                           <BulletList items={q.question_strengths} tone="strength" />
                         </div>
-                        <div className="rounded-lg border border-rose-200/80 dark:border-rose-900/80 bg-rose-50/80 dark:bg-rose-950/40 p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                        <div className="rounded-control border border-subtle bg-danger-soft p-3">
+                          <p className="text-xs font-black uppercase tracking-wider text-danger">
                             Weaknesses
                           </p>
                           <BulletList items={q.question_weaknesses} tone="weakness" />
                         </div>
                         {q.score_display ? (
-                          <div className="sm:col-span-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Score</p>
-                            <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{q.score_display}</p>
+                          <div className="sm:col-span-2 rounded-control border border-subtle bg-surface-1 p-3">
+                            <p className="text-xs font-black uppercase tracking-wider text-muted">Score</p>
+                            <p className="text-sm font-bold text-primary">{q.score_display}</p>
                           </div>
                         ) : null}
                       </div>

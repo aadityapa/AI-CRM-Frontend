@@ -29,8 +29,8 @@ export type InterviewSchedule = {
   created_time_ist?: string;
 };
 
-export async function getDashboardData(limit = 1000): Promise<{ candidates: Candidate[]; sessions: Session[] }> {
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 1000, 1000));
+export async function getDashboardData(limit = 200): Promise<{ candidates: Candidate[]; sessions: Session[] }> {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
   const data = await apiGet<{ candidates: Candidate[]; sessions: Session[] }>(`/hr/dashboard?limit=${safeLimit}`);
   const candidates = Array.isArray(data.candidates) ? data.candidates : [];
   const sessions = Array.isArray(data.sessions) ? data.sessions : [];
@@ -38,28 +38,6 @@ export async function getDashboardData(limit = 1000): Promise<{ candidates: Cand
     candidates,
     sessions: ensureSessionsFromCandidates(candidates, sessions),
   };
-}
-
-export async function getCandidates(): Promise<Candidate[]> {
-  const data = await apiGet<{ candidates: Candidate[] }>("/hr/dashboard?limit=1000");
-  return Array.isArray(data.candidates) ? data.candidates : [];
-}
-
-export async function getSessions(candidates?: Candidate[]): Promise<Session[]> {
-  const data = await apiGet<{ sessions: Session[] }>("/hr/dashboard?limit=1000");
-  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-  return ensureSessionsFromCandidates(candidates || [], sessions);
-}
-
-export async function getCandidateById(id: string): Promise<Candidate | null> {
-  const all = await getCandidates();
-  return all.find((c) => c.id === id) || null;
-}
-
-export async function getSessionById(id: string): Promise<Session | null> {
-  const data = await apiGet<{ sessions: Session[] }>("/hr/dashboard?limit=1000");
-  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-  return sessions.find((s) => s.id === id) || null;
 }
 
 export async function getSchedules(): Promise<InterviewSchedule[]> {
@@ -72,13 +50,6 @@ export async function deleteSchedule(scheduleId: string): Promise<boolean> {
   if (!id) return false;
   await apiDelete(`/hr/schedules/${encodeURIComponent(id)}`);
   return true;
-}
-
-export async function getInterviewRecord(interviewId: string): Promise<InterviewRecord | null> {
-  const id = String(interviewId || "").trim();
-  if (!id) return null;
-  const data = await apiGet<{ record: InterviewRecord }>(`/hr/interviews/${encodeURIComponent(id)}`);
-  return data?.record || null;
 }
 
 export async function deleteInterviewRecord(interviewId: string): Promise<boolean> {

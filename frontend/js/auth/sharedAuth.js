@@ -42,6 +42,12 @@ export function switchAuthMode(mode, registerHandler, loginHandler) {
   loginBtns.forEach((btn) => btn.classList.toggle("active", !isRegister));
   registerBtns.forEach((btn) => btn.classList.toggle("active", isRegister));
 
+  // Portal label follows the visible auth screen (Welcome back vs Create account).
+  const portalPill = document.getElementById("authSwitchHr");
+  if (portalPill) {
+    portalPill.textContent = isRegister ? "Register portal" : "Login Portal";
+  }
+
   const hrBtn = document.getElementById("hrActionBtn");
   if (hrBtn) {
     hrBtn.innerText = "Sign in";

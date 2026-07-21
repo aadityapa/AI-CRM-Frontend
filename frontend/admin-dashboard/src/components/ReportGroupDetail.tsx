@@ -43,12 +43,12 @@ export function ReportGroupDetail({
 
   if (!group) {
     return (
-      <div className="h-full min-h-[600px] flex flex-col items-center justify-center bg-white dark:bg-slate-900 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-3xl text-slate-400 dark:text-slate-500">
-        <div className="bg-slate-50 dark:bg-slate-800 p-8 rounded-full mb-6 border border-slate-100 dark:border-slate-700">
-          <Layers3 className="w-16 h-16 text-indigo-200 dark:text-indigo-500/60" />
+      <div className="h-full min-h-96 flex flex-col items-center justify-center bg-surface-1 border-2 border-dashed border-subtle rounded-card text-muted">
+        <div className="bg-surface-2 p-8 rounded-full mb-6 ring-1 ring-inset ring-subtle">
+          <Layers3 className="w-16 h-16 text-brand-300" />
         </div>
-        <h3 className="text-2xl font-bold text-slate-700 dark:text-slate-200">Select {groupLabel}</h3>
-        <p className="mt-2 text-slate-400 dark:text-slate-500 max-w-sm text-center">
+        <h3 className="text-display text-xl font-bold text-secondary">Select {groupLabel}</h3>
+        <p className="mt-2 text-muted max-w-sm text-center">
           Pick an item from the sidebar to review grouped interview metrics and linked candidate reports.
         </p>
       </div>
@@ -57,57 +57,57 @@ export function ReportGroupDetail({
 
   return (
     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-      <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-wrap items-center justify-between gap-4">
+      <div className="glass p-8 rounded-card shadow-raised flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-5 min-w-0">
-          <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 flex items-center justify-center text-indigo-600 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/60">
+          <div className="w-16 h-16 rounded-card bg-surface-2 flex items-center justify-center text-brand-600 ring-1 ring-inset ring-subtle dark:text-brand-300">
             <Target className="w-8 h-8" />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase text-indigo-500 dark:text-indigo-300 tracking-widest">{groupLabel}</p>
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-slate-100 tracking-tight truncate">{group.label}</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 flex items-center gap-1">
+            <p className="text-xs font-black uppercase text-brand-600 dark:text-brand-300 tracking-widest">{groupLabel}</p>
+            <h2 className="text-display text-2xl font-bold text-primary tracking-tight truncate">{group.label}</h2>
+            <p className="text-xs text-muted mt-2 flex items-center gap-1">
               <CalendarClock className="w-3.5 h-3.5" /> Latest interview: {fmtWhen(group.latestDate)}
             </p>
           </div>
         </div>
         <div className="text-right">
-          <p className="text-3xl font-black text-slate-800 dark:text-slate-100">{group.averageScore}%</p>
-          <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-widest">Average AI score</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-primary">{group.averageScore}%</p>
+          <p className="text-xs font-black uppercase text-muted tracking-widest">Average AI score</p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-3">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-          <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-widest">Total candidates</p>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-1 flex items-center gap-2"><Users className="w-4 h-4 text-indigo-500" /> {group.totalCandidates}</p>
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <p className="text-xs font-black uppercase text-muted tracking-widest">Total candidates</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-primary mt-1 flex items-center gap-2"><Users className="w-4 h-4 text-brand-500" /> {group.totalCandidates}</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
-          <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-widest">Total interviews</p>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">{group.totalInterviews}</p>
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <p className="text-xs font-black uppercase text-muted tracking-widest">Total interviews</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-primary mt-1">{group.totalInterviews}</p>
         </div>
-        <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 p-4">
-          <p className="text-[10px] font-black uppercase text-emerald-700 dark:text-emerald-300 tracking-widest">Completed interviews</p>
-          <p className="text-2xl font-black text-emerald-700 dark:text-emerald-200 mt-1 flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> {group.completedInterviews}</p>
+        <div className="rounded-card border border-subtle bg-success-soft p-4">
+          <p className="text-xs font-black uppercase text-success tracking-widest">Completed interviews</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-success mt-1 flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> {group.completedInterviews}</p>
         </div>
-        <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/30 p-4">
-          <p className="text-[10px] font-black uppercase text-amber-700 dark:text-amber-300 tracking-widest">Pending interviews</p>
-          <p className="text-2xl font-black text-amber-700 dark:text-amber-200 mt-1 flex items-center gap-2"><Clock3 className="w-4 h-4" /> {group.pendingInterviews}</p>
+        <div className="rounded-card border border-subtle bg-warning-soft p-4">
+          <p className="text-xs font-black uppercase text-warning tracking-widest">Pending interviews</p>
+          <p className="text-display text-2xl font-bold tabular-nums text-warning mt-1 flex items-center gap-2"><Clock3 className="w-4 h-4" /> {group.pendingInterviews}</p>
         </div>
-        <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/70 dark:bg-indigo-950/30 p-4">
-          <p className="text-[10px] font-black uppercase text-indigo-700 dark:text-indigo-300 tracking-widest">Latest activity</p>
-          <p className="text-sm font-bold text-indigo-700 dark:text-indigo-200 mt-2">{fmtWhen(group.latestDate)}</p>
+        <div className="rounded-card border border-subtle bg-brand-50 dark:bg-surface-2 p-4">
+          <p className="text-xs font-black uppercase text-brand-700 dark:text-brand-300 tracking-widest">Latest activity</p>
+          <p className="text-sm font-bold text-brand-700 dark:text-brand-200 mt-2">{fmtWhen(group.latestDate)}</p>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
-          <h3 className="font-black text-slate-800 dark:text-slate-100 uppercase text-xs tracking-widest">Linked Candidate Interviews</h3>
-          <span className="text-xs text-slate-400 dark:text-slate-500 font-semibold">{group.rows.length} records</span>
+      <div className="bg-surface-1 rounded-card border border-subtle shadow-raised overflow-hidden">
+        <div className="px-6 py-4 border-b border-subtle flex items-center justify-between gap-3">
+          <h3 className="font-black text-primary uppercase text-xs tracking-widest">Linked Candidate Interviews</h3>
+          <span className="text-xs text-muted font-semibold">{group.rows.length} records</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="text-slate-400 dark:text-slate-500 text-[10px] uppercase font-black tracking-widest border-b border-slate-100 dark:border-slate-800">
+              <tr className="text-muted text-xs uppercase font-black tracking-widest border-b border-subtle">
                 <th className="px-6 py-3">Candidate</th>
                 <th className="px-6 py-3">Template</th>
                 <th className="px-6 py-3">Date</th>
@@ -117,26 +117,24 @@ export function ReportGroupDetail({
                 <th className="px-6 py-3 text-right">Report</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-subtle">
               {rows.map((row) => {
                 const interview = row.interview;
                 const done = isInterviewCompleted(interview);
                 return (
-                  <tr key={`${row.candidateId}:${interview.id}`} className="k-hover-row hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors">
+                  <tr key={`${row.candidateId}:${interview.id}`} className="row-hover transition-colors duration-micro ease-smooth">
                     <td className="px-6 py-4">
                       <div>
-                        <p className="font-bold text-slate-800 dark:text-slate-100">{row.candidateName}</p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400">{row.candidateEmail}</p>
+                        <p className="font-bold text-primary">{row.candidateName}</p>
+                        <p className="text-xs text-muted">{row.candidateEmail}</p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-700 dark:text-slate-200">{interview.templateTitle || interview.sessionName || "Interview"}</td>
-                    <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400 whitespace-nowrap">{fmtWhen(row.sortDate)}</td>
+                    <td className="px-6 py-4 text-sm text-secondary">{interview.templateTitle || interview.sessionName || "Interview"}</td>
+                    <td className="px-6 py-4 text-sm text-muted whitespace-nowrap">{fmtWhen(row.sortDate)}</td>
                     <td className="px-6 py-4">
                       <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${
-                          done
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"
-                            : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-black uppercase tracking-widest ${
+                          done ? "border-subtle bg-success-soft text-success" : "border-subtle bg-warning-soft text-warning"
                         }`}
                       >
                         {done ? "Completed" : "Pending"}
@@ -152,7 +150,7 @@ export function ReportGroupDetail({
                       <button
                         type="button"
                         onClick={() => onOpenCandidateReport?.(row.candidateId, interview.id)}
-                        className="inline-flex items-center gap-1 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all"
+                        className="inline-flex items-center gap-1 rounded-control border border-subtle bg-surface-1 px-3 py-1.5 text-xs font-bold text-brand-600 dark:text-brand-300 transition-colors duration-micro ease-smooth hover:bg-surface-2"
                       >
                         Open Report
                       </button>
@@ -162,7 +160,7 @@ export function ReportGroupDetail({
               })}
               {!rows.length ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-slate-400 dark:text-slate-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-sm text-muted">
                     No linked interviews found for this grouping.
                   </td>
                 </tr>
@@ -170,8 +168,8 @@ export function ReportGroupDetail({
             </tbody>
           </table>
         </div>
-        <div className="px-6 py-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <p className="text-xs text-slate-400 dark:text-slate-500">
+        <div className="px-6 py-3 border-t border-subtle flex items-center justify-between">
+          <p className="text-xs text-muted">
             Page {page} of {pageCount}
           </p>
           <div className="flex items-center gap-2">
@@ -179,7 +177,7 @@ export function ReportGroupDetail({
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:pointer-events-none"
+              className="rounded-control border border-subtle px-3 py-1.5 text-xs font-semibold text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-2 disabled:opacity-50 disabled:pointer-events-none"
             >
               Prev
             </button>
@@ -187,7 +185,7 @@ export function ReportGroupDetail({
               type="button"
               onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
               disabled={page >= pageCount}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:pointer-events-none"
+              className="rounded-control border border-subtle px-3 py-1.5 text-xs font-semibold text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-2 disabled:opacity-50 disabled:pointer-events-none"
             >
               Next
             </button>

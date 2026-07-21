@@ -24,7 +24,7 @@ export function KarnexBranding({
   return (
     <div className={`flex flex-col gap-1 select-none ${className}`}>
       <div
-        className="inline-flex items-center justify-center rounded-xl border border-slate-200/80 bg-white/95 px-3 py-2 shadow-sm dark:border-slate-600/40 dark:bg-slate-900/50 dark:backdrop-blur-sm"
+        className="inline-flex items-center justify-center rounded-card border border-subtle bg-surface-1 px-3 py-2 shadow-raised"
         style={{ maxWidth: isSm ? 160 : 200 }}
       >
         <img
@@ -45,12 +45,12 @@ export function KarnexBranding({
           decoding="async"
         />
       </div>
-      <div className={isSm ? "text-[9px]" : "text-[10px]"}>
-        <p className="m-0 font-bold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+      <div className="text-xs">
+        <p className="m-0 font-bold uppercase tracking-widest text-muted">
           AI HR SUITE
         </p>
         {!isSm && (
-          <p className="m-0 mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+          <p className="m-0 mt-0.5 text-xs font-medium text-muted">
             Enterprise AI Interview Platform
           </p>
         )}

@@ -9,15 +9,45 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronRight,
+  Database,
   Info,
   RotateCcw,
   Save,
+  X,
   Zap,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
+import { previewQuestionBankFromTemplate } from "../api/questionBank";
 import { CreatableMasterCombobox } from "../components/CreatableMasterCombobox";
 import { INTELLIGENCE_SUITE_CATEGORIES } from "../constants/intelligenceSuiteCategories";
 import { MAX_COUNT_MODE_QUESTIONS, clampCountModeQuestions } from "../constants/interviewLimits";
+
+type QuestionType = "dynamic" | "manual" | "question_bank";
+
+type QuestionBankMatch = {
+  id?: string;
+  role?: string;
+  skill?: string;
+  difficulty?: string;
+  category?: string;
+  question?: string;
+};
+
+const QB_CATEGORIES = [
+  { value: "technical", label: "Technical" },
+  { value: "behavioral", label: "Behavioral" },
+  { value: "situational", label: "Situational" },
+  { value: "general", label: "General" },
+] as const;
+
+const QB_DIFFICULTIES = [
+  { value: "easy", label: "Easy" },
+  { value: "medium", label: "Medium" },
+  { value: "hard", label: "Hard" },
+] as const;
+
+type QbCategoryValue = (typeof QB_CATEGORIES)[number]["value"];
+type QbDifficultyValue = (typeof QB_DIFFICULTIES)[number]["value"];
 
 type JobConfig = {
   jobId: string;
@@ -106,10 +136,15 @@ export function TemplateFormPage({
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [qbToast, setQbToast] = useState("");
   const [busy, setBusy] = useState(false);
   const [jobs, setJobs] = useState<JobConfig[]>([]);
+  const [editingJob, setEditingJob] = useState<JobConfig | null>(null);
 
-  const editing = useMemo(() => jobs.find((j) => j.jobId === jobId) || null, [jobs, jobId]);
+  const editing = useMemo(
+    () => editingJob || jobs.find((j) => j.jobId === jobId) || null,
+    [editingJob, jobs, jobId],
+  );
 
   const [jobTitle, setJobTitle] = useState("");
   const [domain, setDomain] = useState("");
@@ -131,21 +166,30 @@ export function TemplateFormPage({
   const [warn30Sec, setWarn30Sec] = useState(30);
   const [micAlwaysOn, setMicAlwaysOn] = useState(false);
   const [showSpokenText, setShowSpokenText] = useState(false);
-  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(true);
   const [initialResponseWaitSec, setInitialResponseWaitSec] = useState(5);
-  const [silenceDetectionSec, setSilenceDetectionSec] = useState(3);
-  const [noResponseCountdownSec, setNoResponseCountdownSec] = useState(3);
+  const [noResponseExtraWaitSec, setNoResponseExtraWaitSec] = useState(2.5);
+  const [silenceDetectionSec, setSilenceDetectionSec] = useState(2.5);
   const [autoSkipEnabled, setAutoSkipEnabled] = useState(true);
   const [voiceCommandsEnabled, setVoiceCommandsEnabled] = useState(true);
-  const [confirmationBeforeNextSec, setConfirmationBeforeNextSec] = useState(3);
+  const [confirmationBeforeNextSec, setConfirmationBeforeNextSec] = useState(2.5);
   const [minimumAnswerWords, setMinimumAnswerWords] = useState(5);
   const [minimumSpeechDurationSec, setMinimumSpeechDurationSec] = useState(2);
   const [speechEnergyThreshold, setSpeechEnergyThreshold] = useState(0.038);
   const [speechConfirmMs, setSpeechConfirmMs] = useState(400);
   const [jdText, setJdText] = useState("");
   const [templateInstructions, setTemplateInstructions] = useState("");
-  const [questionType, setQuestionType] = useState<"dynamic" | "manual">("dynamic");
+  const [questionType, setQuestionType] = useState<QuestionType>("dynamic");
   const [manualQuestionsText, setManualQuestionsText] = useState("");
+  const [qbCategories, setQbCategories] = useState<QbCategoryValue[]>(["technical"]);
+  const [qbDifficulties, setQbDifficulties] = useState<QbDifficultyValue[]>(["medium"]);
+  const [qbExcludedQuestionIds, setQbExcludedQuestionIds] = useState<string[]>([]);
+  const [qbRandomize, setQbRandomize] = useState(true);
+  const [qbAvoidDuplicates, setQbAvoidDuplicates] = useState(true);
+  const [qbPreviewBusy, setQbPreviewBusy] = useState(false);
+  const [qbMatches, setQbMatches] = useState<QuestionBankMatch[]>([]);
+  const [qbTotalMatched, setQbTotalMatched] = useState(0);
+  const [qbPoolTotal, setQbPoolTotal] = useState(0);
   const [sampleBusy, setSampleBusy] = useState(false);
   const [sampleQuestions, setSampleQuestions] = useState<string[]>([]);
   const [sampleDomains, setSampleDomains] = useState<string[]>([]);
@@ -193,11 +237,16 @@ export function TemplateFormPage({
     if (!Number.isFinite(d)) return raw;
     return new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   }, [editing]);
+  const bankPreviewCount = useMemo(
+    () => (questionType === "question_bank" ? sampleQuestions.length : 0),
+    [questionType, sampleQuestions.length],
+  );
   const countModeQuestionsToAsk = useMemo(() => {
     const n = clampCountModeQuestions(numQ, 5);
     if (questionType === "manual" && manualQuestionCount > 0) return Math.min(n, manualQuestionCount);
+    if (questionType === "question_bank" && bankPreviewCount > 0) return Math.min(n, bankPreviewCount);
     return n;
-  }, [numQ, questionType, manualQuestionCount]);
+  }, [numQ, questionType, manualQuestionCount, bankPreviewCount]);
 
   const interviewDurationLabel = useMemo(() => {
     if (timingMode === "time") return `${timeLimitMin} minutes (time limit)`;
@@ -206,6 +255,10 @@ export function TemplateFormPage({
   }, [timingMode, timeLimitMin, countModeQuestionsToAsk]);
 
   const prevHydratedJobIdRef = useRef<string | null | undefined>(undefined);
+  // Tracks the jobId whose data has actually been loaded into the form. Save is
+  // blocked when editing (jobId != null) unless this matches jobId — this is the
+  // guard that stops an un-hydrated (empty) edit form from overwriting the DB.
+  const hydratedJobIdRef = useRef<string | null>(null);
   const promptDraftTouchedRef = useRef(false);
   const lastAutoGeneratedPromptRef = useRef("");
 
@@ -247,11 +300,17 @@ export function TemplateFormPage({
 
     if (jobId == null) {
       if (prev != null) {
+        setEditingJob(null);
         setTimingMode("");
         setStep(1);
         setJobTitle("");
         setDomain("");
-        setOpportunityId("");
+        let prefillOpp = "";
+        try {
+          prefillOpp = sessionStorage.getItem("crm_prefill_opportunityId") || "";
+          if (prefillOpp) sessionStorage.removeItem("crm_prefill_opportunityId");
+        } catch { /* ignore */ }
+        setOpportunityId(prefillOpp);
         setCustomerName("");
         setRequiredSkills("");
         setOptionalSkills("");
@@ -284,17 +343,64 @@ export function TemplateFormPage({
         setPromptVersion(1);
         setPromptHistory([]);
         setPromptTestQuestions([]);
+        setAutoAdvanceEnabled(true);
         promptDraftTouchedRef.current = false;
         lastAutoGeneratedPromptRef.current = "";
       }
       prevHydratedJobIdRef.current = jobId;
+      // New-template mode: the empty form is intentional and safe to save.
+      hydratedJobIdRef.current = null;
       return;
     }
 
-    if (!jobs.length) return;
-    const j = jobs.find((x) => x.jobId === jobId) || null;
-    if (!j) return;
+    // Editing an existing template: until this template's data is loaded into the
+    // form, block saves so we can never overwrite good data with empty defaults.
+    hydratedJobIdRef.current = null;
 
+    let alive = true;
+    (async () => {
+      try {
+        let j: JobConfig | null = null;
+        try {
+          const data = await apiGet<{ job: JobConfig }>(`/job/config/${encodeURIComponent(jobId)}`, { force: true });
+          j = data?.job || null;
+        } catch {
+          j = null;
+        }
+        // Fallback: reuse the already-loaded list (it carries every field). This
+        // keeps the form populated even if the single-template fetch fails.
+        if (!j) {
+          try {
+            const list = await apiGet<{ jobs: JobConfig[] }>("/job/configs", { force: true });
+            j = (Array.isArray(list?.jobs) ? list.jobs : []).find((x) => x.jobId === jobId) || null;
+          } catch {
+            j = null;
+          }
+        }
+        if (!j) {
+          j = jobs.find((x) => x.jobId === jobId) || null;
+        }
+        if (!alive) return;
+        if (!j) {
+          setError("Could not load this template. Refresh before editing to avoid overwriting saved data.");
+          return;
+        }
+        setEditingJob(j);
+        hydrateJobIntoForm(j);
+        prevHydratedJobIdRef.current = jobId;
+        hydratedJobIdRef.current = jobId; // form is now safe to save
+      } catch (e: any) {
+        if (!alive) return;
+        setError(String(e?.message || e || "Failed to load template."));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
+
+  function hydrateJobIntoForm(j: JobConfig) {
     setJobTitle(j.jobTitle || "");
     setDomain(j.domain || "");
     setOpportunityId((j as any).opportunityId || (j as any).opportunity_id || "");
@@ -306,7 +412,6 @@ export function TemplateFormPage({
     setExpMax(exp.max);
     const d = String(j.difficulty || "medium").toLowerCase();
     setDifficulty(d === "easy" || d === "hard" ? (d as any) : "medium");
-    setNumQ(clampCountModeQuestions(j.numQ ?? 5, 5));
     const im = String(j.interviewMode || "technical").toLowerCase();
     setInterviewMode(im === "hr" || im === "standard" ? "hr" : "technical");
     const tm = String((j as any).timingMode || (j as any).timing_mode || "count").toLowerCase();
@@ -323,7 +428,7 @@ export function TemplateFormPage({
     );
 
     const qt = String((j as any).questionType || (j as any).question_type || "dynamic").toLowerCase();
-    setQuestionType(qt === "manual" ? "manual" : "dynamic");
+    setQuestionType(qt === "manual" ? "manual" : qt === "question_bank" ? "question_bank" : "dynamic");
     const mq = (j as any).manualQuestions ?? (j as any).manual_questions;
     if (Array.isArray(mq) && mq.length) {
       setManualQuestionsText(mq.map((x: unknown) => String(x)).filter(Boolean).join("\n"));
@@ -332,6 +437,43 @@ export function TemplateFormPage({
     }
 
     const w = (j.weights || {}) as Record<string, unknown>;
+    const qbCfg = (w.questionBankConfig || {}) as Record<string, unknown>;
+    const savedCats = Array.isArray(qbCfg.categories)
+      ? qbCfg.categories.map((x) => String(x).toLowerCase())
+      : qbCfg.category
+        ? [String(qbCfg.category).toLowerCase()]
+        : ["technical"];
+    setQbCategories(
+      savedCats.filter((c): c is QbCategoryValue => QB_CATEGORIES.some((x) => x.value === c)).length
+        ? (savedCats.filter((c): c is QbCategoryValue => QB_CATEGORIES.some((x) => x.value === c)) as QbCategoryValue[])
+        : ["technical"],
+    );
+    const savedDiffs = Array.isArray(qbCfg.difficulties)
+      ? qbCfg.difficulties.map((x) => String(x).toLowerCase())
+      : qbCfg.difficulty
+        ? [String(qbCfg.difficulty).toLowerCase()]
+        : [String(j.difficulty || "medium").toLowerCase()];
+    setQbDifficulties(
+      savedDiffs.filter((d): d is QbDifficultyValue => QB_DIFFICULTIES.some((x) => x.value === d)).length
+        ? (savedDiffs.filter((d): d is QbDifficultyValue => QB_DIFFICULTIES.some((x) => x.value === d)) as QbDifficultyValue[])
+        : ["medium"],
+    );
+    const savedExcluded = qbCfg.excludedQuestionIds;
+    setQbExcludedQuestionIds(
+      Array.isArray(savedExcluded) ? savedExcluded.map((x) => String(x)).filter(Boolean) : [],
+    );
+    setQbRandomize(toBoolean(qbCfg.randomizationEnabled, true));
+    setQbAvoidDuplicates(toBoolean(qbCfg.avoidDuplicateQuestions, true));
+    setQbMatches([]);
+    setQbTotalMatched(0);
+    const savedPoolTotal = Number((w as any).questionBankPoolTotal || 0);
+    setQbPoolTotal(savedPoolTotal > 0 ? savedPoolTotal : 0);
+    const qbQuestionCount = Number(qbCfg.questionCount || qbCfg.question_count || 0);
+    if (qt === "question_bank" && qbQuestionCount > 0) {
+      setNumQ(clampCountModeQuestions(qbQuestionCount, 5));
+    } else {
+      setNumQ(clampCountModeQuestions(j.numQ ?? 5, 5));
+    }
     const qc = w.questionCategories;
     setSelectedCategoryIds(Array.isArray(qc) ? qc.map((x) => String(x)).filter(Boolean) : []);
     setSuiteTargetRole(typeof w.intelligenceTargetRole === "string" ? (w.intelligenceTargetRole as string) : "");
@@ -346,13 +488,19 @@ export function TemplateFormPage({
     setWarn2Min(Math.max(1, Math.min(30, Math.round(Number(tw["2min"] ?? 120) / 60) || 2)));
     setWarn1Min(Math.max(1, Math.min(15, Math.round(Number(tw["1min"] ?? 60) / 60) || 1)));
     setWarn30Sec(Math.max(10, Math.min(120, Number(tw["30sec"] ?? 30) || 30)));
-    setAutoAdvanceEnabled(toBoolean(w.autoAdvanceEnabled ?? w.auto_advance_enabled, false));
+    setAutoAdvanceEnabled(toBoolean(w.autoAdvanceEnabled ?? w.auto_advance_enabled, true));
     setInitialResponseWaitSec(clampInt(w.initialResponseWaitSec ?? w.initial_response_wait_sec ?? 5, 2, 30));
-    setSilenceDetectionSec(clampInt(w.silenceDetectionSec ?? w.silence_detection_sec ?? 3, 2, 15));
-    setNoResponseCountdownSec(clampInt(w.noResponseCountdownSec ?? w.no_response_countdown_sec ?? 3, 2, 15));
+    setNoResponseExtraWaitSec(
+      Math.max(1, Math.min(15, Number(w.noResponseExtraWaitSec ?? w.no_response_extra_wait_sec ?? 2.5) || 2.5)),
+    );
+    setSilenceDetectionSec(
+      Math.max(1, Math.min(15, Number(w.silenceDetectionSec ?? w.silence_detection_sec ?? 2.5) || 2.5)),
+    );
     setAutoSkipEnabled(toBoolean(w.autoSkipEnabled ?? w.auto_skip_enabled, true));
     setVoiceCommandsEnabled(toBoolean(w.voiceCommandsEnabled ?? w.voice_commands_enabled, true));
-    setConfirmationBeforeNextSec(clampInt(w.confirmationBeforeNextSec ?? w.confirmation_before_next_sec ?? 3, 0, 10));
+    setConfirmationBeforeNextSec(
+      Math.max(0, Math.min(10, Number(w.confirmationBeforeNextSec ?? w.confirmation_before_next_sec ?? 2.5) || 2.5)),
+    );
     setMinimumAnswerWords(clampInt(w.minimumAnswerWords ?? w.minimum_answer_words ?? 5, 1, 30));
     setMinimumSpeechDurationSec(clampInt(w.minimumSpeechDurationSec ?? w.minimum_speech_duration_sec ?? 2, 1, 30));
     setSpeechEnergyThreshold(
@@ -362,7 +510,14 @@ export function TemplateFormPage({
 
     const savedPreview = w.previewQuestions;
     if (Array.isArray(savedPreview)) {
-      setSampleQuestions(savedPreview.map((q) => String(q)).filter(Boolean).slice(0, 15));
+      const preview = savedPreview.map((q) => String(q)).filter(Boolean).slice(0, 15);
+      setSampleQuestions(preview);
+      if (qt === "question_bank") {
+        setQbTotalMatched(preview.length);
+        setQbPoolTotal(
+          Math.max(preview.length, savedPoolTotal > 0 ? savedPoolTotal : 0, preview.length),
+        );
+      }
     } else {
       setSampleQuestions([]);
     }
@@ -384,9 +539,7 @@ export function TemplateFormPage({
     setPromptTokenEstimate(Math.max(0, Math.round(Number((j as any).promptCharCount || 0) / 4)));
     setPromptTestQuestions([]);
     lastAutoGeneratedPromptRef.current = String((j as JobConfig).generatedPrompt || "").trim();
-
-    prevHydratedJobIdRef.current = jobId;
-  }, [jobId, jobs]);
+  }
 
   const validateStep = (targetStep: 1 | 2 | 3) => {
     if (targetStep >= 1) {
@@ -397,6 +550,14 @@ export function TemplateFormPage({
       if (!requiredSkills.trim()) return "Required skills are required.";
       if (questionType === "manual" && manualQuestionCount < 1) {
         return "Manual Interview Questions: add at least one non-empty line (one question per line).";
+      }
+      if (questionType === "question_bank") {
+        if (!(suiteTargetRole || jobTitle).trim()) {
+          return "Question Bank mode requires a target role.";
+        }
+        if (qbPoolTotal < 1 && bankPreviewCount < 1) {
+          return "Question Bank mode: click “Preview from Bank” to verify matching questions before continuing.";
+        }
       }
     }
     return "";
@@ -429,6 +590,99 @@ export function TemplateFormPage({
       setSelectedCategoryIds([]);
     } else {
       setSelectedCategoryIds(INTELLIGENCE_SUITE_CATEGORIES.map((c) => c.id));
+    }
+  };
+
+  const toggleQbCategory = (value: QbCategoryValue) => {
+    setQbCategories((prev) => {
+      if (prev.includes(value)) {
+        const next = prev.filter((x) => x !== value);
+        return next.length ? next : [value];
+      }
+      return [...prev, value];
+    });
+  };
+
+  const toggleQbDifficulty = (value: QbDifficultyValue) => {
+    setQbDifficulties((prev) => {
+      if (prev.includes(value)) {
+        const next = prev.filter((x) => x !== value);
+        return next.length ? next : [value];
+      }
+      return [...prev, value];
+    });
+  };
+
+  const removeQuestionFromBankPreview = (idx: number) => {
+    const match = qbMatches[idx];
+    const removedId = match?.id ? String(match.id) : "";
+    setSampleQuestions((prev) => prev.filter((_, i) => i !== idx));
+    setQbMatches((prev) => prev.filter((_, i) => i !== idx));
+    setQbTotalMatched((prev) => Math.max(0, prev - 1));
+    if (removedId) {
+      setQbExcludedQuestionIds((prev) => (prev.includes(removedId) ? prev : [...prev, removedId]));
+    }
+  };
+
+  const showQbToast = (msg: string) => {
+    setQbToast(msg);
+    window.setTimeout(() => setQbToast(""), 7000);
+  };
+
+  const runQuestionBankPreview = async () => {
+    if (questionType !== "question_bank") return;
+    const roleLine = (suiteTargetRole || jobTitle).trim();
+    if (!roleLine) {
+      setError("Target role is required for Question Bank preview.");
+      return;
+    }
+    if (!requiredSkills.trim()) {
+      setError("Required skills are required for Question Bank preview.");
+      return;
+    }
+    if (!qbCategories.length) {
+      setError("Select at least one bank category.");
+      return;
+    }
+    if (!qbDifficulties.length) {
+      setError("Select at least one difficulty level.");
+      return;
+    }
+    try {
+      setQbPreviewBusy(true);
+      setError("");
+      setQbToast("");
+      const data = await previewQuestionBankFromTemplate({
+        role: roleLine,
+        requiredSkills,
+        optionalSkills,
+        categories: qbCategories,
+        difficulties: qbDifficulties,
+        questionCount: clampCountModeQuestions(numQ, 5),
+        randomizationEnabled: qbRandomize,
+        avoidDuplicateQuestions: qbAvoidDuplicates,
+        excludedQuestionIds: qbExcludedQuestionIds,
+      });
+      setSampleQuestions(data.questions);
+      setQbMatches(data.matches);
+      setQbTotalMatched(data.totalMatched);
+      setQbPoolTotal(data.poolTotal);
+      setSampleDomains([]);
+      setSampleAssignments([]);
+      setSampleSkillsUsed(data.skillsUsed || []);
+    } catch (e: unknown) {
+      const backendErr = String((e as Error)?.message || e || "").trim();
+      const toastMsg = backendErr
+        ? `Unable to load Question Bank preview. ${backendErr}`
+        : "Unable to load Question Bank preview.";
+      showQbToast(toastMsg);
+      setError(backendErr || "Unable to load Question Bank preview.");
+      setSampleQuestions([]);
+      setQbMatches([]);
+      setQbTotalMatched(0);
+      setQbPoolTotal(0);
+    } finally {
+      setQbPreviewBusy(false);
     }
   };
 
@@ -584,7 +838,7 @@ export function TemplateFormPage({
         : data?.sampleQuestion
           ? [String(data.sampleQuestion)]
           : [];
-      const trimmed = list.map((q) => String(q)).filter(Boolean).slice(0, 20);
+      const trimmed = list.map((q: unknown) => String(q)).filter(Boolean).slice(0, 20);
       setPromptTestQuestions(trimmed);
       // Persist these as the template's preview questions on Save (so candidates
       // can be served a randomized subset during live interviews).
@@ -602,7 +856,7 @@ export function TemplateFormPage({
   };
 
   useEffect(() => {
-    if (step !== 3 || questionType === "manual") return;
+    if (step !== 3 || questionType === "manual" || questionType === "question_bank") return;
     const t = window.setTimeout(() => {
       refreshPromptPreview({ silent: true });
     }, 200);
@@ -627,6 +881,14 @@ export function TemplateFormPage({
   ]);
 
   const save = async () => {
+    // Guard: when editing an existing template, refuse to save until its data has
+    // been loaded into the form. Without this, a failed/slow load leaves the form
+    // empty and a save would overwrite the stored template with blank values —
+    // the exact "template details disappear" data-loss bug.
+    if (jobId && hydratedJobIdRef.current !== jobId) {
+      setError("This template hasn't finished loading yet. Please wait for it to load before saving.");
+      return;
+    }
     const err = validateStep(2);
     if (err) {
       setError(err);
@@ -652,7 +914,9 @@ export function TemplateFormPage({
           ? countModeQuestionsToAsk
           : questionType === "manual" && manualQuestionCount > 0
             ? manualQuestionCount
-            : clampCountModeQuestions(numQ, 5);
+            : questionType === "question_bank" && bankPreviewCount > 0
+              ? countModeQuestionsToAsk
+              : clampCountModeQuestions(numQ, 5);
       fd.append("numQ", String(saveNumQ));
       fd.append("followupMode", "false");
       fd.append("interviewMode", interviewMode);
@@ -696,13 +960,33 @@ export function TemplateFormPage({
         intelligenceTargetRole: suiteTargetRole.trim(),
         intelligenceSeniority: suiteSeniority.trim(),
         intelligenceTechStack: suiteTechStack.trim(),
-        adaptiveNextQuestion: adaptiveNextQuestion,
+        adaptiveNextQuestion: questionType === "question_bank" ? false : adaptiveNextQuestion,
         expMin,
         expMax,
-        previewQuestions: questionType === "manual" ? [] : sampleQuestions,
-        previewDomains: questionType === "manual" ? [] : sampleDomains,
-        previewAssignments: questionType === "manual" ? [] : sampleAssignments,
+        previewQuestions:
+          questionType === "manual" ? [] : questionType === "question_bank" ? sampleQuestions : sampleQuestions,
+        previewDomains: questionType === "manual" || questionType === "question_bank" ? [] : sampleDomains,
+        previewAssignments: questionType === "manual" || questionType === "question_bank" ? [] : sampleAssignments,
         previewSkillsUsed: questionType === "manual" ? [] : sampleSkillsUsed,
+        questionBankPoolTotal: questionType === "question_bank" ? qbPoolTotal : prior.questionBankPoolTotal,
+        questionBankConfig:
+          questionType === "question_bank"
+            ? {
+                role: (suiteTargetRole || jobTitle).trim(),
+                skills: requiredSkills
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                categories: qbCategories,
+                difficulties: qbDifficulties,
+                category: qbCategories[0] || "technical",
+                difficulty: qbDifficulties[0] || difficulty,
+                questionCount: countModeQuestionsToAsk,
+                randomizationEnabled: qbRandomize,
+                avoidDuplicateQuestions: qbAvoidDuplicates,
+                excludedQuestionIds: qbExcludedQuestionIds,
+              }
+            : prior.questionBankConfig,
         enableTimeWarnings: enableTimeWarnings,
         timeWarningSec: {
           "5min": Math.max(60, Math.round(warn5Min * 60)),
@@ -710,11 +994,11 @@ export function TemplateFormPage({
           "1min": Math.max(30, Math.round(warn1Min * 60)),
           "30sec": Math.max(10, Math.min(120, warn30Sec)),
         },
-        timeWarningsTts: true,
+        timeWarningsTts: false,
         autoAdvanceEnabled,
         initialResponseWaitSec,
+        noResponseExtraWaitSec,
         silenceDetectionSec,
-        noResponseCountdownSec,
         autoSkipEnabled,
         voiceCommandsEnabled,
         confirmationBeforeNextSec,
@@ -730,6 +1014,9 @@ export function TemplateFormPage({
       });
       const data = await res.json();
       if (!res.ok || data?.error) throw new Error(data?.error || `Save failed (${res.status})`);
+      if (data?.warning) {
+        window.alert(String(data.warning));
+      }
       setPromptVersion(nextPromptVersion);
       setPromptHistory(nextPromptHistory);
       await refresh();
@@ -742,13 +1029,13 @@ export function TemplateFormPage({
   };
 
   return (
-    <div className="max-w-[1600px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
         <div>
           <div className="flex items-center gap-2">
             <button
               onClick={onDone}
-              className="h-10 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-sm font-semibold text-slate-700 inline-flex items-center gap-2"
+              className="h-10 px-3 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-sm font-semibold text-secondary inline-flex items-center gap-2"
             >
               <ArrowLeft className="w-4 h-4" /> Back
             </button>
@@ -758,21 +1045,21 @@ export function TemplateFormPage({
                 onOpenHrSetup();
               }}
               href="/?focus=template"
-              className="h-10 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-sm font-semibold text-slate-700 inline-flex items-center gap-2"
+              className="h-10 px-3 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-sm font-semibold text-secondary inline-flex items-center gap-2"
             >
               HR Setup <ArrowUpRight className="w-4 h-4" />
             </a>
           </div>
-          <h1 className="mt-4 text-2xl sm:text-3xl font-extrabold tracking-tight">
+          <h1 className="text-display mt-4 text-2xl font-bold tracking-tight text-primary">
             {jobId ? "Edit Template" : "Create Template"}
           </h1>
-          <p className="text-slate-500 mt-1">Templates power HR setup (skills/role/JD) and ATS scoring.</p>
+          <p className="text-muted text-sm mt-1">Templates power HR setup (skills/role/JD) and ATS scoring.</p>
         </div>
         <div className="flex items-center gap-2">
           {step > 1 ? (
             <button
               onClick={back}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-800 font-semibold hover:bg-slate-50 transition"
+              className="inline-flex items-center gap-2 rounded-control border border-subtle bg-surface-1 px-4 py-2.5 font-semibold text-secondary transition-colors duration-micro ease-smooth hover:border-strong hover:bg-surface-2 hover:text-primary"
               disabled={busy || loading}
             >
               <ArrowLeft className="w-4 h-4" />
@@ -782,7 +1069,7 @@ export function TemplateFormPage({
           {step < 3 ? (
             <button
               onClick={next}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition disabled:opacity-60"
+              className="inline-flex items-center gap-2 btn-depth btn-gradient rounded-control bg-brand-600 px-4 py-2.5 font-semibold text-white disabled:opacity-60"
               disabled={busy || loading}
             >
               Next <ArrowRight className="w-4 h-4" />
@@ -790,7 +1077,7 @@ export function TemplateFormPage({
           ) : (
             <button
               onClick={save}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition disabled:opacity-60"
+              className="inline-flex items-center gap-2 btn-depth btn-gradient rounded-control bg-brand-600 px-4 py-2.5 font-semibold text-white disabled:opacity-60"
               disabled={busy || loading}
             >
               <Save className="w-4 h-4" />
@@ -801,21 +1088,27 @@ export function TemplateFormPage({
       </div>
 
       {error ? (
-        <div className="mt-6 bg-white border border-rose-200 rounded-2xl p-6 text-rose-700">
+        <div className="mt-6 rounded-card border border-subtle bg-danger-soft p-6 text-danger">
           <div className="font-extrabold">Template error</div>
-          <div className="mt-2 text-sm text-rose-600">{error}</div>
+          <div className="mt-2 text-sm">{error}</div>
         </div>
       ) : null}
 
-      <div className="mt-6 bg-white border border-slate-200 rounded-2xl p-6">
+      {qbToast ? (
+        <div className="mt-4 rounded-card border border-subtle bg-warning-soft px-4 py-3 text-sm text-warning">
+          {qbToast}
+        </div>
+      ) : null}
+
+      <div className="mt-6 bg-surface-1 border border-subtle rounded-card p-6 shadow-raised">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
-              <Briefcase className="w-5 h-5 text-indigo-600" />
+            <div className="fx-glow w-11 h-11 rounded-card bg-gradient-to-br from-brand-600 to-violet-600 flex items-center justify-center">
+              <Briefcase className="w-5 h-5 text-white" />
             </div>
             <div>
-              <div className="text-sm font-extrabold tracking-tight">Template wizard</div>
-              <div className="text-xs text-slate-500 mt-0.5">
+              <div className="text-sm font-extrabold tracking-tight text-primary">Template wizard</div>
+              <div className="text-xs text-muted mt-0.5">
                 {editing ? `Editing ${editing.jobTitle}` : "Create a job template HR can reuse."}
               </div>
             </div>
@@ -828,12 +1121,12 @@ export function TemplateFormPage({
               return (
                 <div key={s.id} className="flex items-center gap-2">
                   <div
-                    className={`h-9 px-3 rounded-xl border text-sm font-semibold flex items-center gap-2 transition ${
+                    className={`h-9 px-3 rounded-control border text-sm font-semibold flex items-center gap-2 transition-colors duration-micro ease-smooth ${
                       active
-                        ? "bg-white border-indigo-200 text-indigo-700 shadow-sm"
+                        ? "bg-surface-1 border-subtle text-brand-700 shadow-raised dark:text-brand-300"
                         : done
-                          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                          : "bg-slate-50 border-slate-200 text-slate-600"
+                          ? "bg-success-soft border-subtle text-success"
+                          : "bg-surface-2 border-subtle text-secondary"
                     }`}
                   >
                     {done ? <CheckCircle2 className="w-4 h-4" /> : <span className="w-4 text-center">{idx + 1}</span>}
@@ -852,20 +1145,20 @@ export function TemplateFormPage({
           {step === 1 ? (
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Job title</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Job title</label>
               <input
                 value={jobTitle}
                 onChange={(e) => setJobTitle(e.target.value)}
-                className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                 placeholder="e.g. Python Developer"
               />
             </div>
             <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Domain (optional)</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Domain (optional)</label>
               <input
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
-                className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                 placeholder="e.g. Automotive / FinTech / Enterprise"
               />
             </div>
@@ -884,11 +1177,11 @@ export function TemplateFormPage({
               placeholder="Search or create customer"
             />
             <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Difficulty</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Difficulty</label>
               <select
                 value={difficulty}
                 onChange={(e) => setDifficulty((e.target.value as any) || "medium")}
-                className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
               >
                 <option value="easy">Easy</option>
                 <option value="medium">Medium</option>
@@ -896,28 +1189,28 @@ export function TemplateFormPage({
               </select>
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Interview mode</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Interview mode</label>
               <select
                 value={interviewMode}
                 onChange={(e) => setInterviewMode((e.target.value as "technical" | "hr") || "technical")}
-                className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
               >
                 <option value="technical">Technical Interview</option>
                 <option value="hr">HR Interview</option>
               </select>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 p-4 md:col-span-2">
-              <div className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Timing</div>
+            <div className="rounded-card border border-subtle p-4 md:col-span-2">
+              <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Timing</div>
               <div className="mt-3">
-                <label className="text-[11px] font-extrabold tracking-widest uppercase text-slate-500">Mode</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Mode</label>
                 <select
                   value={timingMode}
                   onChange={(e) => {
                     const v = e.target.value as "" | "count" | "time";
                     setTimingMode(v === "count" || v === "time" ? v : "");
                   }}
-                  className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                 >
                   <option value="">Select timing mode…</option>
                   <option value="count">Ask by question count (fixed)</option>
@@ -926,7 +1219,7 @@ export function TemplateFormPage({
               </div>
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                 <div>
-                  <label className="text-[11px] font-extrabold tracking-widest uppercase text-slate-500">Questions count</label>
+                  <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Questions count</label>
                   <input
                     type="number"
                     min={1}
@@ -934,11 +1227,11 @@ export function TemplateFormPage({
                     value={numQ}
                     onChange={(e) => setNumQ(clampCountModeQuestions(e.target.value, numQ))}
                     disabled={timingMode !== "count"}
-                    className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-extrabold tracking-widest uppercase text-slate-500">Time limit (min)</label>
+                  <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Time limit (min)</label>
                   <input
                     type="number"
                     min={1}
@@ -946,11 +1239,11 @@ export function TemplateFormPage({
                     value={timeLimitMin}
                     onChange={(e) => setTimeLimitMin(clampInt(e.target.value, 1, 360))}
                     disabled={timingMode !== "time"}
-                    className="mt-2 w-full h-11 px-4 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50 disabled:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                   />
                 </div>
               </div>
-              <div className="mt-2 text-xs text-slate-500">
+              <div className="mt-2 text-xs text-muted">
                 {!timingMode
                   ? "Choose how the interview ends: fixed number of questions, or a time limit."
                   : timingMode === "time"
@@ -959,26 +1252,30 @@ export function TemplateFormPage({
                       ? manualQuestionCount > 0
                         ? `Ask ${countModeQuestionsToAsk} questions from your manual list (${manualQuestionCount} in pool, up to ${MAX_COUNT_MODE_QUESTIONS} per interview).`
                         : "Add manual questions in step 2, then set how many to ask per interview."
-                      : `Candidates will answer exactly ${numQ} questions (max ${MAX_COUNT_MODE_QUESTIONS}).`}
+                      : questionType === "question_bank"
+                        ? bankPreviewCount > 0
+                          ? `Ask up to ${countModeQuestionsToAsk} questions from Question Bank (${bankPreviewCount} matched in preview).`
+                          : "Configure Question Bank filters in step 2 and run preview."
+                        : `Candidates will answer exactly ${numQ} questions (max ${MAX_COUNT_MODE_QUESTIONS}).`}
               </div>
               {timingMode === "time" ? (
-                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                <div className="mt-4 rounded-card border border-subtle bg-surface-1 p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
-                      <div className="text-[11px] font-extrabold tracking-widest uppercase text-slate-500">
+                      <div className="text-xs font-extrabold tracking-widest uppercase text-muted">
                         Time warnings
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">
+                      <div className="mt-1 text-xs text-muted">
                         Non-blocking banners before auto-submit (default ON).
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => setEnableTimeWarnings((v) => !v)}
-                      className={`h-9 px-3 rounded-xl border text-sm font-semibold transition ${
+                      className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors duration-micro ease-smooth ${
                         enableTimeWarnings
-                          ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                          : "bg-slate-50 border-slate-200 text-slate-600"
+                          ? "bg-brand-50 border-subtle text-brand-700 dark:bg-brand-900 dark:text-brand-200"
+                          : "bg-surface-2 border-subtle text-secondary"
                       }`}
                     >
                       {enableTimeWarnings ? "ON" : "OFF"}
@@ -987,47 +1284,47 @@ export function TemplateFormPage({
                   {enableTimeWarnings ? (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500">5 min warn</label>
+                        <label className="text-xs font-bold uppercase text-muted">5 min warn</label>
                         <input
                           type="number"
                           min={1}
                           max={60}
                           value={warn5Min}
                           onChange={(e) => setWarn5Min(clampInt(e.target.value, 1, 60))}
-                          className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200"
+                          className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500">2 min warn</label>
+                        <label className="text-xs font-bold uppercase text-muted">2 min warn</label>
                         <input
                           type="number"
                           min={1}
                           max={30}
                           value={warn2Min}
                           onChange={(e) => setWarn2Min(clampInt(e.target.value, 1, 30))}
-                          className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200"
+                          className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500">1 min warn</label>
+                        <label className="text-xs font-bold uppercase text-muted">1 min warn</label>
                         <input
                           type="number"
                           min={1}
                           max={15}
                           value={warn1Min}
                           onChange={(e) => setWarn1Min(clampInt(e.target.value, 1, 15))}
-                          className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200"
+                          className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500">30 sec warn</label>
+                        <label className="text-xs font-bold uppercase text-muted">30 sec warn</label>
                         <input
                           type="number"
                           min={10}
                           max={120}
                           value={warn30Sec}
                           onChange={(e) => setWarn30Sec(clampInt(e.target.value, 10, 120))}
-                          className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200"
+                          className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary"
                         />
                       </div>
                     </div>
@@ -1042,44 +1339,44 @@ export function TemplateFormPage({
               to the backend so legacy DB columns and API contracts remain valid.
             */}
 
-            <div className="rounded-2xl border border-slate-200 p-4 md:col-span-2 bg-slate-50/40">
+            <div className="rounded-card border border-subtle p-4 md:col-span-2 bg-surface-2">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <div className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Enable Transcript Input</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-700">{showSpokenText ? "ON" : "OFF"}</div>
+                  <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Enable Transcript Input</div>
+                  <div className="mt-1 text-sm font-semibold text-secondary">{showSpokenText ? "ON" : "OFF"}</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowSpokenText((v) => !v)}
-                  className={`h-9 px-3 rounded-xl border text-sm font-semibold transition ${
+                  className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors duration-micro ease-smooth ${
                     showSpokenText
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      ? "bg-success-soft border-subtle text-success hover:border-strong"
+                      : "bg-surface-2 border-subtle text-secondary hover:border-strong"
                   }`}
                 >
                   Toggle
                 </button>
               </div>
-              <div className="mt-2 text-xs text-slate-500">
+              <div className="mt-2 text-xs text-muted">
                 When ON, the candidate sees the live transcript panel. Turn OFF to hide the transcript section entirely.
               </div>
             </div>
 
-            <div className="rounded-2xl border border-indigo-200 p-4 md:col-span-2 bg-indigo-50/30">
+            <div className="fx-gradient-border rounded-card border border-subtle p-4 md:col-span-2 bg-surface-1">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <div className="text-xs font-extrabold tracking-widest uppercase text-indigo-600">Smart Auto-Advance</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-700">
+                  <div className="text-xs font-extrabold tracking-widest uppercase text-brand-600 dark:text-brand-300">Smart Auto-Advance</div>
+                  <div className="mt-1 text-sm font-semibold text-secondary">
                     {autoAdvanceEnabled ? "ON — voice-driven flow" : "OFF — manual Send / Skip"}
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setAutoAdvanceEnabled((v) => !v)}
-                  className={`h-9 px-3 rounded-xl border text-sm font-semibold transition ${
+                  className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors duration-micro ease-smooth ${
                     autoAdvanceEnabled
-                      ? "bg-indigo-100 border-indigo-300 text-indigo-800"
-                      : "bg-slate-50 border-slate-200 text-slate-700"
+                      ? "bg-brand-100 border-subtle text-brand-700 dark:bg-brand-900 dark:text-brand-200"
+                      : "bg-surface-2 border-subtle text-secondary"
                   }`}
                 >
                   {autoAdvanceEnabled ? "ON" : "OFF"}
@@ -1088,68 +1385,68 @@ export function TemplateFormPage({
               {autoAdvanceEnabled ? (
                 <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Initial wait (sec)</label>
+                    <label className="text-xs font-bold uppercase text-muted">Initial wait (sec)</label>
                     <input type="number" min={2} max={30} value={initialResponseWaitSec}
                       onChange={(e) => setInitialResponseWaitSec(clampInt(e.target.value, 2, 30))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Silence detect (sec)</label>
-                    <input type="number" min={2} max={15} value={silenceDetectionSec}
-                      onChange={(e) => setSilenceDetectionSec(clampInt(e.target.value, 2, 15))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                    <label className="text-xs font-bold uppercase text-muted">Extra skip wait (sec)</label>
+                    <input type="number" min={1} max={15} step={0.5} value={noResponseExtraWaitSec}
+                      onChange={(e) => setNoResponseExtraWaitSec(Math.max(1, Math.min(15, Number(e.target.value) || 2.5)))}
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">No-response countdown</label>
-                    <input type="number" min={2} max={15} value={noResponseCountdownSec}
-                      onChange={(e) => setNoResponseCountdownSec(clampInt(e.target.value, 2, 15))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                    <label className="text-xs font-bold uppercase text-muted">Silence detect (sec)</label>
+                    <input type="number" min={1} max={15} step={0.5} value={silenceDetectionSec}
+                      onChange={(e) => setSilenceDetectionSec(Math.max(1, Math.min(15, Number(e.target.value) || 2.5)))}
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Confirm before next</label>
-                    <input type="number" min={0} max={10} value={confirmationBeforeNextSec}
-                      onChange={(e) => setConfirmationBeforeNextSec(clampInt(e.target.value, 0, 10))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                    <label className="text-xs font-bold uppercase text-muted">Post-complete silence (sec)</label>
+                    <input type="number" min={0} max={10} step={0.5} value={confirmationBeforeNextSec}
+                      onChange={(e) => setConfirmationBeforeNextSec(Math.max(0, Math.min(10, Number(e.target.value) || 2.5)))}
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Min answer words</label>
+                    <label className="text-xs font-bold uppercase text-muted">Min answer words</label>
                     <input type="number" min={1} max={30} value={minimumAnswerWords}
                       onChange={(e) => setMinimumAnswerWords(clampInt(e.target.value, 1, 30))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Min speech (sec)</label>
+                    <label className="text-xs font-bold uppercase text-muted">Min speech (sec)</label>
                     <input type="number" min={1} max={30} value={minimumSpeechDurationSec}
                       onChange={(e) => setMinimumSpeechDurationSec(clampInt(e.target.value, 1, 30))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Speech energy threshold</label>
+                    <label className="text-xs font-bold uppercase text-muted">Speech energy threshold</label>
                     <input type="number" min={0.01} max={0.12} step={0.001} value={speechEnergyThreshold}
                       onChange={(e) => setSpeechEnergyThreshold(Math.max(0.01, Math.min(0.12, Number(e.target.value) || 0.038)))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500">Speech confirm (ms)</label>
+                    <label className="text-xs font-bold uppercase text-muted">Speech confirm (ms)</label>
                     <input type="number" min={300} max={500} value={speechConfirmMs}
                       onChange={(e) => setSpeechConfirmMs(clampInt(e.target.value, 300, 500))}
-                      className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200" />
+                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div className="flex items-end">
                     <button type="button" onClick={() => setAutoSkipEnabled((v) => !v)}
-                      className={`w-full h-10 rounded-lg border text-xs font-bold ${autoSkipEnabled ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-slate-50 border-slate-200"}`}>
+                      className={`w-full h-10 rounded-control border text-xs font-bold ${autoSkipEnabled ? "bg-warning-soft border-subtle text-warning" : "bg-surface-2 border-subtle text-secondary"}`}>
                       Auto-skip: {autoSkipEnabled ? "ON" : "OFF"}
                     </button>
                   </div>
                   <div className="flex items-end">
                     <button type="button" onClick={() => setVoiceCommandsEnabled((v) => !v)}
-                      className={`w-full h-10 rounded-lg border text-xs font-bold ${voiceCommandsEnabled ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-slate-50 border-slate-200"}`}>
+                      className={`w-full h-10 rounded-control border text-xs font-bold ${voiceCommandsEnabled ? "bg-success-soft border-subtle text-success" : "bg-surface-2 border-subtle text-secondary"}`}>
                       Voice commands: {voiceCommandsEnabled ? "ON" : "OFF"}
                     </button>
                   </div>
                 </div>
               ) : (
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-muted">
                   When ON, the interview detects speech and silence to auto-submit answers and auto-skip silent questions.
                 </p>
               )}
@@ -1159,29 +1456,29 @@ export function TemplateFormPage({
         ) : step === 2 ? (
           <div className="mt-6 space-y-5">
             <div>
-              <div className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Years of experience</div>
-              <p className="text-xs text-slate-500 mt-1 mb-2">Used for question generation and saved on the template.</p>
+              <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Years of experience</div>
+              <p className="text-xs text-muted mt-1 mb-2">Used for question generation and saved on the template.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Experience min</label>
+                  <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Experience min</label>
                   <input
                     type="number"
                     min={0}
                     max={40}
                     value={expMin}
                     onChange={(e) => setExpMin(clampInt(e.target.value, 0, 40))}
-                    className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Experience max</label>
+                  <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Experience max</label>
                   <input
                     type="number"
                     min={0}
                     max={40}
                     value={expMax}
                     onChange={(e) => setExpMax(clampInt(e.target.value, 0, 40))}
-                    className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   />
                 </div>
               </div>
@@ -1190,62 +1487,74 @@ export function TemplateFormPage({
             {/* Row 1: Skills */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Required skills</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Required skills</label>
                 <input
                   value={requiredSkills}
                   onChange={(e) => setRequiredSkills(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   placeholder="e.g. python, fastapi, sql"
                 />
               </div>
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Optional skills</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Optional skills</label>
                 <input
                   value={optionalSkills}
                   onChange={(e) => setOptionalSkills(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   placeholder="e.g. docker, aws"
                 />
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Question Type</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Question Type</label>
               <select
                 value={questionType}
                 onChange={(e) => {
-                  const v = e.target.value === "manual" ? "manual" : "dynamic";
+                  const raw = e.target.value;
+                  const v: QuestionType =
+                    raw === "manual" ? "manual" : raw === "question_bank" ? "question_bank" : "dynamic";
                   setQuestionType(v);
                   setError("");
+                  if (v === "question_bank") {
+                    setAdaptiveNextQuestion(false);
+                  }
+                  if (v !== "question_bank") {
+                    setQbMatches([]);
+                    setQbTotalMatched(0);
+                  }
                 }}
-                className="mt-1.5 w-full md:max-w-md h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                className="mt-1.5 w-full md:max-w-md h-10 px-4 input-recessed rounded-control text-sm text-primary"
               >
                 <option value="dynamic">Dynamic Questions</option>
                 <option value="manual">Manual Questions</option>
+                <option value="question_bank">Question Bank</option>
               </select>
-              <p className="text-xs text-slate-500 mt-1.5">
-                Dynamic uses AI-generated questions from skills and assessment domains. Manual uses only the questions you list
-                below.
+              <p className="text-xs text-muted mt-1.5">
+                <span className="font-semibold text-secondary">Dynamic</span> — AI generates from skills and domains.{" "}
+                <span className="font-semibold text-secondary">Manual</span> — fixed list you provide.{" "}
+                <span className="font-semibold text-secondary">Question Bank</span> — pulls approved questions from your
+                centralized bank by role, skills, and difficulty.
               </p>
             </div>
 
             {/* Row 2: Target Role / Seniority / Tech Stack */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Target role</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Target role</label>
                 <input
                   value={suiteTargetRole}
                   onChange={(e) => setSuiteTargetRole(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   placeholder="e.g. Python Developer"
                 />
               </div>
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Seniority level</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Seniority level</label>
                 <select
                   value={suiteSeniority}
                   onChange={(e) => setSuiteSeniority(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                 >
                   <option value="">Select…</option>
                   <option value="Junior">Junior</option>
@@ -1254,11 +1563,11 @@ export function TemplateFormPage({
                 </select>
               </div>
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">Tech stack (optional)</label>
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Tech stack (optional)</label>
                 <input
                   value={suiteTechStack}
                   onChange={(e) => setSuiteTechStack(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
                   placeholder="e.g. React, Node.js, AWS"
                 />
               </div>
@@ -1266,25 +1575,24 @@ export function TemplateFormPage({
 
             {questionType === "dynamic" ? (
               <>
-            {/* Row 3: Domain selection header + actions */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <h3 className="text-sm font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-brand-600 dark:text-brand-300" />
                   Assessment Domains
                   {selectedCategoryIds.length > 0 && (
-                    <span className="ml-1 text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                    <span className="ml-1 text-xs font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full dark:bg-brand-900 dark:text-brand-200">
                       {selectedCategoryIds.length} selected
                     </span>
                   )}
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Select domains to shape question generation alongside your skills.</p>
+                <p className="text-xs text-muted mt-0.5">Select domains to shape question generation alongside your skills.</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={selectAllSuiteCategories}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-blue-600 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 transition"
+                  className="px-3 py-1.5 text-xs font-bold text-secondary rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 hover:text-brand-600 dark:hover:text-brand-300"
                 >
                   {selectedCategoryIds.length === INTELLIGENCE_SUITE_CATEGORIES.length ? "Clear all" : "Select all"}
                 </button>
@@ -1292,10 +1600,10 @@ export function TemplateFormPage({
                   type="button"
                   onClick={runIntelligenceQuestionnaire}
                   disabled={selectedCategoryIds.length === 0 || !requiredSkills.trim() || sampleBusy}
-                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg font-bold text-xs transition-all ${
+                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-control font-bold text-xs transition-colors duration-micro ease-smooth ${
                     selectedCategoryIds.length > 0 && requiredSkills.trim() && !sampleBusy
-                      ? "bg-blue-600 text-white hover:bg-blue-700 shadow-sm shadow-blue-200"
-                      : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                      ? "btn-depth btn-gradient bg-brand-600 text-white"
+                      : "bg-surface-2 text-muted cursor-not-allowed"
                   }`}
                 >
                   {sampleBusy ? "Generating…" : "Generate Questions"}
@@ -1314,24 +1622,24 @@ export function TemplateFormPage({
                     key={cat.id}
                     type="button"
                     onClick={() => toggleSuiteCategory(cat.id)}
-                    className={`group flex items-center gap-2.5 text-left px-3 py-2.5 rounded-xl border-2 transition-all duration-200 ${
+                    className={`group flex items-center gap-2.5 text-left px-3 py-2.5 rounded-card border transition-colors duration-micro ease-smooth ${
                       isSelected
-                        ? "border-blue-500 bg-blue-50/60 shadow-sm"
-                        : "border-slate-100 bg-white hover:border-slate-200 hover:shadow-sm"
+                        ? "fx-gradient-border border-transparent bg-brand-50 shadow-raised dark:bg-brand-900"
+                        : "border-subtle bg-surface-1 hover:border-strong hover:shadow-raised"
                     }`}
                   >
                     <div
-                      className={`shrink-0 p-1.5 rounded-lg transition-all ${
-                        isSelected ? "bg-blue-600 text-white" : `${cat.bgColor} ${cat.color}`
+                      className={`shrink-0 p-1.5 rounded-control transition-colors duration-micro ease-smooth ${
+                        isSelected ? "bg-brand-600 text-white" : `${cat.bgColor} ${cat.color}`
                       }`}
                     >
-                      <Icon className="w-4 h-4 stroke-[2.25]" />
+                      <Icon className="w-4 h-4" />
                     </div>
                     <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                      <span className={`text-xs font-bold leading-tight truncate ${isSelected ? "text-blue-900" : "text-slate-800"}`}>
+                      <span className={`text-xs font-bold leading-tight truncate ${isSelected ? "text-brand-700 dark:text-brand-200" : "text-primary"}`}>
                         {cat.title}
                       </span>
-                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-blue-500" />}
+                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-brand-500" />}
                     </div>
                   </button>
                 );
@@ -1339,9 +1647,136 @@ export function TemplateFormPage({
             </div>
 
               </>
+            ) : questionType === "question_bank" ? (
+              <div className="fx-gradient-border rounded-card border border-subtle bg-surface-1 p-5 space-y-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
+                      <Database className="w-4 h-4 text-violet-600 dark:text-violet-300" />
+                      Question Bank selection
+                    </h3>
+                    <p className="text-xs text-secondary mt-1 max-w-2xl">
+                      Questions are loaded from your approved Question Bank using target role, required skills, and your
+                      selected categories and difficulty levels. Each candidate gets a unique randomized subset when
+                      randomization is enabled; parallel interviews avoid repeating the same questions when possible.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={runQuestionBankPreview}
+                    disabled={qbPreviewBusy || !requiredSkills.trim() || !(suiteTargetRole || jobTitle).trim()}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-control font-bold text-xs transition-colors duration-micro ease-smooth ${
+                      !qbPreviewBusy && requiredSkills.trim() && (suiteTargetRole || jobTitle).trim()
+                        ? "bg-violet-600 text-white shadow-raised hover:bg-violet-700"
+                        : "bg-surface-2 text-muted cursor-not-allowed"
+                    }`}
+                  >
+                    {qbPreviewBusy ? "Loading…" : "Preview from Bank"}
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Bank category</label>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {QB_CATEGORIES.map((c) => {
+                        const active = qbCategories.includes(c.value);
+                        return (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => toggleQbCategory(c.value)}
+                            className={`px-3 py-1.5 rounded-control text-xs font-bold border transition-colors duration-micro ease-smooth ${
+                              active
+                                ? "bg-violet-600 text-white border-transparent"
+                                : "bg-surface-1 text-secondary border-subtle hover:border-strong"
+                            }`}
+                          >
+                            {c.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Difficulty filter</label>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {QB_DIFFICULTIES.map((d) => {
+                        const active = qbDifficulties.includes(d.value);
+                        return (
+                          <button
+                            key={d.value}
+                            type="button"
+                            onClick={() => toggleQbDifficulty(d.value)}
+                            className={`px-3 py-1.5 rounded-control text-xs font-bold border transition-colors duration-micro ease-smooth ${
+                              active
+                                ? "bg-violet-600 text-white border-transparent"
+                                : "bg-surface-1 text-secondary border-subtle hover:border-strong"
+                            }`}
+                          >
+                            {d.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Preview pool size</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_COUNT_MODE_QUESTIONS}
+                      value={numQ}
+                      onChange={(e) => setNumQ(clampCountModeQuestions(e.target.value, numQ))}
+                      className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4 text-sm">
+                  <label className="inline-flex items-center gap-2 text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={qbRandomize}
+                      onChange={(e) => setQbRandomize(e.target.checked)}
+                      className="rounded border-strong text-violet-600"
+                    />
+                    Randomize per candidate
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={qbAvoidDuplicates}
+                      onChange={(e) => setQbAvoidDuplicates(e.target.checked)}
+                      className="rounded border-strong text-violet-600"
+                    />
+                    Avoid duplicate questions across sessions
+                  </label>
+                </div>
+                <p className="text-xs text-muted">
+                  With both options enabled, each scheduled candidate receives a different mix from the bank pool.
+                  Questions you remove below are excluded for every interview on this template.
+                </p>
+
+                {qbPoolTotal > 0 ? (
+                  <div className="rounded-card border border-subtle bg-success-soft px-3 py-2 text-xs font-semibold text-success">
+                    {qbPoolTotal} matching question{qbPoolTotal === 1 ? "" : "s"} in the bank
+                    {qbExcludedQuestionIds.length
+                      ? ` (${qbExcludedQuestionIds.length} excluded from interviews)`
+                      : ""}
+                    .
+                  </div>
+                ) : (
+                  <div className="rounded-card border border-subtle bg-warning-soft px-3 py-2 text-xs text-warning">
+                    Run a preview to confirm the bank has questions for role “{suiteTargetRole || jobTitle || "—"}” and skills{" "}
+                    {requiredSkills || "—"}.
+                  </div>
+                )}
+              </div>
             ) : (
               <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">
+                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">
                   Manual Interview Questions
                 </label>
                 <textarea
@@ -1349,12 +1784,12 @@ export function TemplateFormPage({
                   onChange={(e) => setManualQuestionsText(e.target.value)}
                   rows={16}
                   spellCheck={false}
-                  className="mt-1.5 w-full min-h-[220px] max-h-[480px] overflow-y-auto p-3 rounded-xl border border-slate-200 bg-white text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-y whitespace-pre-wrap"
+                  className="mt-1.5 w-full min-h-56 max-h-96 overflow-y-auto p-3 input-recessed rounded-control text-sm leading-relaxed text-primary resize-y whitespace-pre-wrap"
                   placeholder={"Paste interview questions here.\nOne question per line."}
                 />
-                <p className="text-xs text-slate-500 mt-1.5">
+                <p className="text-xs text-muted mt-1.5">
                   {manualQuestionCount} question{manualQuestionCount === 1 ? "" : "s"} (empty lines ignored, duplicates removed, up to 120
-                  saved). Each candidate interview gets the same pool in a <span className="font-semibold text-slate-600">different order</span>{" "}
+                  saved). Each candidate interview gets the same pool in a <span className="font-semibold text-secondary">different order</span>{" "}
                   so parallel sessions do not all see question 1 first.
                 </p>
               </div>
@@ -1362,37 +1797,39 @@ export function TemplateFormPage({
 
             {/* Row 5: JD text (moved up, before Generated Preview) */}
             <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-slate-500">JD text (optional)</label>
+              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">JD text (optional)</label>
               <textarea
                 value={jdText}
                 onChange={(e) => setJdText(e.target.value)}
                 rows={4}
-                className="mt-1.5 w-full p-3 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-y"
+                className="mt-1.5 w-full p-3 input-recessed rounded-control text-sm text-primary resize-y"
                 placeholder="Paste job description here…"
               />
             </div>
 
             {/* Row 6: AI-Generated Interview Questions (API Response) */}
-            {questionType === "dynamic" && sampleQuestions.length > 0 && (
-              <div className="rounded-2xl border-2 border-blue-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between flex-wrap gap-3 mb-4 pb-3 border-b border-slate-100">
+            {(questionType === "dynamic" || questionType === "question_bank") && sampleQuestions.length > 0 && (
+              <div className="fx-gradient-border-animated rounded-card bg-surface-1 p-5 shadow-raised">
+                <div className="fx-hairline-b flex items-center justify-between flex-wrap gap-3 mb-4 pb-3">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-blue-600 text-white">
-                      <Zap className="w-4 h-4" />
+                    <div className={`p-2 rounded-control text-white ${questionType === "question_bank" ? "bg-violet-600" : "bg-gradient-to-br from-brand-600 to-violet-600"}`}>
+                      {questionType === "question_bank" ? <Database className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
                     </div>
                     <div>
-                      <h4 className="text-sm font-extrabold tracking-tight text-slate-900">
-                        AI-Generated Interview Questions
+                      <h4 className="text-sm font-extrabold tracking-tight text-primary">
+                        {questionType === "question_bank" ? "Question Bank Preview" : "AI-Generated Interview Questions"}
                       </h4>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
+                      <p className="text-xs text-muted mt-0.5">
                         {sampleQuestions.length} question{sampleQuestions.length === 1 ? "" : "s"} ready
                       </p>
                     </div>
                   </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-[11px] font-bold text-emerald-700">
-                      Will be asked in the live interview
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-success-soft ring-1 ring-inset ring-subtle">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+                    <span className="text-xs font-bold text-success">
+                      {questionType === "question_bank"
+                        ? "Sample preview — live interviews draw from the full pool"
+                        : "Will be asked in the live interview"}
                     </span>
                   </div>
                 </div>
@@ -1400,34 +1837,64 @@ export function TemplateFormPage({
                 <ol className="space-y-2.5">
                   {sampleQuestions.map((q: string, idx: number) => {
                     const assignedDomain = sampleAssignments[idx] || "";
+                    const match = qbMatches[idx];
                     return (
                       <li
-                        key={idx}
-                        className="flex gap-3 p-3 rounded-xl bg-slate-50/60 border border-slate-100 hover:border-blue-200 hover:bg-blue-50/30 transition"
+                        key={`${match?.id || "q"}-${idx}`}
+                        className="row-hover flex gap-3 p-3 rounded-card bg-surface-2 border border-subtle transition-colors duration-micro ease-smooth"
                       >
-                        <span className="shrink-0 w-7 h-7 rounded-lg bg-blue-600 text-white text-xs font-extrabold flex items-center justify-center">
+                        <span className="shrink-0 w-7 h-7 rounded-control bg-gradient-to-br from-brand-600 to-violet-600 text-white text-xs font-extrabold flex items-center justify-center">
                           {idx + 1}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm text-slate-800 leading-relaxed">{String(q)}</p>
-                          {assignedDomain ? (
-                            <span className="inline-block mt-1.5 text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                          <p className="text-sm text-primary leading-relaxed">{String(q)}</p>
+                          {questionType === "question_bank" && match ? (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {match.skill ? (
+                                <span className="text-xs font-semibold text-violet-600 dark:text-violet-300 bg-surface-1 px-2 py-0.5 rounded-full ring-1 ring-inset ring-subtle">
+                                  {match.skill}
+                                </span>
+                              ) : null}
+                              {match.difficulty ? (
+                                <span className="text-xs font-semibold text-secondary bg-surface-1 px-2 py-0.5 rounded-full ring-1 ring-inset ring-subtle">
+                                  {match.difficulty}
+                                </span>
+                              ) : null}
+                              {match.category ? (
+                                <span className="text-xs font-semibold text-muted bg-surface-1 px-2 py-0.5 rounded-full ring-1 ring-inset ring-subtle">
+                                  {match.category}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : assignedDomain ? (
+                            <span className="inline-block mt-1.5 text-xs font-semibold text-brand-700 dark:text-brand-200 bg-brand-50 dark:bg-brand-900 px-2 py-0.5 rounded-full ring-1 ring-inset ring-subtle">
                               {assignedDomain}
                             </span>
                           ) : null}
                         </div>
+                        {questionType === "question_bank" ? (
+                          <button
+                            type="button"
+                            onClick={() => removeQuestionFromBankPreview(idx)}
+                            className="shrink-0 self-start p-2 rounded-control text-muted transition-colors duration-micro ease-smooth hover:text-danger hover:bg-danger-soft"
+                            title="Remove — will not be asked in any interview"
+                            aria-label="Remove question — will not be asked in any interview"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        ) : null}
                       </li>
                     );
                   })}
                 </ol>
 
                 {sampleSkillsUsed.length > 0 && (
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skills covered:</span>
+                  <div className="mt-4 pt-3 border-t border-subtle flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-muted uppercase tracking-wider">Skills covered:</span>
                     {sampleSkillsUsed.map((sk) => (
                       <span
                         key={sk}
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100"
+                        className="text-xs font-bold px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 dark:bg-brand-900 dark:text-brand-200 ring-1 ring-inset ring-subtle"
                       >
                         {sk}
                       </span>
@@ -1437,35 +1904,91 @@ export function TemplateFormPage({
               </div>
             )}
           </div>
-        ) : step === 3 && questionType === "manual" ? (
+        ) : step === 3 && questionType === "question_bank" ? (
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 rounded-2xl border border-slate-200 p-6 bg-white shadow-sm">
-              <div className="text-sm font-extrabold tracking-tight text-slate-900">Manual template review</div>
-              <p className="mt-1 text-xs text-slate-500">Recruiter-friendly summary — no AI prompt configuration.</p>
+            <div className="fx-gradient-border lg:col-span-7 rounded-card border border-subtle p-6 bg-surface-1">
+              <div className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
+                <Database className="w-4 h-4 text-violet-600 dark:text-violet-300" />
+                Question Bank template review
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Live interviews pull from the bank using these filters; preview is a sample of the matching pool.
+              </p>
               <dl className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Template name</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{jobTitle || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Target role</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{suiteTargetRole || jobTitle || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Target role</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{suiteTargetRole || jobTitle || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Categories</dt>
+                  <dd className="mt-0.5 font-semibold text-primary capitalize">{qbCategories.join(", ") || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Seniority</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{suiteSeniority || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Difficulty levels</dt>
+                  <dd className="mt-0.5 font-semibold text-primary capitalize">{qbDifficulties.join(", ") || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Opportunity ID</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{opportunityId || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Questions per interview</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{countModeQuestionsToAsk}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Skills filter</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{requiredSkills || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Customer name</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{customerName || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Randomize</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{qbRandomize ? "Yes" : "No"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Question count</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Avoid duplicates</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{qbAvoidDuplicates ? "Yes" : "No"}</dd>
+                </div>
+              </dl>
+            </div>
+            <div className="lg:col-span-5 rounded-card border border-subtle p-5 bg-surface-1">
+              <div className="text-sm font-extrabold tracking-tight text-primary">Preview sample ({sampleQuestions.length})</div>
+              {sampleQuestions.length ? (
+                <ol className="mt-3 space-y-2 text-sm text-secondary list-decimal list-inside max-h-80 overflow-y-auto">
+                  {sampleQuestions.map((q, idx) => (
+                    <li key={idx} className="leading-relaxed">
+                      {q}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-3 text-sm text-warning">No preview loaded. Go back to step 2 and run “Preview from Bank”.</p>
+              )}
+            </div>
+          </div>
+        ) : step === 3 && questionType === "manual" ? (
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 rounded-card border border-subtle p-6 bg-surface-1 shadow-raised">
+              <div className="text-sm font-extrabold tracking-tight text-primary">Manual template review</div>
+              <p className="mt-1 text-xs text-muted">Recruiter-friendly summary — no AI prompt configuration.</p>
+              <dl className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Template name</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{jobTitle || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Target role</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{suiteTargetRole || jobTitle || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Seniority</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{suiteSeniority || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Opportunity ID</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{opportunityId || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Customer name</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{customerName || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Question count</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
                     {timingMode === "count" ? countModeQuestionsToAsk : manualQuestionCount}
                     {timingMode === "count" && manualQuestionCount > countModeQuestionsToAsk
                       ? ` (from ${manualQuestionCount} in pool)`
@@ -1473,179 +1996,194 @@ export function TemplateFormPage({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Interview mode</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Interview mode</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
                     {interviewMode === "hr" ? "HR Interview" : "Technical Interview"}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Interview duration</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{interviewDurationLabel}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Interview duration</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{interviewDurationLabel}</dd>
                 </div>
                 <div className="sm:col-span-2">
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Assessment domains</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Assessment domains</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
                     {assessmentDomainLabels.length ? assessmentDomainLabels.join(", ") : "—"}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Created date</dt>
-                  <dd className="mt-0.5 font-semibold text-slate-900">{createdDateLabel}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Created date</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{createdDateLabel}</dd>
                 </div>
               </dl>
             </div>
-            <div className="lg:col-span-5 rounded-2xl border border-slate-200 p-5 bg-slate-50/60">
-              <div className="text-sm font-extrabold tracking-tight text-slate-900">What gets saved</div>
-              <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+            <div className="lg:col-span-5 rounded-card border border-subtle p-5 bg-surface-2">
+              <div className="text-sm font-extrabold tracking-tight text-primary">What gets saved</div>
+              <p className="mt-2 text-sm text-secondary leading-relaxed">
                 This manual template stores your question list, role metadata, timing settings, and scheduling references.
                 Candidates receive exactly the questions listed — no AI generation at runtime.
               </p>
             </div>
-            <div className="lg:col-span-12 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm font-extrabold tracking-tight text-emerald-950">Manual interview questions</div>
-                <div className="text-xs font-bold uppercase tracking-widest text-emerald-800">
+            <div className="lg:col-span-12 rounded-card border border-subtle bg-success-soft p-6">
+              <div className="fx-hairline-b flex flex-wrap items-center justify-between gap-3 pb-2">
+                <div className="text-sm font-extrabold tracking-tight text-success">Manual interview questions</div>
+                <div className="text-xs font-bold uppercase tracking-widest text-success">
                   Total questions: {manualQuestionCount}
                 </div>
               </div>
               {manualQuestionLines.length ? (
-                <ul className="mt-4 space-y-2 max-h-[480px] overflow-auto pr-1">
+                <ul className="mt-4 space-y-2 max-h-96 overflow-auto pr-1">
                   {manualQuestionLines.map((q, idx) => (
                     <li
                       key={`${idx}-${q.slice(0, 32)}`}
-                      className="flex items-start gap-2 rounded-xl border border-emerald-200/80 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm"
+                      className="flex items-start gap-2 rounded-card border border-subtle bg-surface-1 px-3 py-2.5 text-sm text-primary shadow-raised"
                     >
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" aria-hidden />
+                      <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" aria-hidden />
                       <span className="leading-relaxed">
-                        <span className="font-bold text-emerald-900 mr-1">Q{idx + 1}.</span>
+                        <span className="font-bold text-success mr-1">Q{idx + 1}.</span>
                         {q}
                       </span>
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="mt-3 text-sm text-amber-800">No manual questions added yet. Go back to step 2 to add your list.</p>
+                <p className="mt-3 text-sm text-warning">No manual questions added yet. Go back to step 2 to add your list.</p>
               )}
             </div>
           </div>
         ) : step === 3 ? (
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 rounded-2xl border border-slate-200 p-5 bg-slate-50/40">
-              <div className="text-sm font-extrabold tracking-tight">Summary</div>
-              <div className="mt-3 space-y-2 text-sm text-slate-700">
-                <div><span className="font-semibold text-slate-900">Title:</span> {jobTitle || "—"}</div>
-                <div><span className="font-semibold text-slate-900">Domain:</span> {domain || "—"}</div>
-                <div><span className="font-semibold text-slate-900">Opportunity ID:</span> {opportunityId || "—"}</div>
-                <div><span className="font-semibold text-slate-900">Customer:</span> {customerName || "—"}</div>
+            <div className="lg:col-span-7 rounded-card border border-subtle p-5 bg-surface-2">
+              <div className="text-sm font-extrabold tracking-tight text-primary">Summary</div>
+              <div className="mt-3 space-y-2 text-sm text-secondary">
+                <div><span className="font-semibold text-primary">Title:</span> {jobTitle || "—"}</div>
+                <div><span className="font-semibold text-primary">Domain:</span> {domain || "—"}</div>
+                <div><span className="font-semibold text-primary">Opportunity ID:</span> {opportunityId || "—"}</div>
+                <div><span className="font-semibold text-primary">Customer:</span> {customerName || "—"}</div>
                 <div className="pt-1">
-                  <label className="block text-sm font-semibold text-slate-900 mb-1.5">Template Instructions</label>
+                  <label className="block text-sm font-semibold text-primary mb-1.5">Template Instructions</label>
                   <textarea
                     value={templateInstructions}
                     onChange={(e) => setTemplateInstructions(e.target.value)}
                     rows={4}
                     spellCheck={false}
-                    className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm leading-relaxed text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y min-h-[88px]"
+                    className="w-full input-recessed rounded-control p-3 text-sm leading-relaxed text-primary resize-y min-h-24"
                     placeholder="e.g. Focus on CAN/LIN and UDS diagnostics; use practical embedded scenarios; avoid generic theory."
                   />
-                  <p className="mt-1.5 text-xs text-slate-500">
+                  <p className="mt-1.5 text-xs text-muted">
                     Shown in the AI prompt as <span className="font-mono">Template Instructions</span>. Updates the live prompt preview below when you edit.
                   </p>
                 </div>
-                <div><span className="font-semibold text-slate-900">Difficulty:</span> {difficulty}</div>
-                <div><span className="font-semibold text-slate-900">Questions:</span> {numQ}</div>
+                <div><span className="font-semibold text-primary">Difficulty:</span> {difficulty}</div>
+                <div><span className="font-semibold text-primary">Questions:</span> {numQ}</div>
                 <div>
-                  <span className="font-semibold text-slate-900">Timing:</span>{" "}
+                  <span className="font-semibold text-primary">Timing:</span>{" "}
                   {!timingMode
                     ? "—"
                     : timingMode === "time"
                       ? `${timeLimitMin} min limit`
                       : `Fixed question count (${numQ})`}
                 </div>
-                <div><span className="font-semibold text-slate-900">Mic:</span> Auto-activated after each question</div>
-                <div><span className="font-semibold text-slate-900">Transcript input:</span> {showSpokenText ? "Enabled" : "Hidden"}</div>
-                <div><span className="font-semibold text-slate-900">Interview mode:</span> {interviewMode === "hr" ? "HR Interview" : "Technical Interview"}</div>
-                <div><span className="font-semibold text-slate-900">Required skills:</span> {requiredSkills || "—"}</div>
-                <div><span className="font-semibold text-slate-900">Optional skills:</span> {optionalSkills || "—"}</div>
+                <div><span className="font-semibold text-primary">Mic:</span> Auto-activated after each question</div>
+                <div><span className="font-semibold text-primary">Transcript input:</span> {showSpokenText ? "Enabled" : "Hidden"}</div>
+                <div><span className="font-semibold text-primary">Interview mode:</span> {interviewMode === "hr" ? "HR Interview" : "Technical Interview"}</div>
+                <div><span className="font-semibold text-primary">Required skills:</span> {requiredSkills || "—"}</div>
+                <div><span className="font-semibold text-primary">Optional skills:</span> {optionalSkills || "—"}</div>
                 <div>
-                  <span className="font-semibold text-slate-900">Experience range:</span>{" "}
+                  <span className="font-semibold text-primary">Experience range:</span>{" "}
                   {expMax > 0 ? `${expMin}–${expMax} years` : expMin > 0 ? `${expMin}+ years` : "Any / not set"}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-900">Question type:</span> Dynamic Questions
+                  <span className="font-semibold text-primary">Question type:</span>{" "}
+                  {questionType === "manual"
+                    ? "Manual Questions"
+                    : questionType === "question_bank"
+                      ? "Question Bank"
+                      : "Dynamic Questions"}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-900">Intelligence suite:</span>{" "}
+                  <span className="font-semibold text-primary">Intelligence suite:</span>{" "}
                   {selectedCategoryIds.length
                     ? `${selectedCategoryIds.length} domain(s) — ${suiteTargetRole || jobTitle || "—"}`
                     : "—"}
                 </div>
                 <div>
-                  <span className="font-semibold text-slate-900">Adaptive next question:</span>{" "}
+                  <span className="font-semibold text-primary">Adaptive next question:</span>{" "}
                   {adaptiveNextQuestion ? "Enabled" : "Disabled"}
                 </div>
                 {suiteSeniority ? (
                   <div>
-                    <span className="font-semibold text-slate-900">Seniority:</span> {suiteSeniority}
+                    <span className="font-semibold text-primary">Seniority:</span> {suiteSeniority}
                   </div>
                 ) : null}
                 {suiteTechStack ? (
                   <div>
-                    <span className="font-semibold text-slate-900">Stack emphasis:</span> {suiteTechStack}
+                    <span className="font-semibold text-primary">Stack emphasis:</span> {suiteTechStack}
                   </div>
                 ) : null}
               </div>
             </div>
-            <div className="lg:col-span-5 rounded-2xl border border-slate-200 p-5">
-              <div className="text-sm font-extrabold tracking-tight">What gets saved</div>
-              <div className="mt-2 text-sm text-slate-500">
+            <div className="lg:col-span-5 rounded-card border border-subtle p-5">
+              <div className="text-sm font-extrabold tracking-tight text-primary">What gets saved</div>
+              <div className="mt-2 text-sm text-muted">
                 This template stores interview setup fields, template instructions for AI prompts, opportunity/customer references, and interview configuration.
               </div>
             </div>
 
-            <div className="lg:col-span-12 rounded-2xl border border-slate-200 bg-slate-900 text-slate-100 p-5">
+            <div className="fx-gradient-border-animated lg:col-span-12 rounded-card bg-surface-1 text-primary p-5 shadow-raised">
               <button
                 type="button"
                 onClick={() => setPromptExpanded((v) => !v)}
                 className="w-full flex items-center justify-between gap-3 text-left"
               >
                 <div>
-                  <div className="text-sm font-extrabold tracking-tight">AI Prompt Configuration</div>
-                  <div className="text-xs text-slate-400 mt-1">
+                  <div className="flex items-center gap-2 text-sm font-extrabold tracking-tight text-primary">
+                    AI Prompt Configuration
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-accent-600 ring-1 ring-inset ring-subtle dark:text-accent-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
+                      AI
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted mt-1">
                     Review and customize the exact prompt used for AI question generation.
                   </div>
                 </div>
-                <div className="text-slate-300">{promptExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</div>
+                <div className="text-muted">{promptExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</div>
               </button>
 
               {promptExpanded ? (
                 <div className="mt-4 space-y-4">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="text-xs text-slate-400">
-                      Characters: <span className="font-semibold text-slate-200">{promptCharCount}</span> | Tokens (est):{" "}
-                      <span className="font-semibold text-slate-200">{promptTokenEstimate}</span> | Version:{" "}
-                      <span className="font-semibold text-slate-200">{promptVersion}</span>
+                    <div className="text-xs text-muted">
+                      Characters: <span className="font-semibold tabular-nums text-secondary">{promptCharCount}</span> | Tokens (est):{" "}
+                      <span className="font-semibold tabular-nums text-secondary">{promptTokenEstimate}</span> | Version:{" "}
+                      <span className="font-semibold tabular-nums text-secondary">{promptVersion}</span>
                     </div>
-                    <label className="inline-flex items-center gap-2 text-xs text-slate-300">
+                    <label className="inline-flex items-center gap-2 text-xs text-secondary">
                       <input
                         type="checkbox"
                         checked={adaptiveNextQuestion}
                         onChange={(e) => setAdaptiveNextQuestion(e.target.checked)}
-                        className="rounded border-slate-600 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+                        disabled={questionType === "question_bank"}
+                        className="rounded border-strong text-brand-500 disabled:opacity-40"
                       />
                       Adaptive next-question mode
+                      {questionType === "question_bank" ? (
+                        <span className="text-muted">(disabled for Question Bank)</span>
+                      ) : null}
                     </label>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => navigator.clipboard.writeText((promptPreview || editedPrompt || generatedPrompt || "").trim())}
-                        className="h-8 px-3 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold inline-flex items-center gap-1.5"
+                        className="h-8 px-3 rounded-control border border-subtle bg-surface-2 text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-3 hover:text-primary text-xs font-semibold inline-flex items-center gap-1.5"
                       >
                         <Copy className="w-3.5 h-3.5" /> Copy Prompt
                       </button>
                       <button
                         type="button"
                         onClick={resetPromptToDefault}
-                        className="h-8 px-3 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold inline-flex items-center gap-1.5"
+                        className="h-8 px-3 rounded-control border border-subtle bg-surface-2 text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-3 hover:text-primary text-xs font-semibold inline-flex items-center gap-1.5"
                       >
                         <RotateCcw className="w-3.5 h-3.5" /> Reset to Default
                       </button>
@@ -1653,7 +2191,7 @@ export function TemplateFormPage({
                         type="button"
                         onClick={testPrompt}
                         disabled={promptTestBusy}
-                        className="h-8 px-3 rounded-lg border border-indigo-400/40 bg-indigo-500/20 hover:bg-indigo-500/30 text-xs font-semibold text-indigo-100"
+                        className="h-8 px-3 rounded-control border border-subtle bg-brand-50 text-brand-700 transition-colors duration-micro ease-smooth hover:bg-brand-100 text-xs font-semibold dark:bg-brand-900 dark:text-brand-200 dark:hover:bg-brand-800"
                       >
                         {promptTestBusy ? "Generating 15–20…" : "Test Prompt (15–20)"}
                       </button>
@@ -1661,7 +2199,7 @@ export function TemplateFormPage({
                   </div>
 
                   <div>
-                    <div className="text-[11px] uppercase tracking-widest font-bold text-slate-400 mb-1.5">Editable Prompt</div>
+                    <div className="text-xs uppercase tracking-widest font-bold text-muted mb-1.5">Editable Prompt</div>
                     <textarea
                       value={editedPrompt}
                       onChange={(e) => {
@@ -1670,30 +2208,30 @@ export function TemplateFormPage({
                       }}
                       rows={12}
                       spellCheck={false}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm leading-6 font-mono text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y min-h-[220px] max-h-[560px] overflow-auto"
+                      className="input-recessed w-full rounded-control p-3 text-sm leading-6 font-mono text-primary resize-y min-h-56 max-h-screen overflow-auto"
                       placeholder={generatedPrompt || "Generating default prompt..."}
                     />
-                    <div className="mt-1.5 text-[11px] text-slate-400">
+                    <div className="mt-1.5 text-xs text-muted">
                       Leave blank to use the generated default prompt. Custom prompt is sanitized and size-limited before save.
                     </div>
                   </div>
 
                   <div>
-                    <div className="text-[11px] uppercase tracking-widest font-bold text-slate-400 mb-1.5">Live Prompt Preview</div>
-                    <pre className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs leading-6 font-mono text-slate-200 overflow-auto max-h-[340px] whitespace-pre-wrap">
+                    <div className="text-xs uppercase tracking-widest font-bold text-muted mb-1.5">Live Prompt Preview</div>
+                    <pre className="w-full rounded-card border border-subtle bg-surface-2 p-3 text-xs leading-6 font-mono text-secondary overflow-auto max-h-80 whitespace-pre-wrap">
                       {promptBusy ? "Refreshing prompt preview..." : promptPreview || generatedPrompt || "No prompt yet."}
                     </pre>
                   </div>
 
                   {promptTestQuestions.length > 0 ? (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+                    <div className="rounded-card border border-subtle bg-success-soft p-3">
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="text-[11px] uppercase tracking-widest font-bold text-emerald-300">
+                        <div className="text-xs uppercase tracking-widest font-bold text-success">
                           Sample Output ({promptTestQuestions.length} questions)
                         </div>
-                        <div className="text-[10px] text-emerald-200/80">Preview only — not saved to the template</div>
+                        <div className="text-xs text-success">Preview only — not saved to the template</div>
                       </div>
-                      <ol className="space-y-2 text-sm text-emerald-100 list-decimal list-inside max-h-[360px] overflow-auto">
+                      <ol className="space-y-2 text-sm text-secondary list-decimal list-inside max-h-96 overflow-auto">
                         {promptTestQuestions.map((q, idx) => (
                           <li key={`${idx}-${q.slice(0, 24)}`} className="leading-relaxed">
                             {q}

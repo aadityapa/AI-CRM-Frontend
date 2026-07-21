@@ -175,6 +175,7 @@ export function buildInterviewPdfData(
     "Pending Review";
 
   const overallFeedback =
+    safeText(report.scoring_rationale) ||
     safeText(report.overall_summary || report.summary || report.feedback) ||
     safeText(interview.summary) ||
     "—";

@@ -14,12 +14,21 @@ type Ctx = {
 
 const ThemeContext = createContext<Ctx | null>(null);
 
+/**
+ * Resolution order: primary key -> legacy key -> system preference.
+ * Must stay in lockstep with the pre-hydration script in index.html so the
+ * first painted theme never flips after React mounts.
+ */
 function readStored(): ThemeMode {
   try {
     const v = String(window.localStorage.getItem(STORAGE_KEY) || "").toLowerCase();
     if (v === "dark" || v === "light") return v === "dark" ? "dark" : "light";
-    if (window.localStorage.getItem(LEGACY_UI_DARK_KEY) === "1") return "dark";
-    return "light";
+    const legacy = window.localStorage.getItem(LEGACY_UI_DARK_KEY);
+    if (legacy === "1") return "dark";
+    if (legacy === "0") return "light";
+    return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   } catch {
     return "light";
   }

@@ -1,14 +1,58 @@
+@import "./styles/tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Keep enterprise/glass style consistent */
+/* ============================================================================
+   Karnex unified design system — shared tokens.
+   These CSS variables are the single source of truth for surfaces, borders,
+   text, and brand colors across BOTH the CRM and the AI Interview Platform so
+   the two products feel like one. Tailwind utility classes still work; tokens
+   are used for the app shell and any component that opts in via var(--kx-*).
+   ============================================================================ */
 :root {
   color-scheme: light;
+
+  /* Brand */
+  --kx-brand-500: #0ea5e9; /* sky-500 */
+  --kx-brand-600: #4f46e5; /* indigo-600 */
+  --kx-brand-gradient: linear-gradient(90deg, #0ea5e9 0%, #4f46e5 100%);
+
+  /* Surfaces & structure (light) */
+  --kx-bg: #f8fafc;                       /* page background (slate-50) */
+  --kx-surface: #ffffff;                  /* opaque cards / header */
+  --kx-surface-translucent: rgba(255, 255, 255, 0.72);
+  --kx-surface-soft: rgba(255, 255, 255, 0.7);
+  --kx-border: rgba(226, 232, 240, 0.9);  /* slate-200 */
+
+  /* Text */
+  --kx-text: #0f172a;        /* slate-900 */
+  --kx-text-muted: #64748b;  /* slate-500 */
+
+  /* Elevation */
+  --kx-shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.06);
+  --kx-shadow-md: 0 10px 30px rgba(15, 23, 42, 0.08);
+
+  /* Spacing / radius scale (kept small & consistent) */
+  --kx-radius: 0.75rem;   /* 12px */
+  --kx-radius-lg: 1rem;   /* 16px */
 }
 
 html.dark {
   color-scheme: dark;
+
+  --kx-bg: #020617;                       /* slate-950 */
+  --kx-surface: #0f172a;                  /* slate-900 */
+  --kx-surface-translucent: rgba(15, 23, 42, 0.82);
+  --kx-surface-soft: rgba(30, 41, 59, 0.7);
+  --kx-border: rgba(51, 65, 85, 0.85);    /* slate-700 */
+
+  --kx-text: #f1f5f9;        /* slate-100 */
+  --kx-text-muted: #94a3b8;  /* slate-400 */
+
+  --kx-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --kx-shadow-md: 0 12px 34px rgba(0, 0, 0, 0.45);
 }
 
 /* Broad dark surfaces for common Tailwind utility combos used across admin pages */

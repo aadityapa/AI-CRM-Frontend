@@ -1,11 +1,25 @@
 /**
- * Smart auto-advance interview engine (Jun 2026).
- * Robust client-side VAD: noise calibration, speech-band energy, confirmation windows.
+ * Enterprise smart auto-advance — OpenAI Whisper + GPT completion (Jul 2026).
+ * Timers are safety fallbacks only; GPT drives answer completion after silence.
  */
 
 import { state } from "./state.js";
 import { apiFetch } from "./core.js";
-import { isSileroSpeechActive, startSileroVad, stopSileroVad } from "./vad_silero.js";
+import {
+  enqueueWhisperSegment,
+  flushWhisperSegments,
+  getWhisperSegmentTranscript,
+  resetWhisperSegments,
+  whisperTranscriptionInFlight,
+} from "./interview_whisper_segments.js";
+import {
+  getSileroSpeechProbability,
+  isSileroSpeechActive,
+  sileroProbabilityAcceptable,
+  sileroVadAvailable,
+  startSileroVad,
+  stopSileroVad,
+} from "./vad_silero.js";
 
 const VOICE_COMMAND_PATTERNS = [
   /\bnext question\b/i,
@@ -23,27 +37,26 @@ const SPEECH_BAND_HIGH_HZ = 3400;
 const CALIBRATION_MS = 1000;
 const SPEECH_END_HANGOVER_MS = 280;
 const DEBUG_LOG_THROTTLE_MS = 500;
+const COMPLETION_DEBOUNCE_MS = 400;
 
-/** Explicit interview phases — never allow deadlocks between these. */
+const FILLER_RE = /\b(um+|uh+|er+|ah+|like|you know|let me think|actually|hold on|one moment|give me a (second|moment))\b/i;
+const EXPLICIT_DONE_RE = /\b(that'?s all|i'?m done|i am done|that is my answer|finished|move on|next question)\b/i;
+
 export const AUTO_ADVANCE_PHASE = {
   IDLE: "idle",
   WAITING_FOR_RESPONSE: "waiting_for_response",
-  NO_RESPONSE_WARNING: "no_response_warning",
   LISTENING: "listening",
-  ANSWER_CAPTURED: "answer_captured",
   SUBMITTING: "moving_next",
   SKIPPED: "question_skipped",
 };
 
-let _active = false;
+let _listenOnly = false;
 let _turnSeq = 0;
 let _audioCtx = null;
 let _analyser = null;
 let _freqBuf = null;
 let _timeBuf = null;
 let _vadHandle = null;
-let _countdownHandle = null;
-let _countdownInterval = null;
 let _speechRecognition = null;
 let _callbacks = null;
 let _turnMeta = null;
@@ -59,10 +72,8 @@ let _turnStartTs = 0;
 let _confirmedSpeechMs = 0;
 let _lastConfirmedSpeechFrameTs = 0;
 let _interimTranscript = "";
-let _confirmationActive = false;
-let _noResponseHandled = false;
-let _bannerActionInFlight = false;
-let _bannerUiBound = false;
+let _completionCheckInFlight = false;
+let _lastCompletionCheckTs = 0;
 
 let _calibrated = false;
 let _calibrationUntil = 0;
@@ -70,20 +81,9 @@ let _calibrationSamples = [];
 let _noiseFloor = 0.01;
 let _lastDebugLevelTs = 0;
 let _debugPanelEl = null;
-let _skipCountdownSeq = 0;
-let _skipCountdownActive = false;
 let _sileroActive = false;
-let _sileroSpeechSince = 0;
-let _warningCountdownSpeechSince = 0;
-let _responseWaitHandle = null;
-let _hardFallbackHandle = null;
-let _hardFallbackDeadline = 0;
-let _warningCycleId = 0;
-let _warningCount = 0;
-const WARNING_RESUME_SPEECH_MS = 1000;
-const WARNING_CANCEL_MIN_MS = 500;
-const HARD_NO_RESPONSE_MS = 15000;
-const SUBSTANTIVE_SPEECH_MS = 800;
+let _active = false;
+let _initialWaitHandle = null;
 
 function _cfg() {
   return state.autoAdvance || {};
@@ -91,6 +91,19 @@ function _cfg() {
 
 function _enabled() {
   return !!_cfg().enabled;
+}
+
+function _initialWaitMs() {
+  return (Number(_cfg().initial_response_wait_sec) || 5) * 1000;
+}
+
+function _extraSkipMs() {
+  return (Number(_cfg().no_response_extra_wait_sec) || 2.5) * 1000;
+}
+
+function _silenceMs() {
+  const sec = Number(_cfg().silence_detection_sec) || 2.5;
+  return Math.max(2500, Math.min(5000, sec * 1000));
 }
 
 function _vadDebugEnabled() {
@@ -103,39 +116,24 @@ function _vadDebugEnabled() {
 }
 
 function _vadLog(event, detail = {}) {
-  const msg = `[VAD] ${event}`;
-  if (_vadDebugEnabled()) {
-    console.info(msg, detail);
-    _appendDebugPanel(event, detail);
-  }
+  if (!_vadDebugEnabled()) return;
+  console.info(`[VAD] ${event}`, detail);
+  _appendDebugPanel(event, detail);
 }
 
-/** Always-on lifecycle logs required for interview flow diagnostics (BUG #6). */
 function _vadEventLog(event, detail = {}) {
-  const msg = `[VAD] ${event}`;
-  console.info(msg, Object.keys(detail).length ? detail : "");
-  if (_vadDebugEnabled()) {
-    _appendDebugPanel(event, detail);
-  }
-}
-
-function _logAlways(prefix, event, detail = {}) {
-  const msg = `[${prefix}] ${event}`;
-  console.info(msg, Object.keys(detail).length ? detail : "");
-  if (_vadDebugEnabled()) {
-    _appendDebugPanel(`${prefix} ${event}`, detail);
-  }
+  console.info(`[VAD] ${event}`, Object.keys(detail).length ? detail : "");
+  if (_vadDebugEnabled()) _appendDebugPanel(event, detail);
 }
 
 function _logInterview(event, detail = {}) {
-  const msg = `[INTERVIEW] ${event}`;
-  console.info(msg, Object.keys(detail).length ? detail : "");
+  const qIdx = _turnMeta?.questionIndex;
+  const payload = qIdx != null ? { question_index: qIdx, ...detail } : detail;
+  console.info(`[INTERVIEW] ${event}`, Object.keys(payload).length ? payload : "");
 }
 
 function _appendDebugPanel(event, detail) {
-  if (!_debugPanelEl) {
-    _debugPanelEl = document.getElementById("vadDebugPanel");
-  }
+  if (!_debugPanelEl) _debugPanelEl = document.getElementById("vadDebugPanel");
   if (!_debugPanelEl) return;
   const line = document.createElement("div");
   line.className = "vad-debug-line";
@@ -191,42 +189,16 @@ function _speechConfirmMs() {
   return Math.max(300, Math.min(500, Number(_cfg().speech_confirm_ms) || 400));
 }
 
-function _answerMeetsMinimum() {
-  const minWords = Number(_cfg().minimum_answer_words) || 5;
-  const minDurSec = Number(_cfg().minimum_speech_duration_sec) || 2;
-  const words = _wordCount(_interimTranscript);
-  const speechDurSec = _confirmedSpeechMs / 1000;
-  return words >= minWords || speechDurSec >= minDurSec;
-}
-
-function _clearTimers() {
-  if (_countdownHandle) {
-    clearTimeout(_countdownHandle);
-    _countdownHandle = null;
-  }
-  if (_countdownInterval) {
-    clearInterval(_countdownInterval);
-    _countdownInterval = null;
+function _clearTimer(handleName) {
+  if (handleName === "_initialWaitHandle" && _initialWaitHandle) {
+    clearTimeout(_initialWaitHandle);
+    _initialWaitHandle = null;
   }
 }
 
-function _clearResponseWaitTimer() {
-  if (_responseWaitHandle) {
-    clearTimeout(_responseWaitHandle);
-    _responseWaitHandle = null;
-  }
-}
-
-function _clearResponseTimers() {
-  _clearResponseWaitTimer();
-  if (_hardFallbackHandle) {
-    clearTimeout(_hardFallbackHandle);
-    _hardFallbackHandle = null;
-  }
-}
-
-function _maxWarningsBeforeFinalize() {
-  return Math.max(1, Number(_cfg().max_no_response_warnings) || 3);
+function _clearAllTimers() {
+  if (_initialWaitHandle) clearTimeout(_initialWaitHandle);
+  _initialWaitHandle = null;
 }
 
 function _getExternalCaptureText() {
@@ -237,17 +209,16 @@ function _getExternalCaptureText() {
   }
 }
 
+function _useVadWhisperPipeline() {
+  return state.vadWhisperPipeline !== false && !!_cfg().enabled;
+}
+
 function _getCombinedCaptureText() {
   const external = _getExternalCaptureText();
   if (external) return external;
+  const whisper = getWhisperSegmentTranscript();
+  if (whisper) return whisper;
   return String(_interimTranscript || "").trim();
-}
-
-/** Partial transcripts do NOT block warnings — candidate may have started then gone silent. */
-function _shouldBlockNoResponseWarning() {
-  if (_sileroHumanSpeech()) return true;
-  if (_speechConfirmed && _lastSpeechTs && Date.now() - _lastSpeechTs < 1200) return true;
-  return false;
 }
 
 function _hasCapturableAnswer() {
@@ -256,74 +227,117 @@ function _hasCapturableAnswer() {
   return false;
 }
 
-function _scheduleNextWarningWait() {
-  _noResponseHandled = false;
-  _skipCountdownActive = false;
-  _warningCountdownSpeechSince = 0;
-  _bannerActionInFlight = false;
-  _clearTimers();
-  _hideBanner();
-  _turnStartTs = Date.now();
-  _setPhase(AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE, "Waiting for your response…");
-  _startResponseTimers();
-  _logInterview("Waiting for response before next warning", { warningCount: _warningCount });
+function _sileroHumanSpeech() {
+  return _sileroActive || isSileroSpeechActive();
 }
 
-function _scheduleHardFallbackTimer() {
-  if (_hardFallbackHandle) {
-    clearTimeout(_hardFallbackHandle);
-    _hardFallbackHandle = null;
+function _heuristicCompletion(transcript, { silenceDurationSec, isStillSpeaking, silenceThresholdSec }) {
+  const text = String(transcript || "").trim();
+  if (isStillSpeaking) return { status: "ANSWER_IN_PROGRESS", confidence: 0.85, source: "heuristic" };
+  if (!text) return { status: "ANSWER_IN_PROGRESS", confidence: 0.6, source: "heuristic" };
+  if (EXPLICIT_DONE_RE.test(text)) return { status: "ANSWER_COMPLETE", confidence: 0.9, source: "heuristic" };
+  if (FILLER_RE.test(text)) {
+    const trailing = text.slice(-80);
+    if (FILLER_RE.test(trailing)) return { status: "ANSWER_IN_PROGRESS", confidence: 0.8, source: "heuristic" };
   }
-  _hardFallbackDeadline = Date.now() + HARD_NO_RESPONSE_MS;
-  _hardFallbackHandle = setTimeout(() => {
-    _hardFallbackHandle = null;
-    if (!_active) return;
-    if (!_noResponseHandled) {
-      if (_shouldBlockNoResponseWarning()) return;
-      _logInterview("Hard timeout — forcing warning", { afterSec: HARD_NO_RESPONSE_MS / 1000 });
-      _beginNoResponseWarning();
+  if (/[,:…\-]$|\.\.\.$/.test(text.replace(/\s+$/, ""))) {
+    return { status: "ANSWER_IN_PROGRESS", confidence: 0.75, source: "heuristic" };
+  }
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 3) return { status: "ANSWER_IN_PROGRESS", confidence: 0.7, source: "heuristic" };
+  if (silenceDurationSec >= silenceThresholdSec) {
+    return { status: "ANSWER_COMPLETE", confidence: 0.82, source: "heuristic" };
+  }
+  return { status: "ANSWER_IN_PROGRESS", confidence: 0.7, source: "heuristic" };
+}
+
+function _isCandidateSpeaking(features) {
+  if (_sileroHumanSpeech()) return true;
+  if (features && _isStillSpeaking(features)) return true;
+  if (_speechConfirmed && _lastSpeechTs && Date.now() - _lastSpeechTs < 400) return true;
+  return false;
+}
+
+function _shouldBlockInitialSkip() {
+  if (_speechConfirmed) return true;
+  if (_speechCandidateSince) return true;
+  if (_sileroHumanSpeech()) return true;
+  if (whisperTranscriptionInFlight()) return true;
+  if (_wordCount(_getCombinedCaptureText()) > 0) return true;
+  return false;
+}
+
+/** Stop timers/VAD without discarding whisper transcript or capture callbacks. */
+function _freezeAutoAdvanceTurn() {
+  _active = false;
+  _clearAllTimers();
+  _stopVad();
+  void stopSileroVad();
+  _sileroActive = false;
+  _stopSpeechRecognition();
+}
+
+export function freezeAutoAdvanceTurn() {
+  _freezeAutoAdvanceTurn();
+}
+
+async function _awaitWhisperCaptureIdle(maxMs = 4000, { onlyIfSpeechActivity = false } = {}) {
+  const hasActivity =
+    _speechConfirmed || _speechCandidateSince || _sileroHumanSpeech() || whisperTranscriptionInFlight();
+  if (onlyIfSpeechActivity && !hasActivity) {
+    try {
+      await flushWhisperSegments();
+    } catch (_) {
+      /* ignore */
+    }
+    return _getCombinedCaptureText();
+  }
+  const deadline = Date.now() + Math.max(500, Number(maxMs) || 4000);
+  try {
+    await flushWhisperSegments();
+  } catch (_) {
+    /* ignore */
+  }
+  while (whisperTranscriptionInFlight() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    try {
+      await flushWhisperSegments();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  const text = _getCombinedCaptureText();
+  if (text && _callbacks?.onInterimTranscript) {
+    try {
+      _callbacks.onInterimTranscript(text);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return text;
+}
+
+function _startInitialWaitTimers() {
+  _clearAllTimers();
+  _turnStartTs = Date.now();
+  const waitMs = _initialWaitMs();
+  _logInterview("Listening started", { initialWaitSec: waitMs / 1000 });
+  _initialWaitHandle = setTimeout(() => {
+    _initialWaitHandle = null;
+    if (!_active || _listenOnly) return;
+    if (_shouldBlockInitialSkip()) return;
+    if (!_cfg().auto_skip_enabled) {
+      _logInterview("Auto-skip disabled — staying on question");
       return;
     }
-    if (_skipCountdownActive && _canAutoSkipAfterCountdown()) {
-      _skipCountdownActive = false;
-      _logInterview("Hard timeout — warning countdown expired", { warningNumber: _warningCount });
-      const maxWarnings = _maxWarningsBeforeFinalize();
-      if (_warningCount < maxWarnings) {
-        _scheduleNextWarningWait();
-      } else if (_hasCapturableAnswer()) {
-        void _triggerAutoSubmit("hard_timeout_save_partial", { partial_answer: true });
-      } else {
-        void _triggerAutoSkip("hard_timeout_fallback");
-      }
-    }
-  }, HARD_NO_RESPONSE_MS);
-}
-
-function _startResponseTimers() {
-  _clearResponseTimers();
-  const waitMs = (_cfg().initial_response_wait_sec || 5) * 1000;
-  _logInterview("Silence timer started", { waitSec: waitMs / 1000, hardSec: HARD_NO_RESPONSE_MS / 1000 });
-  _scheduleHardFallbackTimer();
-  _responseWaitHandle = setTimeout(() => {
-    _responseWaitHandle = null;
-    if (!_active || _noResponseHandled || _shouldBlockNoResponseWarning()) return;
-    if (_phase !== AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE) return;
-    _logInterview("Silence timer fired", { waitSec: waitMs / 1000 });
-    _beginNoResponseWarning();
+    _logInterview("No speech within initial wait — auto skip", { waitSec: waitMs / 1000 });
+    void _triggerAutoSkip("silent_no_response");
   }, waitMs);
 }
 
-function _resetWarningCycleState(reason = "warning_resume") {
-  _noResponseHandled = false;
-  _skipCountdownActive = false;
-  _warningCountdownSpeechSince = 0;
-  _sileroSpeechSince = 0;
-  _bannerActionInFlight = false;
-  _clearTimers();
-  _hideBanner();
-  _turnStartTs = Date.now();
-  _scheduleHardFallbackTimer();
-  _logInterview("Warning state reset", { reason, warningCycleId: _warningCycleId });
+function _onSpeechDetectedDuringWait(now) {
+  _clearTimer("_initialWaitHandle");
+  if (!_speechConfirmed) _confirmSpeech(now);
 }
 
 function _stopVad() {
@@ -364,101 +378,9 @@ function _stopSpeechRecognition() {
   _speechRecognition = null;
 }
 
-function _isNoResponseWarningPhase() {
-  return _phase === AUTO_ADVANCE_PHASE.NO_RESPONSE_WARNING;
-}
-
-function _isAnswerCapturedPhase() {
-  return _confirmationActive || _phase === AUTO_ADVANCE_PHASE.ANSWER_CAPTURED;
-}
-
-function _setBannerButtonsEnabled(enabled) {
-  const cont = document.getElementById("autoAdvanceContinueBtn");
-  const conf = document.getElementById("autoAdvanceConfirmBtn");
-  [cont, conf].forEach((btn) => {
-    if (!btn) return;
-    btn.disabled = !enabled;
-    btn.classList.remove("is-loading");
-  });
-}
-
-function _setBannerButtonsLoading(loading) {
-  const cont = document.getElementById("autoAdvanceContinueBtn");
-  const conf = document.getElementById("autoAdvanceConfirmBtn");
-  [cont, conf].forEach((btn) => {
-    if (!btn) return;
-    btn.disabled = !!loading;
-    btn.classList.toggle("is-loading", !!loading);
-  });
-}
-
-function _updateBannerForPhase(phase) {
-  const titleEl = document.getElementById("autoAdvanceTitle");
-  const msgEl = document.getElementById("autoAdvanceMessage");
-  const confirmBtn = document.getElementById("autoAdvanceConfirmBtn");
-  const continueBtn = document.getElementById("autoAdvanceContinueBtn");
-
-  if (phase === AUTO_ADVANCE_PHASE.NO_RESPONSE_WARNING) {
-    if (titleEl) titleEl.innerText = "⚠ No response detected";
-    if (msgEl) msgEl.innerText = "Speak now or question will be skipped";
-    if (confirmBtn) confirmBtn.innerText = "Skip Question";
-    if (continueBtn) continueBtn.innerText = "Continue Speaking";
-    return;
-  }
-
-  if (phase === AUTO_ADVANCE_PHASE.ANSWER_CAPTURED) {
-    if (titleEl) titleEl.innerText = "Answer detected";
-    if (msgEl) msgEl.innerText = "Moving to next question in:";
-    if (confirmBtn) confirmBtn.innerText = "Submit Now";
-    if (continueBtn) continueBtn.innerText = "Continue Speaking";
-  }
-}
-
 function _setPhase(phase, message) {
-  if (
-    _skipCountdownActive &&
-    phase !== AUTO_ADVANCE_PHASE.NO_RESPONSE_WARNING &&
-    phase !== AUTO_ADVANCE_PHASE.SKIPPED &&
-    phase !== AUTO_ADVANCE_PHASE.LISTENING &&
-    phase !== AUTO_ADVANCE_PHASE.SUBMITTING
-  ) {
-    return;
-  }
   _phase = phase;
   if (_callbacks?.onPhase) _callbacks.onPhase(phase, message);
-
-  const banner = document.getElementById("autoAdvanceBanner");
-  const msgEl = document.getElementById("autoAdvanceMessage");
-  const showBanner =
-    phase === AUTO_ADVANCE_PHASE.ANSWER_CAPTURED ||
-    phase === AUTO_ADVANCE_PHASE.NO_RESPONSE_WARNING ||
-    phase === AUTO_ADVANCE_PHASE.SUBMITTING ||
-    phase === AUTO_ADVANCE_PHASE.SKIPPED;
-
-  if (showBanner) {
-    _updateBannerForPhase(phase);
-  }
-
-  if (banner) {
-    banner.classList.toggle("is-visible", showBanner);
-    banner.dataset.phase = phase;
-  }
-
-  if (msgEl && message && !showBanner) {
-    msgEl.innerText = message;
-  }
-
-  if (showBanner) {
-    _setBannerButtonsEnabled(true);
-    _bannerActionInFlight = false;
-  }
-}
-
-function _hideBanner() {
-  const banner = document.getElementById("autoAdvanceBanner");
-  if (banner) banner.classList.remove("is-visible");
-  _setBannerButtonsEnabled(true);
-  _bannerActionInFlight = false;
 }
 
 function _rmsFromTimeDomain(timeBuf) {
@@ -487,7 +409,6 @@ function _speechBandRatio(analyser, freqBuf, sampleRate) {
   const binHz = nyquist / binCount;
   const lowBin = Math.floor(SPEECH_BAND_LOW_HZ / binHz);
   const highBin = Math.min(binCount - 1, Math.ceil(SPEECH_BAND_HIGH_HZ / binHz));
-
   let total = 0;
   let speechBand = 0;
   for (let i = 0; i < binCount; i++) {
@@ -507,12 +428,9 @@ function _analyzeFrame() {
 }
 
 function _isSpeechCandidate(features) {
-  if (
-    (_skipCountdownActive || _isNoResponseWarningPhase() || _speechConfirmed) &&
-    _sileroHumanSpeech()
-  ) {
-    return true;
-  }
+  if (_speechConfirmed && _sileroHumanSpeech()) return true;
+  const sileroOk = sileroVadAvailable() ? sileroProbabilityAcceptable() : true;
+  if (!sileroOk) return false;
   const threshold = _speechThreshold();
   const energyOk = features.rms >= threshold;
   const bandOk = features.bandRatio >= 0.22 && features.bandRatio <= 0.9;
@@ -522,84 +440,6 @@ function _isSpeechCandidate(features) {
 
 function _isStillSpeaking(features) {
   return features.rms >= _hangoverThreshold() && features.bandRatio >= 0.18;
-}
-
-function _isWarningPhaseSpeech(features) {
-  return features.rms >= _speechThreshold() * 0.8 && features.bandRatio >= 0.15;
-}
-
-function _sileroHumanSpeech() {
-  return _sileroActive || isSileroSpeechActive();
-}
-
-function _trackWarningCountdownSpeech(features, now) {
-  if (!_skipCountdownActive && !_isNoResponseWarningPhase()) {
-    _warningCountdownSpeechSince = 0;
-    return;
-  }
-  const fftSpeech =
-    features &&
-    (_isWarningPhaseSpeech(features) ||
-      (features.rms >= _speechThreshold() && features.bandRatio >= 0.18));
-  if (_sileroHumanSpeech() || fftSpeech) {
-    if (!_warningCountdownSpeechSince) _warningCountdownSpeechSince = now;
-  } else if (!_sileroHumanSpeech() && !fftSpeech && _warningCountdownSpeechSince) {
-    if (now - _warningCountdownSpeechSince < 200) return;
-    _warningCountdownSpeechSince = 0;
-  }
-}
-
-function _warningResumeSignal(features, now) {
-  if (_wordCount(_getCombinedCaptureText()) > 0) return "transcript_words";
-  _trackWarningCountdownSpeech(features, now);
-  if (
-    _warningCountdownSpeechSince > 0 &&
-    now - _warningCountdownSpeechSince >= WARNING_CANCEL_MIN_MS
-  ) {
-    return "warning_speech_sustained";
-  }
-  return null;
-}
-
-function _cancelSkipCountdown(reason, { hideBanner = true } = {}) {
-  if (!_skipCountdownActive && !_noResponseHandled && !_isNoResponseWarningPhase()) return false;
-  _skipCountdownSeq += 1;
-  _skipCountdownActive = false;
-  _clearTimers();
-  if (hideBanner) _hideBanner();
-  _noResponseHandled = false;
-  _bannerActionInFlight = false;
-  _warningCountdownSpeechSince = 0;
-  _vadEventLog("Countdown cancelled", { reason, warningCycleId: _warningCycleId });
-  return true;
-}
-
-function _resumeAnswerDuringWarning(reason, features, now) {
-  if (!_skipCountdownActive && !_isNoResponseWarningPhase() && !_noResponseHandled) return false;
-  if (!_cancelSkipCountdown(reason)) return false;
-
-  _vadEventLog("Voice detected", { reason, during: "warning_countdown", warningCycleId: _warningCycleId });
-  _logAlways("VAD", "Speech detected");
-  _logAlways("VAD", "Warning cancelled");
-  _logInterview("Warning cancelled by speech", { reason, warningCycleId: _warningCycleId });
-
-  if (!_speechConfirmed) {
-    if (features && (_isSpeechCandidate(features) || _isWarningPhaseSpeech(features))) {
-      if (!_speechCandidateSince) _speechCandidateSince = now;
-    }
-    _confirmSpeech(now);
-  } else {
-    _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Listening…");
-    _vadEventLog("Listening");
-  }
-  _resetWarningCycleState("speech_during_warning");
-  return true;
-}
-
-function _onTranscriptDuringWarning() {
-  if (!_skipCountdownActive && !_isNoResponseWarningPhase() && !_noResponseHandled) return;
-  if (_wordCount(_interimTranscript) === 0) return;
-  _resumeAnswerDuringWarning("transcript_words", null, Date.now());
 }
 
 function _finishCalibration() {
@@ -615,6 +455,9 @@ function _finishCalibration() {
     noiseFloor: Number(_noiseFloor.toFixed(4)),
     threshold: Number(_speechThreshold().toFixed(4)),
   });
+  if (_active && !_listenOnly && !_speechConfirmed && _phase === AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE) {
+    _startInitialWaitTimers();
+  }
 }
 
 function _resetSpeechTracking() {
@@ -626,8 +469,7 @@ function _resetSpeechTracking() {
   _belowHangoverSince = 0;
   _confirmedSpeechMs = 0;
   _lastConfirmedSpeechFrameTs = 0;
-  _sileroSpeechSince = 0;
-  _warningCountdownSpeechSince = 0;
+  _completionCheckInFlight = false;
 }
 
 function _confirmSpeech(now) {
@@ -638,10 +480,8 @@ function _confirmSpeech(now) {
   _lastConfirmedSpeechFrameTs = now;
   _silenceSinceTs = 0;
   _belowHangoverSince = 0;
-  _vadLog("Speech Started", {
-    threshold: Number(_speechThreshold().toFixed(4)),
-    bandRatio: "confirmed",
-  });
+  _clearTimer("_initialWaitHandle");
+  _logInterview("Speech started");
   _vadEventLog("Listening");
   _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Listening…");
   if (_callbacks?.onSpeechStart) _callbacks.onSpeechStart(now);
@@ -649,7 +489,8 @@ function _confirmSpeech(now) {
 
 function _endSpeech(now) {
   if (!_speechConfirmed) return;
-  const durationSec = ((now - _speechStartTs) / 1000).toFixed(1);
+  const durationSec = Number(((now - _speechStartTs) / 1000).toFixed(1));
+  _logInterview("Speech ended", { durationSec });
   _vadLog("Speech Ended", { durationSec });
   _lastSpeechTs = now;
   if (!_silenceSinceTs) _silenceSinceTs = now;
@@ -668,10 +509,9 @@ function _buildEventMeta(trigger, extra = {}) {
   const base = {
     trigger,
     question_index: _turnMeta?.questionIndex,
-    warning_count: _warningCount,
     start_speaking_at: _speechStartTs ? new Date(_speechStartTs).toISOString() : null,
     end_speaking_at: new Date(now).toISOString(),
-    silence_duration_ms: _silenceSinceTs && _lastSpeechTs ? Math.max(0, now - _silenceSinceTs) : null,
+    silence_duration_ms: _silenceSinceTs ? Math.max(0, now - _silenceSinceTs) : null,
     speech_duration_ms: _confirmedSpeechMs || null,
     confirmed_speech_ms: _confirmedSpeechMs || null,
     word_count: _wordCount(captureText || _interimTranscript),
@@ -686,43 +526,12 @@ function _buildEventMeta(trigger, extra = {}) {
     ...extra,
   };
   if (base.auto_submitted === undefined) {
-    base.auto_submitted = !["no_response", "manual_skip"].includes(trigger) || !!extra.partial_answer;
+    base.auto_submitted = !["no_response", "manual_skip", "silent_no_response"].includes(trigger) || !!extra.partial_answer;
   }
   if (base.skipped === undefined) {
-    base.skipped = trigger === "no_response" || trigger === "manual_skip";
+    base.skipped = ["no_response", "manual_skip", "silent_no_response"].includes(trigger);
   }
   return base;
-}
-
-function _startCountdown(seconds, mode, onComplete) {
-  _clearTimers();
-  const seq = ++_skipCountdownSeq;
-  let left = Math.max(1, Number(seconds) || 1);
-  const countdownEl = document.getElementById("autoAdvanceCountdown");
-  const statusEl = document.getElementById("candidateStatus");
-
-  const tick = () => {
-    if (countdownEl) countdownEl.innerText = String(left);
-    if (statusEl) {
-      statusEl.innerText =
-        mode === "no_response"
-          ? `Speak now or question will be skipped in ${left}s`
-          : `Answer detected — moving to next question in ${left}s`;
-    }
-  };
-
-  tick();
-  _countdownInterval = setInterval(() => {
-    if (seq !== _skipCountdownSeq) return;
-    left -= 1;
-    if (left <= 0) {
-      _clearTimers();
-      if (seq !== _skipCountdownSeq) return;
-      onComplete();
-      return;
-    }
-    tick();
-  }, 1000);
 }
 
 async function _validateSkipWithServer(meta) {
@@ -732,200 +541,191 @@ async function _validateSkipWithServer(meta) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auto_advance_meta: meta, action: "skip" }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return true;
     const data = await res.json();
     return data.allow_skip !== false;
   } catch (_) {
-    return !_sileroHumanSpeech() && !_speechConfirmed && _wordCount(_interimTranscript) === 0;
+    return !_sileroHumanSpeech() && !_speechConfirmed && _wordCount(_getCombinedCaptureText()) === 0;
   }
 }
 
 async function _triggerAutoSubmit(trigger, extra = {}) {
-  if (!_active) return;
+  if (!_active || _listenOnly) return;
   const onAutoSubmit = _callbacks?.onAutoSubmit;
   if (!onAutoSubmit) return;
-  _vadLog("Auto Submit Triggered", { trigger });
+  _vadEventLog("Auto submit", { trigger });
+  await _awaitWhisperCaptureIdle(5000);
   const meta = _buildEventMeta(trigger, { auto_submitted: true, skipped: false, ...extra });
-  stopAutoAdvanceTurn();
+  _logInterview("Auto submit payload", {
+    trigger,
+    transcript_len: String(meta.capture_text || meta.interim_transcript || "").length,
+    transcript_preview: String(meta.capture_text || meta.interim_transcript || "").slice(0, 120),
+  });
+  _freezeAutoAdvanceTurn();
   onAutoSubmit(meta);
 }
 
 async function _triggerAutoSkip(reason) {
-  if (!_active) return;
+  if (!_active || _listenOnly) return;
+  await _awaitWhisperCaptureIdle(5000, { onlyIfSpeechActivity: true });
   if (_hasCapturableAnswer()) {
-    _logAlways("ANSWER", "Partial transcript detected");
-    _logAlways("ANSWER", "Saving transcript");
+    _logInterview("Skip blocked — transcript present after whisper flush", {
+      transcript_len: _getCombinedCaptureText().length,
+    });
     await _triggerAutoSubmit("save_before_skip", { partial_answer: true });
     return;
   }
-  if (_sileroHumanSpeech() || _speechConfirmed || _wordCount(_interimTranscript) > 0) {
-    _logAlways("VAD", "Auto skip blocked — human speech active");
-    _resumeAnswerDuringWarning("speech_active_before_skip", null, Date.now());
+  if (_sileroHumanSpeech() || _speechConfirmed || _speechCandidateSince || whisperTranscriptionInFlight()) {
+    _logInterview("Skip blocked — speech activity or whisper in flight", {
+      speech_confirmed: _speechConfirmed,
+      whisper_in_flight: whisperTranscriptionInFlight(),
+    });
     return;
   }
   const onAutoSkip = _callbacks?.onAutoSkip;
   if (!onAutoSkip) return;
-  const meta = _buildEventMeta("no_response", { skipped: true, auto_submitted: false });
+  const meta = _buildEventMeta("silent_no_response", { skipped: true, auto_submitted: false });
   const allowed = await _validateSkipWithServer(meta);
   if (!allowed) {
-    _logAlways("VAD", "Server blocked auto-skip — speech evidence");
-    _resumeAnswerDuringWarning("server_speech_validation", null, Date.now());
+    _logInterview("Skip blocked by server validate-speech");
     return;
   }
-  _vadLog("Auto Skip Triggered", { reason });
-  const skipReason = reason || "Auto skip — no response detected";
-  stopAutoAdvanceTurn();
-  onAutoSkip(skipReason, meta);
-}
-
-function _beginConfirmationCountdown() {
-  if (_confirmationActive) return;
-  _confirmationActive = true;
-  const sec = _cfg().confirmation_before_next_sec ?? 3;
-  _vadEventLog("Answer complete", { confirmationSec: sec });
-  _setPhase(
-    AUTO_ADVANCE_PHASE.ANSWER_CAPTURED,
-    `Answer detected. Moving to next question in ${sec} seconds…`
-  );
-  _startCountdown(sec, "answer_captured", () => {
-    _confirmationActive = false;
-    _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Submitting your answer…");
-    _triggerAutoSubmit("silence");
+  _logInterview("Auto skip payload", {
+    reason: reason || "silent_no_response",
+    transcript_len: 0,
+    speech_confirmed: _speechConfirmed,
   });
+  _freezeAutoAdvanceTurn();
+  onAutoSkip(reason || "Auto skip — no response", meta);
 }
 
-function _cancelConfirmation() {
-  if (!_confirmationActive) return;
-  _confirmationActive = false;
-  _clearTimers();
-  _hideBanner();
-  _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Continue speaking — we're still listening.");
-}
+async function _checkAnswerCompletion(now) {
+  if (_listenOnly || !_active || !_speechConfirmed || _completionCheckInFlight) return;
+  if (_sileroHumanSpeech() || _speechCandidateSince || _isCandidateSpeaking(_analyser ? _analyzeFrame() : null)) return;
+  if (now - _lastCompletionCheckTs < COMPLETION_DEBOUNCE_MS) return;
 
-function _resumeFromNoResponseWarning() {
-  if (!_active || !_isNoResponseWarningPhase()) return;
-  if (_bannerActionInFlight) return;
+  const silenceDur = _silenceSinceTs ? now - _silenceSinceTs : 0;
+  const silenceThresholdSec = _silenceMs() / 1000;
+  if (silenceDur < _silenceMs()) return;
 
-  _cancelSkipCountdown("continue_speaking_button");
-  _resetWarningCycleState("continue_speaking_button");
-  _startResponseTimers();
-  _vadLog("Waiting Timer reset", { reason: "continue_speaking" });
-  _setPhase(AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE, "Waiting for your response…");
-}
+  _completionCheckInFlight = true;
+  _lastCompletionCheckTs = now;
 
-function _canAutoSkipAfterCountdown() {
-  if (!_active) return false;
-  if (_sileroHumanSpeech()) return false;
-  if (_speechConfirmed) return false;
-  if (_speechCandidateSince > 0) return false;
-  if (_wordCount(_getCombinedCaptureText()) > 0) return false;
-  if (_confirmedSpeechMs >= WARNING_RESUME_SPEECH_MS) return false;
-  return true;
-}
+  try {
+    await flushWhisperSegments();
+  } catch (_) {
+    /* ignore */
+  }
 
-function _beginNoResponseWarning() {
-  if (!_active || _noResponseHandled) return;
-  if (_shouldBlockNoResponseWarning()) return;
-  _warningCount += 1;
-  _noResponseHandled = true;
-  _warningCycleId += 1;
-  _warningCountdownSpeechSince = 0;
-  _clearResponseWaitTimer();
-  _logAlways("WARNING", `Warning #${_warningCount} shown`);
-  _logInterview("Warning displayed", { warningCycleId: _warningCycleId, warningNumber: _warningCount });
-  _vadLog("No-response warning shown", { warningNumber: _warningCount });
+  const transcript = _getCombinedCaptureText();
+  if (!transcript && _confirmedSpeechMs < 800) {
+    _completionCheckInFlight = false;
+    return;
+  }
 
-  const cd = _cfg().no_response_countdown_sec || 3;
-  _setPhase(AUTO_ADVANCE_PHASE.NO_RESPONSE_WARNING, "No response detected. Please start speaking.");
-  _skipCountdownActive = true;
-  _vadEventLog("Waiting for response", { phase: "warning_countdown", seconds: cd, warningNumber: _warningCount });
-  _logInterview("Countdown started", { seconds: cd, warningCycleId: _warningCycleId, warningNumber: _warningCount });
-  _logAlways("WARNING", "Countdown started", { seconds: cd, warningNumber: _warningCount });
-  _startCountdown(cd, "no_response", () => {
-    void (async () => {
-      if (!_skipCountdownActive) return;
-      if (!_canAutoSkipAfterCountdown()) {
-        _logAlways("VAD", "Countdown expired but skip blocked — speech/transcript detected");
-        _resumeAnswerDuringWarning("countdown_speech_detected", null, Date.now());
-        return;
-      }
-      _skipCountdownActive = false;
-      _logInterview("Countdown completed", { warningNumber: _warningCount });
-
-      const maxWarnings = _maxWarningsBeforeFinalize();
-      if (_warningCount < maxWarnings) {
-        _logAlways("WARNING", `Warning #${_warningCount} ended — scheduling warning #${_warningCount + 1}`);
-        _scheduleNextWarningWait();
-        return;
-      }
-
-      if (_hasCapturableAnswer()) {
-        _logAlways("ANSWER", "Partial transcript detected");
-        _logAlways("ANSWER", "Saving transcript");
-        _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Saving your answer…");
-        await _triggerAutoSubmit("no_response_save_partial", { partial_answer: true });
-        return;
-      }
-
-      if (!_cfg().auto_skip_enabled) {
-        _noResponseHandled = false;
-        _scheduleNextWarningWait();
-        return;
-      }
-
-      _setPhase(AUTO_ADVANCE_PHASE.SKIPPED, "Question skipped — loading next question…");
-      _logInterview("Question skipped", { warningNumber: _warningCount });
-      await _triggerAutoSkip("Auto skip — no response after warnings");
-    })();
+  _logInterview("Transcript snapshot", {
+    transcript_preview: transcript.slice(0, 120),
+    transcript_len: transcript.length,
+    silence_sec: Number((silenceDur / 1000).toFixed(2)),
   });
+
+  let result = { status: "ANSWER_IN_PROGRESS", confidence: 0.5, source: "default" };
+  try {
+    const res = await apiFetch("/candidate/analyze-answer-completion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question_text: _turnMeta?.questionText || "",
+        transcript,
+        silence_duration_sec: silenceDur / 1000,
+        is_still_speaking: false,
+        silence_threshold_sec: silenceThresholdSec,
+      }),
+    });
+    if (res.ok) {
+      result = await res.json();
+    } else {
+      result = _heuristicCompletion(transcript, {
+        silenceDurationSec: silenceDur / 1000,
+        isStillSpeaking: false,
+        silenceThresholdSec,
+      });
+      _logInterview("Completion API error — heuristic fallback", { httpStatus: res.status });
+    }
+  } catch (err) {
+    result = _heuristicCompletion(transcript, {
+      silenceDurationSec: silenceDur / 1000,
+      isStillSpeaking: false,
+      silenceThresholdSec,
+    });
+    _logInterview("Completion API failed — heuristic fallback", { err: String(err?.message || err) });
+  } finally {
+    _completionCheckInFlight = false;
+  }
+
+  if (!_active) return;
+
+  _logInterview("GPT completion decision", {
+    status: result.status,
+    confidence: result.confidence,
+    source: result.source || "api",
+    transcript_len: transcript.length,
+  });
+  _vadEventLog("Answer completion", result);
+
+  if (result.status === "ANSWER_COMPLETE") {
+    const confirmMs = Math.max(0, Number(_cfg().confirmation_before_next_sec) || 0) * 1000;
+    _logInterview("Answer complete — advancing", {
+      trigger: "answer_complete",
+      confidence: result.confidence,
+      confirm_ms: confirmMs,
+    });
+    _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, confirmMs > 0 ? "Submitting…" : "Submitting…");
+    if (confirmMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, confirmMs));
+      if (!_active) return;
+    }
+    _logInterview("Auto submitted", { trigger: "answer_complete", confidence: result.confidence });
+    void _triggerAutoSubmit("answer_complete", { completion_confidence: result.confidence });
+    return;
+  }
+
+  _silenceSinceTs = now;
+  _logInterview("Answer in progress — continuing to listen", { confidence: result.confidence });
 }
 
 function _onSilenceDetected(now) {
-  if (!_active || _confirmationActive || !_speechConfirmed) return;
-
-  const silenceMs = (_cfg().silence_detection_sec || 3) * 1000;
-  const silenceDur = now - _silenceSinceTs;
-  if (silenceDur < silenceMs) return;
-
-  _vadLog("Silence Duration", { sec: Number((silenceDur / 1000).toFixed(1)) });
-  _vadEventLog("Silence detected", { sec: Number((silenceDur / 1000).toFixed(1)) });
-
-  if (!_answerMeetsMinimum()) {
-    _vadLog("Answer incomplete — resuming listen", {
-      words: _wordCount(_interimTranscript),
-      speechSec: Number((_confirmedSpeechMs / 1000).toFixed(1)),
-    });
-    _resetSpeechTracking();
-    _setPhase(AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE, "Keep speaking — we need a fuller answer.");
-    return;
-  }
-
-  _silenceSinceTs = _lastSpeechTs + silenceMs;
-  if (_cfg().confirmation_before_next_sec > 0) {
-    _beginConfirmationCountdown();
-  } else {
-    _vadEventLog("Answer complete", { autoSubmit: true });
-    _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Answer captured. Submitting…");
-    _triggerAutoSubmit("silence");
-  }
+  if (!_active || !_speechConfirmed) return;
+  void _checkAnswerCompletion(now);
 }
 
 function _processSpeechCandidate(features, isCandidate, now) {
-  if (_skipCountdownActive || _isNoResponseWarningPhase() || (_noResponseHandled && !_speechConfirmed)) {
-    const signal = _warningResumeSignal(features, now);
-    if (signal) {
-      _resumeAnswerDuringWarning(signal, features, now);
+  if (_isCandidateSpeaking(features)) {
+    if (_silenceSinceTs) {
+      _silenceSinceTs = 0;
+      _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Listening…");
     }
+  }
+
+  if (!_speechConfirmed && (_phase === AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE || _initialWaitHandle)) {
+    if (isCandidate || _sileroHumanSpeech()) {
+      if (!_speechCandidateSince) {
+        _speechCandidateSince = now;
+        _clearTimer("_initialWaitHandle");
+        _logInterview("Speech candidate detected — initial wait cancelled");
+      }
+      if (now - _speechCandidateSince >= _speechConfirmMs()) {
+        _onSpeechDetectedDuringWait(now);
+      }
+      return;
+    }
+    _speechCandidateSince = 0;
+    return;
   }
 
   if (isCandidate) {
     if (!_speechCandidateSince) _speechCandidateSince = now;
     if (!_speechConfirmed && now - _speechCandidateSince >= _speechConfirmMs()) {
-      if (_confirmationActive) _cancelConfirmation();
-      if (_noResponseHandled || _skipCountdownActive || _isNoResponseWarningPhase()) {
-        _resumeAnswerDuringWarning("speech_confirmed", features, now);
-        return;
-      }
       _confirmSpeech(now);
     }
     if (_speechConfirmed) {
@@ -957,9 +757,7 @@ function _processSpeechCandidate(features, isCandidate, now) {
     if (!_belowHangoverSince) _belowHangoverSince = now;
     if (now - _belowHangoverSince >= SPEECH_END_HANGOVER_MS) {
       _endSpeech(now);
-      if (!_confirmationActive) {
-        _onSilenceDetected(now);
-      }
+      _onSilenceDetected(now);
     }
   }
 }
@@ -971,56 +769,43 @@ function _vadLoop() {
 
   if (now - _lastDebugLevelTs >= DEBUG_LOG_THROTTLE_MS) {
     _lastDebugLevelTs = now;
-    const levelDetail = {
+    _vadLog("Audio Level", {
       rms: Number(features.rms.toFixed(4)),
       band: Number(features.bandRatio.toFixed(3)),
-      zcr: Number(features.zcr.toFixed(3)),
-      threshold: Number(_speechThreshold().toFixed(4)),
       silero: _sileroHumanSpeech(),
       speechConfirmed: _speechConfirmed,
-    };
-    _vadLog("Audio Level", levelDetail);
+    });
   }
 
   if (!_calibrated) {
     _calibrationSamples.push(features.rms);
-    if (now >= _calibrationUntil) {
-      _finishCalibration();
+    if (now >= _calibrationUntil) _finishCalibration();
+    if (_wordCount(_getCombinedCaptureText()) > 0 || _sileroHumanSpeech()) {
+      _onSpeechDetectedDuringWait(now);
     }
     _vadHandle = requestAnimationFrame(_vadLoop);
     return;
   }
 
-  const isCandidate = _isSpeechCandidate(features);
-  _processSpeechCandidate(features, isCandidate, now);
-
-  if (_skipCountdownActive || _isNoResponseWarningPhase()) {
-    const lateSignal = _warningResumeSignal(features, now);
-    if (lateSignal) {
-      _resumeAnswerDuringWarning(lateSignal, features, now);
-    }
-  }
+  _processSpeechCandidate(features, _isSpeechCandidate(features), now);
 
   if (
-    _calibrated &&
-    !_confirmationActive &&
-    !_noResponseHandled &&
-    _phase === AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE &&
-    !_shouldBlockNoResponseWarning()
+    _speechConfirmed &&
+    _silenceSinceTs &&
+    !_completionCheckInFlight &&
+    !_speechCandidateSince &&
+    !_isCandidateSpeaking(features)
   ) {
-    const waitMs = (_cfg().initial_response_wait_sec || 5) * 1000;
-    if (now - _turnStartTs >= waitMs && !_responseWaitHandle) {
-      _vadLog("Waiting Timer expired (vad loop backup)", {
-        waitingSec: ((now - _turnStartTs) / 1000).toFixed(1),
-      });
-      _beginNoResponseWarning();
+    const silenceDur = now - _silenceSinceTs;
+    if (silenceDur >= _silenceMs()) {
+      void _checkAnswerCompletion(now);
     }
   }
 
   if (_cfg().voice_commands_enabled && _interimTranscript && _matchesVoiceCommand(_interimTranscript)) {
-    if (_answerMeetsMinimum() || _speechConfirmed) {
-      _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Voice command detected. Submitting…");
-      _triggerAutoSubmit("voice_command");
+    if (_speechConfirmed || _wordCount(_getCombinedCaptureText()) >= 2) {
+      _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Submitting…");
+      void _triggerAutoSubmit("voice_command");
       return;
     }
   }
@@ -1043,11 +828,13 @@ function _startSpeechRecognition() {
       }
       _interimTranscript = text.trim();
       if (_callbacks?.onInterimTranscript) _callbacks.onInterimTranscript(_interimTranscript);
-      _onTranscriptDuringWarning();
+      if (!_speechConfirmed && _wordCount(_interimTranscript) > 0) {
+        _onSpeechDetectedDuringWait(Date.now());
+      }
       if (_cfg().voice_commands_enabled && _matchesVoiceCommand(_interimTranscript)) {
-        if (_answerMeetsMinimum() || _speechConfirmed) {
-          _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Voice command detected. Submitting…");
-          _triggerAutoSubmit("voice_command");
+        if (_speechConfirmed || _wordCount(_interimTranscript) >= 2) {
+          _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Submitting…");
+          void _triggerAutoSubmit("voice_command");
         }
       }
     };
@@ -1073,12 +860,13 @@ export function applyAutoAdvanceConfig(payload = {}) {
   state.autoAdvance = {
     enabled: !!(aa.enabled ?? payload.auto_advance_enabled),
     initial_response_wait_sec: Number(aa.initial_response_wait_sec ?? aa.response_wait_timeout) || 5,
-    silence_detection_sec: Number(aa.silence_detection_sec ?? aa.silence_detection_timeout) || 3,
+    no_response_extra_wait_sec: Number(aa.no_response_extra_wait_sec ?? 2.5),
+    silence_detection_sec: Number(aa.silence_detection_sec ?? aa.silence_detection_timeout) || 2.5,
     no_response_countdown_sec: Number(aa.no_response_countdown_sec) || 3,
     max_no_response_warnings: Number(aa.max_no_response_warnings) || 3,
     auto_skip_enabled: aa.auto_skip_enabled !== false,
     voice_commands_enabled: aa.voice_commands_enabled !== false,
-    confirmation_before_next_sec: Number(aa.confirmation_before_next_sec ?? 3),
+    confirmation_before_next_sec: Number(aa.confirmation_before_next_sec ?? 2.5),
     minimum_answer_words: Number(aa.minimum_answer_words) || 5,
     minimum_speech_duration_sec: Number(aa.minimum_speech_duration_sec) || 2,
     speech_energy_threshold: Number(aa.speech_energy_threshold) || 0.038,
@@ -1092,140 +880,89 @@ export function getAutoAdvanceCaptureSnapshot() {
     active: _active,
     capture_text: captureText,
     interim_transcript: captureText || _interimTranscript,
+    whisper_transcript: getWhisperSegmentTranscript(),
+    speech_probability: getSileroSpeechProbability(),
     speech_duration_ms: _confirmedSpeechMs || 0,
     confirmed_speech_ms: _confirmedSpeechMs || 0,
     word_count: _wordCount(captureText || _interimTranscript),
     speech_confirmed: _speechConfirmed,
     silero_speech_active: _sileroHumanSpeech(),
-    warning_count: _warningCount,
   };
 }
 
 export function resetAutoAdvanceUi() {
   stopAutoAdvanceTurn();
-  _hideBanner();
 }
 
 export function stopAutoAdvanceTurn() {
   _active = false;
   _turnSeq += 1;
-  _confirmationActive = false;
   _resetSpeechTracking();
   _interimTranscript = "";
-  _noResponseHandled = false;
-  _bannerActionInFlight = false;
   _calibrated = false;
   _calibrationSamples = [];
-  _skipCountdownSeq += 1;
-  _skipCountdownActive = false;
-  _clearTimers();
-  _clearResponseTimers();
-  _hardFallbackDeadline = 0;
-  _warningCountdownSpeechSince = 0;
-  _hideBanner();
+  _clearAllTimers();
   _stopVad();
   void stopSileroVad();
   _sileroActive = false;
   _stopSpeechRecognition();
+  resetWhisperSegments();
   _callbacks = null;
   _turnMeta = null;
+  _listenOnly = false;
   _phase = AUTO_ADVANCE_PHASE.IDLE;
   _hideDebugPanel();
+}
+
+export async function flushAutoAdvanceWhisperTranscription() {
+  const text = await flushWhisperSegments();
+  if (text && _callbacks?.onInterimTranscript) _callbacks.onInterimTranscript(text);
+  return text;
+}
+
+export function autoAdvanceWhisperBusy() {
+  return whisperTranscriptionInFlight();
 }
 
 export function isAutoAdvanceActive() {
   return _active && _enabled();
 }
 
-export function cancelAutoAdvancePopup() {
-  if (_bannerActionInFlight) return;
-  if (_isAnswerCapturedPhase()) {
-    _cancelConfirmation();
-    return;
-  }
-  if (_isNoResponseWarningPhase()) {
-    _resumeFromNoResponseWarning();
-    return;
-  }
-  _cancelConfirmation();
-}
+/** @deprecated Banner removed — no-op for compatibility */
+export function cancelAutoAdvancePopup() {}
 
-export function confirmAutoAdvanceNow() {
-  if (!_active || _bannerActionInFlight) return;
+/** @deprecated Banner removed — manual skip uses candidateSkipBtn */
+export function confirmAutoAdvanceNow() {}
 
-  _bannerActionInFlight = true;
-  _setBannerButtonsLoading(true);
-  _clearTimers();
-  _confirmationActive = false;
-
-  if (_isNoResponseWarningPhase()) {
-    if (_hasCapturableAnswer()) {
-      _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Saving your answer…");
-      void _triggerAutoSubmit("manual_skip_with_answer", { partial_answer: true });
-      return;
-    }
-    _setPhase(AUTO_ADVANCE_PHASE.SKIPPED, "Skipping question…");
-    void _triggerAutoSkip("Candidate skipped — no response");
-    return;
-  }
-
-  _setPhase(AUTO_ADVANCE_PHASE.SUBMITTING, "Submitting your answer…");
-  _triggerAutoSubmit("manual_immediate");
-}
-
-/** @deprecated Use cancelAutoAdvancePopup */
+/** @deprecated */
 export function cancelAutoAdvanceConfirmation() {
   cancelAutoAdvancePopup();
 }
 
-/** @deprecated Use confirmAutoAdvanceNow */
+/** @deprecated */
 export function submitAutoAdvanceImmediately() {
   confirmAutoAdvanceNow();
 }
 
-/**
- * External activity hook (candidate recorder transcript, mic open, etc.).
- * Cancels no-response countdown immediately — works in manual and dynamic modes.
- */
+/** External transcript activity hook (manual/dynamic modes). */
 export function notifyAutoAdvanceAnswerActivity(source, detail = {}) {
   if (!_active) return;
-  if (!_skipCountdownActive && !_isNoResponseWarningPhase() && !_noResponseHandled) return;
-
   const text = String(detail.text || _interimTranscript || "").trim();
   if (source === "transcript" && _wordCount(text) > 0) {
     _interimTranscript = text;
     if (_callbacks?.onInterimTranscript) _callbacks.onInterimTranscript(_interimTranscript);
-    _resumeAnswerDuringWarning("external_transcript", null, Date.now());
+    if (!_speechConfirmed) _onSpeechDetectedDuringWait(Date.now());
   }
 }
 
-export function initAutoAdvanceBannerUi() {
-  if (_bannerUiBound) return;
-  _bannerUiBound = true;
+/** @deprecated Banner removed — no-op */
+export function initAutoAdvanceBannerUi() {}
 
-  const continueBtn = document.getElementById("autoAdvanceContinueBtn");
-  const confirmBtn = document.getElementById("autoAdvanceConfirmBtn");
-
-  continueBtn?.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    cancelAutoAdvancePopup();
-  });
-
-  confirmBtn?.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    confirmAutoAdvanceNow();
-  });
-}
-
-/**
- * Begin smart auto-advance for the current question turn.
- */
 export function beginAutoAdvanceTurn(opts = {}) {
   stopAutoAdvanceTurn();
-  if (!_enabled() || opts.isWarmup) return;
+  if (!_enabled()) return;
 
+  _listenOnly = !!(opts.listenOnly || opts.isWarmup);
   const turnSeq = ++_turnSeq;
   _active = true;
   _callbacks = opts;
@@ -1236,29 +973,28 @@ export function beginAutoAdvanceTurn(opts = {}) {
   _calibrated = false;
   _calibrationSamples = [];
   _calibrationUntil = Date.now() + CALIBRATION_MS;
-  _turnStartTs = Date.now();
-  _warningCount = 0;
   _resetSpeechTracking();
+  resetWhisperSegments();
   _phase = AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE;
 
   _ensureDebugPanel();
   _vadEventLog("Waiting for response", {
     questionIndex: opts.questionIndex,
-    timeoutSec: _cfg().initial_response_wait_sec || 5,
+    initialWaitSec: _initialWaitMs() / 1000,
   });
-  _vadLog("Waiting Timer started", {
-    timeoutSec: _cfg().initial_response_wait_sec || 5,
-  });
-
-  _setPhase(AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE, "Waiting for your response…");
-  _logInterview("Waiting for response started", {
-    waitSec: _cfg().initial_response_wait_sec || 5,
-  });
-  _startResponseTimers();
+  _setPhase(AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE, "Listening…");
+  if (_listenOnly) {
+    _turnStartTs = Date.now();
+    _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Listening…");
+  } else {
+    _turnStartTs = Date.now();
+    // Initial no-response timer starts after mic calibration (see _finishCalibration).
+  }
 
   const stream = opts.audioStream;
   if (!stream || !stream.getAudioTracks?.().length) {
-    console.warn("[INTERVIEW] No audio stream — hard silence timers still active");
+    console.warn("[INTERVIEW] No audio stream — silence timers still active");
+    if (!_listenOnly) _startInitialWaitTimers();
     return;
   }
 
@@ -1275,22 +1011,47 @@ export function beginAutoAdvanceTurn(opts = {}) {
     _timeBuf = new Uint8Array(_analyser.fftSize);
     _freqBuf = new Uint8Array(_analyser.frequencyBinCount);
     _vadHandle = requestAnimationFrame(_vadLoop);
-    _startSpeechRecognition();
+    if (!_useVadWhisperPipeline()) {
+      _startSpeechRecognition();
+    }
     void startSileroVad(stream, {
       onSpeechStart: () => {
         _sileroActive = true;
         const now = Date.now();
-        if (!_sileroSpeechSince) _sileroSpeechSince = now;
-        if (_skipCountdownActive || _isNoResponseWarningPhase()) {
-          if (!_warningCountdownSpeechSince) _warningCountdownSpeechSince = now;
-          return;
+        _clearTimer("_initialWaitHandle");
+        if (_silenceSinceTs) {
+          _silenceSinceTs = 0;
+          _setPhase(AUTO_ADVANCE_PHASE.LISTENING, "Listening…");
         }
-        // Do not confirm speech from Silero alone during initial wait — FFT must agree.
+        if (!_speechConfirmed) {
+          if (_phase === AUTO_ADVANCE_PHASE.WAITING_FOR_RESPONSE || _initialWaitHandle) {
+            _onSpeechDetectedDuringWait(now);
+          } else if (sileroProbabilityAcceptable() && _calibrated) {
+            _confirmSpeech(now);
+          }
+        }
       },
       onSpeechEnd: () => {
         _sileroActive = false;
-        _sileroSpeechSince = 0;
-        _vadEventLog("Silence detected", { source: "silero" });
+        if (_speechConfirmed) {
+          const now = Date.now();
+          if (!_silenceSinceTs) _silenceSinceTs = now;
+          _lastSpeechTs = now;
+        }
+      },
+      onSpeechEndAudio: (audio) => {
+        if (!_useVadWhisperPipeline()) return;
+        if (!sileroProbabilityAcceptable(0.75)) return;
+        void enqueueWhisperSegment(audio).then(() => {
+          const text = getWhisperSegmentTranscript();
+          if (text) {
+            _interimTranscript = text;
+            if (_callbacks?.onInterimTranscript) _callbacks.onInterimTranscript(text);
+            if (!_speechConfirmed && _wordCount(text) > 0) {
+              _onSpeechDetectedDuringWait(Date.now());
+            }
+          }
+        });
       },
     });
   } catch (err) {

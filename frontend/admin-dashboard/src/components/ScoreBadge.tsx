@@ -22,7 +22,7 @@ export function ScoreBadge({ score }: { score: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
 
-  const cls = val >= 80 ? "text-emerald-500" : val >= 70 ? "text-amber-500" : "text-rose-500";
-  return <span className={`text-lg font-black ${cls}`}>{val}%</span>;
+  const cls = val >= 80 ? "text-success" : val >= 70 ? "text-warning" : "text-danger";
+  return <span className={`text-display text-lg font-bold tabular-nums ${cls}`}>{val}%</span>;
 }
 

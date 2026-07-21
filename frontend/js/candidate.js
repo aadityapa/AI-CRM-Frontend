@@ -22,9 +22,11 @@ import {
 } from "./interview_time_warnings.js";
 import {
   applyAutoAdvanceConfig,
+  autoAdvanceWhisperBusy,
   beginAutoAdvanceTurn,
   cancelAutoAdvancePopup,
   confirmAutoAdvanceNow,
+  flushAutoAdvanceWhisperTranscription,
   getAutoAdvanceCaptureSnapshot,
   notifyAutoAdvanceAnswerActivity,
   resetAutoAdvanceUi,
@@ -399,19 +401,14 @@ function _setInterviewPhase(phase) {
 const AUTO_ADVANCE_PHASE_LABELS = {
   waiting_for_response: "Waiting For Response...",
   listening: "Listening...",
-  answer_captured: "Answer Captured...",
   moving_next: "Moving To Next Question...",
-  no_response_warning: "No Response Detected...",
-  no_response: "No Response Detected...",
   question_skipped: "Question Skipped...",
 };
 
 const _AUTO_ADVANCE_TO_INTERVIEW_PHASE = {
   waiting_for_response: "waiting_for_response",
   listening: "listening",
-  answer_captured: "answer_captured",
   moving_next: "moving_next",
-  no_response_warning: "warning_countdown",
   question_skipped: "question_skipped",
   skipped: "question_skipped",
 };
@@ -428,16 +425,14 @@ function _onAutoAdvancePhase(phase, message) {
 }
 
 function _startAutoAdvanceForTurn(isWarmup) {
-  if (isWarmup || !recorderStream) return;
-  if (!state.autoAdvance?.enabled) {
-    console.warn("[INTERVIEW] Auto-advance disabled — no-response warning will not run");
-    return;
-  }
+  if (!recorderStream) return;
+  if (!state.autoAdvance?.enabled) return;
   beginAutoAdvanceTurn({
     audioStream: recorderStream,
     questionIndex: state.currentQuestionIndex,
     questionText: state.currentQuestion,
     isWarmup,
+    listenOnly: !!isWarmup,
     getCaptureText: () => spokenAnswerText,
     onPhase: _onAutoAdvancePhase,
     onInterimTranscript: (text) => {
@@ -589,8 +584,10 @@ function _setSpokenAnswer(text) {
       words: spokenAnswerText.split(/\s+/).filter(Boolean).length,
       preview: spokenAnswerText.slice(0, 120),
     });
-    if (_pendingManualSubmit && !_answerSubmitInFlight) {
+    if (_pendingManualSubmit) {
       console.info("[SUBMIT] Auto-submitting after transcript arrived");
+      _pendingManualSubmit = false;
+      _answerSubmitInFlight = false;
       void submitCandidateAnswer(false, true);
     }
   }
@@ -602,7 +599,7 @@ function _setSpokenAnswer(text) {
 /** Read spoken transcript only (voice-only interview flow). */
 function _collectPendingAnswerText() {
   const snap = getAutoAdvanceCaptureSnapshot();
-  return String(spokenAnswerText || snap.capture_text || snap.interim_transcript || "").trim();
+  return String(spokenAnswerText || snap.capture_text || snap.interim_transcript || snap.whisper_transcript || "").trim();
 }
 
 /**
@@ -698,7 +695,8 @@ function _delay(ms) {
 /** Stop mic and wait for transcription, bounded by FINALIZE_GRACE_MS. */
 async function waitForMicTranscriptionIdleWithTimeout(maxMs = FINALIZE_GRACE_MS) {
   const recorderActive = activeRecorder && activeRecorder.state !== "inactive";
-  if (!isMicListening && !recorderActive && !_transcriptionInFlight) return;
+  const whisperBusy = autoAdvanceWhisperBusy();
+  if (!isMicListening && !recorderActive && !_transcriptionInFlight && !whisperBusy) return;
   const waitPromise = new Promise((resolve) => {
     _micStopDoneResolver = resolve;
     try {
@@ -709,6 +707,7 @@ async function waitForMicTranscriptionIdleWithTimeout(maxMs = FINALIZE_GRACE_MS)
     }
   });
   await Promise.race([waitPromise, _delay(maxMs)]);
+  await _finalizeMicTranscription();
 }
 
 /**
@@ -927,6 +926,37 @@ function _mergeVoiceTranscript(existing, incoming) {
   return `${a} ${b}`.replace(/\s+/g, " ").trim();
 }
 
+/** Full-blob STT when VAD/Whisper segments produced no text (warmup or missed VAD). */
+async function _transcribeRecordedChunksFallback() {
+  const blob = new Blob(recordedChunks, { type: "audio/webm" });
+  if (!blob.size) return "";
+  try {
+    console.info("[candidate-stt] blob_fallback", { bytes: blob.size });
+    return await _transcribeCapturedAudio(blob);
+  } catch (err) {
+    console.warn("[candidate-stt] blob_fallback_failed", err?.message || err);
+    return "";
+  }
+}
+
+/** Whisper segments first; fall back to recorded webm blob when empty. */
+async function _finalizeMicTranscription() {
+  let text = "";
+  const useVadWhisper = state.autoAdvance?.enabled && state.vadWhisperPipeline !== false;
+  if (useVadWhisper) {
+    text = String((await flushAutoAdvanceWhisperTranscription()) || "").trim();
+  }
+  if (!text) {
+    text = String((await _transcribeRecordedChunksFallback()) || "").trim();
+  }
+  if (text) {
+    const merged = _mergeVoiceTranscript(spokenAnswerText, text);
+    _setSpokenAnswer(merged);
+    return merged;
+  }
+  return String(spokenAnswerText || "").trim();
+}
+
 function _stopMicInputInternal() {
   stopAutoAdvanceTurn();
   if (activeRecorder && activeRecorder.state !== "inactive") {
@@ -953,16 +983,21 @@ function _stopMicInputInternal() {
 /** Wait until MediaRecorder stop + server transcription finishes (used before /answer or /submit). */
 async function waitForMicTranscriptionIdle() {
   const recorderActive = activeRecorder && activeRecorder.state !== "inactive";
-  if (!isMicListening && !recorderActive && !_transcriptionInFlight) return;
+  const whisperBusy = autoAdvanceWhisperBusy();
+  if (!isMicListening && !recorderActive && !_transcriptionInFlight && !whisperBusy) return;
   await new Promise((resolve) => {
     _micStopDoneResolver = resolve;
     try {
       if (recorderActive) activeRecorder.stop();
-      else if (!_transcriptionInFlight) resolve();
+      else if (!_transcriptionInFlight && !whisperBusy) resolve();
     } catch (_) {
       resolve();
     }
   });
+  if (state.autoAdvance?.enabled && state.vadWhisperPipeline !== false) {
+    const text = await flushAutoAdvanceWhisperTranscription();
+    if (text) _setSpokenAnswer(_mergeVoiceTranscript(spokenAnswerText, text));
+  }
 }
 
 /**
@@ -1040,37 +1075,44 @@ async function startMicRecordingAuto() {
         return;
       }
       try {
-        const blob = new Blob(recordedChunks, { type: "audio/webm" });
-        if (!blob.size) {
-          try {
-            console.warn("[candidate-stt] speech_received_empty_blob");
-          } catch (_) {
-            /* ignore */
-          }
+        _transcriptionInFlight = true;
+        const useVadWhisper = state.autoAdvance?.enabled && state.vadWhisperPipeline !== false;
+        if (useVadWhisper) {
+          const merged = await _finalizeMicTranscription();
           const st = document.getElementById("candidateStatus");
-          if (st) st.innerText = "";
+          if (st) st.innerText = merged ? "Transcription ready." : "";
         } else {
-          _transcriptionInFlight = true;
-          try {
-            console.info("[candidate-stt] speech_received", { bytes: blob.size });
-          } catch (_) {
-            /* ignore */
+          const blob = new Blob(recordedChunks, { type: "audio/webm" });
+          if (!blob.size) {
+            try {
+              console.warn("[candidate-stt] speech_received_empty_blob");
+            } catch (_) {
+              /* ignore */
+            }
+            const st = document.getElementById("candidateStatus");
+            if (st) st.innerText = "";
+          } else {
+            try {
+              console.info("[candidate-stt] speech_received", { bytes: blob.size });
+            } catch (_) {
+              /* ignore */
+            }
+            const transcribed = await _transcribeCapturedAudio(blob);
+            const merged = _mergeVoiceTranscript(spokenAnswerText, transcribed);
+            try {
+              console.info("[candidate-stt] transcript_generated", { len: merged.length, preview: merged.slice(0, 120) });
+            } catch (_) {
+              /* ignore */
+            }
+            _setSpokenAnswer(merged);
+            try {
+              console.info("[candidate-stt] transcript_stored");
+            } catch (_) {
+              /* ignore */
+            }
+            const st = document.getElementById("candidateStatus");
+            if (st) st.innerText = merged ? "Transcription ready. Review and tap Send Response." : "";
           }
-          const transcribed = await _transcribeCapturedAudio(blob);
-          const merged = _mergeVoiceTranscript(spokenAnswerText, transcribed);
-          try {
-            console.info("[candidate-stt] transcript_generated", { len: merged.length, preview: merged.slice(0, 120) });
-          } catch (_) {
-            /* ignore */
-          }
-          _setSpokenAnswer(merged);
-          try {
-            console.info("[candidate-stt] transcript_stored");
-          } catch (_) {
-            /* ignore */
-          }
-          const st = document.getElementById("candidateStatus");
-          if (st) st.innerText = merged ? "Transcription ready. Review and tap Send Response." : "";
         }
       } catch (err) {
         const st = document.getElementById("candidateStatus");
@@ -1215,6 +1257,13 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   state.currentQuestion = _normalizeQuestionPhrasing((data.question || "").replace(/\s+/g, " ").trim());
 
   if (!state.currentQuestion && data.message === "Interview completed") {
+    const idx = Number(data.index) || 0;
+    const total = Number(data.total) || 0;
+    if (total > 0 && idx < total) {
+      console.warn("[FLOW] Premature completion — fetching next question", { idx, total });
+      await loadQuestion({ fastTransition: true });
+      return;
+    }
     if (statusEl) statusEl.innerText = "Finalizing your interview…";
     _setInterviewPhase("evaluating");
     await submitInterview({});
@@ -1241,16 +1290,15 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
     _setResponseProcessingUi(false, "");
     _setSendResponseEnabled(false);
     _setInterviewPhase("ai_speaking");
-    void _speakQuestionAudioOnly(rendered).then(async () => {
-      if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
-      _setSendResponseEnabled(true);
-      _setInterviewPhase("waiting_for_answer");
-      try {
-        await startMicRecordingAuto();
-      } catch (_) {
-        /* startMicRecordingAuto updates status */
-      }
-    });
+    await _speakQuestionAudioOnly(rendered);
+    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    _setSendResponseEnabled(true);
+    _setInterviewPhase("waiting_for_answer");
+    try {
+      await startMicRecordingAuto();
+    } catch (_) {
+      /* startMicRecordingAuto updates status */
+    }
     return;
   }
 
@@ -1273,17 +1321,18 @@ async function _fetchNextQuestionPayload(timeoutMs = 30000) {
 }
 
 export async function loadQuestion(options = {}) {
-  if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+  if (_interviewFlowStopped || state.endingInterview || state.redirecting) return false;
   const loadSeq = ++_questionLoadSeq;
   const prefetched = options.prefetched || null;
   const fastTransition = !!options.fastTransition;
+  const throwOnError = !!options.throwOnError;
   const isFirstQuestion = !prefetched && !state.currentQuestion;
   try {
     console.info("[QUESTION] Loading first question", { isFirstQuestion, fastTransition });
     if (!prefetched && isMicListening && !isFirstQuestion) {
       await waitForMicTranscriptionIdle();
     }
-    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return false;
     _cancelActiveSpeech();
     lastSpokenQuestion = "";
     _stopMicInputInternal();
@@ -1291,43 +1340,101 @@ export async function loadQuestion(options = {}) {
     _setInterviewPhase("generating_next");
 
     const data = prefetched || (await _fetchNextQuestionPayload(isFirstQuestion ? 45000 : 30000));
+    if (data?.error) {
+      throw new Error(String(data.error));
+    }
     console.info("[QUESTION] Question loaded successfully", {
       index: data.index,
       hasQuestion: !!(data.question || "").trim(),
     });
     await _transitionToNextQuestion(data, loadSeq, { fastTransition });
     console.info("[INTERVIEW] Active");
+    return true;
   } catch (err) {
     console.error("[QUESTION] Failed", { message: err?.message || String(err) });
-    if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    if (_interviewFlowStopped || state.endingInterview || state.redirecting) return false;
     const questionEl = document.getElementById("candidateQuestion");
     if (questionEl) questionEl.innerText = `Error: ${err.message}`;
     _setResponseProcessingUi(false, `Error: ${err.message}`);
     _setSendResponseEnabled(true);
+    if (throwOnError) throw err;
+    return false;
   }
 }
 
-function _hasCapturableAnswerContent(snapshot = null) {
+function _hasCapturableAnswerContent(snapshot = null, meta = null) {
   const snap = snapshot || getAutoAdvanceCaptureSnapshot();
-  const text = String(spokenAnswerText || snap.capture_text || snap.interim_transcript || "").trim();
-  const speechMs = Number(snap.speech_duration_ms || snap.confirmed_speech_ms || 0);
-  const wordCount = Number(snap.word_count || 0) || text.split(/\s+/).filter(Boolean).length;
+  const metaText = _transcriptFromAutoAdvanceMeta(meta);
+  const text = String(spokenAnswerText || metaText || snap.capture_text || snap.interim_transcript || snap.whisper_transcript || "").trim();
+  const speechMs = Number(snap.speech_duration_ms || snap.confirmed_speech_ms || meta?.speech_duration_ms || meta?.confirmed_speech_ms || 0);
+  const wordCount = Number(snap.word_count || meta?.word_count || 0) || text.split(/\s+/).filter(Boolean).length;
   return text.length > 0 || speechMs >= 1000 || wordCount > 0;
+}
+
+function _transcriptFromAutoAdvanceMeta(meta) {
+  if (!meta || typeof meta !== "object") return "";
+  return String(meta.capture_text || meta.interim_transcript || meta.transcript || "").trim();
+}
+
+async function _finalizeSkipTranscriptCapture() {
+  const hasRecorderAudio = isMicListening || (activeRecorder && activeRecorder.state !== "inactive") || recordedChunks.length > 0;
+  if (!hasRecorderAudio && !autoAdvanceWhisperBusy() && String(spokenAnswerText || "").trim()) {
+    return _collectPendingAnswerText();
+  }
+  if (state.autoAdvance?.enabled && state.vadWhisperPipeline !== false) {
+    const flushed = String((await flushAutoAdvanceWhisperTranscription()) || "").trim();
+    if (flushed) _setSpokenAnswer(_mergeVoiceTranscript(spokenAnswerText, flushed));
+  }
+  const deadline = Date.now() + 4000;
+  while (autoAdvanceWhisperBusy() && Date.now() < deadline) {
+    await _delay(80);
+    const flushed = String((await flushAutoAdvanceWhisperTranscription()) || "").trim();
+    if (flushed) _setSpokenAnswer(_mergeVoiceTranscript(spokenAnswerText, flushed));
+  }
+  if (!String(spokenAnswerText || "").trim() && recordedChunks.length > 0) {
+    const recovered = await _finalizeMicTranscription();
+    if (recovered) _setSpokenAnswer(recovered);
+  }
+  return _collectPendingAnswerText();
 }
 
 export async function submitCandidateAnswer(forceSkip = false, _retryAfterTranscription = false, options = {}) {
   const skipRequested = forceSkip === true;
-  const captureSnapshot = getAutoAdvanceCaptureSnapshot();
-  let explicitSkip = skipRequested;
   let autoAdvanceMeta = options.autoAdvanceMeta || null;
 
+  if (_answerSubmitInFlight || _submitInterviewInFlight || _interviewFlowStopped || state.endingInterview || state.redirecting) {
+    console.warn("[SUBMIT] Ignored — interview busy or submit in flight");
+    return;
+  }
+
+  if (skipRequested && !_retryAfterTranscription) {
+    const finalized = await _finalizeSkipTranscriptCapture();
+    if (finalized) {
+      console.info("[SKIP] Transcript finalized before skip decision", {
+        question_index: state.currentQuestionIndex,
+        transcript_len: finalized.length,
+        preview: finalized.slice(0, 120),
+      });
+    }
+  }
+
+  const captureSnapshot = getAutoAdvanceCaptureSnapshot();
+  let explicitSkip = skipRequested;
+
   if (skipRequested) {
-    console.info("[SKIP] Skip clicked");
-    if (_hasCapturableAnswerContent(captureSnapshot)) {
-      console.info("[SKIP] Transcript exists");
-      console.info("[SKIP] Converting skip into answered question");
+    console.info("[SKIP] Skip clicked", {
+      question_index: state.currentQuestionIndex,
+      hasTranscript: !!String(spokenAnswerText || "").trim(),
+    });
+    if (_hasCapturableAnswerContent(captureSnapshot, autoAdvanceMeta)) {
+      console.info("[SKIP] Transcript exists — converting skip into answered question", {
+        question_index: state.currentQuestionIndex,
+        transcript_len: String(spokenAnswerText || _transcriptFromAutoAdvanceMeta(autoAdvanceMeta) || captureSnapshot.capture_text || "").length,
+      });
       explicitSkip = false;
-      const snapText = String(captureSnapshot.capture_text || captureSnapshot.interim_transcript || "").trim();
+      const snapText = String(
+        spokenAnswerText || _transcriptFromAutoAdvanceMeta(autoAdvanceMeta) || captureSnapshot.capture_text || captureSnapshot.interim_transcript || "",
+      ).trim();
       if (!String(spokenAnswerText || "").trim() && snapText) _setSpokenAnswer(snapText);
       if (!autoAdvanceMeta) {
         autoAdvanceMeta = {
@@ -1336,6 +1443,14 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
           partial_answer: true,
           auto_submitted: false,
           skipped: false,
+        };
+      } else {
+        autoAdvanceMeta = {
+          ...autoAdvanceMeta,
+          partial_answer: true,
+          auto_submitted: false,
+          skipped: false,
+          trigger: autoAdvanceMeta.trigger || "skip_with_answer",
         };
       }
     }
@@ -1346,15 +1461,12 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     skipRequested,
     retryAfterTranscription: _retryAfterTranscription,
     hasTranscript: !!String(spokenAnswerText || "").trim(),
+    question_index: state.currentQuestionIndex,
     inFlight: _answerSubmitInFlight,
   });
-  if (_answerSubmitInFlight || _submitInterviewInFlight || _interviewFlowStopped || state.endingInterview || state.redirecting) {
-    console.warn("[SUBMIT] Ignored — interview busy or submit in flight");
-    return;
-  }
   _pendingManualSubmit = false;
-  stopAutoAdvanceTurn();
   _answerSubmitInFlight = true;
+  stopAutoAdvanceTurn();
   const statusEl = document.getElementById("candidateStatus");
 
   if (explicitSkip) {
@@ -1364,12 +1476,13 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
   } else {
     _bypassTranscription = false;
     _logTurnEvent("action_taken", { action: "send", skipped: false });
-    const existingTranscript = String(spokenAnswerText || "").trim();
+    const existingTranscript = _collectPendingAnswerText();
     const recorderActive = activeRecorder && activeRecorder.state !== "inactive";
     const awaitingTranscript = isMicListening || recorderActive || _transcriptionInFlight;
     if (existingTranscript) {
+      if (!String(spokenAnswerText || "").trim()) _setSpokenAnswer(existingTranscript);
       if (recorderActive || isMicListening) {
-        void waitForMicTranscriptionIdleWithTimeout(8000);
+        await waitForMicTranscriptionIdleWithTimeout(8000);
       }
     } else if (awaitingTranscript) {
       _pendingManualSubmit = true;
@@ -1378,6 +1491,10 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       _setInterviewPhase("evaluating");
       console.info("[SUBMIT] Processing answer — waiting for transcript");
       await waitForMicTranscriptionIdleWithTimeout(8000);
+      if (!_pendingManualSubmit) {
+        _answerSubmitInFlight = false;
+        return;
+      }
       _pendingManualSubmit = false;
     }
   }
@@ -1386,8 +1503,9 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     return;
   }
 
-  const spokenText = String(spokenAnswerText || "").trim();
-  let ans = explicitSkip ? SKIPPED_ANSWER_TOKEN : spokenText;
+  const spokenText = explicitSkip ? "" : _collectPendingAnswerText();
+  if (!explicitSkip && spokenText && !String(spokenAnswerText || "").trim()) _setSpokenAnswer(spokenText);
+  let ans = explicitSkip ? SKIPPED_ANSWER_TOKEN : spokenText || String(spokenAnswerText || "").trim();
   const skipped = explicitSkip;
 
   if (!explicitSkip && !ans) {
@@ -1396,11 +1514,19 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       _answerSubmitInFlight = false;
       return submitCandidateAnswer(false, true);
     }
+    if (!stillBusy && (recordedChunks.length > 0 || autoAdvanceWhisperBusy())) {
+      const recovered = await _finalizeMicTranscription();
+      if (recovered) ans = recovered;
+    }
+  }
+  if (!explicitSkip && !ans) {
     _setResponseProcessingUi(false, "");
     _setInterviewPhase("waiting_for_answer");
     setLiveTranscriptVisible(state.showSpokenText);
     _setSendResponseEnabled(true);
-    if (statusEl) statusEl.innerText = "Speak your answer, then tap Send Response — or Skip Question.";
+    const emptyMsg = "No answer captured. Speak first, then tap Send Response.";
+    if (statusEl) statusEl.innerText = emptyMsg;
+    _showCandidateToast(emptyMsg);
     _answerSubmitInFlight = false;
     return;
   }
@@ -1412,8 +1538,8 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
   _logTurnEvent("transcript_received", {
     action: skipped ? "skip" : "send",
     skipped,
-    transcript_len: skipped ? 0 : spokenText.length,
-    transcript_preview: skipped ? SKIPPED_ANSWER_TOKEN : spokenText.slice(0, 120),
+    transcript_len: skipped ? 0 : String(ans || "").length,
+    transcript_preview: skipped ? SKIPPED_ANSWER_TOKEN : String(ans || "").slice(0, 120),
   });
 
   const loadSeq = ++_questionLoadSeq;
@@ -1429,7 +1555,15 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     _logTurnEvent("answer_received", {
       action: skipped ? "skip" : "send",
       skipped,
-      transcript_len: skipped ? 0 : spokenText.length,
+      question_index: state.currentQuestionIndex,
+      transcript_len: skipped ? 0 : String(ans || "").length,
+    });
+    console.info("[SUBMIT] Payload", {
+      question_index: state.currentQuestionIndex,
+      action: skipped ? "skip" : "send",
+      skipped,
+      transcript_len: skipped ? 0 : String(ans || "").length,
+      transcript_preview: skipped ? SKIPPED_ANSWER_TOKEN : String(ans || "").slice(0, 120),
     });
     const params = new URLSearchParams({
       ans,
@@ -1442,13 +1576,28 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       params.set("auto_advance_meta", JSON.stringify(autoAdvanceMeta));
     }
 
-    const resp = await handleJson(
-      await apiFetch("/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params,
-      }),
-    );
+    const res = await apiFetch("/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    });
+    if (res.status === 409) {
+      let blocked = null;
+      try {
+        blocked = await res.json();
+      } catch (_) {
+        blocked = null;
+      }
+      if (blocked?.speech_blocked) {
+        console.info("[SKIP] Server blocked skip — resuming listen", { reason: blocked.reason });
+        _setResponseProcessingUi(false, "");
+        _setInterviewPhase("listening");
+        setAiState("Listening...");
+        _startAutoAdvanceForTurn(!!state.isWarmupTurn);
+        return;
+      }
+    }
+    const resp = await handleJson(res);
 
     _cancelActiveSpeech();
     if (!skipped) {
@@ -1458,7 +1607,7 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     _logTurnEvent("answer_saved", {
       action: skipped ? "skip" : "send",
       skipped,
-      words: skipped ? 0 : spokenText.split(/\s+/).filter(Boolean).length,
+      words: skipped ? 0 : String(ans || "").split(/\s+/).filter(Boolean).length,
     });
 
     if (skipped) {
@@ -1809,11 +1958,18 @@ export async function enterFullscreen() {
   try {
     if (root.requestFullscreen) {
       await root.requestFullscreen();
-      proctorFullscreenEntered = !!document.fullscreenElement;
+    } else if (root.webkitRequestFullscreen) {
+      await root.webkitRequestFullscreen();
+    } else if (root.mozRequestFullScreen) {
+      await root.mozRequestFullScreen();
+    } else if (root.msRequestFullscreen) {
+      await root.msRequestFullscreen();
     }
+    proctorFullscreenEntered = !!document.fullscreenElement;
   } catch (_) {
-    // Fullscreen is best-effort because some browsers only allow it from a direct user gesture.
+    // Fullscreen requires a direct user gesture in most browsers.
   }
+  return !!document.fullscreenElement;
 }
 
 function bindProctorListeners() {
@@ -2046,16 +2202,13 @@ async function completeProctoringStartup(camOk) {
   if (proctoringFullyStarted) return;
   await startProctorSession();
   bindProctorListeners();
-  // Strict fullscreen: request once before questions begin; unsupported/blocked
-  // browsers continue under the warning system instead of blocking the session.
-  await enterFullscreen();
   proctoringFullyStarted = true;
   if (!camOk) {
     setProctorUi("WARNING", 0, "Camera is OFF. Use “Camera / mic prompt” if you need to retry.");
     return;
   }
   if (proctorActive) {
-    setProctorUi("SAFE", 100, "Camera is ON. Use Fullscreen when answering.");
+    setProctorUi("SAFE", 100, "Camera is ON. Interview runs in fullscreen mode.");
   } else {
     setProctorUi(
       "WARNING",

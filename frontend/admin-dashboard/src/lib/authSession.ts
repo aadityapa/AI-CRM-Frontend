@@ -8,6 +8,17 @@ export function getAuthToken(): string {
   }
 }
 
+export function getStoredAuthUser(): Record<string, unknown> | null {
+  try {
+    const raw = window.localStorage.getItem("authUser");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function clearAuthSession(): void {
   try {
     for (const k of AUTH_KEYS) {

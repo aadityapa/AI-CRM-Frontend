@@ -1,0 +1,718 @@
+/* ============================================================================
+   KARNEX LEGACY TOKEN LAYER  (compatibility aliases + component recipes)
+   ----------------------------------------------------------------------------
+   EVOLVE-DON'T-FORK: the canonical primitives now live in
+   src/design-system/tokens/tokens.css (imported first, below). This file
+   re-expresses every variable the ~40 existing pages already consume
+   (--brand-*, --surface-*, --e*-shadow, --r-*, --dur-*, .glass, .sheen,
+   .btn-depth, .input-recessed, .shimmer, .elev-1..3) as ALIASES of those
+   primitives — zero page edits required.
+
+   :root = light theme, .dark (class on <html>) = dark theme.
+   Values are verified by scripts/check-contrast.mjs — if you change a
+   text/surface/brand value, re-run:  node scripts/check-contrast.mjs
+   ============================================================================ */
+@import "../design-system/tokens/tokens.css";
+
+:root {
+  /* --------------------------------------------------------------- SURFACES
+     Stripe-style ladder on the neutral ramp: soft cool-gray page, white
+     cards. surface-2 is the HOVER/RAISED tint (one step darker than the
+     card, so row-hover reads on white); surface-3 is the modal surface. */
+  --surface-0: var(--neutral-100); /* page background */
+  --surface-1: var(--neutral-0);   /* card */
+  --surface-2: var(--neutral-50);  /* hover tint / popover */
+  --surface-3: var(--neutral-0);   /* modal / command palette */
+
+  --text-primary:   var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-muted:     #5d6b7e; /* AA-tuned between neutral-500/600: 4.5+ on every surface */
+
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.18);
+
+  /* -------------------------------------------------------------- ELEVATION
+     Legacy names -> the four canonical levels (flat/raised/overlay/modal). */
+  --e0: var(--elev-flat);
+  --e1-shadow: var(--elev-raised);
+  --e2-shadow: var(--elev-overlay);
+  --e3-shadow: var(--elev-modal);
+
+  /* Specular edges — kept for compatibility, toned WAY down (calm-premium). */
+  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.40);
+  --edge-shade:     inset 0 -1px 0 rgba(15, 23, 42, 0.04);
+
+  /* ------------------------------------------------------------------ GLASS
+     v3: real (but disciplined) translucency — ONLY .glass surfaces are
+     translucent; opaque token surfaces stay for tables/busy screens (perf +
+     readability). Light: 80% white. Dark: 6% white over the near-black page
+     (composites to ~= surface-1, so every verified text pair still holds). */
+  --glass-bg:            rgba(255, 255, 255, 0.80);
+  --glass-border-top:    rgba(255, 255, 255, 0.70);
+  --glass-border-bottom: rgba(15, 23, 42, 0.08);
+  --glass-blur: 12px;
+
+  /* ------------------------------------------------------------------ SHEEN
+     Alpha capped at 0.05 (was 0.09) — barely-there top light. Contrast
+     checker composites this worst case onto every verified pair. */
+  --sheen: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.03) 28%,
+    rgba(255, 255, 255, 0) 42%
+  );
+  --shimmer-tint: rgba(255, 255, 255, 0.55);
+  --recess-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  --btn-gloss: rgba(255, 255, 255, 0);        /* retired — flat-first buttons */
+  --btn-gloss-hover: rgba(255, 255, 255, 0);  /* retired — flat-first buttons */
+
+  /* Interactive-control hover tint (theme-aware; used by .btn-depth etc.). */
+  --control-hover:  var(--neutral-100);
+  --control-active: var(--neutral-200);
+
+  /* ------------------------------------------------------ AI ACCENT (ONLY on
+     AI-generated / AI-active surfaces — never for generic decoration) */
+  --ai-gradient: linear-gradient(135deg, var(--brand-400) 0%, var(--violet-500) 100%);
+  --ai-glow: 0 0 20px rgba(99, 102, 241, 0.18);
+
+  /* ------------------------------------------------------------- v3 EFFECTS
+     Brand bloom (shadow-only, like --ai-glow — an accent bloom, NOT a fifth
+     elevation level), the solid-button gradient pair, row-hover tint and the
+     .fx-grid line color. Pigments: brand-500 (99,102,241) / violet (139,92,
+     246) / accent (34,211,238). */
+  --glow-brand: 0 0 16px rgba(99, 102, 241, 0.25), 0 0 40px rgba(139, 92, 246, 0.10);
+  --glow-brand-strong: 0 0 24px rgba(99, 102, 241, 0.35), 0 0 56px rgba(139, 92, 246, 0.16);
+  --btn-gradient: linear-gradient(135deg, var(--brand-600) 0%, var(--violet-600) 100%);
+  --btn-gradient-hover: linear-gradient(135deg, var(--brand-700) 0%, var(--violet-700) 100%);
+  --btn-gradient-active: linear-gradient(135deg, var(--brand-800) 0%, var(--violet-800) 100%);
+  --row-hover: rgba(99, 102, 241, 0.05);
+  --fx-grid-line: rgba(15, 23, 42, 0.05);
+  --fx-spot: rgba(99, 102, 241, 0.05);
+
+  /* ----------------------------------------------------------------- MOTION
+     Legacy names -> the two canonical durations + single decel curve.
+     (--dur-fast/base = micro 150ms, --dur-slow/page = panel 250ms.) */
+  --dur-fast: var(--motion-micro);
+  --dur-base: var(--motion-micro);
+  --dur-slow: var(--motion-panel);
+  --dur-page: var(--motion-panel);
+  /* --ease-out comes from the primitives. Spring is retired -> same curve. */
+  --ease-spring-ish: var(--ease-out);
+
+  /* ------------------------------------------------------- RADII / BORDERS
+     Legacy names -> the three canonical radii (6/10/16).
+     --r-xl is DEPRECATED (aliased to modal 16). --r-full = pill exception. */
+  --r-sm: var(--radius-input);
+  --r-md: var(--radius-card);
+  --r-lg: var(--radius-modal);
+  --r-xl: var(--radius-modal); /* deprecated — do not use in new code */
+  --r-full: var(--radius-pill);
+  --bw-1: 1px;
+  --bw-2: 2px;
+
+  /* Focus ring — surface gap + brand halo, readable on any surface */
+  --focus-ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--brand-500);
+}
+
+/* ============================================================== DARK THEME */
+.dark {
+  --surface-0: #050816; /* v3 page — deep indigo-black */
+  --surface-1: var(--neutral-900); /* #0f172a — raised/secondary (opaque) */
+  --surface-2: var(--neutral-800);
+  --surface-3: #283548;
+
+  --text-primary:   var(--neutral-100);
+  /* v3 asked for #94a3b8 secondary / #64748b muted — both fail AA on the
+     modal surface (+sheen worst case: 4.42 / 3.64). AA-nudged values: */
+  --text-secondary: #b6c2d4;
+  --text-muted:     #9dabbf; /* AA-tuned: 4.5+ on every dark surface */
+
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(148, 163, 184, 0.30);
+
+  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --edge-shade:     inset 0 -1px 0 rgba(2, 6, 23, 0.50);
+
+  /* v3 dark glass: 6% white over the near-black page ≈ surface-1, so all
+     verified dark text pairs hold on glass (gate has explicit glass pairs). */
+  --glass-bg:            rgba(255, 255, 255, 0.06);
+  --glass-border-top:    rgba(255, 255, 255, 0.10);
+  --glass-border-bottom: rgba(2, 6, 23, 0.55);
+
+  --sheen: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.015) 28%,
+    rgba(255, 255, 255, 0) 42%
+  );
+  --shimmer-tint: rgba(255, 255, 255, 0.06);
+  --recess-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.40);
+
+  --control-hover:  #263349;
+  --control-active: #2e3d57;
+
+  --ai-glow: 0 0 20px rgba(99, 102, 241, 0.28);
+
+  --glow-brand: 0 0 16px rgba(99, 102, 241, 0.35), 0 0 40px rgba(139, 92, 246, 0.16);
+  --glow-brand-strong: 0 0 24px rgba(99, 102, 241, 0.45), 0 0 56px rgba(139, 92, 246, 0.22);
+  --row-hover: rgba(99, 102, 241, 0.09);
+  --fx-grid-line: rgba(148, 163, 184, 0.07);
+  --fx-spot: rgba(99, 102, 241, 0.06);
+}
+
+/* Heavy backdrop-filter janks mobile GPUs — halve the blur radius. */
+@media (max-width: 768px) {
+  :root {
+    --glass-blur: 4px;
+  }
+}
+
+/* ============================================================================
+   BASE TYPOGRAPHY — Inter (loaded in index.html), 1.5 body line-height.
+   Tailwind's fontFamily.sans also maps to --font-ui; this rule covers any
+   markup rendered before/outside Tailwind preflight.
+   ============================================================================ */
+html {
+  font-family: var(--font-ui);
+  line-height: var(--leading-body);
+  /* Reserve the scrollbar gutter on the root scroller so content never
+     shifts horizontally when a page grows past the viewport. */
+  scrollbar-gutter: stable;
+}
+
+/* ============================================================================
+   UTILITY CLASSES (plain CSS — multi-part shadows can't be expressed cleanly
+   in Tailwind). Radii are intentionally NOT set here; compose with rounded-*.
+   ============================================================================ */
+
+/* ---- Elevation recipes: background + border + one of the 4 shadow levels - */
+.elev-1 {
+  background-color: var(--surface-1);
+  border: var(--bw-1) solid var(--border-subtle);
+  box-shadow: var(--elev-raised);
+}
+.elev-2 {
+  background-color: var(--surface-2);
+  border: var(--bw-1) solid var(--border-subtle);
+  box-shadow: var(--elev-overlay);
+}
+.elev-3 {
+  background-color: var(--surface-3);
+  border: var(--bw-1) solid var(--border-subtle);
+  box-shadow: var(--elev-modal);
+}
+
+/* ---- Glass: NOW NEAR-OPAQUE (calm). Kept for compatibility; treat it as a
+        slightly-translucent card, not a lens. ------------------------------ */
+.glass {
+  background-color: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: var(--bw-1) solid var(--glass-border-bottom);
+  border-top-color: var(--glass-border-top);
+  box-shadow: var(--elev-raised);
+}
+
+/* ============================================================================
+   v3 EFFECTS KIT — reusable, token-only, GPU-cheap (gradients / shadows /
+   transforms; the ONLY backdrop-filter in the system stays inside .glass).
+   Every animated effect pauses under prefers-reduced-motion. Effects heavier
+   than a shadow are OPT-IN classes for hero surfaces — never blanket-applied.
+   ============================================================================ */
+
+/* ---- .fx-aurora: ambient indigo/violet/cyan mesh — ONE fixed, pre-composited
+        gradient layer per shell (App.tsx + CrmApp.tsx). Values are the
+        --aurora-* tokens in design-system/tokens/tokens.css (light + dark).
+        `.moonlight` is the kept legacy alias (same recipe). Deliberately:
+        - NO backdrop-filter, NO blur() — plain gradients, ~free to composite;
+        - z-index -1 + `isolate` on the shell root, so the mesh paints above
+          the shell background but below ALL content (no z-index needed on
+          pages, and fixed overlays/modals keep their existing stacking);
+        - static by default; a barely-perceptible 60s transform-only drift
+          runs only when the user has not asked for reduced motion (this is
+          ambient scenery — the 150/250ms motion law governs UI, not sky). */
+.fx-aurora,
+.moonlight {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    var(--aurora-vignette),
+    var(--aurora-c),
+    var(--aurora-b),
+    var(--aurora-a);
+}
+/* Stronger mesh for login-like HERO surfaces only (paints in-flow, not fixed —
+   scope it to the hero container). */
+.fx-aurora-hero {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    var(--aurora-hero-c),
+    var(--aurora-hero-b),
+    var(--aurora-hero-a);
+}
+/* The CRM shell mounts inside the platform shell — hide the nested duplicate
+   so the two meshes never stack their alphas (covers old + new class names). */
+.fx-aurora ~ * .fx-aurora,
+.fx-aurora ~ * .moonlight,
+.moonlight ~ * .moonlight,
+.moonlight ~ * .fx-aurora {
+  display: none;
+}
+@keyframes fx-aurora-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.04);
+  }
+  to {
+    transform: translate3d(0, -1%, 0) scale(1.06);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fx-aurora,
+  .moonlight,
+  .fx-aurora-hero {
+    /* GPU-only (transform), pre-scaled so edges never expose a gap. */
+    animation: fx-aurora-drift 60s ease-in-out infinite alternate;
+  }
+}
+
+/* ---- .fx-spotlight: ONE global mouse-follow radial highlight per app shell.
+        CSS custom props (--spot-x/--spot-y, px on <html>) are written by the
+        rAF-throttled pointermove hook (useSpotlight in motion3d.tsx — mounted
+        by App.tsx). No per-card listeners. Alpha ≤ 0.06 (--fx-spot). Hidden
+        on touch and under reduced motion. */
+.fx-spotlight {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    720px circle at var(--spot-x, 50%) var(--spot-y, -20%),
+    var(--fx-spot) 0%,
+    rgba(139, 92, 246, 0.02) 45%,
+    transparent 70%
+  );
+}
+.fx-spotlight ~ * .fx-spotlight {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce), (pointer: coarse) {
+  .fx-spotlight {
+    display: none;
+  }
+}
+
+/* ---- .fx-noise: 2.5%-opacity SVG turbulence overlay (data URI — zero
+        requests). Opt-in, hero/empty surfaces only. */
+.fx-noise {
+  position: relative;
+}
+.fx-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---- .fx-grid: faint background grid (login hero + dashboards), masked so
+        it fades out instead of ending on a hard line. */
+.fx-grid {
+  position: relative;
+}
+.fx-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--fx-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--fx-grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(80% 60% at 50% 0%, #000 0%, transparent 100%);
+  mask-image: radial-gradient(80% 60% at 50% 0%, #000 0%, transparent 100%);
+}
+
+/* ---- .fx-gradient-border: masked indigo→violet→cyan hairline border.
+        Static by default; the -animated variant (AI surfaces only) drifts the
+        gradient angle slowly. Composable over ANY surface (incl. .glass) —
+        it's a ::before ring, not a background trick. Do NOT combine with
+        .sheen (both own ::before). */
+@property --fx-border-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 135deg;
+}
+.fx-gradient-border,
+.fx-gradient-border-animated {
+  position: relative;
+}
+.fx-gradient-border::before,
+.fx-gradient-border-animated::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  /* Pigments: brand-500 / violet-500 / accent-400 (same convention as the
+     aurora tokens — rgba of system pigments). */
+  background: linear-gradient(
+    var(--fx-border-angle, 135deg),
+    rgba(99, 102, 241, 0.55),
+    rgba(139, 92, 246, 0.45) 50%,
+    rgba(34, 211, 238, 0.35)
+  );
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+}
+@keyframes fx-border-drift {
+  to {
+    --fx-border-angle: 495deg;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fx-gradient-border-animated::before {
+    animation: fx-border-drift 9s linear infinite;
+  }
+}
+
+/* ---- .fx-glow / .fx-glow-hover: soft brand bloom — SHADOW ONLY (no filters).
+        An accent bloom in the --ai-glow family, not a fifth elevation. */
+.fx-glow {
+  box-shadow: var(--glow-brand);
+}
+.fx-glow-hover {
+  transition: box-shadow var(--motion-micro) var(--ease-out);
+}
+.fx-glow-hover:hover {
+  box-shadow: var(--glow-brand);
+}
+
+/* ---- .fx-lift: hover raise — transform/shadow only, 150ms. */
+.fx-lift {
+  transition:
+    transform var(--motion-micro) var(--ease-out),
+    box-shadow var(--motion-micro) var(--ease-out);
+}
+.fx-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-overlay);
+}
+.fx-lift:active {
+  transform: translateY(0);
+}
+
+/* ---- .fx-hairline-b: gradient hairline along the bottom edge (glass top
+        bars). Pure 1px gradient — subtle, indigo→violet→cyan. */
+.fx-hairline-b {
+  position: relative;
+}
+.fx-hairline-b::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.35) 30%,
+    rgba(139, 92, 246, 0.30) 55%,
+    rgba(34, 211, 238, 0.22) 78%,
+    transparent 100%
+  );
+}
+
+/* ---- .ai-thinking: 3-dot AI typing/thinking pulse (markup: three <span>s —
+        see the AiThinking export in ui.tsx). Static staggered opacity under
+        reduced motion (state stays legible without movement). */
+.ai-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-thinking > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full); /* dot — documented shape exception */
+  background-color: var(--brand-400);
+  animation: ai-thinking-pulse 1.2s ease-in-out infinite;
+}
+.ai-thinking > span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ai-thinking > span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes ai-thinking-pulse {
+  0%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* ---- .row-hover: DataTable row hover — brand-tinted bg glow (bg only). */
+.row-hover:hover {
+  background-color: var(--row-hover);
+}
+
+/* ---- .nav-pill-gradient: active sidebar item — indigo→violet pill + soft
+        bloom. White text is AA on both stops (brand-600 6.29 / violet-600
+        5.71). */
+.nav-pill-gradient {
+  background-image: var(--btn-gradient);
+  box-shadow: var(--glow-brand);
+}
+
+/* ---- Gloss sheen overlay — opt-in, alpha capped at 0.05 (calm) ---------- */
+.sheen {
+  position: relative;
+}
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--sheen);
+  pointer-events: none;
+}
+
+/* ---- AI accent surface: gradient border + glow. AI surfaces ONLY. ------- */
+.ai-surface {
+  border: var(--bw-1) solid transparent;
+  background:
+    linear-gradient(var(--surface-1), var(--surface-1)) padding-box,
+    var(--ai-gradient) border-box;
+  box-shadow: var(--ai-glow);
+}
+@property --ai-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 135deg;
+}
+.ai-generating {
+  border: var(--bw-1) solid transparent;
+  background:
+    linear-gradient(var(--surface-1), var(--surface-1)) padding-box,
+    linear-gradient(var(--ai-angle), var(--brand-400), #8b5cf6, var(--brand-400)) border-box;
+  box-shadow: var(--ai-glow);
+  animation: ai-rotate 2.4s linear infinite;
+}
+@keyframes ai-rotate {
+  to {
+    --ai-angle: 495deg;
+  }
+}
+
+/* ---- Skeleton shimmer: moving sheen at the same 135deg angle ------------ */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--surface-2);
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 25%,
+    var(--shimmer-tint) 50%,
+    transparent 75%
+  );
+  transform: translateX(-100%);
+  animation: shimmer-slide 1.6s var(--ease-out) infinite;
+  pointer-events: none;
+}
+@keyframes shimmer-slide {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes shimmer-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+/* ---- Input: flat-first (legacy name kept). Calm border at rest, brand
+        focus ring on :focus — no more recessed inner shadow. --------------- */
+.input-recessed {
+  background-color: var(--surface-1);
+  border: var(--bw-1) solid var(--border-strong);
+  box-shadow: var(--elev-flat);
+  transition:
+    box-shadow var(--motion-micro) var(--ease-out),
+    background-color var(--motion-micro) var(--ease-out),
+    border-color var(--motion-micro) var(--ease-out);
+}
+.input-recessed:hover:not(:disabled):not(:focus):not(:focus-within) {
+  border-color: var(--neutral-400);
+}
+.input-recessed:focus,
+.input-recessed:focus-within {
+  outline: none;
+  border-color: transparent;
+  box-shadow: var(--focus-ring);
+}
+.input-recessed:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Error state (compose ON .input-recessed — see inputErrorCls in ui.tsx):
+   danger border at rest/hover, danger focus ring instead of brand. */
+.input-recessed.input-error,
+.input-recessed.input-error:hover:not(:disabled):not(:focus):not(:focus-within) {
+  border-color: var(--danger);
+}
+.input-recessed.input-error:focus,
+.input-recessed.input-error:focus-within {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--danger);
+}
+
+/* ---- Depth button (legacy name kept): FLAT-FIRST. No gloss gradient, no
+        lift — just a bordered control with 150ms background micro-motion.
+        Hover tint, pressed tint, focus ring, 50% disabled. ----------------- */
+.btn-depth {
+  background-color: var(--surface-2);
+  border: var(--bw-1) solid var(--border-subtle);
+  box-shadow: var(--elev-flat);
+  transition:
+    background-color var(--motion-micro) var(--ease-out),
+    border-color var(--motion-micro) var(--ease-out),
+    box-shadow var(--motion-micro) var(--ease-out),
+    color var(--motion-micro) var(--ease-out);
+}
+.btn-depth:hover:not(:disabled) {
+  background-color: var(--control-hover);
+  border-color: var(--border-strong);
+}
+.btn-depth:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.btn-depth:active:not(:disabled) {
+  background-color: var(--control-active);
+}
+.btn-depth:disabled {
+  box-shadow: var(--elev-flat);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Solid buttons keep their fill on hover — darken, never wash to neutral.
+   (Without these, .btn-depth:hover's --control-hover out-cascades bg-brand-600.)
+   Danger buttons ride the theme-stable danger-solid trio so white text stays AA
+   in both themes. */
+.btn-depth.bg-brand-600:hover:not(:disabled) {
+  background-color: var(--brand-700);
+  border-color: var(--brand-700);
+}
+.btn-depth.bg-brand-600:active:not(:disabled) {
+  background-color: var(--brand-800);
+}
+.btn-depth.bg-danger,
+.btn-depth.bg-danger:disabled {
+  background-color: var(--danger-solid);
+}
+.btn-depth.bg-danger:hover:not(:disabled) {
+  background-color: var(--danger-solid-hover);
+  border-color: var(--danger-solid-hover);
+}
+.btn-depth.bg-danger:active:not(:disabled) {
+  background-color: var(--danger-solid-active);
+}
+
+/* ---- v3 primary button: indigo→violet gradient + soft glow + micro-lift.
+   Composes ON .btn-depth (btnPrimary keeps bg-brand-600 underneath as the
+   paint fallback; the same solid-button hover overrides above still guard the
+   background-color layer — the .btn-depth cascade lesson, DESIGN-DECISIONS
+   §12). Gradient stops are AA for white text in every state (600 6.29 /
+   700 7.90 / violet-600 5.71 / violet-700 7.11). */
+.btn-depth.btn-gradient {
+  background-image: var(--btn-gradient);
+  border-color: transparent;
+  box-shadow: var(--glow-brand);
+  transition:
+    background-color var(--motion-micro) var(--ease-out),
+    border-color var(--motion-micro) var(--ease-out),
+    box-shadow var(--motion-micro) var(--ease-out),
+    transform var(--motion-micro) var(--ease-out),
+    color var(--motion-micro) var(--ease-out);
+}
+.btn-depth.btn-gradient:hover:not(:disabled) {
+  background-image: var(--btn-gradient-hover);
+  border-color: transparent;
+  box-shadow: var(--glow-brand-strong);
+  transform: translateY(-1px);
+}
+.btn-depth.btn-gradient:active:not(:disabled) {
+  background-image: var(--btn-gradient-active);
+  box-shadow: var(--glow-brand);
+  transform: translateY(0);
+}
+.btn-depth.btn-gradient:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.btn-depth.btn-gradient:disabled {
+  box-shadow: none;
+}
+
+/* ---- Reduced motion: kill movement/rotation, keep opacity fades --------- */
+@media (prefers-reduced-motion: reduce) {
+  .ai-generating {
+    animation: none;
+  }
+  .shimmer::after {
+    transform: none;
+    animation: shimmer-pulse 1.6s ease-in-out infinite;
+  }
+  .btn-depth,
+  .btn-depth:active:not(:disabled),
+  .btn-depth.btn-gradient:hover:not(:disabled),
+  .fx-lift:hover {
+    transform: none;
+  }
+  .btn-depth,
+  .input-recessed {
+    transition-property: opacity, background-color, box-shadow;
+  }
+  /* AI thinking dots: static staggered opacity (state stays legible). */
+  .ai-thinking > span {
+    animation: none;
+    opacity: 0.35;
+  }
+  .ai-thinking > span:nth-child(2) {
+    opacity: 0.65;
+  }
+  .ai-thinking > span:nth-child(3) {
+    opacity: 1;
+  }
+  /* Aurora / gradient-border drift are inside no-preference blocks already;
+     the fixed ambient layers render static frames here. */
+}
+
+/* ============================================================================
+   DISPLAY TYPE — Space Grotesk for h1/page titles + KPI numerals ONLY.
+   Body copy stays Inter. (Loaded in index.html with display=swap; the
+   --font-display stack falls back to Inter, so FOUT is metric-benign.)
+   ============================================================================ */
+.text-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}

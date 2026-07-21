@@ -104,28 +104,28 @@ function ScoreBar({ value, tone = "indigo" }: { value: number; tone?: "indigo" |
   const v = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
   const bar =
     tone === "emerald"
-      ? "bg-emerald-600"
+      ? "bg-success-500"
       : tone === "amber"
-        ? "bg-amber-500"
+        ? "bg-warning-500"
         : tone === "rose"
-          ? "bg-rose-600"
+          ? "bg-danger-500"
           : tone === "violet"
-            ? "bg-violet-600"
-            : "bg-indigo-600";
+            ? "bg-violet-500"
+            : "bg-gradient-to-r from-brand-500 to-violet-500";
   return (
-    <div className="h-2 rounded-full bg-slate-100 border border-slate-200 overflow-hidden">
-      <div className={`h-full ${bar}`} style={{ width: `${v}%` }} />
+    <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+      <div className={`h-full rounded-full ${bar}`} style={{ width: `${v}%` }} />
     </div>
   );
 }
 
 function SkeletonBlock({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-xl bg-slate-100 ${className}`} />;
+  return <div className={`animate-pulse rounded-card bg-surface-2 ${className}`} />;
 }
 
 function PageSkeleton() {
   return (
-    <div className="max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <div className="mx-auto max-w-screen-xl w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       <SkeletonBlock className="h-10 w-44" />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4 space-y-4">
@@ -162,23 +162,23 @@ function DeleteCandidateModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-slate-900/50" onClick={busy ? undefined : onClose} />
-      <div className="absolute inset-x-0 top-24 mx-auto w-[min(480px,calc(100%-2rem))]">
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden">
+      <div className="absolute inset-0 bg-backdrop" onClick={busy ? undefined : onClose} />
+      <div className="absolute inset-x-0 top-24 mx-auto w-full max-w-md px-4">
+        <div className="bg-surface-1 rounded-modal border border-subtle shadow-modal overflow-hidden">
           <div className="p-6">
             <div className="flex items-start gap-4">
-              <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+              <div className="w-11 h-11 rounded-full bg-danger-soft flex items-center justify-center text-danger shrink-0">
                 <TriangleAlert className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-lg font-extrabold text-slate-900">Delete candidate permanently?</div>
-                <div className="mt-2 text-sm text-slate-600">
+                <div className="text-lg font-extrabold text-primary">Delete candidate permanently?</div>
+                <div className="mt-2 text-sm text-secondary">
                   Are you sure you want to permanently delete{" "}
-                  <span className="font-bold text-slate-900">{candidateName || "this candidate"}</span>{" "}
+                  <span className="font-bold text-primary">{candidateName || "this candidate"}</span>{" "}
                   and all interview records?
                 </div>
-                <div className="mt-3 text-xs font-semibold text-rose-600">This action cannot be undone.</div>
-                {error ? <div className="mt-3 text-xs text-rose-600">{error}</div> : null}
+                <div className="mt-3 text-xs font-semibold text-danger">This action cannot be undone.</div>
+                {error ? <div className="mt-3 text-xs text-danger">{error}</div> : null}
               </div>
             </div>
             <div className="mt-6 flex items-center justify-end gap-2">
@@ -186,7 +186,7 @@ function DeleteCandidateModal({
                 type="button"
                 onClick={onClose}
                 disabled={busy}
-                className="h-10 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition font-semibold text-slate-700 disabled:opacity-60"
+                className="h-10 px-4 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 font-semibold text-secondary disabled:opacity-60"
               >
                 Cancel
               </button>
@@ -194,7 +194,7 @@ function DeleteCandidateModal({
                 type="button"
                 onClick={onConfirm}
                 disabled={busy}
-                className="h-10 px-4 rounded-xl bg-rose-600 text-white font-semibold shadow-sm hover:bg-rose-700 transition disabled:opacity-60 inline-flex items-center gap-2"
+                className="h-10 px-4 rounded-control bg-danger-solid text-white font-semibold shadow-raised transition-colors duration-micro ease-smooth hover:bg-danger-solid-hover disabled:opacity-60 inline-flex items-center gap-2"
               >
                 {busy ? "Deleting…" : "Delete permanently"}
               </button>
@@ -260,32 +260,32 @@ function InterviewQAPanel({
   }, [record]);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white">
+    <div className="rounded-card border border-subtle bg-surface-1">
       <div className="flex items-stretch">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="k-hover-row flex-1 min-w-0 px-5 py-4 flex items-center justify-between gap-4 hover:bg-slate-50/60 transition text-left rounded-tl-2xl"
+          className="row-hover flex-1 min-w-0 px-5 py-4 flex items-center justify-between gap-4 transition-colors duration-micro ease-smooth text-left"
         >
           <div className="text-left min-w-0">
-            <div className="text-sm font-extrabold text-slate-900 truncate">
+            <div className="text-sm font-extrabold text-primary truncate">
               {fmtDateLabel(interview.scheduled_at_local || interview.created_at_ist || interview.created_at)}
             </div>
-            <div className="text-xs text-slate-500 mt-0.5 truncate">
+            <div className="text-xs text-muted mt-0.5 truncate">
               Interview ID: {interview.id || "—"} • Score {interview.score}% • {interview.questions_count} questions
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <StatusPill variant="tile" status={String(interview.status || "")} />
-            {open ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+            {open ? <ChevronUp className="w-4 h-4 text-muted" /> : <ChevronDown className="w-4 h-4 text-muted" />}
           </div>
         </button>
-        <div className="flex items-center gap-1 px-2 border-l border-slate-200 bg-slate-50/40 rounded-tr-2xl">
+        <div className="flex items-center gap-1 px-2 border-l border-subtle bg-surface-2">
           {onOpenFullReport ? (
             <button
               type="button"
               onClick={onOpenFullReport}
-              className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100/80 transition text-[11px] font-bold text-indigo-800"
+              className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-subtle bg-brand-50 transition-colors duration-micro ease-smooth hover:bg-brand-100 dark:bg-brand-900 dark:hover:bg-brand-800 text-xs font-bold text-brand-700 dark:text-brand-200"
               title="Open full analytics report for this interview"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -296,7 +296,7 @@ function InterviewQAPanel({
             type="button"
             onClick={onDownloadPdf}
             disabled={pdfDisabled}
-            className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 transition text-[11px] font-bold text-slate-700 disabled:opacity-50 disabled:pointer-events-none"
+            className="inline-flex items-center gap-1.5 px-2.5 h-9 rounded-lg border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-xs font-bold text-secondary disabled:opacity-50 disabled:pointer-events-none"
           >
             <Download className="w-3.5 h-3.5" />
             {pdfBusyThis ? "…" : "PDF"}
@@ -312,17 +312,17 @@ function InterviewQAPanel({
               <SkeletonBlock className="h-16" />
             </div>
           ) : error ? (
-            <div className="text-sm text-rose-600">{error}</div>
+            <div className="text-sm text-danger">{error}</div>
           ) : !turns.length ? (
-            <div className="text-sm text-slate-500">No question/answer payload found for this interview.</div>
+            <div className="text-sm text-muted">No question/answer payload found for this interview.</div>
           ) : (
-            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="divide-y divide-subtle border border-subtle rounded-card overflow-hidden">
               {turns.map((t) => (
                 <div key={t.idx} className="p-4">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Q{t.idx}</div>
-                  <div className="mt-1 font-bold text-slate-900">{t.q || "—"}</div>
-                  <div className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Answer</div>
-                  <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">{t.a || "—"}</div>
+                  <div className="text-xs font-black uppercase tracking-widest text-muted">Q{t.idx}</div>
+                  <div className="mt-1 font-bold text-primary">{t.q || "—"}</div>
+                  <div className="mt-3 text-xs font-black uppercase tracking-widest text-muted">Answer</div>
+                  <div className="mt-1 text-sm text-secondary whitespace-pre-wrap">{t.a || "—"}</div>
                 </div>
               ))}
             </div>
@@ -483,18 +483,18 @@ export function CandidateInterviewsPage({
 
   if (error || !data) {
     return (
-      <div className="max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mx-auto max-w-screen-xl w-full px-4 sm:px-6 lg:px-8 py-8">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 px-3 h-9 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-sm font-semibold text-slate-700"
+          className="inline-flex items-center gap-2 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-sm font-semibold text-secondary"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to dashboard
         </button>
-        <div className="mt-6 bg-white border border-rose-200 rounded-2xl p-8 text-rose-700">
+        <div className="mt-6 bg-danger-soft border border-subtle rounded-card p-8 text-danger">
           <div className="font-extrabold">Could not load candidate</div>
-          <div className="mt-2 text-sm text-rose-600">{error || "Candidate not found."}</div>
+          <div className="mt-2 text-sm text-danger">{error || "Candidate not found."}</div>
         </div>
       </div>
     );
@@ -538,10 +538,10 @@ export function CandidateInterviewsPage({
       type="button"
       onClick={() => setTab(key)}
       {...tabTap}
-      className={`px-4 h-10 rounded-xl text-sm font-semibold inline-flex items-center gap-2 transition ${
+      className={`px-4 h-10 rounded-control text-sm font-semibold inline-flex items-center gap-2 transition ${
         tab === key
-          ? "bg-white text-indigo-700 border border-indigo-200 shadow-sm"
-          : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+          ? "bg-surface-1 text-brand-700 border border-subtle shadow-raised dark:text-brand-300"
+          : "text-secondary hover:text-primary hover:bg-surface-1"
       }`}
     >
       {icon}
@@ -550,7 +550,7 @@ export function CandidateInterviewsPage({
   );
 
   return (
-    <div className="max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="mx-auto max-w-screen-xl w-full px-4 sm:px-6 lg:px-8 py-8">
       <DeleteCandidateModal
         open={confirmOpen}
         candidateName={candidate.name}
@@ -580,7 +580,7 @@ export function CandidateInterviewsPage({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 px-3 h-9 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-sm font-semibold text-slate-700"
+          className="inline-flex items-center gap-2 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-sm font-semibold text-secondary"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to dashboard
@@ -594,7 +594,7 @@ export function CandidateInterviewsPage({
                 onOpenCandidateReport(iid || undefined);
               }}
               disabled={!interviews.length}
-              className="inline-flex items-center gap-2 px-4 h-9 rounded-xl border border-indigo-200 bg-white text-indigo-800 font-semibold shadow-sm hover:bg-indigo-50 transition disabled:opacity-50 disabled:pointer-events-none"
+              className="inline-flex items-center gap-2 px-4 h-9 rounded-control border border-subtle bg-surface-1 text-brand-700 dark:text-brand-200 font-semibold shadow-raised transition-colors duration-micro ease-smooth hover:bg-surface-2 disabled:opacity-50 disabled:pointer-events-none"
               title="Open charts, timeline, and Q/A on the full report page"
             >
               <ExternalLink className="w-4 h-4" />
@@ -605,7 +605,7 @@ export function CandidateInterviewsPage({
             type="button"
             onClick={handleDownloadFullPdf}
             disabled={pdfDisabled || !interviews.length}
-            className="inline-flex items-center gap-2 px-4 h-9 rounded-xl bg-indigo-600 text-white font-semibold shadow-sm hover:bg-indigo-700 transition disabled:opacity-50 disabled:pointer-events-none"
+            className="btn-depth btn-gradient inline-flex items-center gap-2 px-4 h-9 rounded-control bg-brand-600 text-white font-semibold disabled:opacity-50 disabled:pointer-events-none"
           >
             <Download className="w-4 h-4" />
             {pdfBusyFull ? "Preparing PDF…" : "Download PDF"}
@@ -616,7 +616,7 @@ export function CandidateInterviewsPage({
               setDeleteError("");
               setConfirmOpen(true);
             }}
-            className="inline-flex items-center gap-2 px-4 h-9 rounded-xl bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 font-semibold transition"
+            className="inline-flex items-center gap-2 px-4 h-9 rounded-control bg-surface-1 border border-subtle transition-colors duration-micro ease-smooth hover:bg-danger-soft text-danger font-semibold"
           >
             <Trash2 className="w-4 h-4" />
             Delete candidate
@@ -625,24 +625,24 @@ export function CandidateInterviewsPage({
       </div>
 
       {pdfError ? (
-        <div className="mt-3 text-sm text-rose-600 font-semibold" role="alert">
+        <div className="mt-3 text-sm text-danger font-semibold" role="alert">
           {pdfError}
         </div>
       ) : null}
-      {toast ? <div className="mt-3 text-sm text-emerald-700 font-semibold">{toast}</div> : null}
+      {toast ? <div className="mt-3 text-sm text-success font-semibold">{toast}</div> : null}
 
       {/* Header */}
-      <div className="mt-5 bg-white border border-slate-200 rounded-2xl p-5 sm:p-6">
+      <div className="mt-5 bg-surface-1 border border-subtle rounded-card p-5 sm:p-6">
         <div className="flex flex-wrap items-start gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center font-extrabold text-lg shrink-0">
+          <div className="fx-glow w-14 h-14 rounded-card bg-gradient-to-br from-brand-600 to-violet-600 text-white flex items-center justify-center font-extrabold text-lg shrink-0">
             {initials(candidate.name)}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">{candidate.name}</h1>
+              <h1 className="text-display text-2xl font-bold tracking-tight text-primary">{candidate.name}</h1>
               <StatusPill variant="tile" status={candidate.status as string} />
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
               <span className="inline-flex items-center gap-1.5">
                 <Mail className="w-4 h-4" />
                 {candidate.email}
@@ -661,36 +661,36 @@ export function CandidateInterviewsPage({
                 {candidate.skills.slice(0, 12).map((s) => (
                   <span
                     key={s}
-                    className="bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md text-[11px] font-bold text-slate-600"
+                    className="bg-surface-2 ring-1 ring-inset ring-subtle px-2 py-0.5 rounded-control text-xs font-bold text-secondary"
                   >
                     {s}
                   </span>
                 ))}
                 {candidate.skills.length > 12 ? (
-                  <span className="text-[11px] font-bold text-slate-500">+{candidate.skills.length - 12} more</span>
+                  <span className="text-xs font-bold text-muted">+{candidate.skills.length - 12} more</span>
                 ) : null}
               </div>
             ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 ml-auto">
-            <div className="rounded-xl border border-slate-200 px-4 py-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Avg score</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{candidate.avg_score}%</div>
+            <div className="rounded-card border border-subtle px-4 py-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Avg score</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{candidate.avg_score}%</div>
             </div>
-            <div className="rounded-xl border border-slate-200 px-4 py-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Best</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{analytics.bestScore}%</div>
+            <div className="rounded-card border border-subtle px-4 py-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Best</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{analytics.bestScore}%</div>
             </div>
-            <div className="rounded-xl border border-slate-200 px-4 py-3 col-span-2 sm:col-span-1">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900 truncate">{candidate.status}</div>
+            <div className="rounded-card border border-subtle px-4 py-3 col-span-2 sm:col-span-1">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Status</div>
+              <div className="mt-1 text-xl font-extrabold text-primary truncate">{candidate.status}</div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="mt-6 inline-flex gap-1 p-1 bg-slate-100/80 border border-slate-200 rounded-2xl">
+      <div className="mt-6 inline-flex gap-1 p-1 bg-surface-2 border border-subtle rounded-control">
         {tabBtn("overview", "Overview", <BadgeCheck className="w-4 h-4" />)}
         {tabBtn("evaluations", "Evaluations", <BarChart3 className="w-4 h-4" />)}
         {tabBtn("qa", "Questions & Answers", <MessageSquare className="w-4 h-4" />)}
@@ -753,9 +753,9 @@ export function CandidateInterviewsPage({
 
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mt-6 bg-white border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center">
-      <div className="font-extrabold text-slate-900">{title}</div>
-      <div className="mt-2 text-sm text-slate-500">{body}</div>
+    <div className="mt-6 bg-surface-1 border-2 border-dashed border-subtle rounded-card p-10 text-center">
+      <div className="font-extrabold text-primary">{title}</div>
+      <div className="mt-2 text-sm text-muted">{body}</div>
     </div>
   );
 }
@@ -784,13 +784,13 @@ function OverviewTab({
     <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-8 space-y-4">
         {interviews.slice(0, 6).map((it) => (
-          <div key={it.id} className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div key={it.id} className="bg-surface-1 border border-subtle rounded-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-extrabold text-slate-900">
+                <div className="text-sm font-extrabold text-primary">
                   {fmtDateLabel(it.scheduled_at_local || it.created_at_ist || it.created_at)}
                 </div>
-                <div className="mt-0.5 text-xs text-slate-500 inline-flex items-center gap-2">
+                <div className="mt-0.5 text-xs text-muted inline-flex items-center gap-2">
                   <Clock className="w-3.5 h-3.5" />
                   Duration {fmtDuration(it.duration_sec)} • {it.questions_count} questions
                 </div>
@@ -800,7 +800,7 @@ function OverviewTab({
                   <button
                     type="button"
                     onClick={() => onOpenInterviewReport(it)}
-                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100/80 transition text-xs font-bold text-indigo-800"
+                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-brand-50 transition-colors duration-micro ease-smooth hover:bg-brand-100 dark:bg-brand-900 dark:hover:bg-brand-800 text-xs font-bold text-brand-700 dark:text-brand-200"
                     title="Open full analytics report"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -811,7 +811,7 @@ function OverviewTab({
                   type="button"
                   onClick={() => onDownloadInterviewPdf(it)}
                   disabled={pdfBusyFull || pdfBusyInterviewId !== null}
-                  className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-xs font-bold text-slate-700 disabled:opacity-50 disabled:pointer-events-none"
+                  className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-xs font-bold text-secondary disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <Download className="w-3.5 h-3.5" />
                   {pdfBusyInterviewId === it.id ? "PDF…" : "PDF"}
@@ -821,24 +821,24 @@ function OverviewTab({
                     type="button"
                     onClick={() => onDeleteInterview(it)}
                     disabled={deleteBusyInterviewId === it.id}
-                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-rose-200 bg-white hover:bg-rose-50 transition text-xs font-bold text-rose-700 disabled:opacity-60 disabled:pointer-events-none"
+                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-danger-soft text-xs font-bold text-danger disabled:opacity-60 disabled:pointer-events-none"
                   >
                     {deleteBusyInterviewId === it.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                     {deleteBusyInterviewId === it.id ? "Deleting…" : "Delete"}
                   </button>
                 ) : null}
                 <StatusPill variant="tile" status={String(it.status || "")} />
-                <span className="font-extrabold text-slate-900">{it.score}%</span>
+                <span className="font-extrabold text-primary">{it.score}%</span>
               </div>
             </div>
             <div className="mt-4">
               <ScoreBar value={it.score} />
             </div>
             {it.summary ? (
-              <div className="mt-4 text-sm text-slate-600 whitespace-pre-wrap line-clamp-4">{it.summary}</div>
+              <div className="mt-4 text-sm text-secondary whitespace-pre-wrap line-clamp-4">{it.summary}</div>
             ) : null}
             {it.recommendation ? (
-              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold">
+              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-control bg-brand-50 ring-1 ring-inset ring-subtle text-brand-700 dark:bg-brand-900 dark:text-brand-200 text-xs font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 {it.recommendation}
               </div>
@@ -847,17 +847,17 @@ function OverviewTab({
         ))}
       </div>
       <div className="lg:col-span-4 space-y-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="bg-surface-1 border border-subtle rounded-card p-5">
           <div className="text-sm font-extrabold tracking-tight">Timeline</div>
-          <div className="mt-4 space-y-3 max-h-[420px] overflow-auto pr-1">
+          <div className="mt-4 space-y-3 max-h-96 overflow-auto pr-1">
             {interviews.map((it) => (
               <div key={it.id} className="flex items-start gap-3">
-                <div className="mt-1 w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
+                <div className="mt-1 w-2 h-2 rounded-full bg-brand-500 shrink-0" />
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-slate-700">
+                  <div className="text-xs font-bold text-secondary">
                     {fmtDateLabel(it.scheduled_at_local || it.created_at_ist || it.created_at)}
                   </div>
-                  <div className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+                  <div className="text-xs text-muted inline-flex items-center gap-1.5">
                     <CalendarClock className="w-3 h-3" />
                     Score {it.score}% • {String(it.status || "")}
                   </div>
@@ -887,18 +887,18 @@ function PaginationFooter({
         type="button"
         onClick={() => onPageChange(Math.max(0, page - 1))}
         disabled={page <= 0}
-        className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition font-semibold text-slate-700 text-sm disabled:opacity-50"
+        className="h-9 px-3 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 font-semibold text-secondary text-sm disabled:opacity-50"
       >
         Previous
       </button>
-      <div className="text-xs text-slate-500 font-semibold">
+      <div className="text-xs text-muted font-semibold">
         Page {page + 1} / {totalPages}
       </div>
       <button
         type="button"
         onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
         disabled={page >= totalPages - 1}
-        className="h-9 px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition font-semibold text-slate-700 text-sm disabled:opacity-50"
+        className="h-9 px-3 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 font-semibold text-secondary text-sm disabled:opacity-50"
       >
         Next
       </button>
@@ -936,20 +936,20 @@ function EvaluationsTab({
     <div className="mt-6">
       <div className="grid grid-cols-1 gap-4">
         {interviews.map((it) => (
-          <div key={it.id} className="bg-white border border-slate-200 rounded-2xl p-5">
+          <div key={it.id} className="bg-surface-1 border border-subtle rounded-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-extrabold text-slate-900">
+                <div className="text-sm font-extrabold text-primary">
                   {fmtDateLabel(it.scheduled_at_local || it.created_at_ist || it.created_at)}
                 </div>
-                <div className="text-[11px] text-slate-500">Interview ID: {it.id}</div>
+                <div className="text-xs text-muted">Interview ID: {it.id}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {onOpenInterviewReport ? (
                   <button
                     type="button"
                     onClick={() => onOpenInterviewReport(it)}
-                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100/80 transition text-xs font-bold text-indigo-800"
+                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-brand-50 transition-colors duration-micro ease-smooth hover:bg-brand-100 dark:bg-brand-900 dark:hover:bg-brand-800 text-xs font-bold text-brand-700 dark:text-brand-200"
                     title="Open full analytics report"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -960,7 +960,7 @@ function EvaluationsTab({
                   type="button"
                   onClick={() => onDownloadInterviewPdf(it)}
                   disabled={pdfBusyFull || pdfBusyInterviewId !== null}
-                  className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition text-xs font-bold text-slate-700 disabled:opacity-50 disabled:pointer-events-none"
+                  className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 text-xs font-bold text-secondary disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <Download className="w-3.5 h-3.5" />
                   {pdfBusyInterviewId === it.id ? "PDF…" : "Download PDF"}
@@ -970,68 +970,68 @@ function EvaluationsTab({
                     type="button"
                     onClick={() => onDeleteInterview(it)}
                     disabled={deleteBusyInterviewId === it.id}
-                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl border border-rose-200 bg-white hover:bg-rose-50 transition text-xs font-bold text-rose-700 disabled:opacity-60 disabled:pointer-events-none"
+                    className="inline-flex items-center gap-1.5 px-3 h-9 rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-danger-soft text-xs font-bold text-danger disabled:opacity-60 disabled:pointer-events-none"
                   >
                     {deleteBusyInterviewId === it.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                     {deleteBusyInterviewId === it.id ? "Deleting…" : "Delete"}
                   </button>
                 ) : null}
                 <StatusPill variant="tile" status={String(it.status || "")} />
-                <span className="font-extrabold text-slate-900">{it.score}%</span>
+                <span className="font-extrabold text-primary">{it.score}%</span>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-xl border border-slate-200 p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Communication</div>
-                <div className="mt-1 text-lg font-extrabold text-slate-900">{it.communication_score}%</div>
+              <div className="rounded-card border border-subtle p-3">
+                <div className="text-xs font-black uppercase tracking-widest text-muted">Communication</div>
+                <div className="mt-1 text-lg font-extrabold text-primary">{it.communication_score}%</div>
                 <div className="mt-2">
                   <ScoreBar value={it.communication_score} tone="violet" />
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-200 p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Technical</div>
-                <div className="mt-1 text-lg font-extrabold text-slate-900">{it.technical_score}%</div>
+              <div className="rounded-card border border-subtle p-3">
+                <div className="text-xs font-black uppercase tracking-widest text-muted">Technical</div>
+                <div className="mt-1 text-lg font-extrabold text-primary">{it.technical_score}%</div>
                 <div className="mt-2">
                   <ScoreBar value={it.technical_score} tone="indigo" />
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-200 p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Confidence</div>
-                <div className="mt-1 text-lg font-extrabold text-slate-900">{it.confidence_score}%</div>
+              <div className="rounded-card border border-subtle p-3">
+                <div className="text-xs font-black uppercase tracking-widest text-muted">Confidence</div>
+                <div className="mt-1 text-lg font-extrabold text-primary">{it.confidence_score}%</div>
                 <div className="mt-2">
                   <ScoreBar value={it.confidence_score} tone="emerald" />
                 </div>
               </div>
             </div>
             {it.recommendation ? (
-              <div className="mt-4 text-xs font-bold text-indigo-700">HR recommendation: {it.recommendation}</div>
+              <div className="mt-4 text-xs font-bold text-brand-700 dark:text-brand-300">HR recommendation: {it.recommendation}</div>
             ) : null}
             {it.summary ? (
-              <div className="mt-3 text-sm text-slate-600 whitespace-pre-wrap">{it.summary}</div>
+              <div className="mt-3 text-sm text-secondary whitespace-pre-wrap">{it.summary}</div>
             ) : null}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Strengths</div>
+              <div className="rounded-card border border-subtle bg-success-soft p-3">
+                <div className="text-xs font-black uppercase tracking-widest text-success">Strengths</div>
                 {it.strengths?.length ? (
-                  <ul className="mt-2 list-disc pl-5 text-sm text-emerald-900 space-y-1">
+                  <ul className="mt-2 list-disc pl-5 text-sm text-secondary space-y-1">
                     {it.strengths.map((s, i) => (
                       <li key={`${it.id}-s-${i}`}>{s}</li>
                     ))}
                   </ul>
                 ) : (
-                  <div className="mt-2 text-xs text-emerald-700">—</div>
+                  <div className="mt-2 text-xs text-success">—</div>
                 )}
               </div>
-              <div className="rounded-xl border border-rose-100 bg-rose-50/30 p-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-rose-600">Weaknesses</div>
+              <div className="rounded-card border border-subtle bg-danger-soft p-3">
+                <div className="text-xs font-black uppercase tracking-widest text-danger">Weaknesses</div>
                 {it.weaknesses?.length ? (
-                  <ul className="mt-2 list-disc pl-5 text-sm text-rose-900 space-y-1">
+                  <ul className="mt-2 list-disc pl-5 text-sm text-secondary space-y-1">
                     {it.weaknesses.map((w, i) => (
                       <li key={`${it.id}-w-${i}`}>{w}</li>
                     ))}
                   </ul>
                 ) : (
-                  <div className="mt-2 text-xs text-rose-700">—</div>
+                  <div className="mt-2 text-xs text-danger">—</div>
                 )}
               </div>
             </div>
@@ -1109,15 +1109,15 @@ function AnalyticsTab({
   const finalRecommendation = interviews[0]?.recommendation || analytics.latestStatus;
   return (
     <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5">
+      <div className="lg:col-span-7 bg-surface-1 border border-subtle rounded-card p-5">
         <div className="text-sm font-extrabold tracking-tight">Skill performance</div>
         <div className="mt-4 space-y-3">
           {!analytics.skillBreakdown.length ? (
-            <div className="text-sm text-slate-500">No per-skill breakdown available yet.</div>
+            <div className="text-sm text-muted">No per-skill breakdown available yet.</div>
           ) : (
             analytics.skillBreakdown.map((s) => (
               <div key={s.skill}>
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                <div className="flex items-center justify-between text-xs font-semibold text-secondary">
                   <span className="truncate">{s.skill}</span>
                   <span>{s.score}%</span>
                 </div>
@@ -1130,37 +1130,37 @@ function AnalyticsTab({
         </div>
       </div>
       <div className="lg:col-span-5 space-y-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="bg-surface-1 border border-subtle rounded-card p-5">
           <div className="text-sm font-extrabold tracking-tight">Score averages</div>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Communication</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{analytics.avgComm}%</div>
+            <div className="rounded-card border border-subtle p-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Communication</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{analytics.avgComm}%</div>
               <ScoreBar value={analytics.avgComm} tone="violet" />
             </div>
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Technical</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{analytics.avgTech}%</div>
+            <div className="rounded-card border border-subtle p-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Technical</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{analytics.avgTech}%</div>
               <ScoreBar value={analytics.avgTech} tone="indigo" />
             </div>
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Confidence</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{analytics.avgConf}%</div>
+            <div className="rounded-card border border-subtle p-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Confidence</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{analytics.avgConf}%</div>
               <ScoreBar value={analytics.avgConf} tone="emerald" />
             </div>
-            <div className="rounded-xl border border-slate-200 p-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Best score</div>
-              <div className="mt-1 text-xl font-extrabold text-slate-900">{analytics.bestScore}%</div>
+            <div className="rounded-card border border-subtle p-3">
+              <div className="text-xs font-black uppercase tracking-widest text-muted">Best score</div>
+              <div className="mt-1 text-xl font-extrabold text-primary">{analytics.bestScore}%</div>
               <ScoreBar value={analytics.bestScore} tone="amber" />
             </div>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-2xl p-5">
+        <div className="bg-surface-1 border border-subtle rounded-card p-5">
           <div className="text-sm font-extrabold tracking-tight">Final recommendation</div>
-          <div className="mt-3 text-sm text-slate-700">{finalRecommendation || "Pending review"}</div>
+          <div className="mt-3 text-sm text-secondary">{finalRecommendation || "Pending review"}</div>
           <div className="mt-3 inline-flex items-center gap-2">
             <StatusPill variant="tile" status={analytics.latestStatus} />
-            <span className="text-xs text-slate-500 font-semibold">
+            <span className="text-xs text-muted font-semibold">
               based on {analytics.totalInterviews} interview{analytics.totalInterviews === 1 ? "" : "s"}
             </span>
           </div>

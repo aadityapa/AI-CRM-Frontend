@@ -52,11 +52,30 @@ import {
   getAuthUserRaw,
   isAccessTokenExpired,
 } from "./auth/session.js";
-import { activateInterviewSecurity, deactivateInterviewSecurity } from "./interview_security.js";
+import {
+  activateInterviewSecurity,
+  deactivateInterviewSecurity,
+  requireFullscreenBeforeInterview,
+} from "./interview_security.js";
 import { startFaceMonitoring, stopFaceMonitoring } from "./face_detection.js";
 import { runDeviceTestGate, hideDeviceTestGate, readPersistedDeviceTestState } from "./device_test.js";
 const inviteTokenFromUrl = new URLSearchParams(window.location.search).get("invite") || "";
 const hrFocusFromUrl = new URLSearchParams(window.location.search).get("focus") || "";
+
+(function gateProductionConsole() {
+  try {
+    const debug =
+      new URLSearchParams(window.location.search).get("debug") === "1" ||
+      window.localStorage.getItem("kx_debug") === "1";
+    if (!debug) {
+      console.info = () => {};
+      console.debug = () => {};
+      console.log = () => {};
+    }
+  } catch (_) {
+    /* ignore */
+  }
+})();
 
 async function maybeAutoClearCache(scope) {
   const key = scope === "admin" ? "karnexAdminVersion" : "karnexHrVersion";
@@ -93,10 +112,15 @@ async function maybeAutoClearCache(scope) {
 }
 
 const _showScreen = createShowScreen();
+let _deferCandidateProctoring = false;
 const showScreen = (id) => {
   _showScreen(id);
   setInterviewMode(id === "candidate");
-  if (id === "candidate") initProctoring();
+  if (id === "candidate" && getAuthToken() && !_deferCandidateProctoring) {
+    void initProctoring().catch((err) => {
+      console.warn("[VAD] Proctoring init deferred", err);
+    });
+  }
 };
 setCandidateNavigator(showScreen);
 const setupInterview = createSetupInterview(showScreen);
@@ -320,6 +344,29 @@ function logoutUser() {
   }
 }
 
+// Any user with a CRM role now lands in the CRM/admin app instead of the HR Setup
+// scheduler. HR Setup is reached deliberately via the "Interview Schedule" button
+// (which uses ?focus=...), so an explicit focus intent is never redirected — that
+// also avoids a redirect loop. Legacy HR users with no CRM role keep HR Setup.
+async function shouldRedirectFromHrSetup() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("focus")) return false; // explicit HR Setup intent — stay
+    const token = getAuthToken();
+    if (!token) return false;
+    const res = await fetch("/api/me", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return false; // CRM unconfigured / no profile → keep legacy behavior
+    const body = await res.json();
+    const roles = body && body.data && Array.isArray(body.data.roles) ? body.data.roles : [];
+    return roles.length > 0; // has any CRM role → go to /admin (CRM)
+  } catch (_) {
+    return false; // never block login on an RBAC lookup failure
+  }
+}
+
 function revealAppAfterAuth(user) {
   authUser = user || null;
   setUserChip(authUser);
@@ -329,19 +376,29 @@ function revealAppAfterAuth(user) {
   const layout = document.getElementById("mainLayout");
   if (auth) auth.classList.remove("active");
   if (startup) startup.classList.remove("active");
-  if (layout) layout.classList.remove("hidden");
   if ((authUser?.role || "") === "candidate") {
+    if (layout) layout.classList.remove("hidden");
     document.body.classList.add("interview-mode");
     showScreen("candidate");
     return;
   }
   document.body.classList.remove("interview-mode");
-  loadHrRecords();
-  loadInterviewSchedules();
-  loadJobConfigs();
-  initCandidateAutocomplete();
-  showScreen("hr");
-  applyHrFocusFromQuery();
+  // Keep the layout hidden until we know this role may use HR Setup — avoids a
+  // flash of the scheduler for roles that get redirected to /admin.
+  void shouldRedirectFromHrSetup().then((redirect) => {
+    if (redirect) {
+      const qs = window.location.search || "";
+      window.location.replace(`/admin/${qs}`);
+      return;
+    }
+    if (layout) layout.classList.remove("hidden");
+    loadHrRecords();
+    loadInterviewSchedules();
+    loadJobConfigs();
+    initCandidateAutocomplete();
+    showScreen("hr");
+    applyHrFocusFromQuery();
+  });
 }
 
 const setAuthStatus = (text) => {
@@ -410,6 +467,89 @@ function _setInviteStartupState(text) {
   if (aiState) aiState.innerText = msg;
   const status = document.getElementById("candidateStatus");
   if (status) status.innerText = msg;
+}
+function _showInviteLoadingOverlay(message) {
+  const welcome = document.getElementById("screenInviteWelcome");
+  const startBtn = document.getElementById("inviteWelcomeStartBtn");
+  const subEl = document.getElementById("inviteWelcomeSubtitle");
+  const titleEl = document.getElementById("inviteWelcomeTitle");
+  if (welcome) welcome.classList.add("active");
+  if (startBtn) startBtn.hidden = true;
+  if (titleEl) titleEl.textContent = "Preparing your interview";
+  if (subEl) subEl.textContent = message || "Starting interview session...";
+}
+function _hideInviteLoadingOverlay() {
+  const welcome = document.getElementById("screenInviteWelcome");
+  const startBtn = document.getElementById("inviteWelcomeStartBtn");
+  if (welcome) welcome.classList.remove("active");
+  if (startBtn) startBtn.hidden = false;
+}
+function _formatQuestionBankValidation(validation) {
+  if (!validation || typeof validation !== "object") return "";
+  const lines = [];
+  const role = validation.role || {};
+  if (role.filter) {
+    lines.push(`Role “${role.filter}”: ${role.matched ? `${role.pool_count} in pool` : "no matches"}`);
+  }
+  const skills = Array.isArray(validation.skills) ? validation.skills : [];
+  for (const sk of skills) {
+    if (!sk || !sk.skill) continue;
+    lines.push(`Skill “${sk.skill}”: ${sk.matched ? `${sk.pool_count} in pool` : "no matches"}`);
+  }
+  const diff = validation.difficulty || {};
+  if (diff.filter) {
+    lines.push(`Difficulty (${diff.filter}): ${diff.matched ? `${diff.pool_count} in pool` : "no matches"}`);
+  }
+  const cat = validation.category || {};
+  if (cat.filter) {
+    lines.push(`Category (${cat.filter}): ${cat.matched ? `${cat.pool_count} in pool` : "no matches"}`);
+  }
+  const total = Number(validation.total_active_in_bank);
+  const matched = Number(validation.matching_after_all_filters);
+  const required = Number(validation.required_count);
+  if (Number.isFinite(total)) lines.push(`Active questions in bank: ${total}`);
+  if (Number.isFinite(matched) && Number.isFinite(required)) {
+    lines.push(`Matching all filters: ${matched} (need ${required})`);
+  }
+  return lines.join("\n");
+}
+function _showInviteLoginError(message, { allowRetry = true, validation = null } = {}) {
+  const msg = String(message || "Could not start interview session.").trim();
+  const breakdown = _formatQuestionBankValidation(validation);
+  const display = breakdown ? `${msg}\n\n${breakdown}` : msg;
+  _hideInviteLoadingOverlay();
+  const welcome = document.getElementById("screenInviteWelcome");
+  const startBtn = document.getElementById("inviteWelcomeStartBtn");
+  const subEl = document.getElementById("inviteWelcomeSubtitle");
+  const titleEl = document.getElementById("inviteWelcomeTitle");
+  const layout = document.getElementById("mainLayout");
+  if (layout) layout.classList.add("hidden");
+  document.body.classList.remove("interview-mode");
+  if (welcome) welcome.classList.add("active");
+  if (titleEl) titleEl.textContent = "Unable to start interview";
+  if (subEl) {
+    subEl.textContent = display;
+    subEl.style.whiteSpace = breakdown ? "pre-line" : "";
+  }
+  if (startBtn) {
+    startBtn.hidden = !allowRetry;
+    startBtn.textContent = allowRetry ? "Try again" : "Start Interview";
+    if (allowRetry) {
+      startBtn.onclick = (ev) => {
+        ev.preventDefault();
+        startBtn.hidden = true;
+        startBtn.textContent = "Start Interview";
+        startBtn.onclick = null;
+        _showInviteLoadingOverlay("Retrying interview session...");
+        void proceedWithInviteLogin();
+      };
+    }
+  }
+  const q = document.getElementById("candidateQuestion");
+  const status = document.getElementById("candidateStatus");
+  if (q) q.innerText = display;
+  if (status) status.innerText = "Interview could not start";
+  setAuthStatus(display);
 }
 function _startInviteStartupSequence() {
   if (_inviteStartupHandle) {
@@ -607,6 +747,7 @@ async function proceedWithInviteLogin() {
     const headers = {};
     headers["x-device-id"] = _ensureInviteDeviceId();
     _setCandidateStartupControlsDisabled(true);
+    _showInviteLoadingOverlay("Starting interview session...");
     _setInviteStartupState("Starting interview session...");
     console.info("[STEP-2] Session creation started");
     const loginStartedAt = Date.now();
@@ -632,7 +773,11 @@ async function proceedWithInviteLogin() {
           showInviteTerminalState(st, { candidate_name: data.candidate_name });
           return;
         }
-        throw new Error(data.error || `Request failed with status ${res.status}`);
+        const loginErr = new Error(data.error || `Request failed with status ${res.status}`);
+        if (data.validation && typeof data.validation === "object") {
+          loginErr.validation = data.validation;
+        }
+        throw loginErr;
       }
       if ((data.status || "") === "scheduled_wait") {
         _setCandidateStartupControlsDisabled(true);
@@ -653,7 +798,9 @@ async function proceedWithInviteLogin() {
       const user = data.user || {};
       const token = data.access_token || "";
       if (!token) throw new Error("Access token missing for invite login.");
+      _deferCandidateProctoring = true;
       saveAuthSession(user, token, data.expires_at_ist || "");
+      _hideInviteLoadingOverlay();
       revealAppAfterAuth(user);
       const schedule = data.schedule || {};
       const meta = document.getElementById("candidateMeta");
@@ -662,10 +809,19 @@ async function proceedWithInviteLogin() {
       }
       console.info("[STEP-7] Timer started");
       startInterviewTimer();
+      _setInviteStartupState("Entering fullscreen mode...");
+      const fullscreenOk = await requireFullscreenBeforeInterview();
+      if (!fullscreenOk) {
+        throw new Error("Fullscreen is required to start the interview. Click Enter Fullscreen to continue.");
+      }
       _setInviteStartupState("Loading first question...");
       console.info("[STEP-4] Question loading started");
-      await loadQuestion();
+      const loaded = await loadQuestion({ throwOnError: true });
+      if (!loaded) {
+        throw new Error("Failed to load the first interview question.");
+      }
       console.info("[STEP-5] Question loaded");
+      _deferCandidateProctoring = false;
       void initProctoring().catch((err) => {
         console.warn("[VAD] Proctoring init deferred", err);
       });
@@ -679,7 +835,9 @@ async function proceedWithInviteLogin() {
       }
     } catch (err) {
       _setCandidateStartupControlsDisabled(false);
-      throw err;
+      const msg = err?.message || "Could not start interview session.";
+      _showInviteLoginError(msg, { validation: err?.validation || null });
+      return;
     } finally {
       clearTimeout(slowTimer);
       _stopInviteStartupSequence();
@@ -768,10 +926,9 @@ async function autoLoginFromInviteToken() {
     if (startup) startup.classList.remove("active");
     if (welcome) welcome.classList.remove("active");
     hideDeviceTestGate();
-    if (layout) layout.classList.remove("hidden");
-    document.body.classList.add("interview-mode");
-    applyRoleAccess("candidate");
-    showScreen("candidate");
+    if (layout) layout.classList.add("hidden");
+    document.body.classList.remove("interview-mode");
+    _showInviteLoadingOverlay("Connecting to your interview session...");
 
     _verifiedDeviceId = _ensureInviteDeviceId();
 
@@ -781,12 +938,11 @@ async function autoLoginFromInviteToken() {
     if (!lookupRes.ok || lookup.error) {
       const st = lookup.invite_state;
       if (st === "completed" || st === "terminated") {
+        _hideInviteLoadingOverlay();
         showInviteTerminalState(st, { candidate_name: lookup.candidate_name });
         return false;
       }
-      const authEl = document.getElementById("screenAuth");
-      if (authEl) authEl.classList.add("active");
-      setAuthStatus(lookup.error || "Invite link error.");
+      _showInviteLoginError(lookup.error || "Invite link error.");
       return false;
     }
 
@@ -794,6 +950,11 @@ async function autoLoginFromInviteToken() {
     const hasAccessKey = !!(schedule.access_key);
 
     if (hasAccessKey) {
+      _hideInviteLoadingOverlay();
+      if (layout) layout.classList.remove("hidden");
+      document.body.classList.add("interview-mode");
+      applyRoleAccess("candidate");
+      showScreen("candidate");
       showVerificationScreen();
       return true;
     }
@@ -801,9 +962,7 @@ async function autoLoginFromInviteToken() {
     await proceedWithInviteLogin();
     return true;
   } catch (err) {
-    const auth = document.getElementById("screenAuth");
-    if (auth) auth.classList.add("active");
-    setAuthStatus(`Invite link error: ${err.message}`);
+    _showInviteLoginError(`Invite link error: ${err.message}`);
     return false;
   }
 }
@@ -899,6 +1058,23 @@ async function bootstrapInviteFlow() {
     // Previously we eagerly added `active` to `#screenAuth` here which made
     // the auth card cover the startup hero on every fresh page load — the
     // candidate-facing welcome flow has the same "no auto-skip" requirement.
+    //
+    // Exception (July 2026): a password-reset deep link (?reset_token=...)
+    // must land directly on the auth screen's Reset pane — the pane itself is
+    // driven by js/auth/passwordReset.js; here we only keep the screen open.
+    let hasResetToken = false;
+    try {
+      hasResetToken = new URLSearchParams(window.location.search).has("reset_token");
+    } catch (_) {
+      /* ignore */
+    }
+    if (hasResetToken) {
+      const auth = document.getElementById("screenAuth");
+      if (auth) auth.classList.add("active");
+      const startup = document.getElementById("screenStartup");
+      if (startup) startup.classList.remove("active");
+      return Promise.resolve();
+    }
     return restoreSessionIfPossible().then((ok) => {
       if (ok) return;
       const auth = document.getElementById("screenAuth");
