@@ -1,16 +1,41 @@
 /** CRM Settings (Admin-only): master-data tables (departments, designations,
  * skills, locations, document types, leave policy types) + app settings. */
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Power } from "lucide-react";
+import { Pencil, Plus, Power, Settings } from "lucide-react";
 import { crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import {
-  ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
+  ErrorBox, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 type Notify = (msg: string, kind?: "ok" | "err") => void;
 
@@ -105,48 +130,59 @@ function MasterFormModal({
   };
 
   return (
-    <Modal title={`${initial ? "Edit" : "Add"} ${label}`} onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        {fields.map((f) =>
-          f.type === "checkbox" ? (
-            <label key={f.key} className="flex items-center gap-2 text-sm font-semibold text-primary">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-sky-600"
-                checked={!!form[f.key]}
-                onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.checked }))}
-              />
-              {f.label}
-            </label>
-          ) : f.type === "select" ? (
-            <Field key={f.key} label={f.label} required={f.required} error={errors[f.key]}>
-              <select
-                className={inputCls}
-                value={form[f.key] ?? ""}
-                onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.value }))}
-              >
-                <option value="">— None —</option>
-                {(f.options || []).map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </Field>
-          ) : (
-            <Field key={f.key} label={f.label} required={f.required} error={errors[f.key]}>
-              <input
-                className={inputCls}
-                value={form[f.key] ?? ""}
-                placeholder={f.placeholder}
-                onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.value }))}
-              />
-            </Field>
-          ),
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">{`${initial ? "Edit" : "Add"} ${label}`}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={`${initial ? "Edit" : "Add"} ${label}`}
+        subtitle={`Manage the ${label.toLowerCase()} master record used across the CRM.`}
+        icon={<Settings size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          {fields.map((f) =>
+            f.type === "checkbox" ? (
+              <label key={f.key} className="flex items-center gap-2 text-sm font-semibold text-primary">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-sky-600"
+                  checked={!!form[f.key]}
+                  onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.checked }))}
+                />
+                {f.label}
+              </label>
+            ) : f.type === "select" ? (
+              <WizardField key={f.key} label={f.label} required={f.required} error={errors[f.key]}>
+                <select
+                  className={inputCls}
+                  value={form[f.key] ?? ""}
+                  onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.value }))}
+                >
+                  <option value="">— None —</option>
+                  {(f.options || []).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </WizardField>
+            ) : (
+              <WizardField key={f.key} label={f.label} required={f.required} error={errors[f.key]} filled={!!String(form[f.key] ?? "").trim() && !errors[f.key]}>
+                <input
+                  className={inputCls}
+                  value={form[f.key] ?? ""}
+                  placeholder={f.placeholder}
+                  onChange={(e) => setForm((v) => ({ ...v, [f.key]: e.target.value }))}
+                />
+              </WizardField>
+            ),
+          )}
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }

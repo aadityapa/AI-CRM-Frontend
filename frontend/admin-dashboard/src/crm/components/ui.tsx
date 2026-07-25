@@ -68,6 +68,19 @@ export function Modal({
   fullScreen,
   medium,
   footer,
+  bodyClassName,
+  /** Deep layered chrome for wizards: page = surface-0, bars = surface-1. */
+  deep,
+  /** Optional theming scope applied to the whole modal overlay (e.g. `crm-wizard wiz-noise`). */
+  scopeClassName,
+  /** Extra classes on the dialog panel (e.g. glass / glow). */
+  panelClassName,
+  /** Extra classes on the sticky header bar. */
+  headerClassName,
+  /** Extra classes on the sticky footer bar (full-page only). */
+  footerClassName,
+  /** Accessible name when `title` is not a plain string. */
+  ariaLabel,
 }: {
   title: React.ReactNode;
   onClose: () => void;
@@ -79,12 +92,24 @@ export function Modal({
   medium?: boolean;
   /** Optional sticky footer action bar (shown only in full-page mode). */
   footer?: React.ReactNode;
+  /** Extra classes for the scrollable body (e.g. flush padding for nested panes). */
+  bodyClassName?: string;
+  /** Use deep page background (surface-0) with raised surface-1 header/footer. */
+  deep?: boolean;
+  /** Optional theming scope applied to the whole modal overlay (e.g. `crm-wizard wiz-noise`). */
+  scopeClassName?: string;
+  panelClassName?: string;
+  headerClassName?: string;
+  footerClassName?: string;
+  ariaLabel?: string;
 }) {
   const reduce = useReducedMotion();
   const panelRef = React.useRef<HTMLDivElement>(null);
   const returnFocusRef = React.useRef<Element | null>(null);
   /** Full viewport takeover — used for create/edit forms (`fullScreen` or legacy `wide`). */
   const isFullPage = !!(fullScreen || wide);
+  const pageBg = deep ? "bg-surface-0" : "bg-surface-3";
+  const chromeBg = deep ? "bg-surface-1" : "bg-surface-3";
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -122,48 +147,68 @@ export function Modal({
     };
   }, []);
 
-  const outerCls = isFullPage
-    ? "fixed inset-0 z-[200] flex flex-col bg-surface-3"
-    : "fixed inset-0 z-[200] flex items-center justify-center bg-backdrop p-4 [backdrop-filter:blur(var(--glass-blur))] [-webkit-backdrop-filter:blur(var(--glass-blur))]";
-  const panelCls = isFullPage
-    ? "flex h-[100dvh] w-full max-w-none flex-col overflow-hidden"
-    : medium
-      ? "elev-3 flex w-full max-w-3xl max-h-[85vh] flex-col overflow-hidden rounded-modal"
-      : `elev-3 w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-modal`;
+  const scopeCls = scopeClassName ? ` ${scopeClassName}` : "";
+  const outerCls = (isFullPage
+    ? `fixed inset-0 z-[200] flex flex-col ${pageBg}`
+    : "fixed inset-0 z-[200] flex items-center justify-center bg-backdrop p-4 [backdrop-filter:blur(var(--glass-blur))] [-webkit-backdrop-filter:blur(var(--glass-blur))]") + scopeCls;
+  const panelCls = [
+    isFullPage
+      ? "flex h-[100dvh] w-full max-w-none flex-col overflow-hidden"
+      : medium
+        ? "elev-3 flex w-full max-w-3xl max-h-[85vh] flex-col overflow-hidden rounded-modal"
+        : "elev-3 w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-modal",
+    panelClassName || "",
+  ].filter(Boolean).join(" ");
 
   const dialog = (
     <motion.div
       className={outerCls}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: DUR.base }}
+      transition={{ duration: reduce ? 0 : DUR.base }}
       onMouseDown={(e) => !isFullPage && e.target === e.currentTarget && onClose()}
     >
       <motion.div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
+        aria-label={ariaLabel || (typeof title === "string" ? title : undefined)}
         tabIndex={-1}
         className={panelCls}
-        initial={reduce ? { opacity: 0 } : { opacity: 0, scale: isFullPage ? 1 : 0.96, y: isFullPage ? 0 : 12 }}
+        initial={reduce ? { opacity: 0 } : { opacity: 0, scale: isFullPage ? 0.985 : 0.96, y: isFullPage ? 10 : 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={reduce ? { duration: DUR.base } : { duration: DUR.slow, ease: EASE_OUT }}
+        transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 28 }}
       >
-        <div className={`sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-subtle bg-surface-3 px-5 py-3.5 sm:px-8 ${isFullPage ? "" : "rounded-t-modal"}`}>
+        <div className={[
+          `sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-subtle ${chromeBg} px-5 py-3.5 sm:px-8 ${isFullPage ? "" : "rounded-t-modal"}`,
+          headerClassName || "",
+        ].filter(Boolean).join(" ")}>
           <div className="min-w-0 flex-1 text-base font-bold text-primary">{title}</div>
           <button
             onClick={onClose}
-            className={`ml-3 shrink-0 rounded-control p-1 text-muted transition-all duration-fast ease-smooth hover:bg-surface-1 hover:text-primary active:scale-90 ${focusRing}`}
+            className={`ml-3 shrink-0 rounded-control p-1 text-muted transition-all duration-fast ease-smooth hover:bg-surface-2 hover:text-primary active:scale-90 ${focusRing}`}
             aria-label="Close"
           >
             <X size={18} />
           </button>
         </div>
-        <div className={isFullPage ? "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 sm:px-8 sm:py-6" : medium ? "min-h-0 flex-1 overflow-y-auto px-5 py-4" : "px-5 py-4"}>
-          <div className={isFullPage ? "w-full max-w-none" : undefined}>{children}</div>
+        <div
+          className={[
+            isFullPage
+              ? `relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 sm:px-8 sm:py-6 ${deep ? "bg-surface-0" : ""}`
+              : medium
+                ? "min-h-0 flex-1 overflow-y-auto px-5 py-4"
+                : "px-5 py-4",
+            bodyClassName || "",
+          ].filter(Boolean).join(" ")}
+        >
+          <div className={isFullPage ? "relative flex h-full min-h-0 w-full max-w-none flex-col" : undefined}>{children}</div>
         </div>
         {isFullPage && footer && (
-          <div className="sticky bottom-0 z-10 shrink-0 border-t border-subtle bg-surface-3 px-5 py-3 sm:px-8">
+          <div className={[
+            `sticky bottom-0 z-20 shrink-0 border-t border-subtle ${chromeBg} px-5 py-3 sm:px-8`,
+            footerClassName || "",
+          ].filter(Boolean).join(" ")}>
             {footer}
           </div>
         )}
@@ -182,6 +227,10 @@ export function ConfirmModal({
   onConfirm,
   onClose,
   busy,
+  error,
+  secondaryLabel,
+  onSecondary,
+  secondaryBusy,
 }: {
   title: string;
   message: React.ReactNode;
@@ -190,18 +239,49 @@ export function ConfirmModal({
   onConfirm: () => void;
   onClose: () => void;
   busy?: boolean;
+  /** Shown under the confirm message (e.g. 409 dependency block). */
+  error?: string | null;
+  /** Optional alternate action (e.g. Deactivate when hard-delete is blocked). */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  secondaryBusy?: boolean;
 }) {
+  const blocked = Boolean(error);
+  const anyBusy = Boolean(busy || secondaryBusy);
   return (
     <Modal title={title} onClose={onClose}>
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-full bg-warning-soft p-2 text-warning">
           <AlertTriangle size={18} />
         </div>
-        <div className="text-sm text-secondary">{message}</div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="text-sm text-secondary">{message}</div>
+          {error ? (
+            <div className="rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-sm font-medium text-danger" role="alert">
+              {error}
+            </div>
+          ) : null}
+        </div>
       </div>
       <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={danger ? btnDanger : btnPrimary} onClick={onConfirm} disabled={busy}>
+        <button className={btnSecondary} onClick={onClose} disabled={anyBusy}>
+          {blocked ? "Close" : "Cancel"}
+        </button>
+        {blocked && secondaryLabel && onSecondary ? (
+          <button
+            className={btnPrimary}
+            onClick={onSecondary}
+            disabled={anyBusy}
+          >
+            {secondaryBusy ? "Working…" : secondaryLabel}
+          </button>
+        ) : null}
+        <button
+          className={danger ? btnDanger : btnPrimary}
+          onClick={onConfirm}
+          disabled={anyBusy || blocked}
+          title={blocked ? "Resolve dependencies before deleting" : undefined}
+        >
           {busy ? "Working…" : confirmLabel}
         </button>
       </div>
@@ -418,7 +498,7 @@ export function useToast(): [React.ReactNode, (msg: string, kind?: "ok" | "err")
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 48, scale: 0.95 }}
           transition={{ type: "spring", stiffness: 420, damping: 30 }}
-          className={`glass fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-card border-l-2 px-4 py-2.5 text-sm font-semibold text-primary shadow-overlay ${
+          className={`glass fixed bottom-5 right-5 z-[250] flex items-center gap-2 rounded-card border-l-2 px-4 py-2.5 text-sm font-semibold text-primary shadow-overlay ${
             toast.kind === "ok" ? "border-l-success" : "border-l-danger"
           }`}
           role="status"

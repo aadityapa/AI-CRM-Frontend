@@ -11,6 +11,7 @@ import { useCanEditTab } from "../useAccess";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
@@ -254,6 +255,18 @@ export function OpportunitiesListPage() {
             ) : undefined
           }
           emptyMessage="No opportunities in this stage"
+          rowActions={canWrite ? (r) => (
+            <RowActions
+              entity="opportunity"
+              itemLabel={r.title}
+              onEdit={() => crmNavigate(`opportunities/${r.id}`)}
+              deleteUrl={`/api/opportunities/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit
+              canDelete
+            />
+          ) : undefined}
         />
       )}
 

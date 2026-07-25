@@ -3,21 +3,53 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Eye, Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Building2, Eye, Pencil, Plus, SlidersHorizontal, Trash2, Upload, User } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
-import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
+import { crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole } from "../CrmApp";
 import { useCanEditTab, useCrmAccess } from "../useAccess";
+import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import { CustomerFormModal } from "../components/CustomerFormModal";
+import { EditBranchWizard } from "../components/BranchWizardModal";
+import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
+import {
+  COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
+} from "../constants/geo";
 import { normalizePhoneForSave } from "../lib/phone";
 import {
   ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------------ types */
 
@@ -51,6 +83,7 @@ type Branch = {
   hours_required_full_day?: number | null;
   hours_required_half_day?: number | null;
   billing_frequency?: string | null;
+  billing_type?: string | null;
   billing_cycle_start_day?: number | null;
   billing_cycle_end_day?: number | null;
 };
@@ -181,6 +214,18 @@ export function CustomersListPage() {
             ))}
           </select>
         }
+        rowActions={canWrite ? (r) => (
+          <RowActions
+            entity="customer"
+            itemLabel={r.name}
+            onEdit={() => crmNavigate(`customers/${r.id}`)}
+            deleteUrl={`/api/customers/${r.id}`}
+            onDeleted={load}
+            notify={notify}
+            canEdit
+            canDelete
+          />
+        ) : undefined}
       />
       {showNew && (
         <CustomerFormModal
@@ -217,7 +262,7 @@ function BranchFormModal({
     city: initial?.city || "",
     state: initial?.state || "",
     pincode: initial?.pincode || "",
-    country: initial?.country || "",
+    country: initial?.country || DEFAULT_COUNTRY,
     gstin: initial?.gstin || "",
     pan: initial?.pan || "",
     is_primary: initial?.is_primary || false,
@@ -264,78 +309,85 @@ function BranchFormModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Branch" : "Add Branch"} onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Branch name" required error={errors.branch_name}>
-            <input className={inputCls} value={form.branch_name} onChange={(e) => set("branch_name", e.target.value)} />
-          </Field>
-          <Field label="Branch legal name">
-            <input className={inputCls} value={form.branch_legal_name} onChange={(e) => set("branch_legal_name", e.target.value)} />
-          </Field>
-        </div>
-        <Field label="Billing address">
-          <textarea className={inputCls} rows={2} value={form.billing_address} onChange={(e) => set("billing_address", e.target.value)} />
-        </Field>
-        <Field label="Address line 2">
-          <input className={inputCls} value={form.address_line_2} onChange={(e) => set("address_line_2", e.target.value)} />
-        </Field>
-        <Field label="Delivery address">
-          <textarea className={inputCls} rows={2} value={form.delivery_address} onChange={(e) => set("delivery_address", e.target.value)} />
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="City">
-            <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} />
-          </Field>
-          <Field label="State">
-            <input className={inputCls} value={form.state} onChange={(e) => set("state", e.target.value)} />
-          </Field>
-          <Field label="Pincode">
-            <input className={inputCls} value={form.pincode} onChange={(e) => set("pincode", e.target.value)} maxLength={16} />
-          </Field>
-          <Field label="Country">
-            <input className={inputCls} value={form.country} onChange={(e) => set("country", e.target.value)} />
-          </Field>
-          <Field label="GSTIN" error={errors.gstin}>
-            <input className={inputCls} value={form.gstin} onChange={(e) => set("gstin", e.target.value)} maxLength={15} />
-          </Field>
-          <Field label="PAN" error={errors.pan}>
-            <input className={inputCls} value={form.pan} onChange={(e) => set("pan", e.target.value)} maxLength={10} />
-          </Field>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-semibold text-primary">
-          <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_primary} onChange={(e) => set("is_primary", e.target.checked)} />
-          Primary branch
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Saving…" : "Save branch"}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-const branchAddress = (b: Branch) =>
-  [b.billing_address, b.address_line_2, b.city, b.state, b.pincode, b.country].filter(Boolean).join(", ") || "—";
-
-/** Read-only branch details (ported from the removed Customer Branches page). */
-function BranchViewModal({ row, onClose }: { row: Branch; onClose: () => void }) {
-  return (
-    <Modal title={`Branch — ${row.branch_name}`} onClose={onClose}>
-      <dl className="grid gap-3 text-sm sm:grid-cols-2">
-        <div><dt className="text-xs font-semibold uppercase text-muted">Branch legal name</dt><dd>{row.branch_legal_name || "—"}</dd></div>
-        <div><dt className="text-xs font-semibold uppercase text-muted">Primary</dt><dd>{row.is_primary ? "Yes" : "No"}</dd></div>
-        <div><dt className="text-xs font-semibold uppercase text-muted">GSTIN</dt><dd>{row.gstin || "—"}</dd></div>
-        <div><dt className="text-xs font-semibold uppercase text-muted">PAN</dt><dd>{row.pan || "—"}</dd></div>
-        <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase text-muted">Billing address</dt><dd>{branchAddress(row)}</dd></div>
-        {row.delivery_address && (
-          <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase text-muted">Delivery address</dt><dd>{row.delivery_address}</dd></div>
-        )}
-      </dl>
-      <div className="mt-4 flex justify-end">
-        <button type="button" className={btnSecondary} onClick={onClose}>Close</button>
-      </div>
+    <Modal
+      title={<span className="sr-only">{initial ? "Edit Branch" : "Add Branch"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={initial ? "Edit Branch" : "Add Branch"}
+        subtitle="Branch identity, registered address, and tax identifiers."
+        icon={<Building2 size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Branch name" required error={errors.branch_name} icon="building" filled={!!form.branch_name.trim()}>
+              <input className={inputCls} value={form.branch_name} onChange={(e) => set("branch_name", e.target.value)} />
+            </WizardField>
+            <WizardField label="Branch legal name" icon="building" filled={!!form.branch_legal_name.trim()}>
+              <input className={inputCls} value={form.branch_legal_name} onChange={(e) => set("branch_legal_name", e.target.value)} />
+            </WizardField>
+          </div>
+          <WizardField label="Billing address">
+            <textarea className={inputCls} rows={2} value={form.billing_address} onChange={(e) => set("billing_address", e.target.value)} />
+          </WizardField>
+          <WizardField label="Address line 2" icon="map" filled={!!form.address_line_2.trim()}>
+            <input className={inputCls} value={form.address_line_2} onChange={(e) => set("address_line_2", e.target.value)} />
+          </WizardField>
+          <WizardField label="Delivery address">
+            <textarea className={inputCls} rows={2} value={form.delivery_address} onChange={(e) => set("delivery_address", e.target.value)} />
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="City">
+              <SearchableSelect
+                value={form.city}
+                options={optionsFromStrings(INDIAN_CITIES)}
+                allowAdd
+                searchable
+                placeholder="Search city…"
+                onChange={(v) => set("city", v)}
+              />
+            </WizardField>
+            <WizardField label="State">
+              <SearchableSelect
+                value={form.state}
+                options={optionsFromStrings(INDIAN_STATES)}
+                searchable
+                placeholder="Search state…"
+                onChange={(v) => set("state", v)}
+              />
+            </WizardField>
+            <WizardField label="Pincode" icon="map" filled={!!form.pincode.trim()}>
+              <input className={inputCls} value={form.pincode} onChange={(e) => set("pincode", e.target.value)} maxLength={16} />
+            </WizardField>
+            <WizardField label="Country">
+              <SearchableSelect
+                value={form.country || DEFAULT_COUNTRY}
+                options={optionsFromStrings(COUNTRIES)}
+                allowAdd
+                searchable
+                placeholder="Search country…"
+                onChange={(v) => set("country", v)}
+              />
+            </WizardField>
+            <WizardField label="GSTIN" error={errors.gstin} icon="hash" filled={!!form.gstin.trim() && !errors.gstin}>
+              <input className={inputCls} value={form.gstin} onChange={(e) => set("gstin", e.target.value)} maxLength={15} />
+            </WizardField>
+            <WizardField label="PAN" error={errors.pan} icon="hash" filled={!!form.pan.trim() && !errors.pan}>
+              <input className={inputCls} value={form.pan} onChange={(e) => set("pan", e.target.value)} maxLength={10} />
+            </WizardField>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
+            <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_primary} onChange={(e) => set("is_primary", e.target.checked)} />
+            Primary branch
+          </label>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Save branch"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -348,6 +400,7 @@ type CustomerDefaults = {
   holidays_billable: boolean;
   min_hours_full_day: number;
   min_hours_half_day: number;
+  normal_hours_per_day: number;
 };
 
 /** Built-in fallbacks when the customer has no default policy row (mirrors
@@ -358,9 +411,16 @@ const BUILTIN_DEFAULTS: CustomerDefaults = {
   holidays_billable: false,
   min_hours_full_day: 8,
   min_hours_half_day: 4,
+  normal_hours_per_day: 8,
 };
 
-const BILLING_FREQUENCIES = ["Weekly", "Bi-Weekly", "Monthly"];
+/** Billing Type — API enum values with display labels (null = inherit / not set). */
+const BILLING_TYPE_CHOICES = [
+  { value: "Per_Hour", label: "Per Hour" },
+  { value: "Per_Day", label: "Per Day" },
+  { value: "Per_Month", label: "Per Month" },
+  { value: "Per_Year", label: "Per Year" },
+];
 
 type Tri = "" | "yes" | "no";
 const triFromApi = (v: boolean | null | undefined): Tri => (v == null ? "" : v ? "yes" : "no");
@@ -393,7 +453,9 @@ function BranchBillingPolicyModal({
     holidays_billable: "" as Tri,
     hours_required_full_day: "",
     hours_required_half_day: "",
+    working_hours_per_day: "",
     billing_frequency: "",
+    billing_type: "",
     billing_cycle_start_day: "",
     billing_cycle_end_day: "",
   });
@@ -415,7 +477,9 @@ function BranchBillingPolicyModal({
         holidays_billable: triFromApi(p.holidays_billable),
         hours_required_full_day: p.hours_required_full_day != null ? String(p.hours_required_full_day) : "",
         hours_required_half_day: p.hours_required_half_day != null ? String(p.hours_required_half_day) : "",
+        working_hours_per_day: p.working_hours_per_day != null ? String(p.working_hours_per_day) : "",
         billing_frequency: p.billing_frequency || "",
+        billing_type: p.billing_type || "",
         billing_cycle_start_day: p.billing_cycle_start_day != null ? String(p.billing_cycle_start_day) : "",
         billing_cycle_end_day: p.billing_cycle_end_day != null ? String(p.billing_cycle_end_day) : "",
       });
@@ -427,6 +491,7 @@ function BranchBillingPolicyModal({
           holidays_billable: !!d.holidays_billable,
           min_hours_full_day: Number(d.min_hours_full_day ?? 8),
           min_hours_half_day: Number(d.min_hours_half_day ?? 4),
+          normal_hours_per_day: Number(d.normal_hours_per_day ?? 8),
         });
       }
     } catch (e: any) {
@@ -443,10 +508,12 @@ function BranchBillingPolicyModal({
     const numOrNull = (v: string) => (v === "" ? null : Number(v));
     const full = numOrNull(form.hours_required_full_day);
     const half = numOrNull(form.hours_required_half_day);
+    const whpd = numOrNull(form.working_hours_per_day);
     const sd = numOrNull(form.billing_cycle_start_day);
     const ed = numOrNull(form.billing_cycle_end_day);
     if (full != null && (!Number.isFinite(full) || full < 0 || full > 24)) errs.full = "Must be between 0 and 24";
     if (half != null && (!Number.isFinite(half) || half < 0 || half > 24)) errs.half = "Must be between 0 and 24";
+    if (whpd != null && (!Number.isFinite(whpd) || whpd < 0 || whpd > 24)) errs.whpd = "Must be between 0 and 24";
     if (!errs.full && !errs.half && full != null && half != null && half > full)
       errs.half = "Half-day hours cannot exceed full-day hours";
     if (sd != null && (!Number.isInteger(sd) || sd < 1 || sd > 31)) errs.start = "Day must be 1–31";
@@ -461,7 +528,9 @@ function BranchBillingPolicyModal({
         holidays_billable: triToApi(form.holidays_billable),
         hours_required_full_day: full,
         hours_required_half_day: half,
+        working_hours_per_day: whpd,
         billing_frequency: form.billing_frequency || null,
+        billing_type: form.billing_type || null,
         billing_cycle_start_day: sd,
         billing_cycle_end_day: ed,
       });
@@ -516,7 +585,7 @@ function BranchBillingPolicyModal({
             {triSelect("leave_billable", "Leaves billable", defaults.leave_billable)}
             {triSelect("holidays_billable", "Holidays billable", defaults.holidays_billable)}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Min hours — full day" error={errors.full}>
               <input
                 type="number" step="0.5" min={0} max={24}
@@ -541,18 +610,32 @@ function BranchBillingPolicyModal({
               {inheritNote(form.hours_required_half_day === "", `${defaults.min_hours_half_day} h`)}
               {clearBtn("hours_required_half_day")}
             </Field>
+            <Field label="Working hours / day" error={errors.whpd}>
+              <input
+                type="number" step="0.5" min={0} max={24}
+                className={inputCls}
+                value={form.working_hours_per_day}
+                disabled={!canWrite}
+                placeholder={`Inherit (${defaults.normal_hours_per_day})`}
+                onChange={(e) => set("working_hours_per_day", e.target.value)}
+              />
+              <p className="mt-1 text-xs text-muted">Feeds &quot;Hours Per Day&quot; in New Opportunity.</p>
+              {inheritNote(form.working_hours_per_day === "", `${defaults.normal_hours_per_day} h`)}
+              {clearBtn("working_hours_per_day")}
+            </Field>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Billing frequency">
+            <Field label="Billing Type">
               <select
                 className={inputCls}
-                value={form.billing_frequency}
+                value={form.billing_type}
                 disabled={!canWrite}
-                onChange={(e) => set("billing_frequency", e.target.value)}
+                onChange={(e) => set("billing_type", e.target.value)}
               >
                 <option value="">— Not set —</option>
-                {BILLING_FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+                {BILLING_TYPE_CHOICES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+              {clearBtn("billing_type")}
             </Field>
             <Field label="Cycle start day" error={errors.start}>
               <input
@@ -601,16 +684,17 @@ const hasOwnPolicy = (b: Branch) =>
   b.hours_required_full_day != null ||
   b.hours_required_half_day != null ||
   !!b.billing_frequency ||
+  !!b.billing_type ||
   b.billing_cycle_start_day != null ||
   b.billing_cycle_end_day != null;
 
-function BranchesTab({ customerId, canWrite, notify }: { customerId: number; canWrite: boolean; notify: Notify }) {
+function BranchesTab({ customerId, customerName, canWrite, notify }: { customerId: number; customerName?: string | null; canWrite: boolean; notify: Notify }) {
   const [rows, setRows] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<{ initial?: Branch } | null>(null);
-  const [viewRow, setViewRow] = useState<Branch | null>(null);
+  const [wizardRow, setWizardRow] = useState<Branch | null>(null);
   const [policyRow, setPolicyRow] = useState<Branch | null>(null);
   const [deleting, setDeleting] = useState<Branch | null>(null);
   const [busy, setBusy] = useState(false);
@@ -660,7 +744,7 @@ function BranchesTab({ customerId, canWrite, notify }: { customerId: number; can
       key: "branch_name",
       label: "Branch",
       render: (r) => (
-        <span className="font-semibold text-primary">
+        <span className="font-semibold text-brand-600 dark:text-brand-300">
           {r.branch_name}
           {r.is_primary && (
             <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
@@ -696,12 +780,17 @@ function BranchesTab({ customerId, canWrite, notify }: { customerId: number; can
       className: "text-right",
       render: (r) => (
         <span className="inline-flex gap-1">
-          <button className={iconBtn} title="View branch" aria-label="View branch" onClick={(e) => { e.stopPropagation(); setViewRow(r); }}>
+          <button
+            className={iconBtn}
+            title="Open branch"
+            aria-label="Open branch"
+            onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}`); }}
+          >
             <Eye size={15} />
           </button>
           {canWrite && (
             <>
-              <button className={iconBtn} title="Edit branch" aria-label="Edit branch" onClick={(e) => { e.stopPropagation(); setModal({ initial: r }); }}>
+              <button className={iconBtn} title="Edit branch" aria-label="Edit branch" onClick={(e) => { e.stopPropagation(); setWizardRow(r); }}>
                 <Pencil size={15} />
               </button>
               <button className={`${iconBtn} hover:!text-rose-600`} title="Delete branch" aria-label="Delete branch" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
@@ -731,11 +820,21 @@ function BranchesTab({ customerId, canWrite, notify }: { customerId: number; can
         search={search}
         onSearch={setSearch}
         emptyMessage={search ? "No branches match your search" : "No branches yet"}
+        onRowClick={(r) => crmNavigate(`branch-policy/${r.id}`)}
       />
       {modal && (
         <BranchFormModal customerId={customerId} initial={modal.initial} onClose={() => setModal(null)} onSaved={load} notify={notify} />
       )}
-      {viewRow && <BranchViewModal row={viewRow} onClose={() => setViewRow(null)} />}
+      {wizardRow && (
+        <EditBranchWizard
+          customerId={customerId}
+          customerName={customerName}
+          initial={wizardRow}
+          onClose={() => setWizardRow(null)}
+          onSaved={load}
+          notify={notify}
+        />
+      )}
       {policyRow && (
         <BranchBillingPolicyModal
           customerId={customerId}
@@ -955,45 +1054,56 @@ function ContactFormModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Contact" : "Add Contact"} onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        <Field label="Name" required error={errors.name}>
-          <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} />
-        </Field>
-        <Field label="Branch">
-          <select className={inputCls} value={form.branch_id} onChange={(e) => set("branch_id", e.target.value)}>
-            <option value="">— No branch —</option>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.branch_name}</option>
-            ))}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Email" error={errors.email}>
-            <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
-          </Field>
-          <Field label="Phone">
-            <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} maxLength={32} />
-          </Field>
-        </div>
-        <Field label="Designation">
-          <input className={inputCls} value={form.designation} onChange={(e) => set("designation", e.target.value)} />
-        </Field>
-        <div className="flex flex-wrap gap-5">
-          <label className="flex items-center gap-2 text-sm font-semibold text-primary">
-            <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_hiring_manager} onChange={(e) => set("is_hiring_manager", e.target.checked)} />
-            Hiring manager
-          </label>
-          <label className="flex items-center gap-2 text-sm font-semibold text-primary">
-            <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_active} onChange={(e) => set("is_active", e.target.checked)} />
-            Active
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Saving…" : "Save contact"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">{initial ? "Edit Contact" : "Add Contact"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={initial ? "Edit Contact" : "Add Contact"}
+        subtitle="Key contact person, branch, and their coordinates."
+        icon={<User size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          <WizardField label="Name" required error={errors.name} icon="user" filled={!!form.name.trim()}>
+            <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} />
+          </WizardField>
+          <WizardField label="Branch" icon="building">
+            <select className={inputCls} value={form.branch_id} onChange={(e) => set("branch_id", e.target.value)}>
+              <option value="">— No branch —</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.branch_name}</option>
+              ))}
+            </select>
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Email" error={errors.email} icon="mail" filled={!!form.email.trim() && !errors.email}>
+              <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
+            </WizardField>
+            <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
+              <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} maxLength={32} />
+            </WizardField>
+          </div>
+          <WizardField label="Designation" icon="user" filled={!!form.designation.trim()}>
+            <input className={inputCls} value={form.designation} onChange={(e) => set("designation", e.target.value)} />
+          </WizardField>
+          <div className="flex flex-wrap gap-5">
+            <label className="flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
+              <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_hiring_manager} onChange={(e) => set("is_hiring_manager", e.target.checked)} />
+              Hiring manager
+            </label>
+            <label className="flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
+              <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_active} onChange={(e) => set("is_active", e.target.checked)} />
+              Active
+            </label>
+          </div>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Save contact"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1144,43 +1254,56 @@ function DocumentUploadModal({
   if (endDate) fields.end_date = endDate;
 
   return (
-    <Modal title="Upload Document" onClose={onClose} fullScreen>
-      <div className="space-y-3.5">
-        <Field label="Document type" required error={!typeId ? "Select a document type before uploading" : undefined}>
-          <select className={inputCls} value={typeId} onChange={(e) => setTypeId(e.target.value)}>
-            <option value="">— Select type —</option>
-            {docTypes.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Start date">
-            <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </Field>
-          <Field label="End date" error={dateError || undefined}>
-            <input type="date" className={inputCls} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </Field>
+    <Modal
+      title={<span className="sr-only">Upload Document</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Upload Document"
+        subtitle="Attach a customer document and tag its type and validity window."
+        icon={<Upload size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <WizardField label="Document type" required error={!typeId ? "Select a document type before uploading" : undefined} icon="hash">
+            <select className={inputCls} value={typeId} onChange={(e) => setTypeId(e.target.value)}>
+              <option value="">— Select type —</option>
+              {docTypes.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Start date" icon="calendar" filled={!!startDate}>
+              <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </WizardField>
+            <WizardField label="End date" error={dateError || undefined} icon="calendar" filled={!!endDate && !dateError}>
+              <input type="date" className={inputCls} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </WizardField>
+          </div>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose}>Cancel</button>
+            <div className="ml-auto">
+              {canUpload ? (
+                <FileUploadButton
+                  path={`/api/customers/${customerId}/documents`}
+                  fields={fields}
+                  label="Choose file & upload"
+                  onDone={() => {
+                    notify("Document uploaded");
+                    onUploaded();
+                    onClose();
+                  }}
+                  onError={(m) => notify(m, "err")}
+                />
+              ) : (
+                <button type="button" className={`${btnSecondary} h-10 rounded-xl`} disabled>Choose file & upload</button>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-          {canUpload ? (
-            <FileUploadButton
-              path={`/api/customers/${customerId}/documents`}
-              fields={fields}
-              label="Choose file & upload"
-              onDone={() => {
-                notify("Document uploaded");
-                onUploaded();
-                onClose();
-              }}
-              onError={(m) => notify(m, "err")}
-            />
-          ) : (
-            <button type="button" className={btnSecondary} disabled>Choose file & upload</button>
-          )}
-        </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1320,11 +1443,10 @@ export function CustomerDetailPage() {
   return (
     <div>
       {toast}
-      <div className="mb-1">
-        <CrmLink to="customers" className="text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400">
-          ← Customers
-        </CrmLink>
-      </div>
+      <CrmBreadcrumb items={[
+        { label: "Customers", to: "customers" },
+        { label: customer.name },
+      ]} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-3">
@@ -1353,7 +1475,7 @@ export function CustomerDetailPage() {
         onChange={setTab}
       />
       <div className="mt-4">
-        {tab === "branches" && <BranchesTab customerId={customerId} canWrite={canWrite} notify={notify} />}
+        {tab === "branches" && <BranchesTab customerId={customerId} customerName={customer?.name} canWrite={canWrite} notify={notify} />}
         {tab === "billing" && <BillingPolicyTab customerId={customerId} canWrite={canWrite} notify={notify} />}
         {tab === "contacts" && <ContactsTab customerId={customerId} canWrite={canWrite} notify={notify} />}
         {tab === "documents" && <DocumentsTab customerId={customerId} canWrite={canWrite} notify={notify} />}

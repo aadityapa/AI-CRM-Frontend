@@ -4,16 +4,42 @@
  * Approve / Reject (reason) / Cancel actions. Days are server-computed;
  * insufficient-balance 400s are surfaced inline in the apply modal. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Ban, Check, Plus, X } from "lucide-react";
+import { Ban, CalendarOff, Check, Plus, X } from "lucide-react";
 import { CrmApiError, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import {
-  ConfirmModal, ErrorBox, Field, Modal, StatusBadge, Tabs,
+  ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -238,6 +264,17 @@ export function LeaveApplicationsPage() {
               )}
             </>
           }
+          rowActions={isHr ? (r) => (
+            <RowActions
+              entity="leave application"
+              itemLabel={r.employee_name || `#${r.id}`}
+              deleteUrl={`/api/leave-applications/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit={false}
+              canDelete
+            />
+          ) : undefined}
         />
       )}
 
@@ -310,10 +347,43 @@ function ApplyLeaveModal({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [apiError, setApiError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [leaveBalances, setLeaveBalances] = useState<Record<number, number>>({});
 
   const selectedType = leaveTypes.find((t) => String(t.id) === leaveTypeId);
   const showCompOff = isCompOffType(selectedType?.name);
   const multiDay = periodType === "Multi_Day";
+  const selectedBalance = leaveTypeId
+    ? leaveBalances[Number(leaveTypeId)]
+    : undefined;
+  const balanceYear = new Date().getFullYear();
+  // HR filing for another employee uses that id; otherwise self (Myself / non-HR).
+  const balanceEmployeeId = isHr && employeeIdSel ? Number(employeeIdSel) : null;
+
+  // Per-leave-type balances shown next to the leave-type select.
+  // HR/managers read via the employees endpoint; self-service employees (no
+  // employee-read permission) fall back to their own /api/me/leave-balances.
+  useEffect(() => {
+    const toMap = (rows: any[] | undefined) => {
+      const m: Record<number, number> = {};
+      (rows || []).forEach((b: any) => {
+        if (b.leave_type_id != null) m[Number(b.leave_type_id)] = Number(b.balance ?? 0);
+      });
+      return m;
+    };
+    const loadMe = () =>
+      crmGet<any[]>(`/api/me/leave-balances?year=${balanceYear}`)
+        .then((r) => setLeaveBalances(toMap(r.data)))
+        .catch(() => setLeaveBalances({}));
+
+    if (balanceEmployeeId) {
+      // HR filing for another employee — only that employee's balances (never fall back to /me).
+      crmGet<any[]>(`/api/employees/${balanceEmployeeId}/leave-balances?year=${balanceYear}`)
+        .then((r) => setLeaveBalances(toMap(r.data)))
+        .catch(() => setLeaveBalances({}));
+    } else {
+      loadMe();
+    }
+  }, [balanceEmployeeId, balanceYear]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,85 +424,112 @@ function ApplyLeaveModal({
   };
 
   return (
-    <Modal title="Apply Leave" onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        {apiError && <ErrorBox error={apiError} />}
-        {isHr && (
-          <Field label="Employee">
-            <select
-              className={inputCls}
-              value={employeeIdSel}
-              onChange={(e) => setEmployeeIdSel(e.target.value)}
-            >
-              <option value="">Myself</option>
-              {employees.map((e) => <option key={e.id} value={e.id}>{e.full_name || `#${e.id}`}</option>)}
-            </select>
-          </Field>
-        )}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Leave type" required error={errors.leave_type}>
-            <select
-              className={inputCls}
-              value={leaveTypeId}
-              onChange={(e) => { setLeaveTypeId(e.target.value); setCompOffType(""); }}
-            >
-              <option value="">Select leave type…</option>
-              {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Period type">
-            <select
-              className={inputCls}
-              value={periodType}
-              onChange={(e) => setPeriodType(e.target.value)}
-            >
-              {PERIOD_TYPES.map((p) => <option key={p} value={p}>{pretty(p)}</option>)}
-            </select>
-          </Field>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="From date" required error={errors.from_date}>
-            <input type="date" className={inputCls} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </Field>
-          {multiDay && (
-            <Field label="To date" required error={errors.to_date}>
-              <input type="date" className={inputCls} value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} />
-            </Field>
+    <Modal
+      title={<span className="sr-only">Apply Leave</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Apply Leave"
+        subtitle="File a leave request against a client mapping — days are computed by the server."
+        icon={<CalendarOff size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          {apiError && <ErrorBox error={apiError} />}
+          {isHr && (
+            <WizardField label="Employee" icon="user">
+              <select
+                className={inputCls}
+                value={employeeIdSel}
+                onChange={(e) => setEmployeeIdSel(e.target.value)}
+              >
+                <option value="">Myself</option>
+                {employees.map((e) => <option key={e.id} value={e.id}>{e.full_name || `#${e.id}`}</option>)}
+              </select>
+            </WizardField>
           )}
-        </div>
-        {showCompOff && (
-          <Field label="Comp-off type">
-            <select className={inputCls} value={compOffType} onChange={(e) => setCompOffType(e.target.value)}>
-              <option value="">— Select —</option>
-              {COMP_OFF_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField
+              label="Leave type"
+              required
+              error={errors.leave_type}
+              info={
+                leaveTypeId ? (
+                  <span className="mt-1.5 inline-flex items-center rounded-lg border border-[#6D5DFB]/35 bg-[#6D5DFB]/12 px-2.5 py-1 text-[11px] font-semibold tabular-nums text-[color:var(--wiz-muted)]">
+                    Leave balance:{" "}
+                    <span className="ml-1 text-white">
+                      {selectedBalance != null
+                        ? `${Number(selectedBalance).toLocaleString("en-IN", { maximumFractionDigits: 2 })} day(s)`
+                        : "—"}
+                    </span>
+                  </span>
+                ) : undefined
+              }
+            >
+              <select
+                className={inputCls}
+                value={leaveTypeId}
+                onChange={(e) => { setLeaveTypeId(e.target.value); setCompOffType(""); }}
+              >
+                <option value="">Select leave type…</option>
+                {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Period type">
+              <select
+                className={inputCls}
+                value={periodType}
+                onChange={(e) => setPeriodType(e.target.value)}
+              >
+                {PERIOD_TYPES.map((p) => <option key={p} value={p}>{pretty(p)}</option>)}
+              </select>
+            </WizardField>
+          </div>
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="From date" required error={errors.from_date} icon="calendar" filled={!!fromDate}>
+              <input type="date" className={inputCls} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </WizardField>
+            {multiDay && (
+              <WizardField label="To date" required error={errors.to_date} icon="calendar" filled={!!toDate}>
+                <input type="date" className={inputCls} value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} />
+              </WizardField>
+            )}
+          </div>
+          {showCompOff && (
+            <WizardField label="Comp-off type">
+              <select className={inputCls} value={compOffType} onChange={(e) => setCompOffType(e.target.value)}>
+                <option value="">— Select —</option>
+                {COMP_OFF_TYPES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </WizardField>
+          )}
+          <WizardField label="Project" required error={errors.project} icon="building">
+            <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">Select project…</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-          </Field>
-        )}
-        <Field label="Project" required error={errors.project}>
-          <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Select project…</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <p className="text-xs text-muted">
-          Select the project mapping so leave draws from that client&apos;s PE balance (not a shared pool).
-        </p>
-        <Field label="Reason">
-          <textarea
-            className={`${inputCls} min-h-20`}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Reason for this leave…"
-          />
-        </Field>
-        <p className="text-xs text-muted">
-          Days are computed by the server (Full Day = 1, Half Day = 0.5, Multi Day = inclusive day count).
-        </p>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={busy}>{busy ? "Submitting…" : "Submit application"}</button>
-        </div>
-      </form>
+          </WizardField>
+          <InfoChip>
+            Select the project mapping so leave draws from that client&apos;s PE balance (not a shared pool).
+          </InfoChip>
+          <WizardField label="Reason">
+            <textarea
+              className={`${inputCls} min-h-20`}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Reason for this leave…"
+            />
+          </WizardField>
+          <InfoChip>
+            Days are computed by the server (Full Day = 1, Half Day = 0.5, Multi Day = inclusive day count).
+          </InfoChip>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} disabled={busy}>{busy ? "Submitting…" : "Submit application"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -469,25 +566,35 @@ function RejectLeaveModal({
   };
 
   return (
-    <Modal title="Reject Leave Application" onClose={onClose}>
-      <p className="mb-3 text-sm text-secondary">
-        Rejecting <b>{application.leave_type_name || "leave"}</b> for{" "}
-        <b>{application.employee_name || `#${application.employee_id}`}</b>{" "}
-        ({fmtDate(application.from_date)} → {fmtDate(application.to_date)}).
-      </p>
-      <Field label="Rejection reason" required error={error}>
-        <textarea
-          className={`${inputCls} min-h-24`}
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Explain why this leave application is being rejected (min 10 characters)…"
-        />
-      </Field>
-      <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnDanger} onClick={submit} disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>
-      </div>
+    <Modal
+      title={<span className="sr-only">Reject Leave Application</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title="Reject Leave Application"
+        subtitle="Provide a clear reason (minimum 10 characters). The applicant will be notified."
+        icon={<X size={20} aria-hidden />}
+      >
+        <p className="mb-4 text-sm text-secondary">
+          Rejecting <b>{application.leave_type_name || "leave"}</b> for{" "}
+          <b>{application.employee_name || `#${application.employee_id}`}</b>{" "}
+          ({fmtDate(application.from_date)} → {fmtDate(application.to_date)}).
+        </p>
+        <WizardField label="Rejection reason" required error={error}>
+          <textarea
+            className={`${inputCls} min-h-24`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Explain why this leave application is being rejected (min 10 characters)…"
+          />
+        </WizardField>
+        <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnDanger} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }

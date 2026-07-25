@@ -1,18 +1,15 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Briefcase, ClipboardList, Database, LayoutTemplate, Sigma, Users, Terminal, Shield, Moon, Sun, LogOut, Menu, X, CalendarClock } from "lucide-react";
-import { KarnexBranding } from "./components/KarnexBranding";
+import { BarChart3, Briefcase, Database, LayoutTemplate, Sigma, Users, Terminal, Shield } from "lucide-react";
+import { PlatformTopBar } from "./components/platform-nav/PlatformTopBar";
 import { useSpotlight } from "./crm/components/motion3d";
-import { useTheme } from "./theme/ThemeProvider";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
-import { performAdminLogout } from "./lib/adminLogout";
 import { navButtonMotion, pageSurfaceMotion, routeSurfaceKey } from "./lib/motionPresets";
 import {
   canAccessInterviewView,
   defaultLanding,
   hasCrmAccess,
-  hasInterviewAccess,
   ivTabKey,
   tabVisible,
   type InterviewView,
@@ -39,7 +36,7 @@ type View = InterviewView;
 
 type NavExtras = { reportInterviewId?: string; reportReturnTo?: CandidateReportReturnTarget };
 
-type NavDef = { target: View; label: string; icon: LucideIcon; active: (v: View) => boolean };
+type NavDef = { target: View; label: string; icon: LucideIcon; active: (v: string) => boolean };
 
 /** All possible primary nav items. Actual visibility is decided by RBAC below.
  * (hrSetup is excluded too — it opens via the scheduler button, not primary nav.) */
@@ -153,7 +150,6 @@ function AccessDenied({ onHome }: { onHome: () => void }) {
 }
 
 export default function App() {
-  const { theme, toggleTheme } = useTheme();
   const reduceMotion = useReducedMotion();
   // Drives the single global .fx-spotlight layer (rAF-throttled; no-op on
   // touch / reduced motion).
@@ -165,7 +161,6 @@ export default function App() {
   const [reportReturnTo, setReportReturnTo] = useState<CandidateReportReturnTarget>(initial.reportReturnTo);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(() => !!getStoredAuthUser()?.is_super_admin);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // CRM roles drive RBAC. null = still loading; [] = no CRM role (legacy HR user).
   const [roles, setRoles] = useState<string[] | null>(null);
@@ -228,7 +223,6 @@ export default function App() {
       )
     : PLATFORM_NAV_ORDER;
   const canCrm = rbacActive ? hasCrmAccess(effRoles) : true;
-  const platformAccess = rbacActive ? hasInterviewAccess(effRoles) : true;
   // Admin / HR / TA can open the HR Setup scheduler to invite candidates for interviews.
   const canSchedule = !rbacActive || effRoles.includes("Admin") || effRoles.includes("HR") || effRoles.includes("TA");
   const openScheduler = () => goView("hrSetup");
@@ -299,7 +293,6 @@ export default function App() {
     setCandidateId(cid);
     setReportInterviewId("");
     setReportReturnTo("candidates");
-    setMobileNavOpen(false);
     pushNav(v, cid);
   };
 
@@ -337,138 +330,18 @@ export default function App() {
           root) + the ONE global mouse-follow spotlight (useSpotlight above). */}
       <div aria-hidden className="fx-aurora" />
       <div aria-hidden className="fx-spotlight" />
-      {/* Glass top nav bar (tokens.css .glass) with the v3 gradient hairline. */}
-      <header className="glass fx-hairline-b sticky top-0 z-30 rounded-none border-x-0 border-t-0">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
-          <KarnexBranding size="sm" />
-
-          {navItems.length > 0 && (
-            /* Opaque recessed E0 track (no glass-in-glass inside the header). */
-            <nav className="hidden md:flex items-center gap-1 bg-surface-0 border border-subtle rounded-modal p-1 shadow-[var(--recess-shadow)] flex-1 justify-center min-w-0">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = item.active(view);
-                return (
-                  <motion.button
-                    key={item.target}
-                    type="button"
-                    {...navMotion}
-                    onClick={() => goView(item.target)}
-                    className={`group relative px-3 lg:px-4 py-2 rounded-control text-sm font-semibold transition-colors duration-base ease-smooth flex items-center gap-2 focus-visible:outline-none focus-visible:shadow-focus-ring ${
-                      isActive
-                        ? "text-brand-700 dark:text-brand-200"
-                        : "text-[var(--kx-text-muted)] hover:text-[var(--kx-text)] hover:bg-surface-1"
-                    }`}
-                  >
-                    {isActive && (
-                      /* Sheen pill rides the opaque E0 track, not the glass bar. */
-                      <motion.span
-                        layoutId="admin-nav-active"
-                        aria-hidden
-                        className="sheen absolute inset-0 rounded-control border border-subtle bg-brand-100 shadow-e1 dark:bg-brand-900"
-                        transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 35 }}
-                      />
-                    )}
-                    <Icon
-                      className={`relative w-4 h-4 transition-transform duration-base ease-smooth group-hover:scale-110 ${
-                        isActive ? "text-brand-600 dark:text-brand-300" : ""
-                      }`}
-                    />
-                    <span className="relative hidden lg:inline">
-                      {item.label}
-                    </span>
-                  </motion.button>
-                );
-              })}
-            </nav>
-          )}
-
-          <div className="flex items-center gap-2 shrink-0">
-            {navItems.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setMobileNavOpen((o) => !o)}
-                className="btn-depth md:hidden inline-flex h-10 w-10 items-center justify-center rounded-control text-[var(--kx-text-muted)]"
-                aria-label="Toggle navigation"
-                aria-expanded={mobileNavOpen}
-              >
-                {mobileNavOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </button>
-            )}
-            {canSchedule && (
-              <button
-                type="button"
-                onClick={openScheduler}
-                className="btn-depth inline-flex h-10 items-center gap-2 px-3 rounded-control bg-brand-600 text-white text-sm font-semibold"
-                title="Open HR Setup to schedule / invite a candidate for an interview"
-              >
-                <CalendarClock className="w-4 h-4 shrink-0" />
-                <span className="hidden sm:inline">Interview Schedule</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => void performAdminLogout()}
-              className="btn-depth inline-flex h-10 items-center gap-2 px-3 rounded-control text-sm font-semibold text-primary hover:bg-danger-soft hover:text-danger"
-              title="Log out and return to login"
-            >
-              <LogOut className="w-4 h-4 shrink-0" />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="btn-depth inline-flex h-10 w-10 items-center justify-center rounded-control text-primary"
-              title={theme === "dark" ? "Light mode" : "Dark mode"}
-              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            >
-              {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-            <div className="hidden xl:flex items-center gap-2 text-xs text-[var(--kx-text-muted)]">
-              <ClipboardList className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
-              <span className="font-semibold">{platformAccess ? "HR/Admin" : "Karnex CRM"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Mobile nav drawer */}
-        <AnimatePresence>
-          {mobileNavOpen && navItems.length > 0 && (
-            <motion.nav
-              /* GPU-only opacity/transform (animating `height` forced layout
-                 on every frame). Absolutely positioned dropdown under the
-                 sticky header, so opening it shifts no page content. */
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: reduceMotion ? 0 : 0.25, ease: [0.2, 0, 0, 1] }}
-              className="md:hidden absolute inset-x-0 top-full border-t border-b border-subtle bg-surface-1 shadow-overlay"
-            >
-              <div className="px-4 py-3 grid grid-cols-2 gap-2">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = item.active(view);
-                  return (
-                    <button
-                      key={item.target}
-                      type="button"
-                      onClick={() => goView(item.target)}
-                      className={`flex min-h-[44px] items-center gap-2 rounded-control px-3 py-2.5 text-sm font-semibold transition-colors duration-base ease-smooth focus-visible:outline-none focus-visible:shadow-focus-ring ${
-                        isActive
-                          ? "border border-subtle bg-brand-100 text-brand-700 dark:bg-brand-900 dark:text-brand-200"
-                          : "text-[var(--kx-text-muted)] hover:bg-surface-2"
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.nav>
-          )}
-        </AnimatePresence>
-      </header>
+      <PlatformTopBar
+        navItems={navItems}
+        view={view}
+        onNavigate={(target) => goView(target as View)}
+        canSchedule={canSchedule}
+        onSchedule={openScheduler}
+        canCrm={canCrm}
+        roles={effRoles}
+        tabAccess={tabAccess}
+        rbacActive={rbacActive}
+        navMotion={navMotion}
+      />
 
       <Suspense fallback={<PageFallback />}>
         <AnimatePresence mode="wait">

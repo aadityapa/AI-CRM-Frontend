@@ -61,13 +61,3 @@ export function navButtonMotion(reducedMotion: boolean) {
   };
 }
 
-export const listChildMotion = (reducedMotion: boolean, i: number): { initial: object; animate: object; transition: Transition } => {
-  if (reducedMotion) {
-    return { initial: {}, animate: {}, transition: { duration: 0 } };
-  }
-  return {
-    initial: { opacity: 0, y: 6 },
-    animate: { opacity: 1, y: 0 },
-    transition: { type: "spring", stiffness: 420, damping: 28, delay: Math.min(i, 12) * 0.035 },
-  };
-};

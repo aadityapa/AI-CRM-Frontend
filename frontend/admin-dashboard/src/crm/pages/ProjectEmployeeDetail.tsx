@@ -1,16 +1,42 @@
 /** Project Employee detail — ownership bridge for one (employee × project) mapping.
- * Tabs: General | Leave | Holidays | Timesheet | Commercial & PO.
- * API: GET/PUT /api/projects/employees/{pe_id}, rates + leave sub-resources. */
+ * Tabs: General | Leave | Holidays | Timesheet | Invoice.
+ * API: GET/PUT /api/projects/employees/{pe_id}, leave sub-resources. */
 import React, { useCallback, useEffect, useState } from "react";
-import { CalendarDays, ExternalLink, Plus, Save } from "lucide-react";
+import { CalendarDays, CalendarOff, ExternalLink, Plus, RefreshCw, Save } from "lucide-react";
 import { crmGet, crmPost, crmPut, qs } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
+import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable, type Column } from "../components/DataTable";
 import {
   EmptyState, ErrorBox, Field, KpiCard, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
+import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 const money = (v?: number | null) => (v == null ? "—" : `₹${Number(v).toLocaleString("en-IN")}`);
 const dt = (v?: string | null) => (v ? new Date(v).toLocaleDateString("en-IN") : "—");
@@ -57,6 +83,7 @@ type LeaveSummary = {
   consumed?: number | null;
   accrued_this_year?: number | null;
   year?: number;
+  loss_of_pay_consumed?: number | null;
 };
 
 type CreditHistoryRow = {
@@ -80,14 +107,6 @@ type LeaveAppRow = {
   status?: string | null;
   reason?: string | null;
   applied_at?: string | null;
-};
-
-type RateRow = {
-  id: number;
-  effective_from?: string | null;
-  rate?: number | null;
-  billing_unit?: string | null;
-  is_current_rate?: boolean;
 };
 
 type TsRollup = {
@@ -119,7 +138,10 @@ type HolidayCalendar = {
   customer_id?: number | null;
   customer_name?: string | null;
   branch_id?: number | null;
+  branch_name?: string | null;
+  branch_linked?: boolean;
   label?: string | null;
+  note?: string | null;
   read_only?: boolean;
   count?: number;
 };
@@ -143,6 +165,8 @@ type PeDetail = {
   project_name?: string | null;
   customer_id?: number | null;
   customer_name?: string | null;
+  branch_id?: number | null;
+  branch_name?: string | null;
   employee_name?: string | null;
   employee_email?: string | null;
   onboarding_date?: string | null;
@@ -161,7 +185,6 @@ type PeDetail = {
   leave_summary?: LeaveSummary | null;
   credit_history?: CreditHistoryRow[];
   leave_applications?: LeaveAppRow[];
-  rates?: RateRow[];
   timesheet_rollups?: TsRollup[];
   holidays?: HolidayRow[];
   holiday_calendar?: HolidayCalendar | null;
@@ -175,7 +198,6 @@ const PE_TABS = [
   { key: "holidays", label: "Holidays" },
   { key: "timesheets", label: "Timesheet" },
   { key: "invoice", label: "Invoice" },
-  { key: "commercial", label: "Commercial & PO" },
 ];
 
 function InfoItem({ label, children }: { label: string; children: React.ReactNode }) {
@@ -292,104 +314,56 @@ function PeApplyLeaveModal({
   };
 
   return (
-    <Modal title="Apply leave (this project mapping)" onClose={onClose} wide>
-      <form onSubmit={submit} className="space-y-3.5">
-        {apiError && <ErrorBox error={apiError} />}
-        <p className="text-xs text-muted">
-          Consumes leave balance on this Project Employee ({pe.employee_name} @ {pe.project_name}).
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Leave type" required>
-            <select className={inputCls} value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)}>
-              <option value="">Select…</option>
-              {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Period">
-            <select className={inputCls} value={periodType} onChange={(e) => setPeriodType(e.target.value)}>
-              {["Full_Day", "Half_Day", "Multi_Day"].map((p) => (
-                <option key={p} value={p}>{p.replace(/_/g, " ")}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="From" required>
-            <input type="date" className={inputCls} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </Field>
-          {multiDay && (
-            <Field label="To" required>
-              <input type="date" className={inputCls} value={toDate} onChange={(e) => setToDate(e.target.value)} />
-            </Field>
-          )}
-        </div>
-        <Field label="Reason">
-          <textarea className={inputCls} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
-        </Field>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={busy}>{busy ? "Submitting…" : "Submit"}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/* ---------------------------------------------------------------- add rate */
-function AddRateModal({
-  peId, defaultUnit, onClose, onDone, notify,
-}: {
-  peId: number; defaultUnit?: string | null; onClose: () => void;
-  onDone: () => void; notify: (m: string, k?: "ok" | "err") => void;
-}) {
-  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
-  const [rate, setRate] = useState("");
-  const [unit, setUnit] = useState(defaultUnit || "Monthly");
-  const [isCurrent, setIsCurrent] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rate || Number(rate) < 0) return;
-    setBusy(true);
-    try {
-      await crmPost(`/api/projects/employees/${peId}/rates`, {
-        effective_from: effectiveFrom,
-        rate: Number(rate),
-        billing_unit: unit,
-        is_current_rate: isCurrent,
-      });
-      notify("Rate added");
-      onDone();
-      onClose();
-    } catch (err: any) {
-      notify(err?.message || "Failed to add rate", "err");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="Add commercial rate" onClose={onClose}>
-      <form onSubmit={submit} className="space-y-3">
-        <Field label="Effective from" required>
-          <input type="date" className={inputCls} value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
-        </Field>
-        <Field label="Rate" required>
-          <input type="number" min={0} className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} />
-        </Field>
-        <Field label="Billing unit">
-          <select className={inputCls} value={unit} onChange={(e) => setUnit(e.target.value)}>
-            {["Hourly", "Daily", "Monthly"].map((u) => <option key={u} value={u}>{u}</option>)}
-          </select>
-        </Field>
-        <label className="flex items-center gap-2 text-sm text-secondary">
-          <input type="checkbox" checked={isCurrent} onChange={(e) => setIsCurrent(e.target.checked)} />
-          Set as current rate
-        </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">Apply leave (this project mapping)</span>}
+      onClose={onClose}
+      wide
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Apply leave"
+        subtitle="Log a leave application against this project mapping."
+        icon={<CalendarOff size={20} aria-hidden />}
+      >
+        <form onSubmit={submit}>
+          {apiError && <div className="mb-4"><ErrorBox error={apiError} /></div>}
+          <InfoChip>
+            Consumes leave balance on this Project Employee ({pe.employee_name} @ {pe.project_name}).
+          </InfoChip>
+          <div className="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Leave type" required icon="hash">
+              <select className={inputCls} value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)}>
+                <option value="">Select…</option>
+                {leaveTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Period" icon="hash">
+              <select className={inputCls} value={periodType} onChange={(e) => setPeriodType(e.target.value)}>
+                {["Full_Day", "Half_Day", "Multi_Day"].map((p) => (
+                  <option key={p} value={p}>{p.replace(/_/g, " ")}</option>
+                ))}
+              </select>
+            </WizardField>
+            <WizardField label="From" required icon="calendar" filled={!!fromDate}>
+              <input type="date" className={inputCls} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </WizardField>
+            {multiDay && (
+              <WizardField label="To" required icon="calendar" filled={!!toDate}>
+                <input type="date" className={inputCls} value={toDate} onChange={(e) => setToDate(e.target.value)} />
+              </WizardField>
+            )}
+          </div>
+          <div className="mt-5">
+            <WizardField label="Reason">
+              <textarea className={inputCls} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+            </WizardField>
+          </div>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} disabled={busy}>{busy ? "Submitting…" : "Submit"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -497,14 +471,14 @@ function InvoiceTab({ peId, projectId }: { peId: number; projectId?: number | nu
 export function ProjectEmployeeDetailPage() {
   const { id } = useCrmParams();
   const canWrite = useHasRole("Sales_Head", "HR");
-  const canRates = useHasRole("Sales_Head", "Finance", "HR");
+  const canSyncLeave = useHasRole("HR", "Admin");
   const [toast, notify] = useToast();
   const [pe, setPe] = useState<PeDetail | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("general");
   const [saving, setSaving] = useState(false);
+  const [syncingLeave, setSyncingLeave] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [addingRate, setAddingRate] = useState(false);
 
   const [onboarding, setOnboarding] = useState("");
   const [experience, setExperience] = useState("");
@@ -571,14 +545,26 @@ export function ProjectEmployeeDetailPage() {
     }
   };
 
-  const setCurrentRate = async (rateId: number) => {
-    if (!pe) return;
+  const syncLeavePolicies = async () => {
+    if (!pe || syncingLeave) return;
+    setSyncingLeave(true);
     try {
-      await crmPut(`/api/projects/employees/${pe.id}/rates/${rateId}`, { is_current_rate: true });
-      notify("Current rate updated");
+      const res = await crmPost<{
+        added_count?: number;
+        added?: { leave_type_name?: string | null }[];
+      }>(`/api/projects/employees/${pe.id}/leave/sync`, {});
+      const added = res.data?.added || [];
+      const names = added.map((a) => a.leave_type_name).filter(Boolean);
+      notify(
+        names.length
+          ? `Synced — added ${names.join(", ")}`
+          : (res.message || "Leave policies already in sync"),
+      );
       await load();
     } catch (e: any) {
-      notify(e?.message || "Failed to set current rate", "err");
+      notify(e?.message || "Sync failed", "err");
+    } finally {
+      setSyncingLeave(false);
     }
   };
 
@@ -654,22 +640,6 @@ export function ProjectEmployeeDetailPage() {
     { key: "applied_at", label: "Applied", render: (r) => dt(r.applied_at) },
   ];
 
-  const rateCols: Column<RateRow>[] = [
-    { key: "effective_from", label: "Effective from", render: (r) => dt(r.effective_from) },
-    { key: "rate", label: "Rate", render: (r) => money(r.rate) },
-    { key: "billing_unit", label: "Unit", render: (r) => r.billing_unit || pe.billing_unit || "—" },
-    {
-      key: "is_current_rate", label: "Current",
-      render: (r) => r.is_current_rate
-        ? <StatusBadge status="Active" />
-        : (canRates ? (
-          <button type="button" className={`text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`} onClick={() => setCurrentRate(r.id)}>
-            Set current
-          </button>
-        ) : "—"),
-    },
-  ];
-
   const tsCols: Column<TsRollup>[] = [
     {
       key: "period", label: "Period",
@@ -705,16 +675,25 @@ export function ProjectEmployeeDetailPage() {
   const summary = pe.leave_summary || {};
   const eligibility = pe.leave_eligibility || [];
   const calendar = pe.holiday_calendar;
+  const empLabel = pe.employee_name || `Employee #${pe.employee_id}`;
+  const crumbs = [
+    { label: "Customers", to: "customers" },
+    ...(pe.customer_id != null
+      ? [{ label: pe.customer_name || `Customer #${pe.customer_id}`, to: `customers/${pe.customer_id}` }]
+      : []),
+    ...(pe.branch_id != null
+      ? [{ label: pe.branch_name || `Branch #${pe.branch_id}`, to: `branch-policy/${pe.branch_id}` }]
+      : []),
+    { label: pe.project_name || `Project #${pe.project_id}`, to: `projects/${pe.project_id}` },
+    { label: empLabel },
+  ];
   return (
     <div className="space-y-4">
       {toast}
+      <CrmBreadcrumb items={crumbs} />
       <div className="flex flex-wrap items-center gap-2">
-        <CrmLink to="project-employees" className={`rounded-control text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}>
-          Project Employees
-        </CrmLink>
-        <span className="text-muted">/</span>
         <h1 className="text-display text-lg font-bold text-primary">
-          {pe.employee_name || `Employee #${pe.employee_id}`} — {pe.project_name || `Project #${pe.project_id}`}
+          {empLabel} — {pe.project_name || `Project #${pe.project_id}`}
         </h1>
         <StatusBadge status={pe.is_exit ? "Exited" : pe.is_active ? "Active" : "Inactive"} />
       </div>
@@ -729,6 +708,11 @@ export function ProjectEmployeeDetailPage() {
         {pe.customer_id != null && (
           <CrmLink to={`customers/${pe.customer_id}`} className="inline-flex items-center gap-1 text-brand-600 hover:underline dark:text-brand-300">
             {pe.customer_name || "Customer"} <ExternalLink size={12} />
+          </CrmLink>
+        )}
+        {pe.branch_id != null && (
+          <CrmLink to={`branch-policy/${pe.branch_id}`} className="inline-flex items-center gap-1 text-brand-600 hover:underline dark:text-brand-300">
+            {pe.branch_name || "Branch"} <ExternalLink size={12} />
           </CrmLink>
         )}
       </div>
@@ -809,7 +793,19 @@ export function ProjectEmployeeDetailPage() {
             <p className="text-sm text-muted">
               Leave for this Project Employee only — balances copied from the customer leave policy at map time.
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {canSyncLeave && (
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  disabled={syncingLeave}
+                  onClick={syncLeavePolicies}
+                  title="Add leave types from the customer/branch policy that are missing on this PE"
+                >
+                  <RefreshCw size={14} className={syncingLeave ? "animate-spin" : undefined} />
+                  {syncingLeave ? "Syncing…" : "Sync from customer policy"}
+                </button>
+              )}
               <button type="button" className={btnSecondary} onClick={() => crmNavigate("leave-applications")}>
                 <CalendarDays size={14} /> All applications
               </button>
@@ -821,7 +817,7 @@ export function ProjectEmployeeDetailPage() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             <KpiCard
               label="Balance"
               value={Number(summary.balance ?? pe.leave_balance_total ?? 0)}
@@ -839,6 +835,12 @@ export function ProjectEmployeeDetailPage() {
               value={Number(summary.accrued_this_year ?? 0)}
               sub={`${summary.year || new Date().getFullYear()} credits (seed + monthly + comp-off)`}
               accent="from-success/80 to-success"
+            />
+            <KpiCard
+              label="Loss of Pay"
+              value={Number(summary.loss_of_pay_consumed ?? 0)}
+              sub="Unpaid leave consumed (over-balance / explicit LOP)"
+              accent="from-danger/80 to-danger"
             />
           </div>
 
@@ -921,10 +923,16 @@ export function ProjectEmployeeDetailPage() {
                 {calendar?.label || `${pe.customer_name || "Customer"} / ${new Date().getFullYear()}`}
               </div>
               <p className="mt-1 text-xs text-muted">
-                Read-only holiday calendar linked to this PE’s project customer
+                Read-only holiday calendar for this PE’s project
+                {calendar?.branch_name ? ` · ${calendar.branch_name}` : ""}
                 {calendar?.count != null ? ` · ${calendar.count} day(s)` : ""}.
                 Edit via Holidays master.
               </p>
+              {calendar?.note && (
+                <p className="mt-2 text-xs font-semibold text-warning" role="status">
+                  {calendar.note}
+                </p>
+              )}
             </div>
             <span className="rounded-control border border-subtle bg-surface-2 px-2 py-1 text-xs font-semibold text-muted">
               Read-only
@@ -942,33 +950,6 @@ export function ProjectEmployeeDetailPage() {
               emptyMessage="No holidays for this customer this year"
             />
           )}
-        </div>
-      )}
-
-      {tab === "commercial" && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-muted">
-              Effective-dated rates. Invoice uses the rate in effect on each work date (mid-period splits supported).
-              Invoice basis: billable days × current / split rates.
-            </p>
-            {canRates && (
-              <button type="button" className={btnPrimary} onClick={() => setAddingRate(true)}>
-                <Plus size={14} /> Add rate
-              </button>
-            )}
-          </div>
-          <PoDrawdownBar po={pe.po} />
-          <div className="grid grid-cols-2 gap-3 rounded-card border border-subtle bg-surface-1 p-3 sm:grid-cols-3">
-            <InfoItem label="Current rate">{money(pe.billing_rate)}</InfoItem>
-            <InfoItem label="Unit">{pe.billing_unit || "—"}</InfoItem>
-            <InfoItem label="PO / Invoice">
-              <CrmLink to="pos" className="text-brand-600 hover:underline dark:text-brand-300">Purchase Orders</CrmLink>
-              {" · "}
-              <CrmLink to="invoices" className="text-brand-600 hover:underline dark:text-brand-300">Invoices</CrmLink>
-            </InfoItem>
-          </div>
-          <DataTable columns={rateCols} rows={pe.rates || []} loading={false} emptyMessage="No rate history" />
         </div>
       )}
 
@@ -1005,15 +986,6 @@ export function ProjectEmployeeDetailPage() {
           pe={pe}
           onClose={() => setApplying(false)}
           onDone={(m) => { setApplying(false); notify(m || "Leave submitted"); load(); }}
-        />
-      )}
-      {addingRate && (
-        <AddRateModal
-          peId={pe.id}
-          defaultUnit={pe.billing_unit}
-          onClose={() => setAddingRate(false)}
-          onDone={load}
-          notify={notify}
         />
       )}
     </div>

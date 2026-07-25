@@ -1,6 +1,6 @@
 /** Interview-template request workflow (TA raises → RMG fulfils → TA prepares L1). */
-import { useCallback, useEffect, useState } from "react";
-import { Check, LayoutTemplate, RefreshCw, Send, X } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Check, FileText, LayoutTemplate, RefreshCw, Send, X } from "lucide-react";
 import { apiGet } from "../../api/client";
 import { crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
@@ -8,10 +8,36 @@ import { useHasRole } from "../CrmApp";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import {
-  ErrorBox, Field, Modal, StatusBadge, Tabs,
+  ErrorBox, Modal, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 type TR = {
   id: number;
@@ -60,6 +86,7 @@ function goToTemplatesTab(opportunityOppId?: string | null) {
 export function TemplateRequestsPage() {
   const isRMG = useHasRole("RMG");
   const isTA = useHasRole("TA");
+  const canWrite = isRMG || isTA;
   const [tab, setTab] = useState("Pending_RMG");
   const [rows, setRows] = useState<TR[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -209,6 +236,17 @@ export function TemplateRequestsPage() {
           loading={loading}
           onPage={setPage}
           emptyMessage="No template requests in this view"
+          rowActions={canWrite ? (r) => (
+            <RowActions
+              entity="template request"
+              itemLabel={r.tr_number}
+              deleteUrl={`/api/template-requests/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit={false}
+              canDelete
+            />
+          ) : undefined}
         />
       )}
 
@@ -266,55 +304,66 @@ function FulfillModal({ row, onClose, onDone, toast }: {
   };
 
   return (
-    <Modal title={`Fulfil ${row.tr_number} — ${row.role_title}`} onClose={onClose} fullScreen>
-      <p className="mb-3 text-sm text-secondary">
-        Pick an existing interview template. Fulfil stamps its Opportunity ID to{" "}
-        <strong>{row.opportunity_opp_id || "the opportunity"}</strong> so AI L1 uses it.
-        Skills: {row.skills || "n/a"} · Exp: {row.experience_level || "n/a"}.
-      </p>
-      <div className="mb-4 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={btnSecondary}
-          onClick={() => goToTemplatesTab(row.opportunity_opp_id)}
-          title="Opens Templates — Opportunity ID is prefilled when you create a new template"
-        >
-          <LayoutTemplate size={14} /> Create template in Templates tab →
-        </button>
-        <button type="button" className={btnSecondary} onClick={loadJobs} disabled={loadingJobs}>
-          <RefreshCw size={14} /> Refresh list
-        </button>
-      </div>
-      <div className="space-y-3">
-        <Field label="Interview template" required error={err}>
-          <select
-            className={inputCls}
-            value={jobId}
-            onChange={(e) => setJobId(e.target.value)}
-            disabled={loadingJobs}
+    <Modal
+      title={<span className="sr-only">{`Fulfil ${row.tr_number} — ${row.role_title}`}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={`Fulfil ${row.tr_number} — ${row.role_title}`}
+        subtitle="Link an existing interview template so AI L1 uses it for this opportunity."
+        icon={<FileText size={20} aria-hidden />}
+      >
+        <p className="mb-4 text-sm text-secondary">
+          Pick an existing interview template. Fulfil stamps its Opportunity ID to{" "}
+          <strong>{row.opportunity_opp_id || "the opportunity"}</strong> so AI L1 uses it.
+          Skills: {row.skills || "n/a"} · Exp: {row.experience_level || "n/a"}.
+        </p>
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={btnSecondary}
+            onClick={() => goToTemplatesTab(row.opportunity_opp_id)}
+            title="Opens Templates — Opportunity ID is prefilled when you create a new template"
           >
-            <option value="">{loadingJobs ? "Loading templates…" : "Select a template…"}</option>
-            {jobs.map((j) => (
-              <option key={j.jobId} value={j.jobId}>
-                {j.jobTitle || j.jobId} ({j.jobId})
-                {j.opportunityId ? ` · opp ${j.opportunityId}` : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {selected && (
-          <div className="rounded-card border border-subtle bg-surface-2 px-3 py-2 text-xs text-secondary">
-            Will link <strong>{selected.jobTitle}</strong> → opportunity{" "}
-            <strong>{row.opportunity_opp_id || "—"}</strong>
-          </div>
-        )}
-      </div>
-      <div className="mt-4 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy || !jobId}>
-          {busy ? "Linking…" : "Link template"}
-        </button>
-      </div>
+            <LayoutTemplate size={14} /> Create template in Templates tab →
+          </button>
+          <button type="button" className={btnSecondary} onClick={loadJobs} disabled={loadingJobs}>
+            <RefreshCw size={14} /> Refresh list
+          </button>
+        </div>
+        <div className="space-y-5">
+          <WizardField label="Interview template" required error={err}>
+            <select
+              className={inputCls}
+              value={jobId}
+              onChange={(e) => setJobId(e.target.value)}
+              disabled={loadingJobs}
+            >
+              <option value="">{loadingJobs ? "Loading templates…" : "Select a template…"}</option>
+              {jobs.map((j) => (
+                <option key={j.jobId} value={j.jobId}>
+                  {j.jobTitle || j.jobId} ({j.jobId})
+                  {j.opportunityId ? ` · opp ${j.opportunityId}` : ""}
+                </option>
+              ))}
+            </select>
+          </WizardField>
+          {selected && (
+            <InfoChip>
+              Will link <strong>{selected.jobTitle}</strong> → opportunity{" "}
+              <strong>{row.opportunity_opp_id || "—"}</strong>
+            </InfoChip>
+          )}
+        </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy || !jobId}>
+            {busy ? "Linking…" : "Link template"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -344,26 +393,37 @@ function PrepareModal({ row, onClose, onDone, toast }: {
   };
 
   return (
-    <Modal title={`Prepare L1 — ${row.tr_number}`} onClose={onClose} fullScreen>
-      <p className="mb-3 text-sm text-secondary">
-        Template <strong>{row.template_name}</strong>
-        {row.template_job_id ? ` (${row.template_job_id})` : ""} is linked.
-        Generate the invite from Schedule AI L1 — the link is shown on the page (not auto-sent).
-      </p>
-      <div className="space-y-3">
-        <Field label="Candidate email" required error={err}>
-          <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="candidate@email.com" />
-        </Field>
-        <Field label="Candidate name (optional)">
-          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
-        </Field>
-      </div>
-      <div className="mt-4 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Preparing…" : "Prepare L1"}
-        </button>
-      </div>
+    <Modal
+      title={<span className="sr-only">{`Prepare L1 — ${row.tr_number}`}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={`Prepare L1 — ${row.tr_number}`}
+        subtitle="Generate the AI L1 invite — the link is shown on the page (not auto-sent)."
+        icon={<FileText size={20} aria-hidden />}
+      >
+        <p className="mb-4 text-sm text-secondary">
+          Template <strong>{row.template_name}</strong>
+          {row.template_job_id ? ` (${row.template_job_id})` : ""} is linked.
+          Generate the invite from Schedule AI L1 — the link is shown on the page (not auto-sent).
+        </p>
+        <div className="space-y-5">
+          <WizardField label="Candidate email" required error={err} icon="mail" filled={/^\S+@\S+\.\S+$/.test(email.trim())}>
+            <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="candidate@email.com" />
+          </WizardField>
+          <WizardField label="Candidate name (optional)" icon="user" filled={!!name.trim()}>
+            <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
+          </WizardField>
+        </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+            {busy ? "Preparing…" : "Prepare L1"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }

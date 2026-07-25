@@ -1,7 +1,7 @@
 /** Users administration (Admin-only): list/search users, create users with CRM
  * roles, replace roles, activate/deactivate, toggle employee portal access. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyRound, Plus, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
+import { KeyRound, Lock, Plus, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
 import { crmGet, crmPost, crmDelete, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
@@ -19,9 +19,34 @@ import {
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import {
-  ConfirmModal, ErrorBox, Field, Modal, StatusBadge,
+  ConfirmModal, ErrorBox, Modal, StatusBadge,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField, FieldLabel } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 const CRM_ROLES = ["CEO", "Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] as const;
 
@@ -319,37 +344,49 @@ function CreateUserModal({
   };
 
   return (
-    <Modal title="Create User" onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        <Field label="Full name" required error={errors.full_name}>
-          <input className={inputCls} value={form.full_name} onChange={(e) => set("full_name", e.target.value)} />
-        </Field>
-        <Field label="Email" required error={errors.email}>
-          <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Username" required error={errors.username}>
-            <input className={inputCls} value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" />
-          </Field>
-          <Field label="Password" required error={errors.password}>
-            <input
-              type="password"
-              className={inputCls}
-              value={form.password}
-              onChange={(e) => set("password", e.target.value)}
-              placeholder="Min 8 characters"
-              autoComplete="new-password"
-            />
-          </Field>
-        </div>
-        <Field label="CRM roles">
-          <RoleCheckboxes selected={roles} onChange={setRoles} />
-        </Field>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Creating…" : "Create user"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">Create User</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Create User"
+        subtitle="Set up account credentials and assign the CRM roles this user needs."
+        icon={<UserCog size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          <WizardField label="Full name" required error={errors.full_name} icon="user" filled={!!form.full_name.trim() && !errors.full_name}>
+            <input className={inputCls} value={form.full_name} onChange={(e) => set("full_name", e.target.value)} />
+          </WizardField>
+          <WizardField label="Email" required error={errors.email} icon="mail" filled={!!form.email.trim() && !errors.email}>
+            <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Username" required error={errors.username} icon="user" filled={!!form.username.trim() && !errors.username}>
+              <input className={inputCls} value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" />
+            </WizardField>
+            <WizardField label="Password" required error={errors.password} icon="lock">
+              <input
+                type="password"
+                className={inputCls}
+                value={form.password}
+                onChange={(e) => set("password", e.target.value)}
+                placeholder="Min 8 characters"
+                autoComplete="new-password"
+              />
+            </WizardField>
+          </div>
+          <div>
+            <FieldLabel label="CRM roles" />
+            <RoleCheckboxes selected={roles} onChange={setRoles} />
+          </div>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Creating…" : "Create user"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -388,7 +425,16 @@ function EditRolesModal({
   };
 
   return (
-    <Modal title={`Edit Roles — ${user.username}`} onClose={onClose}>
+    <Modal
+      title={<span className="sr-only">{`Edit Roles — ${user.username}`}</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title={`Edit Roles — ${user.username}`}
+        subtitle="Select the CRM roles for this user — the selection replaces all existing roles."
+        icon={<Shield size={20} aria-hidden />}
+      >
       <p className="mb-3 text-sm text-muted">
         Choose which CRM roles <b>{displayName}</b> should have. The selection below{" "}
         <b>replaces all existing roles</b> — pick every role they need access to.
@@ -403,7 +449,7 @@ function EditRolesModal({
         onChange={setRoles}
         userName={displayName}
       />
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--wiz-border)] pt-5">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -437,6 +483,7 @@ function EditRolesModal({
           </button>
         </div>
       </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -535,7 +582,16 @@ function TabAccessModal({
   };
 
   return (
-    <Modal title={`Edit Tab Access — ${user.username}`} onClose={onClose}>
+    <Modal
+      title={<span className="sr-only">{`Edit Tab Access — ${user.username}`}</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title={`Edit Tab Access — ${user.username}`}
+        subtitle="Choose which tabs and fields this user can see — a per-user override on top of any Access Template."
+        icon={<Lock size={20} aria-hidden />}
+      >
       <p className="mb-3 text-sm text-muted">
         Per-user override on top of any assigned <b>Access Template</b> (override wins per tab/field).
         Choose which tabs <b>{user.full_name || user.username}</b> can see. Unchecked tabs are hidden.
@@ -633,7 +689,7 @@ function TabAccessModal({
           );
         })}
       </div>
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--wiz-border)] pt-5">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -659,6 +715,7 @@ function TabAccessModal({
           </button>
         </div>
       </div>
+      </WizFormShell>
     </Modal>
   );
 }

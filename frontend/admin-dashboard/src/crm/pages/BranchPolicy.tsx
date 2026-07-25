@@ -1,15 +1,15 @@
 /** Customer Branch-wise Leave & Holiday Policy — View / Edit.
- * Six blocks in spec order:
- *   1 Branch Identity · 2 Holiday Billing Policy (year table → holiday drill-down)
- *   3 Leave & Holiday Billing Policy · 4 Billing Properties
- *   5 Billable Leave Policy (sub-table) · 6 Linked Projects
+ * Blocks: Branch Identity · Projects · Holiday Billing · Leave & Holiday Billing ·
+ * Billing Properties · Billable Leave Policy.
  * API: GET /api/customers/branches/{id}/policy  (+ branch PUT, holiday-years, holidays, leave policies)
  * Tokens only — Linear-meets-Stripe. */
 import React, { useCallback, useEffect, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronRight, Lock, LockOpen, Pencil, Plus, Power, Save } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmPatch } from "../api";
 import { HolidayNameField } from "../components/HolidayNameField";
-import { CrmLink, useCrmParams } from "../routerHooks";
+import { EditBranchWizard } from "../components/BranchWizardModal";
+import { crmNavigate, useCrmParams } from "../routerHooks";
+import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable, type Column } from "../components/DataTable";
 import {
   ConfirmModal, EmptyState, ErrorBox, Field, KpiCard, Modal, Spinner, StatusBadge,
@@ -89,12 +89,7 @@ export function BranchPolicyPage() {
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState<Partial<BranchPolicy>>({});
   const [saving, setSaving] = useState(false);
-  const [openYear, setOpenYear] = useState<number | null>(null);
-  const [holidays, setHolidays] = useState<Record<number, BranchHoliday[]>>({});
-  const [holidayModal, setHolidayModal] = useState<{ year: number; initial?: BranchHoliday } | null>(null);
-  const [deactivating, setDeactivating] = useState<{ year: number; row: BranchHoliday } | null>(null);
-  const [holidayBusy, setHolidayBusy] = useState(false);
-  const [newYear, setNewYear] = useState("");
+  const [showWizard, setShowWizard] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -131,35 +126,6 @@ export function BranchPolicyPage() {
     finally { setSaving(false); }
   };
 
-  const loadYearHolidays = useCallback(async (calendarYear: number) => {
-    const rows = await crmGet<BranchHoliday[]>(
-      `/api/customers/branches/${id}/holiday-years/${calendarYear}/holidays`,
-    );
-    setHolidays((h) => ({ ...h, [calendarYear]: rows.data || [] }));
-  }, [id]);
-
-  const toggleYear = async (y: HolidayYear) => {
-    if (openYear === y.calendar_year) { setOpenYear(null); return; }
-    setOpenYear(y.calendar_year);
-    if (!holidays[y.calendar_year]) {
-      try {
-        await loadYearHolidays(y.calendar_year);
-      } catch (e: any) {
-        setErr(String(e?.message || e));
-      }
-    }
-  };
-  const freezeYear = async (y: HolidayYear) => {
-    await crmPatch(`/api/customers/branches/${id}/holiday-years/${y.id}`, { is_freeze: !y.is_freeze });
-    load();
-  };
-  const addYear = async () => {
-    const yr = parseInt(newYear, 10);
-    if (!yr) return;
-    await crmPost(`/api/customers/branches/${id}/holiday-years`, { calendar_year: yr });
-    setNewYear("");
-    load();
-  };
   const addLeaveTemplate = async () => {
     if (!data) return;
     await crmPost(`/api/customer-leave-policies`, {
@@ -169,43 +135,9 @@ export function BranchPolicyPage() {
     load();
   };
 
-  const openYearRow = data?.holiday_years.find((y) => y.calendar_year === openYear) || null;
-  const yearFrozen = !!openYearRow?.is_freeze;
-
-  const removeHoliday = async () => {
-    if (!deactivating) return;
-    setHolidayBusy(true);
-    try {
-      await crmDelete(
-        `/api/customers/branches/${id}/holiday-years/${deactivating.year}/holidays/${deactivating.row.id}`,
-      );
-      notify("Holiday removed");
-      setDeactivating(null);
-      await loadYearHolidays(deactivating.year);
-      load();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setHolidayBusy(false);
-    }
-  };
-
   if (err && !data) return <ErrorBox error={err} />;
   if (!data) return <div className="rounded-card border border-subtle bg-surface-1 p-6"><Spinner /></div>;
   const v = edit ? (form as BranchPolicy) : data;
-
-  const yearCols: Column<HolidayYear>[] = [
-    { key: "calendar_year", label: "Calendar Year", render: (r) => (
-        <button type="button" className={`inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`} onClick={() => toggleYear(r)}>
-          {openYear === r.calendar_year ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.calendar_year}
-        </button>) },
-    { key: "holiday_count", label: "Holiday Count", render: (r) => r.holiday_count == null ? "—" : r.holiday_count },
-    { key: "is_freeze", label: "IsFreeze", render: (r) => <StatusBadge status={r.is_freeze ? "Frozen" : "Open"} /> },
-    { key: "edit", label: "", render: (r) => (
-        <button type="button" className={`inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`} onClick={() => freezeYear(r)}>
-          {r.is_freeze ? <><LockOpen size={12} /> Unfreeze</> : <><Lock size={12} /> Freeze</>}
-        </button>) },
-  ];
 
   const leaveCols: Column<LeavePolicyRow>[] = [
     { key: "leave_name", label: "Leave Name", render: (r) => r.leave_name || "—" },
@@ -251,18 +183,23 @@ export function BranchPolicyPage() {
     <div className="space-y-4">
       {toast}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <CrmLink to="customers" className={`text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}>Customers</CrmLink>
-          <span className="text-muted">/</span>
-          <h1 className="text-display text-lg font-bold text-primary">{data.branch_name}</h1>
-          {data.customer_name && <span className="text-sm text-muted">· {data.customer_name}</span>}
+        <div>
+          <CrmBreadcrumb items={[
+            { label: "Customers", to: "customers" },
+            { label: data.customer_name || `Customer #${data.customer_id}`, to: `customers/${data.customer_id}` },
+            { label: data.branch_name },
+          ]} />
+          <h1 className="mt-1 text-display text-lg font-bold text-primary">{data.branch_name}</h1>
         </div>
         {edit
           ? <div className="flex gap-2">
               <button type="button" className={btnSecondary} onClick={() => { setEdit(false); setForm(data); }}>Cancel</button>
               <button type="button" className={btnPrimary} onClick={savePolicy} disabled={saving}><Save size={14} /> Save</button>
             </div>
-          : <button type="button" className={btnSecondary} onClick={() => setEdit(true)}>Edit policy</button>}
+          : <div className="flex gap-2">
+              <button type="button" className={btnSecondary} onClick={() => setEdit(true)}>Edit policy</button>
+              <button type="button" className={btnPrimary} onClick={() => setShowWizard(true)}><Pencil size={14} /> Edit branch</button>
+            </div>}
       </div>
       {err && <ErrorBox error={err} />}
 
@@ -278,91 +215,43 @@ export function BranchPolicyPage() {
         </div>
       </Block>
 
-      {/* 2 — Holiday Billing Policy */}
-      <Block title="Holiday Billing Policy" hint="Per calendar year. Click a year to view its holidays."
-        action={
-          <div className="flex items-center gap-2">
-            <input className={inputCls} style={{ width: 110 }} placeholder="Year" value={newYear} onChange={(e) => setNewYear(e.target.value)} />
-            <button type="button" className={btnSecondary} onClick={addYear}><Plus size={14} /> Add year</button>
-          </div>
-        }>
-        {data.holiday_years.length === 0
-          ? <EmptyState message="No holiday years yet for this branch." />
-          : <div className="space-y-2">
-              <DataTable columns={yearCols} rows={data.holiday_years.map((y) => ({ ...y, id: y.id }))} loading={false} emptyMessage="No holiday years" />
-              {openYear != null && (
-                <div className="rounded-card border border-subtle bg-surface-2 p-3">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-muted">
-                      <CalendarDays size={14} /> Holidays in {openYear}
-                      <span className="rounded-full bg-surface-1 px-2 py-0.5 text-primary">
-                        {(holidays[openYear] || []).length} date{(holidays[openYear] || []).length === 1 ? "" : "s"}
-                      </span>
-                      {yearFrozen && <StatusBadge status="Frozen" />}
-                    </div>
-                    {!yearFrozen && (
-                      <button
-                        type="button"
-                        className={btnSecondary}
-                        onClick={() => setHolidayModal({ year: openYear })}
-                      >
-                        <Plus size={14} /> Add date
-                      </button>
-                    )}
-                  </div>
-                  {(holidays[openYear] || []).length === 0 ? (
-                    <div className="text-sm text-muted">No holiday records for {openYear}.</div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-max text-sm">
-                        <thead>
-                          <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-                            <th className="px-2 py-2">Date</th>
-                            <th className="px-2 py-2">Holiday</th>
-                            <th className="px-2 py-2">Observance</th>
-                            {!yearFrozen && <th className="px-2 py-2 text-right">Actions</th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(holidays[openYear] || []).map((h) => (
-                            <tr key={h.id} className="border-b border-subtle">
-                              <td className="px-2 py-2 whitespace-nowrap">{fmtDate(h.holiday_date)}</td>
-                              <td className="px-2 py-2 font-semibold">{h.name}</td>
-                              <td className="px-2 py-2 text-secondary">{h.observance || "Mandatory"}</td>
-                              {!yearFrozen && (
-                                <td className="px-2 py-2 text-right">
-                                  <span className="inline-flex gap-1">
-                                    <button
-                                      type="button"
-                                      className={`rounded-control p-1.5 text-muted hover:bg-surface-1 hover:text-primary ${focusRing}`}
-                                      title="Edit holiday"
-                                      onClick={() => setHolidayModal({ year: openYear, initial: h })}
-                                    >
-                                      <Pencil size={14} />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`rounded-control p-1.5 text-muted hover:bg-surface-1 hover:text-danger ${focusRing}`}
-                                      title="Remove holiday"
-                                      onClick={() => setDeactivating({ year: openYear, row: h })}
-                                    >
-                                      <Power size={14} />
-                                    </button>
-                                  </span>
-                                </td>
-                              )}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>}
+      {/* 2 — Projects (drill-down to Project detail) */}
+      <Block title="Projects" hint="Click a project to open Overview / Team / Timesheet / PO & Invoices.">
+        <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <KpiCard label="Projects" value={String(data.linked_projects.length)} />
+        </div>
+        {data.linked_projects.length === 0
+          ? <EmptyState message="No projects for this branch yet." />
+          : (
+            <DataTable
+              columns={[
+                {
+                  key: "name",
+                  label: "Name",
+                  render: (p: LinkedProject) => (
+                    <span className="font-semibold text-brand-600 dark:text-brand-300">{p.name}</span>
+                  ),
+                },
+                {
+                  key: "status",
+                  label: "Status",
+                  render: (p: LinkedProject) => <StatusBadge status={p.status || "—"} />,
+                },
+              ]}
+              rows={data.linked_projects}
+              loading={false}
+              emptyMessage="No projects for this branch yet."
+              onRowClick={(p) => crmNavigate(`projects/${p.id}`)}
+            />
+          )}
       </Block>
 
-      {/* 3 — Leave & Holiday Billing Policy */}
+      {/* 3 — Holiday Billing Policy */}
+      <Block title="Holiday Billing Policy" hint="Per calendar year. Click a year to view its holidays.">
+        <BranchHolidayYearsPanel branchId={Number(id)} notify={notify} />
+      </Block>
+
+      {/* 4 — Leave & Holiday Billing Policy */}
       <Block title="Leave & Holiday Billing Policy">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {chk("Holidays Billable", "holidays_billable")}
@@ -379,7 +268,7 @@ export function BranchPolicyPage() {
         </div>
       </Block>
 
-      {/* 4 — Billing Properties */}
+      {/* 5 — Billing Properties */}
       <Block title="Billing Properties">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Field label="Billing Frequency">
@@ -409,7 +298,7 @@ export function BranchPolicyPage() {
         </div>
       </Block>
 
-      {/* 5 — Billable Leave Policy */}
+      {/* 6 — Billable Leave Policy */}
       <Block title="Billable Leave Policy" hint="Optional per branch — may be empty."
         action={<button type="button" className={btnSecondary} onClick={addLeaveTemplate}><Plus size={14} /> Add row</button>}>
         {data.leave_policies.length === 0
@@ -419,26 +308,203 @@ export function BranchPolicyPage() {
             />
           : <DataTable columns={leaveCols} rows={data.leave_policies.map((p) => ({ ...p, id: p.id }))} loading={false} emptyMessage="No rows" />}
       </Block>
+      {showWizard && (
+        <EditBranchWizard
+          customerId={data.customer_id}
+          customerName={data.customer_name}
+          initial={{
+            id: data.id,
+            branch_name: data.branch_name,
+            branch_legal_name: data.branch_legal_name,
+            billing_address: data.billing_address,
+            gstin: data.gstin,
+            pan: data.pan,
+          }}
+          onClose={() => setShowWizard(false)}
+          onSaved={() => { setShowWizard(false); load(); }}
+          notify={notify}
+        />
+      )}
+    </div>
+  );
+}
 
-      {/* 6 — Linked Projects */}
-      <Block title="Linked Projects" hint="Projects under this branch inherit its policy unless they override a field.">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiCard label="Linked projects" value={String(data.linked_projects.length)} />
-        </div>
-        {data.linked_projects.length === 0
-          ? <EmptyState message="No projects linked to this branch yet." />
-          : <ul className="space-y-1 text-sm">
-              {data.linked_projects.map((p) => (
-                <li key={p.id} className="flex items-center justify-between">
-                  <CrmLink to={`projects/${p.id}`} className="text-brand-600 hover:underline dark:text-brand-300">{p.name}</CrmLink>
-                  <StatusBadge status={p.status || "—"} />
-                </li>
-              ))}
-            </ul>}
-      </Block>
+/** Reusable Holiday Billing Policy panel (per calendar-year table → holiday
+ * drill-down + freeze). Lifted verbatim from the page's Section 2 so the
+ * Edit Branch wizard and this page share one implementation of the
+ * freeze/holiday logic. Self-fetches its own holiday years. */
+export function BranchHolidayYearsPanel({
+  branchId,
+  notify,
+}: {
+  branchId: number;
+  notify: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [years, setYears] = useState<HolidayYear[]>([]);
+  const [err, setErr] = useState("");
+  const [openYear, setOpenYear] = useState<number | null>(null);
+  const [holidays, setHolidays] = useState<Record<number, BranchHoliday[]>>({});
+  const [holidayModal, setHolidayModal] = useState<{ year: number; initial?: BranchHoliday } | null>(null);
+  const [deactivating, setDeactivating] = useState<{ year: number; row: BranchHoliday } | null>(null);
+  const [holidayBusy, setHolidayBusy] = useState(false);
+  const [newYear, setNewYear] = useState("");
+
+  const loadYears = useCallback(async () => {
+    try {
+      const res = await crmGet<HolidayYear[]>(`/api/customers/branches/${branchId}/holiday-years`);
+      setYears(res.data || []);
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  }, [branchId]);
+  useEffect(() => { loadYears(); }, [loadYears]);
+
+  const loadYearHolidays = useCallback(async (calendarYear: number) => {
+    const rows = await crmGet<BranchHoliday[]>(
+      `/api/customers/branches/${branchId}/holiday-years/${calendarYear}/holidays`,
+    );
+    setHolidays((h) => ({ ...h, [calendarYear]: rows.data || [] }));
+  }, [branchId]);
+
+  const toggleYear = async (y: HolidayYear) => {
+    if (openYear === y.calendar_year) { setOpenYear(null); return; }
+    setOpenYear(y.calendar_year);
+    if (!holidays[y.calendar_year]) {
+      try {
+        await loadYearHolidays(y.calendar_year);
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      }
+    }
+  };
+  const freezeYear = async (y: HolidayYear) => {
+    await crmPatch(`/api/customers/branches/${branchId}/holiday-years/${y.id}`, { is_freeze: !y.is_freeze });
+    loadYears();
+  };
+  const addYear = async () => {
+    const yr = parseInt(newYear, 10);
+    if (!yr) return;
+    await crmPost(`/api/customers/branches/${branchId}/holiday-years`, { calendar_year: yr });
+    setNewYear("");
+    loadYears();
+  };
+
+  const openYearRow = years.find((y) => y.calendar_year === openYear) || null;
+  const yearFrozen = !!openYearRow?.is_freeze;
+
+  const removeHoliday = async () => {
+    if (!deactivating) return;
+    setHolidayBusy(true);
+    try {
+      await crmDelete(
+        `/api/customers/branches/${branchId}/holiday-years/${deactivating.year}/holidays/${deactivating.row.id}`,
+      );
+      notify("Holiday removed");
+      setDeactivating(null);
+      await loadYearHolidays(deactivating.year);
+      loadYears();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setHolidayBusy(false);
+    }
+  };
+
+  const yearCols: Column<HolidayYear>[] = [
+    { key: "calendar_year", label: "Calendar Year", render: (r) => (
+        <button type="button" className={`inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`} onClick={() => toggleYear(r)}>
+          {openYear === r.calendar_year ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.calendar_year}
+        </button>) },
+    { key: "holiday_count", label: "Holiday Count", render: (r) => r.holiday_count == null ? "—" : r.holiday_count },
+    { key: "is_freeze", label: "IsFreeze", render: (r) => <StatusBadge status={r.is_freeze ? "Frozen" : "Open"} /> },
+    { key: "edit", label: "", render: (r) => (
+        <button type="button" className={`inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`} onClick={() => freezeYear(r)}>
+          {r.is_freeze ? <><LockOpen size={12} /> Unfreeze</> : <><Lock size={12} /> Freeze</>}
+        </button>) },
+  ];
+
+  return (
+    <div className="space-y-2">
+      {err && <ErrorBox error={err} />}
+      <div className="flex items-center justify-end gap-2">
+        <input className={inputCls} style={{ width: 110 }} placeholder="Year" value={newYear} onChange={(e) => setNewYear(e.target.value)} />
+        <button type="button" className={btnSecondary} onClick={addYear}><Plus size={14} /> Add year</button>
+      </div>
+      {years.length === 0
+        ? <EmptyState message="No holiday years yet for this branch." />
+        : <div className="space-y-2">
+            <DataTable columns={yearCols} rows={years.map((y) => ({ ...y, id: y.id }))} loading={false} emptyMessage="No holiday years" />
+            {openYear != null && (
+              <div className="rounded-card border border-subtle bg-surface-2 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-muted">
+                    <CalendarDays size={14} /> Holidays in {openYear}
+                    <span className="rounded-full bg-surface-1 px-2 py-0.5 text-primary">
+                      {(holidays[openYear] || []).length} date{(holidays[openYear] || []).length === 1 ? "" : "s"}
+                    </span>
+                    {yearFrozen && <StatusBadge status="Frozen" />}
+                  </div>
+                  {!yearFrozen && (
+                    <button
+                      type="button"
+                      className={btnSecondary}
+                      onClick={() => setHolidayModal({ year: openYear })}
+                    >
+                      <Plus size={14} /> Add date
+                    </button>
+                  )}
+                </div>
+                {(holidays[openYear] || []).length === 0 ? (
+                  <div className="text-sm text-muted">No holiday records for {openYear}.</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-max text-sm">
+                      <thead>
+                        <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
+                          <th className="px-2 py-2">Date</th>
+                          <th className="px-2 py-2">Holiday</th>
+                          <th className="px-2 py-2">Observance</th>
+                          {!yearFrozen && <th className="px-2 py-2 text-right">Actions</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(holidays[openYear] || []).map((h) => (
+                          <tr key={h.id} className="border-b border-subtle">
+                            <td className="px-2 py-2 whitespace-nowrap">{fmtDate(h.holiday_date)}</td>
+                            <td className="px-2 py-2 font-semibold">{h.name}</td>
+                            <td className="px-2 py-2 text-secondary">{h.observance || "Mandatory"}</td>
+                            {!yearFrozen && (
+                              <td className="px-2 py-2 text-right">
+                                <span className="inline-flex gap-1">
+                                  <button
+                                    type="button"
+                                    className={`rounded-control p-1.5 text-muted hover:bg-surface-1 hover:text-primary ${focusRing}`}
+                                    title="Edit holiday"
+                                    onClick={() => setHolidayModal({ year: openYear, initial: h })}
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`rounded-control p-1.5 text-muted hover:bg-surface-1 hover:text-danger ${focusRing}`}
+                                    title="Remove holiday"
+                                    onClick={() => setDeactivating({ year: openYear, row: h })}
+                                  >
+                                    <Power size={14} />
+                                  </button>
+                                </span>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>}
       {holidayModal && (
         <BranchHolidayModal
-          branchId={Number(id)}
+          branchId={branchId}
           calendarYear={holidayModal.year}
           initial={holidayModal.initial}
           onClose={() => setHolidayModal(null)}
@@ -447,7 +513,7 @@ export function BranchPolicyPage() {
             setHolidayModal(null);
             notify("Holiday saved");
             await loadYearHolidays(yr);
-            load();
+            loadYears();
           }}
           onError={(m) => setErr(m)}
         />

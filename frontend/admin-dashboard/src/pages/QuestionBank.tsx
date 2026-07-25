@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Database,
   Download,
+  FileText,
+  Hash,
+  ListChecks,
   Pencil,
   Plus,
   RefreshCw,
+  Tag,
   Trash2,
   Upload,
   X,
@@ -27,6 +32,60 @@ import {
 } from "../api/questionBank";
 
 const PAGE_SIZE = 25;
+
+/* Shared "New Opportunity wizard" visual language, expressed in this page's own
+ * design-system tokens (theme-adaptive). Gradient banner + icon tile mirrors the
+ * CRM SectionHeaderBanner; WizField mirrors WizardField (label + icon-leading
+ * input). Visual-only — no field, state, or submit logic lives here. */
+function SectionBanner({
+  icon, title, description,
+}: {
+  icon: ReactNode;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <header className="relative mb-6 overflow-hidden rounded-card border border-subtle bg-surface-1 px-5 py-5 shadow-raised">
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-brand-500/15 via-transparent to-violet-500/10" />
+      <div aria-hidden className="pointer-events-none absolute -right-8 -top-12 h-44 w-44 rounded-full bg-brand-500/20 blur-3xl" />
+      <div className="relative z-[1] flex items-start gap-3">
+        <span className="fx-glow mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-card bg-gradient-to-br from-brand-600 to-violet-600 text-white">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold tracking-tight text-primary">{title}</h2>
+          {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function WizField({
+  label, required, icon, className = "", children,
+}: {
+  label: string;
+  required?: boolean;
+  icon?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className}>
+      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+        {label}{required ? <span className="ml-0.5 text-danger">*</span> : null}
+      </label>
+      <div className="relative">
+        {icon ? (
+          <span className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-muted">{icon}</span>
+        ) : null}
+        <div className={icon ? "[&_input]:pl-9 [&_select]:pl-9 [&_textarea]:pl-9" : undefined}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function QuestionBankPage() {
   const [loading, setLoading] = useState(true);
@@ -545,44 +604,58 @@ export function QuestionBankPage() {
       {editorOpen ? (
         <div className="fixed inset-0 z-50 bg-backdrop flex items-center justify-center p-4">
           <div className="bg-surface-1 rounded-modal border border-subtle shadow-modal w-full max-w-2xl max-h-full overflow-y-auto p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-extrabold">{editing ? "Edit Question" : "Add Question"}</h2>
-              <button onClick={() => setEditorOpen(false)} className="p-2 rounded-control hover:bg-surface-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <SectionBanner
+                  icon={<Database className="w-5 h-5" />}
+                  title={editing ? "Edit Question" : "Add Question"}
+                  description="Author a Question Bank entry — role, skill, difficulty, and the model answer used for evaluation."
+                />
+              </div>
+              <button onClick={() => setEditorOpen(false)} className="mt-1 shrink-0 p-2 rounded-control hover:bg-surface-2">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
-                placeholder="Role"
-                value={form.roleName}
-                onChange={(e) => setForm((f) => ({ ...f, roleName: e.target.value }))}
-              />
-              <input
-                className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
-                placeholder="Skill"
-                value={form.skill}
-                onChange={(e) => setForm((f) => ({ ...f, skill: e.target.value }))}
-              />
-              <select
-                className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
-                value={form.difficulty}
-                onChange={(e) => setForm((f) => ({ ...f, difficulty: e.target.value }))}
-              >
-                <option value="easy">Easy</option>
-                <option value="medium">Medium</option>
-                <option value="hard">Hard</option>
-              </select>
-              <select
-                className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
-                value={form.category}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-              >
-                <option value="technical">Technical</option>
-                <option value="behavioral">Behavioral</option>
-                <option value="situational">Situational</option>
-                <option value="general">General</option>
-              </select>
+              <WizField label="Role" icon={<ListChecks className="w-4 h-4" />}>
+                <input
+                  className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
+                  placeholder="Role"
+                  value={form.roleName}
+                  onChange={(e) => setForm((f) => ({ ...f, roleName: e.target.value }))}
+                />
+              </WizField>
+              <WizField label="Skill" icon={<Tag className="w-4 h-4" />}>
+                <input
+                  className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
+                  placeholder="Skill"
+                  value={form.skill}
+                  onChange={(e) => setForm((f) => ({ ...f, skill: e.target.value }))}
+                />
+              </WizField>
+              <WizField label="Difficulty">
+                <select
+                  className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
+                  value={form.difficulty}
+                  onChange={(e) => setForm((f) => ({ ...f, difficulty: e.target.value }))}
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </WizField>
+              <WizField label="Category">
+                <select
+                  className="h-10 px-3 input-recessed rounded-control text-sm text-primary"
+                  value={form.category}
+                  onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                >
+                  <option value="technical">Technical</option>
+                  <option value="behavioral">Behavioral</option>
+                  <option value="situational">Situational</option>
+                  <option value="general">General</option>
+                </select>
+              </WizField>
               <label className="flex items-center gap-2 text-sm font-semibold md:col-span-2">
                 <input
                   type="checkbox"
@@ -592,24 +665,36 @@ export function QuestionBankPage() {
                 Active
               </label>
             </div>
-            <textarea
-              className="mt-3 w-full p-3 input-recessed rounded-control text-sm text-primary min-h-24"
-              placeholder="Question"
-              value={form.question}
-              onChange={(e) => setForm((f) => ({ ...f, question: e.target.value }))}
-            />
-            <textarea
-              className="mt-3 w-full p-3 input-recessed rounded-control text-sm text-primary min-h-24"
-              placeholder="Expected answer (optional — AI can generate if empty)"
-              value={form.expectedAnswer}
-              onChange={(e) => setForm((f) => ({ ...f, expectedAnswer: e.target.value }))}
-            />
-            <input
-              className="mt-3 w-full h-10 px-3 input-recessed rounded-control text-sm text-primary"
-              placeholder="Keywords (comma-separated)"
-              value={form.keywords}
-              onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))}
-            />
+            <div className="mt-3">
+              <WizField label="Question" icon={<FileText className="w-4 h-4" />}>
+                <textarea
+                  className="w-full p-3 input-recessed rounded-control text-sm text-primary min-h-24"
+                  placeholder="Question"
+                  value={form.question}
+                  onChange={(e) => setForm((f) => ({ ...f, question: e.target.value }))}
+                />
+              </WizField>
+            </div>
+            <div className="mt-3">
+              <WizField label="Expected answer">
+                <textarea
+                  className="w-full p-3 input-recessed rounded-control text-sm text-primary min-h-24"
+                  placeholder="Expected answer (optional — AI can generate if empty)"
+                  value={form.expectedAnswer}
+                  onChange={(e) => setForm((f) => ({ ...f, expectedAnswer: e.target.value }))}
+                />
+              </WizField>
+            </div>
+            <div className="mt-3">
+              <WizField label="Keywords" icon={<Hash className="w-4 h-4" />}>
+                <input
+                  className="w-full h-10 px-3 input-recessed rounded-control text-sm text-primary"
+                  placeholder="Keywords (comma-separated)"
+                  value={form.keywords}
+                  onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))}
+                />
+              </WizField>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setEditorOpen(false)}

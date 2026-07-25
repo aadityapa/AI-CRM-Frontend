@@ -1,15 +1,18 @@
 /** Karnex CRM shell: role-based sidebar + notifications bell + mini-router outlet.
  * Depth system: glass header bar, opaque E1 sidebar (so the sheen nav pill never
- * sits inside glass), E2 notifications dropdown, E3 mobile nav drawer. */
+ * sits inside glass), E2 notifications dropdown, E3 mobile nav drawer.
+ * Desktop sidebar: expanded (~240px) or collapsed ICON RAIL (~64px)
+ * (localStorage `crm.sidebar.collapsed`); mobile keeps the overlay drawer. */
 import React, { Suspense, createContext, useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  Banknote, Bell, Briefcase, Building2, CalendarDays, CalendarOff, Clock, FileSpreadsheet,
-  FileText, LayoutDashboard, Menu, Network, Receipt, Settings as SettingsIcon, Target, UserCog, Users, UsersRound, X,
+  Bell, Menu, PanelLeftClose, PanelLeftOpen, X,
 } from "lucide-react";
 import { crmGet, crmPost, CrmApiError } from "./api";
 import { CrmLink, CrmRouter, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
+import { CRM_NAV, type CrmNavItem } from "./nav";
 import { ErrorBox, Spinner } from "./components/ui";
 import { MOTION_DUR, MOTION_EASE_OUT } from "./components/motion3d";
 import { SidebarUserBlock } from "./components/SidebarUserBlock";
@@ -17,8 +20,51 @@ import { isSuperAdmin } from "../lib/rbac";
 import { performAdminLogout } from "../lib/adminLogout";
 import { crmTabVisibleFromMe, type EffectiveAccess } from "./useAccess";
 
+export { CRM_NAV } from "./nav";
+
 /* Shared :focus-visible ring (tokens.css --focus-ring, readable on glass). */
 const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-ring";
+
+/** Desktop sidebar collapse — persisted across reloads. Mobile uses the drawer instead. */
+const SIDEBAR_COLLAPSED_KEY = "crm.sidebar.collapsed";
+const SIDEBAR_WIDTH_PX = 240; // Tailwind w-60
+const SIDEBAR_RAIL_WIDTH_PX = 64; // Tailwind w-16 — icon rail (not hidden)
+
+/** Fixed flyout label for the collapsed icon rail (escapes overflow:hidden ancestors). */
+function RailFlyout({
+  label,
+  anchor,
+}: {
+  label: string;
+  anchor: DOMRect | null;
+}) {
+  if (!anchor || typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      role="tooltip"
+      className="pointer-events-none fixed z-[60] -translate-y-1/2 whitespace-nowrap rounded-control border border-subtle bg-surface-3 px-2.5 py-1 text-xs font-semibold text-primary shadow-e2"
+      style={{ top: anchor.top + anchor.height / 2, left: anchor.right + 8 }}
+    >
+      {label}
+    </div>,
+    document.body,
+  );
+}
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "true" : "false");
+  } catch {
+    /* private mode / quota */
+  }
+}
 
 export type Me = {
   id: number; username: string; full_name: string; email: string; roles: string[];
@@ -46,31 +92,7 @@ export function useHasRole(...roles: string[]): boolean {
   return isSuperAdmin(me.roles) || roles.some((r) => me.roles.includes(r));
 }
 
-type NavItem = { path: string; label: string; icon: React.ComponentType<{ size?: number | string; className?: string }>; roles: string[] };
-
-/** Sidebar entries — exported for light nav-merge tests. */
-export const CRM_NAV: NavItem[] = [
-  { path: "", label: "Dashboard", icon: LayoutDashboard, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
-  { path: "customers", label: "Customers", icon: Building2, roles: ["Admin", "Sales", "Sales_Head", "TA"] },
-  { path: "opportunities", label: "Opportunities", icon: Target, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
-  { path: "candidates", label: "Candidates", icon: Users, roles: ["Admin", "TA", "Sales", "Sales_Head"] },
-  { path: "template-requests", label: "Template Requests", icon: FileText, roles: ["Admin", "TA", "RMG"] },
-  { path: "profiles", label: "Candidate Profiles", icon: UsersRound, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
-  { path: "projects", label: "Projects", icon: Briefcase, roles: ["Admin", "Sales", "Sales_Head"] },
-  { path: "project-employees", label: "Project Employees", icon: Network, roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance"] },
-  { path: "my-leave", label: "My Leave", icon: CalendarDays, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
-  { path: "leave-applications", label: "Leave Applications", icon: CalendarDays, roles: ["Admin", "HR"] },
-  { path: "holidays", label: "Holidays", icon: CalendarOff, roles: ["Admin", "HR"] },
-  { path: "timesheets", label: "Timesheets", icon: Clock, roles: ["Admin", "HR", "Finance", "RMG", "Sales", "Sales_Head"] },
-  { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
-  { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
-  { path: "tds", label: "TDS", icon: Banknote, roles: ["Admin", "Finance"] },
-  { path: "employees", label: "Employees", icon: UserCog, roles: ["Admin", "HR"] },
-  { path: "reports", label: "Reports", icon: FileSpreadsheet, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
-  { path: "users", label: "Users", icon: UserCog, roles: ["Admin", "CEO"] },
-  { path: "access-templates", label: "Access Templates", icon: UserCog, roles: ["Admin", "CEO"] },
-  { path: "settings", label: "Settings", icon: SettingsIcon, roles: ["Admin", "CEO"] },
-];
+type NavItem = CrmNavItem;
 
 /** Whether a sidebar item should highlight for the current CRM path. */
 export function crmNavItemActive(path: string, itemPath: string): boolean {
@@ -177,53 +199,95 @@ function NotificationsBell() {
 }
 
 /** Role-filtered nav links, shared by the desktop sidebar and the mobile drawer.
- * `variant="drawer"` uses ≥44px touch targets and its own layoutId. */
+ * `variant="drawer"` uses ≥44px touch targets and its own layoutId.
+ * `collapsed` (desktop rail only): icon-only + flyout label on hover/focus. */
 function CrmNavLinks({
   items,
   path,
   variant,
   reduce,
+  collapsed = false,
 }: {
   items: NavItem[];
   path: string;
   roles: string[];
   variant: "sidebar" | "drawer";
   reduce: boolean;
+  collapsed?: boolean;
 }) {
   const drawer = variant === "drawer";
+  const rail = !drawer && collapsed;
   return (
     <>
-      {items.map((n) => {
-        const active = crmNavItemActive(path, n.path);
-        const Icon = n.icon;
-        const label = n.label;
-        return (
-          <CrmLink
-            key={n.path || "home"}
-            to={n.path}
-            className={`group relative flex items-center gap-2.5 rounded-control px-3 text-sm font-semibold transition-all duration-base ease-smooth ${focusRing} ${
-              drawer ? "min-h-[44px] py-2.5" : "py-2"
-            } ${
-              active
-                ? "text-white"
-                : `text-secondary hover:bg-surface-2 ${drawer ? "" : "hover:translate-x-0.5"}`
-            }`}
-          >
-            {active && (
-              /* Active pill: v3 indigo→violet gradient + soft bloom, animated
-                 layoutId slide. White text is AA on both stops (6.29 / 5.71). */
-              <motion.span
-                layoutId={drawer ? "crm-nav-active-drawer" : "crm-nav-active"}
-                className="nav-pill-gradient absolute inset-0 rounded-control"
-                transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34 }}
-                aria-hidden
-              />
-            )}
-            <Icon size={16} className="relative z-10 transition-transform duration-base ease-smooth group-hover:scale-110" />
-            <span className="relative z-10">{label}</span>
-          </CrmLink>
-        );
-      })}
+      {items.map((n) => (
+        <CrmNavLinkItem
+          key={n.path || "home"}
+          item={n}
+          active={crmNavItemActive(path, n.path)}
+          drawer={drawer}
+          rail={rail}
+          reduce={reduce}
+        />
+      ))}
+    </>
+  );
+}
+
+function CrmNavLinkItem({
+  item,
+  active,
+  drawer,
+  rail,
+  reduce,
+}: {
+  item: NavItem;
+  active: boolean;
+  drawer: boolean;
+  rail: boolean;
+  reduce: boolean;
+}) {
+  const Icon = item.icon;
+  const label = item.label;
+  const [flyout, setFlyout] = useState<DOMRect | null>(null);
+
+  const showFlyout = (el: HTMLElement) => {
+    if (rail) setFlyout(el.getBoundingClientRect());
+  };
+  const hideFlyout = () => setFlyout(null);
+
+  return (
+    <>
+      <CrmLink
+        to={item.path}
+        aria-label={rail ? label : undefined}
+        onMouseEnter={(e) => showFlyout(e.currentTarget)}
+        onMouseLeave={hideFlyout}
+        onFocus={(e) => showFlyout(e.currentTarget)}
+        onBlur={hideFlyout}
+        className={`group relative flex items-center rounded-control text-sm font-semibold transition-all duration-base ease-smooth ${focusRing} ${
+          rail ? "justify-center px-0 py-2" : "gap-2.5 px-3"
+        } ${
+          drawer ? "min-h-[44px] py-2.5" : rail ? "" : "py-2"
+        } ${
+          active
+            ? "text-white"
+            : `text-secondary hover:bg-surface-2 ${drawer || rail ? "" : "hover:translate-x-0.5"}`
+        }`}
+      >
+        {active && (
+          /* Active pill: v3 indigo→violet gradient + soft bloom, animated
+             layoutId slide. White text is AA on both stops (6.29 / 5.71). */
+          <motion.span
+            layoutId={drawer ? "crm-nav-active-drawer" : "crm-nav-active"}
+            className="nav-pill-gradient absolute inset-0 rounded-control"
+            transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34 }}
+            aria-hidden
+          />
+        )}
+        <Icon size={16} className="relative z-10 transition-transform duration-base ease-smooth group-hover:scale-110" />
+        {!rail && <span className="relative z-10">{label}</span>}
+      </CrmLink>
+      {rail && <RailFlyout label={label} anchor={flyout} />}
     </>
   );
 }
@@ -234,6 +298,15 @@ export default function CrmApp() {
   const [error, setError] = useState("");
   const [path, setPath] = useState(readCrmPath());
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onPop = () => setPath(readCrmPath());
@@ -313,18 +386,64 @@ export default function CrmApp() {
         <div aria-hidden className="fx-spotlight" />
         {/* Desktop sidebar — v3 floating inset glass panel (approved .glass
             surface; the active pill is an opaque gradient, so nothing glossy
-            nests inside the glass). Outer <aside> keeps the sticky geometry;
-            p-2 creates the floating inset. */}
-        <aside className="hidden w-60 shrink-0 flex-col p-2 md:flex md:sticky md:top-16 md:h-[calc(100vh-4rem)]">
-          <div className="glass flex h-full min-h-0 flex-col overflow-hidden rounded-panel">
-            <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3">
-              <CrmNavLinks items={visible} path={path} roles={me.roles} variant="sidebar" reduce={!!reduce} />
-            </nav>
-            <div className="border-t border-subtle p-3">
-              <SidebarUserBlock />
+            nests inside the glass). Width animates 240 ↔ 64 (icon rail);
+            mobile uses the drawer below — this aside stays md+ only. */}
+        <motion.aside
+          className="hidden shrink-0 flex-col overflow-hidden md:flex md:sticky md:top-16 md:h-[calc(100vh-4rem)]"
+          initial={false}
+          animate={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH_PX : SIDEBAR_WIDTH_PX }}
+          transition={reduce ? { duration: 0 } : { duration: MOTION_DUR.slow, ease: MOTION_EASE_OUT }}
+        >
+          <div className={`flex h-full min-h-0 w-full min-w-0 flex-col ${sidebarCollapsed ? "p-1" : "p-2"}`}>
+            <div className="glass flex h-full min-h-0 flex-col overflow-hidden rounded-panel">
+              <div
+                className={`flex items-center border-b border-subtle ${
+                  sidebarCollapsed ? "flex-col gap-0.5 px-0.5 py-1" : "justify-between gap-1 px-2 py-1.5"
+                }`}
+              >
+                {sidebarCollapsed ? (
+                  <span
+                    className="flex h-7 w-7 items-center justify-center rounded-control bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900 dark:text-brand-200"
+                    aria-hidden
+                  >
+                    K
+                  </span>
+                ) : (
+                  <span className="truncate px-1 text-sm font-bold text-primary">Karnex</span>
+                )}
+                <button
+                  type="button"
+                  onClick={toggleSidebarCollapsed}
+                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-muted transition-colors duration-base ease-smooth hover:bg-surface-1 hover:text-primary ${focusRing}`}
+                  aria-label={sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+                  title={sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+                  aria-expanded={!sidebarCollapsed}
+                  aria-controls="crm-desktop-sidebar"
+                >
+                  {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                </button>
+              </div>
+              <nav
+                id="crm-desktop-sidebar"
+                className={`flex flex-1 flex-col gap-0.5 overflow-y-auto ${
+                  sidebarCollapsed ? "px-0.5 py-1" : "p-3"
+                }`}
+              >
+                <CrmNavLinks
+                  items={visible}
+                  path={path}
+                  roles={me.roles}
+                  variant="sidebar"
+                  reduce={!!reduce}
+                  collapsed={sidebarCollapsed}
+                />
+              </nav>
+              <div className={`border-t border-subtle ${sidebarCollapsed ? "p-1" : "p-3"}`}>
+                <SidebarUserBlock compact={sidebarCollapsed} rail={sidebarCollapsed} />
+              </div>
             </div>
           </div>
-        </aside>
+        </motion.aside>
         <div className="min-w-0 flex-1">
           {/* Glass header bar (E1 glass; nothing glossy nested inside it) with
               the v3 gradient hairline along its bottom edge. */}
@@ -333,12 +452,25 @@ export default function CrmApp() {
               <button
                 type="button"
                 onClick={() => setDrawerOpen(true)}
-                className={`btn-depth -ml-1 inline-flex h-11 w-11 items-center justify-center rounded-control text-secondary md:hidden`}
+                className={`btn-depth -ml-1 inline-flex h-11 w-11 items-center justify-center rounded-control text-secondary md:hidden ${focusRing}`}
                 aria-label="Open CRM navigation"
                 aria-haspopup="dialog"
                 aria-expanded={drawerOpen}
               >
                 <Menu size={18} />
+              </button>
+              {/* Desktop sidebar toggle — also in the header (rail toggle is in
+                  the sidebar). Hidden on mobile (drawer). */}
+              <button
+                type="button"
+                onClick={toggleSidebarCollapsed}
+                className={`btn-depth -ml-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-control border border-subtle bg-surface-1 text-primary shadow-e1 transition-colors duration-base ease-smooth hover:bg-surface-2 hover:text-primary md:inline-flex ${focusRing}`}
+                aria-label={sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+                title={sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+                aria-expanded={!sidebarCollapsed}
+                aria-controls="crm-desktop-sidebar"
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={18} strokeWidth={2.25} /> : <PanelLeftClose size={18} strokeWidth={2.25} />}
               </button>
               Karnex CRM
               <span className="flex flex-wrap items-center gap-1">

@@ -3,20 +3,57 @@
  * Employee Details / Addresses / Education / Experience / Projects / Office /
  * Separation / Leave Balances (matrix + editable upsert) / Attendance Rule.
  * Writes: HR (Admin implicit). Reads open to page viewers. */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import {
+  Briefcase, Building2, CalendarDays, ClipboardCheck, GraduationCap, LogOut, Mail,
+  Pencil, Plus, Save, Trash2, User, X,
+} from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanEditTab } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { EmployeeHistoryTab } from "./EmployeeHistory";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   btnPrimary, btnSecondary, ConfirmModal, EmptyState, ErrorBox, Field, inputCls,
   Modal, Spinner, StatusBadge, Tabs, useToast,
 } from "../components/ui";
+import { WizardAurora } from "../components/WizardAurora";
+import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
+import {
+  COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
+} from "../constants/geo";
+import {
+  StepperRail, SectionHeaderBanner, WizardField, WizardFooter, WizardStepProgress, WizardStepCard,
+  InfoChip, type WizardStep,
+} from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -374,78 +411,96 @@ function EmployeeFormModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Employee" : "New Employee"} onClose={onClose} wide fullScreen>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="First name" required>
-          <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-        </Field>
-        <Field label="Last name">
-          <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
-        </Field>
-        <Field label="Email (Official)" required>
-          <input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} />
-        </Field>
-        <Field label="Phone">
-          <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </Field>
-        <Field label="Employee ID">
-          <input className={inputCls} value={employeeCode} onChange={(e) => setEmployeeCode(e.target.value)} placeholder="e.g. KRX-0042" />
-        </Field>
-        <Field label="Date of joining">
-          <input type="date" className={inputCls} value={doj} onChange={(e) => setDoj(e.target.value)} />
-        </Field>
-        <Field label="Department">
-          <select className={inputCls} value={deptId} onChange={(e) => setDeptId(e.target.value)}>
-            <option value="">—</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Designation">
-          <select className={inputCls} value={desigId} onChange={(e) => setDesigId(e.target.value)}>
-            <option value="">—</option>
-            {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Reporting manager">
-          <select className={inputCls} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
-            <option value="">—</option>
-            {managers
-              .filter((m) => !initial || m.id !== initial.id)
-              .map((m) => <option key={m.id} value={m.id}>{m.full_name || `${m.first_name} ${m.last_name || ""}`}</option>)}
-          </select>
-        </Field>
-        <Field label="Profile type">
-          <select className={inputCls} value={profileType} onChange={(e) => setProfileType(e.target.value)}>
-            <option value="Internal">Internal</option>
-            <option value="External">External</option>
-          </select>
-        </Field>
-        <div className="flex items-end gap-4 pb-1.5">
-          <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
-            <input type="checkbox" checked={portalAccess} onChange={(e) => setPortalAccess(e.target.checked)} />
-            Portal access
-          </label>
-          {initial && (
-            <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-              Active
-            </label>
-          )}
+    <Modal
+      title={initial ? "Edit Employee" : "New Employee"}
+      onClose={onClose}
+      wide
+      fullScreen
+      scopeClassName="crm-wizard wiz-noise"
+      panelClassName="wiz-moonlit-panel"
+      headerClassName="wiz-moonlit-header"
+      bodyClassName="relative !overflow-hidden !p-0 sm:!px-0 sm:!py-0"
+    >
+      <div className="wiz-moonlit-shell relative flex h-full min-h-0 flex-col">
+        <WizardAurora />
+        <div className="relative z-10 min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8 sm:py-6">
+          <div className="mx-auto w-full max-w-3xl">
+            <div className="wiz-moonlit-form-card rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="First name" required>
+                  <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+                </Field>
+                <Field label="Last name">
+                  <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+                </Field>
+                <Field label="Email (Official)" required>
+                  <input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} />
+                </Field>
+                <Field label="Phone">
+                  <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+                </Field>
+                <Field label="Employee ID">
+                  <input className={inputCls} value={employeeCode} onChange={(e) => setEmployeeCode(e.target.value)} placeholder="e.g. KRX-0042" />
+                </Field>
+                <Field label="Date of joining">
+                  <input type="date" className={inputCls} value={doj} onChange={(e) => setDoj(e.target.value)} />
+                </Field>
+                <Field label="Department">
+                  <select className={inputCls} value={deptId} onChange={(e) => setDeptId(e.target.value)}>
+                    <option value="">—</option>
+                    {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Designation">
+                  <select className={inputCls} value={desigId} onChange={(e) => setDesigId(e.target.value)}>
+                    <option value="">—</option>
+                    {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Reporting manager">
+                  <select className={inputCls} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
+                    <option value="">—</option>
+                    {managers
+                      .filter((m) => !initial || m.id !== initial.id)
+                      .map((m) => <option key={m.id} value={m.id}>{m.full_name || `${m.first_name} ${m.last_name || ""}`}</option>)}
+                  </select>
+                </Field>
+                <Field label="Profile type">
+                  <select className={inputCls} value={profileType} onChange={(e) => setProfileType(e.target.value)}>
+                    <option value="Internal">Internal</option>
+                    <option value="External">External</option>
+                  </select>
+                </Field>
+                <div className="flex items-end gap-4 pb-1.5">
+                  <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
+                    <input type="checkbox" checked={portalAccess} onChange={(e) => setPortalAccess(e.target.checked)} />
+                    Portal access
+                  </label>
+                  {initial && (
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
+                      <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+                      Active
+                    </label>
+                  )}
+                </div>
+                <Field label="PAN">
+                  <input className={inputCls} value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} maxLength={10} placeholder="ABCDE1234F" />
+                </Field>
+                <Field label="Aadhar">
+                  <input className={inputCls} value={aadhar} onChange={(e) => setAadhar(e.target.value)} maxLength={12} placeholder="12-digit number" />
+                </Field>
+              </div>
+              <p className="mt-3 text-xs text-muted">Full profile (addresses, education, experience, office & leave details) is edited on the employee page after creation.</p>
+              {err && <div className="mt-2 text-sm text-danger">{err}</div>}
+              <div className="mt-5 flex justify-end gap-2">
+                <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
+                <button className={btnPrimary} onClick={submit} disabled={busy}>
+                  {busy ? "Saving…" : initial ? "Save Changes" : "Create Employee"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <Field label="PAN">
-          <input className={inputCls} value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} maxLength={10} placeholder="ABCDE1234F" />
-        </Field>
-        <Field label="Aadhar">
-          <input className={inputCls} value={aadhar} onChange={(e) => setAadhar(e.target.value)} maxLength={12} placeholder="12-digit number" />
-        </Field>
-      </div>
-      <p className="mt-3 text-xs text-muted">Full profile (addresses, education, experience, office & leave details) is edited on the employee page after creation.</p>
-      {err && <div className="mt-2 text-sm text-danger">{err}</div>}
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : initial ? "Save Changes" : "Create Employee"}
-        </button>
       </div>
     </Modal>
   );
@@ -472,9 +527,11 @@ export function EmployeesListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
   const departments = useNameMap("/api/departments?limit=100");
   const designations = useNameMap("/api/designations?limit=100");
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let alive = true;
@@ -493,7 +550,7 @@ export function EmployeesListPage() {
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, deptFilter, typeFilter, page]);
+  }, [tab, search, deptFilter, typeFilter, page, reloadKey]);
 
   const columns: Column<any>[] = [
     { key: "full_name", label: "Name", render: (r) => <span className="font-semibold">{r.full_name}</span> },
@@ -542,6 +599,26 @@ export function EmployeesListPage() {
         onRowClick={(r) => crmNavigate(`employees/${r.id}`)}
         filters={filters}
         emptyMessage={`No ${tab.toLowerCase()} employees`}
+        rowActions={canWrite ? (r) => (
+          <RowActions
+            entity="employee"
+            itemLabel={r.full_name}
+            onEdit={() => crmNavigate(`employees/${r.id}`)}
+            deleteUrl={`/api/employees/${r.id}`}
+            onDeleted={load}
+            notify={showToast}
+            canEdit
+            canDelete
+            onDeactivate={
+              r.is_active
+                ? async () => {
+                    await crmPut(`/api/employees/${r.id}`, { is_active: false });
+                  }
+                : undefined
+            }
+            deactivateSuccessMessage="Employee deactivated"
+          />
+        ) : undefined}
       />
       {showNew && (
         <EmployeeFormModal
@@ -609,19 +686,7 @@ export function EmployeeDetailPage() {
         }}
       />
 
-      {tab === "profile" && (
-        <div className="space-y-4">
-          <EmployeeDetailsSection {...common} />
-          <AddressSection {...common} />
-          <EducationSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-          <ExperienceSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-          <ProjectsSection emp={emp} />
-          <OfficeDetailsSection {...common} />
-          <SeparationSection {...common} />
-          <LeaveBalancesSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-          <AttendanceRuleSection {...common} />
-        </div>
-      )}
+      {tab === "profile" && <EmployeeProfileWizard {...common} />}
 
       {historyOpened && (
         <div className={tab === "employee_history" ? undefined : "hidden"}>
@@ -637,6 +702,235 @@ export function EmployeeDetailPage() {
 }
 
 type SectionProps = { emp: any; canWrite: boolean; onSaved: () => void; showToast: ShowToast };
+
+/* ------------------------------------------ Profile master form as a wizard */
+
+/** Read-only summary shown on the final wizard step. */
+function EmployeeReviewStep({ emp }: { emp: any }) {
+  const name = emp.full_name || `${emp.first_name || ""} ${emp.last_name || ""}`.trim();
+  return (
+    <div className="space-y-4">
+      <InfoChip>
+        Each section saves independently as you edit — there is no combined submit. Review the key
+        details below, then choose Done.
+      </InfoChip>
+      <div className="rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] p-5">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+          <InfoItem label="Name">{name || "—"}</InfoItem>
+          <InfoItem label="Employee ID">{emp.employee_code || "—"}</InfoItem>
+          <InfoItem label="Email (Official)">{emp.email || "—"}</InfoItem>
+          <InfoItem label="Phone">{emp.phone || "—"}</InfoItem>
+          <InfoItem label="Department">{emp.department_name || "—"}</InfoItem>
+          <InfoItem label="Designation">{emp.designation_name || "—"}</InfoItem>
+          <InfoItem label="Profile type">{emp.profile_type || "—"}</InfoItem>
+          <InfoItem label="Status">{emp.is_active ? "Active" : "Inactive"}</InfoItem>
+          <InfoItem label="Date of joining">{fmtDate(emp.date_of_joining)}</InfoItem>
+          <InfoItem label="Reporting manager">{emp.reporting_manager_name || "—"}</InfoItem>
+          <InfoItem label="Portal access">{emp.portal_access ? "Yes" : "No"}</InfoItem>
+          <InfoItem label="Resigned">{emp.is_resigned ? "Yes" : "No"}</InfoItem>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Re-skins the profile master form as a premium multi-step wizard (New
+ *  Opportunity look). Each step hosts the EXISTING section component(s)
+ *  unchanged — per-section Edit → Save (useDraft) plus every data/validation/
+ *  API wire (incl. CV & certificate upload) is preserved. Previous/Next only
+ *  navigate; there is no combined submit. */
+function EmployeeProfileWizard({ emp, canWrite, onSaved, showToast }: SectionProps) {
+  const reduce = useReducedMotion();
+  const [stepIndex, setStepIndex] = useState(0);
+  const [stepDir, setStepDir] = useState<1 | -1>(1);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const steps = useMemo(
+    () => [
+      {
+        key: "identity",
+        title: "Identity & Personal",
+        description: "Name, contact numbers, identifiers, CTC, and CV for this employee.",
+        icon: <User size={20} aria-hidden />,
+        render: () => (
+          <EmployeeDetailsSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+        ),
+      },
+      {
+        key: "contact",
+        title: "Contact & Address",
+        description: "Present and permanent addresses with correspondence details.",
+        icon: <Mail size={20} aria-hidden />,
+        render: () => (
+          <AddressSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+        ),
+      },
+      {
+        key: "office",
+        title: "Office Details",
+        description: "Department, designation, reporting line, role, skills, and project assignments.",
+        icon: <Building2 size={20} aria-hidden />,
+        render: () => (
+          <div className="space-y-4">
+            <OfficeDetailsSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+            <ProjectsSection emp={emp} />
+          </div>
+        ),
+      },
+      {
+        key: "education",
+        title: "Education & Experience",
+        description: "Qualifications and prior work history, with certificate uploads.",
+        icon: <GraduationCap size={20} aria-hidden />,
+        render: () => (
+          <div className="space-y-4">
+            <EducationSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+            <ExperienceSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+          </div>
+        ),
+      },
+      {
+        key: "leave",
+        title: "Leave & Attendance",
+        description: "Leave balances by year and attendance-hour rules.",
+        icon: <CalendarDays size={20} aria-hidden />,
+        render: () => (
+          <div className="space-y-4">
+            <LeaveBalancesSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+            <AttendanceRuleSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+          </div>
+        ),
+      },
+      {
+        key: "separation",
+        title: "Separation",
+        description: "Resignation status, notice period, and last working day.",
+        icon: <LogOut size={20} aria-hidden />,
+        render: () => (
+          <SeparationSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+        ),
+      },
+      {
+        key: "review",
+        title: "Review",
+        description: "Confirm the details. Each section saves independently as you edit.",
+        icon: <ClipboardCheck size={20} aria-hidden />,
+        render: () => <EmployeeReviewStep emp={emp} />,
+      },
+    ],
+    [emp, canWrite, onSaved, showToast],
+  );
+
+  const total = steps.length;
+  const clamped = Math.min(Math.max(stepIndex, 0), total - 1);
+  const current = steps[clamped];
+  const isFirst = clamped <= 0;
+  const isLast = clamped >= total - 1;
+  const maxReached = total - 1; // edit context — every step is freely reachable
+
+  const wizardSteps: WizardStep[] = steps.map((s, i) => ({
+    key: s.key,
+    title: s.title,
+    sublabel: s.description,
+    status: i < clamped ? "complete" : i === clamped ? "partial" : "empty",
+  }));
+
+  const goTo = (i: number) => {
+    if (i < 0 || i >= total) return;
+    setStepDir(i >= clamped ? 1 : -1);
+    setStepIndex(i);
+  };
+  const goPrev = () => {
+    if (isFirst) return;
+    setStepDir(-1);
+    setStepIndex((i) => Math.max(0, i - 1));
+  };
+  const goNext = () => {
+    if (isLast) return;
+    setStepDir(1);
+    setStepIndex((i) => Math.min(total - 1, i + 1));
+  };
+
+  /* Focus the step heading (a11y) then the first editable field on step change. */
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      headingRef.current?.focus?.({ preventScroll: true });
+      const el = bodyRef.current?.querySelector<HTMLElement>(
+        'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])',
+      );
+      el?.focus?.({ preventScroll: true });
+    }, reduce ? 0 : 200);
+    return () => window.clearTimeout(t);
+  }, [clamped, reduce]);
+
+  const pct = Math.round(((clamped + 1) / total) * 100);
+
+  return (
+    <div className="crm-wizard wiz-noise overflow-hidden rounded-2xl border border-[color:var(--wiz-border)]">
+      {/* Mobile: compact horizontal stepper */}
+      <div className="border-b border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] px-4 py-2.5 md:hidden">
+        <StepperRail
+          steps={wizardSteps}
+          currentIndex={clamped}
+          maxReached={maxReached}
+          onSelect={goTo}
+          orientation="horizontal"
+          ariaLabel="Employee profile steps"
+        />
+      </div>
+
+      <div className="flex min-h-0">
+        {/* Desktop: vertical rail + step progress */}
+        <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] p-4 md:block">
+          <StepperRail
+            steps={wizardSteps}
+            currentIndex={clamped}
+            maxReached={maxReached}
+            onSelect={goTo}
+            orientation="vertical"
+            ariaLabel="Employee profile steps"
+          />
+          <WizardStepProgress
+            pct={pct}
+            completeLabel="You're on the final step — review and finish."
+            incompleteLabel="Use Edit within each section to make changes."
+          />
+        </aside>
+
+        {/* Content */}
+        <div
+          ref={bodyRef}
+          className="min-h-0 min-w-0 flex-1 overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-8"
+        >
+          <WizardStepCard stepKey={current.key} stepDir={stepDir}>
+            <SectionHeaderBanner
+              title={current.title}
+              description={current.description}
+              headingRef={headingRef}
+              icon={current.icon}
+            />
+            {current.render()}
+          </WizardStepCard>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-[color:var(--wiz-border)] bg-[color:var(--wiz-bg)] px-4 py-3 sm:px-6">
+        <WizardFooter
+          stepIndex={clamped}
+          totalSteps={total}
+          isFirstStep={isFirst}
+          isLastStep={isLast}
+          onPrev={goPrev}
+          onNext={goNext}
+          onSubmit={() => crmNavigate("employees")}
+          submitLabel="Done"
+        />
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------ 1. Employee Details */
 
@@ -830,7 +1124,7 @@ const emptyAddress = (a?: any): Address => ({
   city: a?.city || "",
   state: a?.state || "",
   postal_code: a?.postal_code || "",
-  country: a?.country || "",
+  country: a?.country || DEFAULT_COUNTRY,
   phone: a?.phone || "",
 });
 
@@ -873,10 +1167,36 @@ function AddressFields({
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <Field label="Address line 1"><input className={inputCls} value={value.line1} onChange={set("line1")} /></Field>
       <Field label="Address line 2"><input className={inputCls} value={value.line2} onChange={set("line2")} /></Field>
-      <Field label="City"><input className={inputCls} value={value.city} onChange={set("city")} /></Field>
-      <Field label="State"><input className={inputCls} value={value.state} onChange={set("state")} /></Field>
+      <Field label="City">
+        <SearchableSelect
+          value={value.city}
+          options={optionsFromStrings(INDIAN_CITIES)}
+          allowAdd
+          searchable
+          placeholder="Search city…"
+          onChange={(v) => onChange({ ...value, city: v })}
+        />
+      </Field>
+      <Field label="State">
+        <SearchableSelect
+          value={value.state}
+          options={optionsFromStrings(INDIAN_STATES)}
+          searchable
+          placeholder="Search state…"
+          onChange={(v) => onChange({ ...value, state: v })}
+        />
+      </Field>
       <Field label="Postal code"><input className={inputCls} value={value.postal_code} onChange={set("postal_code")} /></Field>
-      <Field label="Country"><input className={inputCls} value={value.country} onChange={set("country")} /></Field>
+      <Field label="Country">
+        <SearchableSelect
+          value={value.country || DEFAULT_COUNTRY}
+          options={optionsFromStrings(COUNTRIES)}
+          allowAdd
+          searchable
+          placeholder="Search country…"
+          onChange={(v) => onChange({ ...value, country: v })}
+        />
+      </Field>
       {withPhone && <Field label="Phone"><input className={inputCls} value={value.phone} onChange={set("phone")} /></Field>}
     </div>
   );
@@ -1001,32 +1321,49 @@ function EducationModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Education" : "Add Education"} onClose={onClose}>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Course" required>
-          <input className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. B.E. / M.Sc." />
-        </Field>
-        <Field label="Branch / Specialization">
-          <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} />
-        </Field>
-        <Field label="Start date">
-          <input type="date" className={inputCls} value={start} onChange={(e) => setStart(e.target.value)} />
-        </Field>
-        <Field label="End date">
-          <input type="date" className={inputCls} value={end} onChange={(e) => setEnd(e.target.value)} />
-        </Field>
-        <Field label="University">
-          <input className={inputCls} value={university} onChange={(e) => setUniversity(e.target.value)} />
-        </Field>
-        <Field label="City">
-          <input className={inputCls} value={city} onChange={(e) => setCity(e.target.value)} />
-        </Field>
-      </div>
-      {err && <div className="mt-2 text-sm text-danger">{err}</div>}
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-      </div>
+    <Modal
+      title={<span className="sr-only">{initial ? "Edit Education" : "Add Education"}</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title={initial ? "Edit Education" : "Add Education"}
+        subtitle="Qualification, institution, and study period."
+        icon={<GraduationCap size={20} aria-hidden />}
+      >
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+          <WizardField label="Course" required icon="hash" filled={!!course.trim()}>
+            <input className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. B.E. / M.Sc." />
+          </WizardField>
+          <WizardField label="Branch / Specialization" icon="hash" filled={!!branch.trim()}>
+            <input className={inputCls} value={branch} onChange={(e) => setBranch(e.target.value)} />
+          </WizardField>
+          <WizardField label="Start date" icon="calendar" filled={!!start}>
+            <input type="date" className={inputCls} value={start} onChange={(e) => setStart(e.target.value)} />
+          </WizardField>
+          <WizardField label="End date" icon="calendar" filled={!!end}>
+            <input type="date" className={inputCls} value={end} onChange={(e) => setEnd(e.target.value)} />
+          </WizardField>
+          <WizardField label="University" icon="building" filled={!!university.trim()}>
+            <input className={inputCls} value={university} onChange={(e) => setUniversity(e.target.value)} />
+          </WizardField>
+          <WizardField label="City">
+            <SearchableSelect
+              value={city}
+              options={optionsFromStrings(INDIAN_CITIES)}
+              allowAdd
+              searchable
+              placeholder="Search city…"
+              onChange={setCity}
+            />
+          </WizardField>
+        </div>
+        {err && <div className="mt-3 text-sm text-danger">{err}</div>}
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1212,41 +1549,58 @@ function ExperienceModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Experience" : "Add Experience"} onClose={onClose}>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Company name" required>
-          <input className={inputCls} value={company} onChange={(e) => setCompany(e.target.value)} />
-        </Field>
-        <Field label="Job title">
-          <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-        </Field>
-        <Field label="Date of joining">
-          <input type="date" className={inputCls} value={doj} onChange={(e) => setDoj(e.target.value)} />
-        </Field>
-        <Field label="Date of relieving">
-          <input
-            type="date"
-            className={inputCls}
-            value={current ? "" : relieving}
-            onChange={(e) => setRelieving(e.target.value)}
-            disabled={current}
-          />
-        </Field>
-        <Field label="City">
-          <input className={inputCls} value={city} onChange={(e) => setCity(e.target.value)} />
-        </Field>
-        <div className="flex items-end pb-1.5">
-          <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
-            <input type="checkbox" checked={current} onChange={(e) => setCurrent(e.target.checked)} />
-            Currently working here
-          </label>
+    <Modal
+      title={<span className="sr-only">{initial ? "Edit Experience" : "Add Experience"}</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title={initial ? "Edit Experience" : "Add Experience"}
+        subtitle="Prior employer, role, and tenure dates."
+        icon={<Briefcase size={20} aria-hidden />}
+      >
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+          <WizardField label="Company name" required icon="building" filled={!!company.trim()}>
+            <input className={inputCls} value={company} onChange={(e) => setCompany(e.target.value)} />
+          </WizardField>
+          <WizardField label="Job title" icon="user" filled={!!jobTitle.trim()}>
+            <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+          </WizardField>
+          <WizardField label="Date of joining" icon="calendar" filled={!!doj}>
+            <input type="date" className={inputCls} value={doj} onChange={(e) => setDoj(e.target.value)} />
+          </WizardField>
+          <WizardField label="Date of relieving" icon={current ? "lock" : "calendar"} filled={!current && !!relieving}>
+            <input
+              type="date"
+              className={inputCls}
+              value={current ? "" : relieving}
+              onChange={(e) => setRelieving(e.target.value)}
+              disabled={current}
+            />
+          </WizardField>
+          <WizardField label="City">
+            <SearchableSelect
+              value={city}
+              options={optionsFromStrings(INDIAN_CITIES)}
+              allowAdd
+              searchable
+              placeholder="Search city…"
+              onChange={setCity}
+            />
+          </WizardField>
+          <div className="flex items-end pb-1.5">
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
+              <input type="checkbox" checked={current} onChange={(e) => setCurrent(e.target.checked)} />
+              Currently working here
+            </label>
+          </div>
         </div>
-      </div>
-      {err && <div className="mt-2 text-sm text-danger">{err}</div>}
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-      </div>
+        {err && <div className="mt-3 text-sm text-danger">{err}</div>}
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }

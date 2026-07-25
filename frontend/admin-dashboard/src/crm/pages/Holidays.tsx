@@ -8,9 +8,34 @@ import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { HolidayNameField } from "../components/HolidayNameField";
 import { useHasRole } from "../CrmApp";
 import {
-  ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge,
+  ConfirmModal, EmptyState, ErrorBox, Modal, Spinner, StatusBadge,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -335,73 +360,84 @@ function HolidayFormModal({
   };
 
   return (
-    <Modal title={initial ? "Edit Holiday" : "Add Holiday"} onClose={onClose} fullScreen>
-      <form onSubmit={submit} className="space-y-3.5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <HolidayNameField
-            valueId={nameId}
-            valueName={name}
-            onChangeId={setNameId}
-            onChangeName={setName}
-            required
-            error={errors.name}
-            onError={onError}
-          />
-          <Field label="Date" required error={errors.date}>
-            <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
-          </Field>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Type">
-            <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
-              {HOLIDAY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </Field>
-          <Field label="Observance">
-            <select className={inputCls} value={observance} onChange={(e) => setObservance(e.target.value)}>
-              {OBSERVANCE.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
-          </Field>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Customer (optional)" error={errors.customer}>
-            <select
-              className={inputCls}
-              value={customerId}
-              onChange={(e) => { setCustomerId(e.target.value); setBranchId(""); }}
-            >
-              <option value="">— All customers —</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Branch (optional)">
-            <select
-              className={inputCls}
-              value={branchId}
-              onChange={(e) => setBranchId(e.target.value)}
-              disabled={!customerId || branchesLoading}
-            >
-              <option value="">
-                {!customerId ? "Select a customer first" : branchesLoading ? "Loading branches…" : "— All branches —"}
-              </option>
-              {branches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
-            </select>
-          </Field>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-semibold text-secondary">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-brand-600"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-          />
-          Active
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Saving…" : "Save holiday"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">{initial ? "Edit Holiday" : "Add Holiday"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={initial ? "Edit Holiday" : "Add Holiday"}
+        subtitle="Define the holiday and observance, and optionally scope it to a customer or branch."
+        icon={<CalendarDays size={20} aria-hidden />}
+      >
+        <form onSubmit={submit} className="space-y-5">
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <HolidayNameField
+              valueId={nameId}
+              valueName={name}
+              onChangeId={setNameId}
+              onChangeName={setName}
+              required
+              error={errors.name}
+              onError={onError}
+            />
+            <WizardField label="Date" required error={errors.date} icon="calendar" filled={!!date}>
+              <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+            </WizardField>
+          </div>
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Type">
+              <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
+                {HOLIDAY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Observance">
+              <select className={inputCls} value={observance} onChange={(e) => setObservance(e.target.value)}>
+                {OBSERVANCE.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </WizardField>
+          </div>
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Customer (optional)" error={errors.customer} icon="building">
+              <select
+                className={inputCls}
+                value={customerId}
+                onChange={(e) => { setCustomerId(e.target.value); setBranchId(""); }}
+              >
+                <option value="">— All customers —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Branch (optional)" icon="building">
+              <select
+                className={inputCls}
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+                disabled={!customerId || branchesLoading}
+              >
+                <option value="">
+                  {!customerId ? "Select a customer first" : branchesLoading ? "Loading branches…" : "— All branches —"}
+                </option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
+              </select>
+            </WizardField>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold text-secondary">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand-600"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+            />
+            Active
+          </label>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Save holiday"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }

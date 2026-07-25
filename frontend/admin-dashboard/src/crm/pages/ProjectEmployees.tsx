@@ -3,7 +3,7 @@
  * GET /api/projects/all-employees. Map new via POST /api/projects/{id}/employees.
  * Group-by-employee collapses to one expandable card per person (UC-12). */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Network, UserPlus } from "lucide-react";
 import { crmGet, crmPost } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -11,9 +11,35 @@ import { useCanEditTab } from "../useAccess";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import {
   ErrorBox, Field, Modal, StatusBadge, btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
+import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 type PeRow = {
   id: number;
@@ -120,47 +146,58 @@ function MapModal({ onClose, onSaved, notify }: {
     [e.first_name, e.last_name].filter(Boolean).join(" ") || e.full_name || e.email || `Employee #${e.id}`;
 
   return (
-    <Modal title="Map employee to project" onClose={onClose} wide>
-      <form onSubmit={submit} className="space-y-3.5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Project" required error={errors.project}>
-            <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Select project…</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Employee" required error={errors.employee}>
-            <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-              <option value="">Select employee…</option>
-              {employees.map((e) => <option key={e.id} value={e.id}>{empLabel(e)}</option>)}
-            </select>
-          </Field>
-          <Field label="Billing rate" required error={errors.rate}>
-            <input className={inputCls} type="number" min={0} value={rate} onChange={(e) => setRate(e.target.value)} />
-          </Field>
-          <Field label="Billing unit">
-            <select className={inputCls} value={unit} onChange={(e) => setUnit(e.target.value)}>
-              {["Hourly", "Daily", "Monthly"].map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
-          </Field>
-          <Field label="Work mode">
-            <select className={inputCls} value={workMode} onChange={(e) => setWorkMode(e.target.value)}>
-              {["Onsite", "Remote", "Hybrid"].map((w) => <option key={w} value={w}>{w}</option>)}
-            </select>
-          </Field>
-          <Field label="Onboarding date">
-            <input className={inputCls} type="date" value={onboarding} onChange={(e) => setOnboarding(e.target.value)} />
-          </Field>
-        </div>
-        <p className="text-xs text-muted">
-          Mapping creates a Project Employee record — the bridge that carries this deployment&apos;s leave
-          policy, holiday calendar, timesheet and rate, independently of any other project the person is on.
-        </p>
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={saving}>{saving ? "Saving…" : "Map employee"}</button>
-        </div>
-      </form>
+    <Modal
+      title={<span className="sr-only">Map employee to project</span>}
+      onClose={onClose}
+      wide
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Map employee to project"
+        subtitle="Deploy an employee onto a project with billing rate, unit, and work mode."
+        icon={<Network size={20} aria-hidden />}
+      >
+        <form onSubmit={submit}>
+          <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Project" required error={errors.project} icon="building">
+              <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">Select project…</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Employee" required error={errors.employee} icon="user">
+              <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+                <option value="">Select employee…</option>
+                {employees.map((e) => <option key={e.id} value={e.id}>{empLabel(e)}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Billing rate" required error={errors.rate} icon="hash" filled={!!rate && Number(rate) > 0}>
+              <input className={inputCls} type="number" min={0} value={rate} onChange={(e) => setRate(e.target.value)} />
+            </WizardField>
+            <WizardField label="Billing unit" icon="hash">
+              <select className={inputCls} value={unit} onChange={(e) => setUnit(e.target.value)}>
+                {["Hourly", "Daily", "Monthly"].map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Work mode" icon="map">
+              <select className={inputCls} value={workMode} onChange={(e) => setWorkMode(e.target.value)}>
+                {["Onsite", "Remote", "Hybrid"].map((w) => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Onboarding date" icon="calendar" filled={!!onboarding}>
+              <input className={inputCls} type="date" value={onboarding} onChange={(e) => setOnboarding(e.target.value)} />
+            </WizardField>
+          </div>
+          <InfoChip>
+            Mapping creates a Project Employee record — the bridge that carries this deployment&apos;s leave
+            policy, holiday calendar, timesheet and rate, independently of any other project the person is on.
+          </InfoChip>
+          <div className={wizFooterRow}>
+            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Map employee"}</button>
+          </div>
+        </form>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -313,18 +350,6 @@ export function ProjectEmployeesPage() {
       key: "is_exit", label: "Is exit",
       render: (r) => <StatusBadge status={r.is_exit ? "Exited" : r.is_active ? "Active" : "Inactive"} />,
     },
-    {
-      key: "_actions", label: "", className: "text-right",
-      render: (r) => (
-        <button
-          type="button"
-          className={`inline-flex items-center gap-1 rounded-control border border-subtle bg-surface-1 px-2 py-1 text-xs font-semibold text-secondary hover:bg-surface-2 ${focusRing}`}
-          onClick={(e) => { e.stopPropagation(); crmNavigate(`project-employees/${r.id}`); }}
-        >
-          <Eye size={13} /> Open
-        </button>
-      ),
-    },
   ], []);
 
   return (
@@ -388,6 +413,18 @@ export function ProjectEmployeesPage() {
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)}
           emptyMessage="No project employees match these filters"
+          rowActions={canWrite ? (r) => (
+            <RowActions
+              entity="project employee"
+              itemLabel={r.employee_name || r.project_name}
+              onEdit={() => crmNavigate(`project-employees/${r.id}`)}
+              deleteUrl={`/api/projects/employees/${r.id}`}
+              onDeleted={load}
+              notify={notify}
+              canEdit
+              canDelete
+            />
+          ) : undefined}
         />
       )}
       {mapping && <MapModal onClose={() => setMapping(false)} onSaved={load} notify={notify} />}
