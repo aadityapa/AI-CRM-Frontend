@@ -9,8 +9,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  AlertTriangle, Calendar as CalendarIcon, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  Clock, Copy, Globe, Mail, Plus, Search, Sparkles, X, Zap, Loader2,
+  AlertTriangle, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  Clock, Copy, Globe, Mail, Plus, Search, Sparkles, User, X, Zap, Loader2,
 } from "lucide-react";
 import { apiGet } from "../api/client";
 import { getAuthToken } from "../lib/authSession";
@@ -253,13 +253,13 @@ export function HrSetupPage() {
         {/* CARD 1 — Candidate sourcing */}
         <motion.section {...enter} transition={reduce ? { duration: 0.15 } : { duration: 0.25, ease: EASE_OUT, delay: 0.06 }}
           className={sectionCls}>
-          <CardHead icon={<Search className="h-4 w-4" />} title="AI-Assisted Candidate Sourcing" />
+          <CardHead icon={<Search className="h-5 w-5" />} title="AI-Assisted Candidate Sourcing" description="Pick a job template and find the candidate to invite for this AI interview." />
           <label className={`mt-6 ${labelCls}`}>Select from job role template</label>
           <TemplateCombobox templates={templates} value={jobId} onChange={setJobId} spring={spring} reduce={!!reduce} />
 
           <div className="mt-6 grid gap-4">
             <FloatingField label="Full name" flash={flash === "name"}>
-              <CandidateInput value={fullName} onChange={setFullName} placeholder="Type to search candidate…" onPick={onPickCandidate} reduce={!!reduce} />
+              <CandidateInput value={fullName} onChange={setFullName} placeholder="Type to search candidate…" onPick={onPickCandidate} reduce={!!reduce} leadingIcon={<User className="h-4 w-4" />} />
             </FloatingField>
             <FloatingField label="Email address" required error={emailErr} flash={flash === "email"}>
               <CandidateInput
@@ -272,6 +272,7 @@ export function HrSetupPage() {
                 onPick={onPickCandidate}
                 reduce={!!reduce}
                 byEmail
+                leadingIcon={<Mail className="h-4 w-4" />}
               />
             </FloatingField>
           </div>
@@ -281,7 +282,7 @@ export function HrSetupPage() {
             .ai-generating border animates ONLY while the profile synthesis runs. */}
         <motion.section {...enter} transition={reduce ? { duration: 0.15 } : { duration: 0.25, ease: EASE_OUT, delay: 0.12 }}
           className={generating ? "rounded-card p-6 ai-generating" : sectionCls}>
-          <CardHead icon={<Zap className="h-4 w-4" />} title="Interview Orchestration & Skills Synthesis" />
+          <CardHead icon={<Zap className="h-5 w-5" />} title="Interview Orchestration & Skills Synthesis" description="AI synthesizes the assessment profile from the template — refine the skills before scheduling." />
           <div className="mt-6">
             {!template ? (
               <EmptyProfile />
@@ -341,7 +342,7 @@ export function HrSetupPage() {
       {/* CARD 3 — slot allocation */}
       <motion.section {...enter} transition={reduce ? { duration: 0.15 } : { duration: 0.25, ease: EASE_OUT, delay: 0.18 }}
         className={`mt-6 ${sectionCls}`}>
-        <CardHead icon={<CalendarIcon className="h-4 w-4" />} title="Interview Slot Allocation" />
+        <CardHead icon={<CalendarClock className="h-5 w-5" />} title="Interview Slot Allocation" description="Choose the date, time, and zone for the candidate's interview slot." />
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-surface-2 px-4 py-3">
           <div className="flex items-center gap-3">
             <Clock className="h-5 w-5 text-brand-500" />
@@ -469,13 +470,35 @@ export function HrSetupPage() {
 }
 
 /* ---------------------------------------------------------- sub-components */
-function CardHead({ icon, title }: { icon: React.ReactNode; title: string }) {
+/* Section header in the shared "New Opportunity wizard" banner language, using
+ * this page's own tokens: a gradient icon tile (fx-glow) + title + description.
+ * Structure mirrors the CRM SectionHeaderBanner; visual-only. */
+function CardHead({ icon, title, description }: { icon: React.ReactNode; title: string; description?: string }) {
   return (
-    <div className="flex items-center gap-2.5">
-      {/* Brand-tinted icon chip — the ONE subtle brand accent per card (calm, no glow). */}
-      <span className="flex h-9 w-9 items-center justify-center rounded-control bg-brand-50 text-brand-600 dark:bg-brand-900 dark:text-brand-300">{icon}</span>
-      <h2 className="text-base font-bold text-primary">{title}</h2>
+    <div className="flex items-start gap-3">
+      <span className="fx-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-card bg-gradient-to-br from-brand-600 to-violet-600 text-white">{icon}</span>
+      <div className="min-w-0">
+        <h2 className="text-base font-bold text-primary">{title}</h2>
+        {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
+      </div>
     </div>
+  );
+}
+
+/* Standalone gradient banner (dialogs) — same visual language as CardHead. */
+function SectionBanner({ icon, title, description }: { icon: React.ReactNode; title: string; description?: string }) {
+  return (
+    <header className="relative mb-4 overflow-hidden rounded-card border border-subtle bg-surface-1 px-4 py-4">
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-brand-500/15 via-transparent to-violet-500/10" />
+      <div aria-hidden className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full bg-brand-500/20 blur-3xl" />
+      <div className="relative z-[1] flex items-start gap-3">
+        <span className="fx-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-card bg-gradient-to-br from-brand-600 to-violet-600 text-white">{icon}</span>
+        <div className="min-w-0">
+          <h3 className="text-base font-bold text-primary">{title}</h3>
+          {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -510,9 +533,9 @@ function FloatingField({ label, required, error, flash, children }: { label: str
   );
 }
 
-function CandidateInput({ value, onChange, onBlur, onPick, placeholder, valid, error, reduce, byEmail }: {
+function CandidateInput({ value, onChange, onBlur, onPick, placeholder, valid, error, reduce, byEmail, leadingIcon }: {
   value: string; onChange: (v: string) => void; onBlur?: () => void; onPick: (c: CandidateSuggest) => void;
-  placeholder?: string; valid?: boolean; error?: boolean; reduce: boolean; byEmail?: boolean;
+  placeholder?: string; valid?: boolean; error?: boolean; reduce: boolean; byEmail?: boolean; leadingIcon?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<CandidateSuggest[]>([]);
@@ -534,8 +557,11 @@ function CandidateInput({ value, onChange, onBlur, onPick, placeholder, valid, e
 
   return (
     <div className="relative">
+      {leadingIcon ? (
+        <span className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-muted">{leadingIcon}</span>
+      ) : null}
       <input
-        className={`input-recessed w-full rounded-control px-3 py-2 text-sm text-primary placeholder:text-muted ${error ? "input-error" : valid ? "border-success" : ""}`}
+        className={`input-recessed w-full rounded-control py-2 text-sm text-primary placeholder:text-muted ${leadingIcon ? "pl-9 pr-3" : "px-3"} ${error ? "input-error" : valid ? "border-success" : ""}`}
         value={value} placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => rows.length && setOpen(true)}
@@ -813,9 +839,11 @@ function ZoneModal({ value, onClose, onPick, reduce }: { value: string; onClose:
       <motion.div initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97 }}
         transition={{ duration: reduce ? 0.15 : 0.25, ease: EASE_OUT }}
         className="relative w-full max-w-sm rounded-modal border border-subtle bg-surface-3 p-4 shadow-modal">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-bold text-primary">Change timezone</h3>
-          <button onClick={onClose} aria-label="Close" className={`rounded-control p-1 text-muted transition-colors duration-micro ease-smooth hover:bg-surface-2 hover:text-primary ${focusRing}`}><X className="h-5 w-5" /></button>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <SectionBanner icon={<Globe className="h-5 w-5" />} title="Select time zone" description="Interview times are shown and scheduled in this zone." />
+          </div>
+          <button onClick={onClose} aria-label="Close" className={`mt-1 shrink-0 rounded-control p-1 text-muted transition-colors duration-micro ease-smooth hover:bg-surface-2 hover:text-primary ${focusRing}`}><X className="h-5 w-5" /></button>
         </div>
         <ul className="max-h-72 space-y-1 overflow-auto">
           {TIMEZONES.map((z) => (

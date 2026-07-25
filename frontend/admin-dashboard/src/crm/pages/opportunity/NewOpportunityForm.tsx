@@ -5,12 +5,12 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Plus, Trash2, Upload, CheckCircle2, Circle, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Upload } from "lucide-react";
 import { crmGet, crmPost, crmUpload } from "../../api";
 import { motion as motionTok } from "../../../design-system/tokens/tokens";
-import { Modal, btnPrimary, btnSecondary, ErrorBox, inputCls, useToast } from "../../components/ui";
+import { Modal, btnSecondary, ErrorBox, inputCls, useToast, ConfirmModal } from "../../components/ui";
 import {
-  OPPORTUNITY_SCHEMA, OPPORTUNITY_TYPES, sectionVisible, fieldVisible,
+  OPPORTUNITY_SCHEMA, OPPORTUNITY_TYPES, sectionVisible, fieldVisible, fieldMatchesShowWhen,
   STRICT_SEQUENTIAL_MODE, SALES_STAGE_OPTIONS, ONBOARDING_STATUS_OPTIONS,
   ROLE_OPTIONS, WORK_LOCATION_OPTIONS, BILLING_TYPE_OPTIONS, APPRAISAL_CYCLE_OPTIONS,
   WFO_REMOTE_OPTIONS, LEAVE_POLICY_OPTIONS,
@@ -19,7 +19,7 @@ import {
 } from "./opportunitySchema";
 import {
   emptyState, switchType, setDetail, isCoreKey, buildSubmitPayload,
-  requiredProgress, hydrateFromServer, fieldsAtRiskOnSwitch, activeDetails,
+  hydrateFromServer, fieldsAtRiskOnSwitch, activeDetails,
   applyBranchContactDetails, sharedDetailsForDraft,
   type OpportunityFormState,
 } from "./opportunityFormState";
@@ -33,8 +33,25 @@ import {
   validateCtcExperience,
   type BillingInputs,
 } from "./ctcSlab";
+import {
+  WizardTopBar,
+  WizardStepper,
+  WizardStepHeader,
+  WizardStepProgress,
+  WizardFooter,
+  WizardFieldSkeleton,
+  sectionHelper,
+  WizardAurora,
+  type AutosaveState,
+  type WizardStep,
+} from "../../components/WizardChrome";
 
 type Opt = { value: string; label: string };
+type EngineerRow = {
+  id: string;
+  name: string;
+  role_title?: string | null;
+};
 type PendingAttachment = { key: string; file: File | null; file_name: string; kind: "customer_jd" | "general" };
 const DRAFT_KEY = "kx.opp.draft";
 const uid = () => Math.random().toString(36).slice(2, 11);
@@ -45,6 +62,16 @@ const tdCls = "px-3 py-2 align-top";
 const tableWrap = "overflow-x-auto rounded-control border border-subtle";
 const tableHead = "bg-surface-2";
 const tableRow = "border-t border-subtle";
+
+/** Branch effective-policy billing_type enum → opportunity schema value
+ * (BILLING_TYPE_OPTIONS / ctcSlab.ts use the spaced "Per X" strings).
+ * Unknown / null values leave the field untouched. */
+const POLICY_BILLING_TYPE_MAP: Record<string, string> = {
+  Per_Hour: "Per Hour",
+  Per_Day: "Per Day",
+  Per_Month: "Per Month",
+  Per_Year: "Per Year",
+};
 
 const CTC_TRIGGER_KEYS = new Set([
   "billing_type", "hours_per_day", "project_duration_months",
@@ -110,20 +137,31 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [active, setActive] = useState("customerDetails");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [maxReached, setMaxReached] = useState(0);
+  const [stepDir, setStepDir] = useState<1 | -1>(1);
   const [nextField, setNextField] = useState<string | undefined>("customer_id");
   const [addCustomer, setAddCustomer] = useState(false);
   const [flash, setFlash] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [customRoles, setCustomRoles] = useState<Opt[]>([]);
+  // Branch id whose effective billing policy was last prefilled (drives the note).
+  const [policyBranchId, setPolicyBranchId] = useState("");
+  const [autosaveStatus, setAutosaveStatus] = useState<AutosaveState>("idle");
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const confirmCloseRef = useRef(false);
+  const [, setTick] = useState(0);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
   const bodyRef = useRef<HTMLDivElement>(null);
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
 
   // Option sources
   const [customers, setCustomers] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [skills, setSkills] = useState<any[]>([]);
+  const [engineers, setEngineers] = useState<EngineerRow[]>([]);
 
   const type = state.activeType;
   const details = activeDetails(state);
@@ -181,6 +219,39 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     return () => { alive = false; };
   }, [customerId, branchId]);
 
+  // Engineers for Replacement Position Type — only project-employees on the
+  // selected customer's projects (active, not exited). Empty until a customer
+  // is chosen (field shows dependsOn hint).
+  useEffect(() => {
+    let alive = true;
+    if (!customerId) {
+      setEngineers([]);
+      return;
+    }
+    (async () => {
+      try {
+        const pe = await crmGet<any[]>(
+          `/api/projects/all-employees?customer_id=${customerId}&status=active&limit=500`,
+        );
+        if (!alive) return;
+        const byEmp = new Map<string, EngineerRow>();
+        for (const r of pe.data || []) {
+          const id = String(r.employee_id ?? "");
+          if (!id || byEmp.has(id)) continue;
+          byEmp.set(id, {
+            id,
+            name: String(r.employee_name || `Employee #${id}`),
+            role_title: r.role_title || null,
+          });
+        }
+        setEngineers(Array.from(byEmp.values()));
+      } catch {
+        if (alive) setEngineers([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [customerId]);
+
   const branchContacts = useMemo(() => {
     if (!branchId) return [];
     return contacts.filter((c) => String(c.branch_id) === String(branchId));
@@ -207,6 +278,77 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       );
     });
   }, [branchId, contacts]);
+
+  // Branch billing-policy inheritance (same effect family as contact autofill):
+  // when a branch is selected, fetch its EFFECTIVE policy (branch → customer →
+  // default) once and prefill the T&M billing fields. Prefill OVERWRITES on
+  // branch change — like contact autofill — but every field stays editable.
+  // The five keys are T&M-only detail fields, so they are written into the
+  // "T&M" bucket (identical to setDetail when T&M is active, and preserved for
+  // when the user picks T&M later). Batch recalc runs once at the end, exactly
+  // like the init / switchType paths.
+  useEffect(() => {
+    if (!branchId) { setPolicyBranchId(""); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const res = await crmGet<any>(`/api/customers/branches/${branchId}/effective-policy`);
+        if (!alive) return;
+        const p = res.data;
+        if (!p) return;
+        setState((s) => {
+          if (String(s.core.branch_id) !== String(branchId)) return s;
+          let next = s;
+          const setTmDetail = (key: string, value: unknown) => {
+            next = {
+              ...next,
+              detailsByType: {
+                ...next.detailsByType,
+                "T&M": { ...(next.detailsByType["T&M"] || {}), [key]: value },
+              },
+            };
+          };
+          if (typeof p.holidays_billable === "boolean") setTmDetail("holidays_billable", p.holidays_billable);
+          if (typeof p.weekoff_billable === "boolean") setTmDetail("weekoff_billable", p.weekoff_billable);
+          if (typeof p.leave_billable === "boolean") setTmDetail("leave_billable", p.leave_billable);
+          if (p.working_hours_per_day != null && Number.isFinite(Number(p.working_hours_per_day))) {
+            setTmDetail("hours_per_day", Number(p.working_hours_per_day));
+          }
+          const mappedBillingType = POLICY_BILLING_TYPE_MAP[String(p.billing_type || "")];
+          if (mappedBillingType) setTmDetail("billing_type", mappedBillingType);
+          // Leave & Holiday counts (null = nothing configured — keep the
+          // schema defaults untouched). holidays/leave are CTC triggers; the
+          // single recalculateOpportunityState below re-derives the bases.
+          if (p.holidays_count != null && Number.isFinite(Number(p.holidays_count))) {
+            setTmDetail("holidays", Number(p.holidays_count));
+          }
+          // weekoff: CustomerBranch has no weekoff-count column today, so the
+          // backend sends no value and the schema default (104) stays; guard
+          // kept so a future backend column flows through unchanged.
+          if (p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))) {
+            setTmDetail("weekoff", Number(p.weekoff_count));
+          }
+          if (p.leave_total != null && Number.isFinite(Number(p.leave_total))) {
+            setTmDetail("leave", Number(p.leave_total));
+          }
+          if (p.credit_leave_monthly != null && Number.isFinite(Number(p.credit_leave_monthly))) {
+            setTmDetail("credit_leave_monthly", Number(p.credit_leave_monthly));
+          }
+          // Prefill only when the branch value matches a Leave Policy mode option
+          // (not leave-type names like Casual/Sick).
+          if (p.leave_policy_name != null && String(p.leave_policy_name)) {
+            const name = String(p.leave_policy_name);
+            if (LEAVE_POLICY_OPTIONS.some((o) => o.value === name)) {
+              setTmDetail("leave_policy", name);
+            }
+          }
+          return recalculateOpportunityState(next);
+        });
+        setPolicyBranchId(String(branchId));
+      } catch { /* non-fatal — leave the billing fields as-is */ }
+    })();
+    return () => { alive = false; };
+  }, [branchId]);
 
   // Keep emails + phones in sync with the selected Contact Person / Hiring Manager.
   // Runs when the id changes or when contacts finish loading after an id was chosen.
@@ -259,11 +401,25 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   // ---- autosave draft — GATED behind isLoaded (never overwrite with empties) ----
   useEffect(() => {
     if (!state.isLoaded) return;
+    setAutosaveStatus("saving");
     const t = window.setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify(serializeForDraft(state))); } catch { /* ignore */ }
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(serializeForDraft(state)));
+        setDraftSavedAt(Date.now());
+        setAutosaveStatus("saved");
+      } catch {
+        setAutosaveStatus("error");
+      }
     }, 800);
     return () => window.clearTimeout(t);
   }, [state]);
+
+  // Keep relative "just now" label fresh while the modal is open.
+  useEffect(() => {
+    if (autosaveStatus !== "saved" || !draftSavedAt) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 10_000);
+    return () => window.clearInterval(id);
+  }, [autosaveStatus, draftSavedAt]);
 
   // Stage default: Sales Validation for Sales roles; Sales Verify otherwise.
   useEffect(() => {
@@ -298,7 +454,8 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     workLocation: WORK_LOCATION_OPTIONS,
     wfoRemote: WFO_REMOTE_OPTIONS,
     appraisalCycle: APPRAISAL_CYCLE_OPTIONS,
-  }), [customers, branches, contactPersons, hiringManagers, skills, customerHasPo, customRoles, isSales]);
+    engineers: engineers.map((e) => ({ value: e.id, label: e.name })),
+  }), [customers, branches, contactPersons, hiringManagers, skills, customerHasPo, customRoles, isSales, engineers]);
 
   // ---- change handlers -----------------------------------------------------
   const setCore = (key: string, value: unknown) =>
@@ -356,6 +513,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
           next = setDetail(next, "contact_phone", "");
           next = setDetail(next, "hiring_manager_email", "");
           next = setDetail(next, "hiring_manager_contact", "");
+          next = setDetail(next, "tm_replacement_engineer", "");
           return next;
         });
         if (cust) {
@@ -384,6 +542,35 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       if (f.key === "opp_type" && value) onSwitchType(value as OpportunityType);
     } else {
       if (f.key === "customer_type" && !customerHasPo) return;
+      // Position Type: clear Replacement Engineer when switching away from Replacement.
+      if (f.key === "tm_position_type") {
+        setState((s) => {
+          let next = setDetail(s, f.key, value);
+          if (String(value) !== "Replacement") {
+            next = setDetail(next, "tm_replacement_engineer", "");
+          }
+          return next;
+        });
+        if (f.next) setNextField(f.next);
+        return;
+      }
+      // Replacement Engineer → auto-fill Role from the engineer's role/designation.
+      if (f.key === "tm_replacement_engineer") {
+        const eng = engineers.find((e) => e.id === String(value));
+        const role = String(eng?.role_title || "").trim();
+        setState((s) => {
+          let next = setDetail(s, f.key, value);
+          if (role) next = setDetail(next, "tm_role", role);
+          return next;
+        });
+        if (role) {
+          const known = [...ROLE_OPTIONS, ...customRoles]
+            .some((r) => r.value.toLowerCase() === role.toLowerCase());
+          if (!known) setCustomRoles((prev) => [...prev, { value: role, label: role }]);
+        }
+        if (f.next) setNextField(f.next);
+        return;
+      }
       // Customer JD: store file names in details; queue files for upload on submit.
       if (f.type === "file" && f.key === "tm_jd_attachments") {
         const files = Array.isArray(value) ? (value as File[]) : [];
@@ -430,8 +617,21 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     if (!msg && f.next) {
       setNextField(f.next);
       if (!reduce && !STRICT_SEQUENTIAL_MODE) {
-        const el = fieldRefs.current[f.next];
-        if (el && document.activeElement !== el) el.focus?.();
+        // FOCUS-STEAL GUARD: when the user clicks/tabs into ANOTHER field
+        // (possibly in a different section), blur fires here first and this
+        // auto-advance used to yank focus back to this section's next field.
+        // Defer one tick and only pull focus if it didn't land on any other
+        // interactive element — i.e. auto-advance only when nothing else was
+        // chosen by the user.
+        window.setTimeout(() => {
+          const el = fieldRefs.current[f.next!];
+          const activeEl = document.activeElement as HTMLElement | null;
+          const userChoseElsewhere =
+            !!activeEl &&
+            activeEl !== document.body &&
+            (activeEl.matches?.("input, select, textarea, button, a[href], [tabindex]") ?? false);
+          if (el && !userChoseElsewhere && document.activeElement !== el) el.focus?.();
+        }, 0);
       }
     }
   };
@@ -460,12 +660,38 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     notify(`Customer "${c.name}" created and selected`);
   };
 
-  // ---- section nav status --------------------------------------------------
+  // ---- wizard section nav --------------------------------------------------
   const visibleSections = OPPORTUNITY_SCHEMA.filter((s) => sectionVisible(s, type));
+  const totalSteps = visibleSections.length;
+  const clampedStep = Math.min(Math.max(stepIndex, 0), Math.max(totalSteps - 1, 0));
+  const currentSection = visibleSections[clampedStep];
+  const isFirstStep = clampedStep <= 0;
+  const isLastStep = clampedStep >= totalSteps - 1 && totalSteps > 0;
+
+  // Type switches change the visible section list — keep the index in range.
+  useEffect(() => {
+    setStepIndex((i) => Math.min(i, Math.max(totalSteps - 1, 0)));
+    setMaxReached((m) => Math.min(m, Math.max(totalSteps - 1, 0)));
+  }, [totalSteps, type]);
+
+  // Scroll panel to top whenever the step changes.
+  useEffect(() => {
+    bodyRef.current?.scrollTo?.({ top: 0, behavior: reduce ? "auto" : "smooth" });
+    const panel = bodyRef.current?.closest?.("[data-modal-body]") || bodyRef.current?.parentElement;
+    panel?.scrollTo?.({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  }, [clampedStep, reduce]);
+
   const sectionStatus = (secKey: string): "empty" | "partial" | "complete" | "error" => {
     const sec = OPPORTUNITY_SCHEMA.find((s) => s.key === secKey);
-    if (!sec?.fields) return "empty";
-    const reqd = sec.fields.filter((f) => f.required && fieldVisible(sec, f, type));
+    if (!sec) return "empty";
+    if (!sec.fields?.length) {
+      // Table / attachments / activity steps have no required field list — treat as complete when visited.
+      if (sec.kind === "table" || sec.kind === "attachments" || sec.kind === "activityLog") return "complete";
+      return "empty";
+    }
+    const reqd = sec.fields.filter(
+      (f) => f.required && fieldVisible(sec, f, type) && fieldMatchesShowWhen(f, state.core, details),
+    );
     if (reqd.some((f) => errors[f.key])) return "error";
     if (!reqd.length) return "complete";
     const filled = reqd.filter((f) => {
@@ -476,9 +702,73 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     return filled.length === reqd.length ? "complete" : "partial";
   };
 
-  const scrollTo = (key: string) => {
-    setActive(key);
-    document.getElementById(`sec-${key}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  /** Validate required fields in one section; flash + focus the first invalid field. */
+  const validateSection = (secKey: string): boolean => {
+    const sec = OPPORTUNITY_SCHEMA.find((s) => s.key === secKey);
+    if (!sec) return true;
+    const nextErrs: Record<string, string> = { ...errors };
+    let firstInvalid: string | null = null;
+
+    for (const f of sec.fields || []) {
+      if (!fieldVisible(sec, f, type)) continue;
+      if (!fieldMatchesShowWhen(f, state.core, details)) continue;
+      if (f.type === "readonly") continue;
+      const m = validateField(f);
+      if (m) {
+        nextErrs[f.key] = m;
+        if (!firstInvalid) firstInvalid = f.key;
+      } else {
+        delete nextErrs[f.key];
+      }
+    }
+
+    if (secKey === "ctcSlab" && type) {
+      state.ctcSlab.forEach((row, index) => {
+        const message = validateCtcExperience(row);
+        const ek = `ctcSlab.${index}.experience`;
+        if (message) {
+          nextErrs[ek] = message;
+          if (!firstInvalid) firstInvalid = ek;
+        } else {
+          delete nextErrs[ek];
+        }
+      });
+    }
+
+    setErrors(nextErrs);
+    if (firstInvalid) {
+      setFlash([firstInvalid]);
+      window.setTimeout(() => setFlash([]), 1600);
+      const el = fieldRefs.current[firstInvalid];
+      el?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "center" });
+      el?.focus?.();
+      notify("Please complete the required fields in this section", "err");
+      return false;
+    }
+    return true;
+  };
+
+  const goToStep = (index: number) => {
+    if (index < 0 || index >= totalSteps) return;
+    if (index > maxReached) return; // don't skip ahead past visited steps
+    setStepDir(index >= clampedStep ? 1 : -1);
+    setStepIndex(index);
+  };
+
+  const goPrev = () => {
+    if (isFirstStep) return;
+    setStepDir(-1);
+    setStepIndex((i) => Math.max(0, i - 1));
+  };
+
+  const goNext = () => {
+    if (!currentSection) return;
+    if (!validateSection(currentSection.key)) return;
+    if (isLastStep) return;
+    const next = clampedStep + 1;
+    setStepDir(1);
+    setStepIndex(next);
+    setMaxReached((m) => Math.max(m, next));
   };
 
   // ---- submit / draft / reset ---------------------------------------------
@@ -487,6 +777,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     for (const sec of visibleSections) {
       for (const f of sec.fields || []) {
         if (!fieldVisible(sec, f, type)) continue;
+        if (!fieldMatchesShowWhen(f, state.core, details)) continue;
         const m = validateField(f);
         if (m) errs[f.key] = m;
       }
@@ -531,138 +822,293 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   };
 
   const saveDraft = () => {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(serializeForDraft(state, attachments))); notify("Draft saved"); }
-    catch { notify("Could not save draft", "err"); }
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(serializeForDraft(state, attachments)));
+      setDraftSavedAt(Date.now());
+      setAutosaveStatus("saved");
+      notify("Draft saved");
+    } catch {
+      setAutosaveStatus("error");
+      notify("Could not save draft", "err");
+    }
   };
   const reset = () => {
     localStorage.removeItem(DRAFT_KEY);
     setState({ ...emptyState(), isLoaded: true });
     setAttachments([]);
     setErrors({});
+    setStepIndex(0);
+    setMaxReached(0);
+    setDraftSavedAt(null);
+    setAutosaveStatus("idle");
   };
 
-  const progress = requiredProgress(state);
+  const isDirty = !!(
+    state.core.customer_id
+    || state.core.title
+    || type
+    || attachments.length
+    || Object.keys(details).some((k) => details[k] !== undefined && details[k] !== "" && details[k] !== null)
+  );
+
+  const requestClose = () => {
+    if (busy || confirmCloseRef.current) return;
+    if (isDirty) {
+      confirmCloseRef.current = true;
+      setConfirmClose(true);
+      return;
+    }
+    onClose();
+  };
+
+  const stepPct = totalSteps ? Math.round(((clampedStep + 1) / totalSteps) * 100) : 0;
+
+  // Focus step heading (a11y), then first focusable field on step enter.
+  useEffect(() => {
+    if (!currentSection || !state.isLoaded) return;
+    const t = window.setTimeout(() => {
+      stepHeadingRef.current?.focus?.({ preventScroll: true });
+      const root = bodyRef.current;
+      if (!root) return;
+      const field = root.querySelector<HTMLElement>(
+        'input:not([disabled]):not([readonly]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])',
+      );
+      field?.focus?.({ preventScroll: false });
+    }, reduce ? 0 : 220);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clampedStep, currentSection?.key, state.isLoaded]);
+
+  // Enter advances (Next / Submit) unless focus is in a textarea.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      if (t.tagName === "BUTTON" || t.tagName === "A") return;
+      if (busy) return;
+      e.preventDefault();
+      if (isLastStep) void submit();
+      else goNext();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wizard nav helpers are stable enough for Enter
+  }, [busy, isLastStep, clampedStep, currentSection, state, attachments]);
+
+  const wizardSteps: WizardStep[] = useMemo(
+    () => visibleSections.map((s) => ({
+      key: s.key,
+      title: s.title,
+      sublabel: sectionHelper(s.key).split(".")[0],
+      status: sectionStatus(s.key),
+    })),
+    // sectionStatus closes over state/errors — recompute when those change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visibleSections, state, errors, type, details],
+  );
 
   // ---- render --------------------------------------------------------------
   const header = (
-    <div className="w-full">
-      <div className="mb-2 flex items-center gap-3">
-        <span className="text-display text-base font-bold text-primary">New Opportunity</span>
-        <span className="text-xs text-muted">{progress}% complete</span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-        <motion.div className="h-full rounded-full bg-brand-500" animate={{ width: `${progress}%` }}
-          transition={reduce ? { duration: 0 } : { duration: motionTok.panel, ease: motionTok.easeOut }} />
-      </div>
-    </div>
+    <WizardTopBar
+      title="New Opportunity"
+      stepIndex={clampedStep}
+      totalSteps={totalSteps}
+      stepPct={stepPct}
+      autosaveStatus={autosaveStatus}
+      savedAt={draftSavedAt}
+      onSaveDraft={saveDraft}
+      onReset={reset}
+      busy={busy}
+    />
   );
 
   const footer = (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      <button type="button" className={btnSecondary} onClick={reset} disabled={busy}>Reset</button>
-      <button type="button" className={btnSecondary} onClick={saveDraft} disabled={busy}>Save as Draft</button>
-      <button type="button" className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Submitting…" : "Submit"}</button>
-    </div>
+    <WizardFooter
+      stepIndex={clampedStep}
+      totalSteps={totalSteps}
+      stepPct={stepPct}
+      isFirstStep={isFirstStep}
+      isLastStep={isLastStep}
+      busy={busy}
+      onPrev={goPrev}
+      onNext={goNext}
+      onSubmit={() => void submit()}
+      submitLabel="Create Opportunity"
+      submitBusyLabel="Creating…"
+    />
   );
 
-  const StatusIcon = ({ st }: { st: ReturnType<typeof sectionStatus> }) =>
-    st === "complete" ? <CheckCircle2 size={14} className="text-success" />
-    : st === "error" ? <AlertCircle size={14} className="text-danger" />
-    : st === "partial" ? <Circle size={14} className="text-brand-500" />
-    : <Circle size={14} className="text-muted" />;
+  const renderStepBody = (s: (typeof visibleSections)[number]) => (
+    <>
+      {s.key === "leaveHoliday" && type === "T&M" && !!policyBranchId
+        && String(state.core.branch_id) === policyBranchId && (
+        <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
+          Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
+            || "the selected branch"}&rsquo;s billing policy — editable.
+        </p>
+      )}
+      {s.kind === "table" ? (
+        <TableSection section={s} type={type}
+          rows={(s.key === "ctcSlab" ? state.ctcSlab : state.skills) as any[]}
+          options={options}
+          rowErrors={s.key === "ctcSlab" ? errors : undefined}
+          onRows={(rows) => setState((prev) => (
+            s.key === "ctcSlab"
+              ? recalculateOpportunityState({ ...prev, ctcSlab: rows })
+              : { ...prev, skills: rows }
+          ))} />
+      ) : s.kind === "attachments" ? (
+        <AttachmentsSection rows={attachments} onRows={setAttachments} />
+      ) : s.kind === "activityLog" ? (
+        <ActivityLogSection />
+      ) : (
+        <SectionFields
+          section={s} type={type} values={state.core} details={details} errors={errors}
+          options={options} nextFieldKey={nextField} strictSequential={STRICT_SEQUENTIAL_MODE} flashKeys={flash}
+          disabledReason={(f) => {
+            if (f.key === "customer_type" && !customerHasPo) {
+              return "Locked to NN until the customer has a purchase order.";
+            }
+            if (f.dependsOn && !state.core[f.dependsOn.field]) return f.dependsOn.hint;
+            return null;
+          }}
+          onChange={onChange} onBlur={onBlur}
+          registerRef={(k, el) => { fieldRefs.current[k] = el; }}
+          onAddNew={(kind) => {
+            if (kind === "customer") { setAddCustomer(true); return; }
+            if (kind === "role") {
+              const raw = window.prompt("Add a custom role (e.g. Lead Engineer)");
+              const name = (raw || "").trim();
+              if (!name) return;
+              const existing = [...ROLE_OPTIONS, ...customRoles]
+                .find((r) => r.value.toLowerCase() === name.toLowerCase());
+              if (existing) {
+                setState((st) => setDetail(st, "tm_role", existing.value));
+                notify(`Role "${existing.label}" selected`);
+                return;
+              }
+              setCustomRoles((prev) => [...prev, { value: name, label: name }]);
+              setState((st) => setDetail(st, "tm_role", name));
+              notify(`Role "${name}" added`);
+            }
+          }}
+        />
+      )}
+    </>
+  );
 
   return (
     <>
-    <Modal title={header} onClose={onClose} fullScreen footer={footer}>
+    <Modal
+      title={header}
+      onClose={requestClose}
+      fullScreen
+      footer={footer}
+      bodyClassName="!overflow-hidden !p-0 sm:!px-0 sm:!py-0"
+      scopeClassName="crm-wizard wiz-noise"
+      panelClassName="wiz-moonlit-panel"
+      headerClassName="wiz-moonlit-header"
+      footerClassName="wiz-moonlit-footer"
+    >
       {toast}
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="flex flex-col gap-6 xl:flex-row">
-        {/* Section nav — horizontal scrolling chips below xl, sticky vertical rail from xl. */}
-        <nav aria-label="Form sections" className="shrink-0 xl:w-60">
-          <ul className="flex gap-1 overflow-x-auto pb-1 xl:sticky xl:top-0 xl:block xl:space-y-1 xl:overflow-x-visible xl:pb-0">
-            {visibleSections.map((s) => {
-              const st = sectionStatus(s.key);
-              return (
-                <li key={s.key} className="shrink-0 xl:shrink">
-                  <button
-                    onClick={() => scrollTo(s.key)}
-                    className={`flex w-full items-center gap-2 whitespace-nowrap rounded-control px-2.5 py-1.5 text-left text-sm font-semibold transition-colors ${
-                      active === s.key ? "bg-surface-2 text-primary" : "text-muted hover:text-primary"
-                    }`}
-                  >
-                    <StatusIcon st={st} /> {s.title}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+      <div className="wiz-moonlit-shell relative flex h-full min-h-0 flex-col">
+        <WizardAurora />
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
+        {/* Mobile / tablet: compact horizontal stepper under top bar */}
+        <div className="shrink-0 border-b border-subtle bg-surface-2/40 px-4 py-2.5 md:hidden">
+          <WizardStepper
+            steps={wizardSteps}
+            currentIndex={clampedStep}
+            maxReached={maxReached}
+            onSelect={goToStep}
+            orientation="horizontal"
+          />
+        </div>
 
-        {/* Sections */}
-        <div ref={bodyRef} className="min-w-0 flex-1 space-y-6">
-          <AnimatePresence initial={false}>
-            {visibleSections.map((s) => (
-              <motion.section
-                key={s.key} id={`sec-${s.key}`}
-                initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                transition={{ duration: motionTok.panel, ease: motionTok.easeOut }}
-                className="rounded-card border border-subtle bg-surface-1 p-6 shadow-raised"
-              >
-                <h3 className="fx-hairline-b mb-4 pb-3 text-sm font-bold uppercase tracking-wide text-secondary">{s.title}</h3>
-                {s.kind === "table" ? (
-                  <TableSection section={s} type={type}
-                    rows={(s.key === "ctcSlab" ? state.ctcSlab : state.skills) as any[]}
-                    options={options}
-                    rowErrors={s.key === "ctcSlab" ? errors : undefined}
-                    onRows={(rows) => setState((prev) => (
-                      s.key === "ctcSlab"
-                        ? recalculateOpportunityState({ ...prev, ctcSlab: rows })
-                        : { ...prev, skills: rows }
-                    ))} />
-                ) : s.kind === "attachments" ? (
-                  <AttachmentsSection rows={attachments} onRows={setAttachments} />
-                ) : s.kind === "activityLog" ? (
-                  <ActivityLogSection />
-                ) : (
-                  <SectionFields
-                    section={s} type={type} values={state.core} details={details} errors={errors}
-                    options={options} nextFieldKey={nextField} strictSequential={STRICT_SEQUENTIAL_MODE} flashKeys={flash}
-                    disabledReason={(f) => {
-                      if (f.key === "customer_type" && !customerHasPo) {
-                        return "Locked to NN until the customer has a purchase order.";
-                      }
-                      if (f.dependsOn && !state.core[f.dependsOn.field]) return f.dependsOn.hint;
-                      return null;
-                    }}
-                    onChange={onChange} onBlur={onBlur}
-                    registerRef={(k, el) => { fieldRefs.current[k] = el; }}
-                    onAddNew={(kind) => {
-                      if (kind === "customer") { setAddCustomer(true); return; }
-                      if (kind === "role") {
-                        const raw = window.prompt("Add a custom role (e.g. Lead Engineer)");
-                        const name = (raw || "").trim();
-                        if (!name) return;
-                        const existing = [...ROLE_OPTIONS, ...customRoles]
-                          .find((r) => r.value.toLowerCase() === name.toLowerCase());
-                        if (existing) {
-                          setState((s) => setDetail(s, "tm_role", existing.value));
-                          notify(`Role "${existing.label}" selected`);
-                          return;
-                        }
-                        setCustomRoles((prev) => [...prev, { value: name, label: name }]);
-                        setState((s) => setDetail(s, "tm_role", name));
-                        notify(`Role "${name}" added`);
-                      }
-                    }}
+        <div className="flex min-h-0 flex-1">
+          {/* Desktop: vertical stepper rail */}
+          <aside className="hidden w-[260px] shrink-0 overflow-y-auto border-r border-subtle bg-surface-2/30 px-3 py-5 md:block lg:px-4">
+            <WizardStepper
+              steps={wizardSteps}
+              currentIndex={clampedStep}
+              maxReached={maxReached}
+              onSelect={goToStep}
+              orientation="vertical"
+              ariaLabel="Opportunity wizard steps"
+            />
+            <WizardStepProgress
+              pct={
+                currentSection
+                  ? sectionStatus(currentSection.key) === "complete"
+                    ? 100
+                    : sectionStatus(currentSection.key) === "partial"
+                      ? 55
+                      : sectionStatus(currentSection.key) === "error"
+                        ? 30
+                        : 0
+                  : 0
+              }
+            />
+          </aside>
+
+          {/* Scrollable content card */}
+          <div ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
+            {error && (
+              <div className="mb-4 max-w-3xl">
+                <ErrorBox error={error} />
+              </div>
+            )}
+            <AnimatePresence mode="wait" initial={false}>
+              {currentSection && (
+                <motion.section
+                  key={currentSection.key}
+                  id={`sec-${currentSection.key}`}
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * 28 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * -28 }}
+                  transition={
+                    reduce
+                      ? { duration: 0 }
+                      : { duration: motionTok.panel, ease: motionTok.easeOut }
+                  }
+                  className="wiz-moonlit-form-card mx-auto max-w-3xl rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8"
+                >
+                  <WizardStepHeader
+                    title={currentSection.title}
+                    description={sectionHelper(currentSection.key, currentSection.title)}
+                    headingRef={stepHeadingRef}
                   />
-                )}
-              </motion.section>
-            ))}
-          </AnimatePresence>
+                  {!state.isLoaded ? (
+                    <WizardFieldSkeleton rows={6} />
+                  ) : (
+                    renderStepBody(currentSection)
+                  )}
+                </motion.section>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
         </div>
       </div>
     </Modal>
+    {confirmClose && (
+      <ConfirmModal
+        title="Close wizard?"
+        message="Your draft is autosaved on this device. You can continue later from where you left off."
+        confirmLabel="Close"
+        onConfirm={() => {
+          confirmCloseRef.current = false;
+          setConfirmClose(false);
+          onClose();
+        }}
+        onClose={() => {
+          confirmCloseRef.current = false;
+          setConfirmClose(false);
+        }}
+      />
+    )}
     {/* Inline customer creation — layered ABOVE, opportunity form stays mounted. */}
     {addCustomer && (
       <CustomerFormModal

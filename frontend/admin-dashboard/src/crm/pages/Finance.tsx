@@ -1,17 +1,24 @@
 /** Finance module pages: Purchase Orders (list/detail), Invoices (list/detail), TDS register.
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
-import React, { useEffect, useMemo, useState } from "react";
-import { Ban, FileDown, IndianRupee, Plus, Receipt } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Ban, ClipboardCheck, DollarSign, FileDown, FileText, IndianRupee, Layers, MapPin, Plus, Receipt,
+} from "lucide-react";
 import { crmGet, crmPost, qs, type Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanEditTab } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
 import {
-  btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, Field, inputCls,
+  btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, inputCls,
   Modal, Spinner, StatusBadge, Tabs, useToast,
 } from "../components/ui";
+import {
+  InfoChip, SectionHeaderBanner, WizardField, WizardFooter, WizardShell, WizardStepCard,
+  WizardTopBar, type WizardStep,
+} from "../components/wizard";
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -94,8 +101,10 @@ export function PurchaseOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
   const customers = useNameMap("/api/customers?limit=100");
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let alive = true;
@@ -107,7 +116,7 @@ export function PurchaseOrdersPage() {
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page]);
+  }, [tab, search, page, reloadKey]);
 
   const columns: Column<any>[] = [
     { key: "po_number", label: "PO Number", render: (r) => <span className="font-semibold">{r.po_number}</span> },
@@ -141,6 +150,18 @@ export function PurchaseOrdersPage() {
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`pos/${r.id}`)}
         emptyMessage={`No ${tab.toLowerCase()} purchase orders`}
+        rowActions={canWrite ? (r) => (
+          <RowActions
+            entity="purchase order"
+            itemLabel={r.po_number}
+            onEdit={() => crmNavigate(`pos/${r.id}`)}
+            deleteUrl={`/api/purchase-orders/${r.id}`}
+            onDeleted={load}
+            notify={showToast}
+            canEdit
+            canDelete
+          />
+        ) : undefined}
       />
       {showNew && (
         <POFormModal
@@ -182,6 +203,10 @@ function POFormModal({
   const [totalValue, setTotalValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [maxReached, setMaxReached] = useState(0);
+  const [stepDir, setStepDir] = useState<1 | -1>(1);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setBranches([]); setContacts([]); setBillingId(""); setDeliveryId(""); setContactId("");
@@ -220,83 +245,213 @@ function POFormModal({
     }
   };
 
-  return (
-    <Modal title="New Purchase Order" onClose={onClose} wide fullScreen>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Customer" required>
-          <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">Select customer…</option>
-            {Object.entries(customers).map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Received date">
-          <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
-        </Field>
-        <Field label="Billing branch">
-          <select className={inputCls} value={billingId} onChange={(e) => setBillingId(e.target.value)} disabled={!customerId}>
-            <option value="">—</option>
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}{b.is_primary ? " (primary)" : ""}</option>)}
-          </select>
-        </Field>
-        <Field label="Delivery branch">
-          <select className={inputCls} value={deliveryId} onChange={(e) => setDeliveryId(e.target.value)} disabled={!customerId}>
-            <option value="">—</option>
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}{b.is_primary ? " (primary)" : ""}</option>)}
-          </select>
-        </Field>
-        <Field label="Contact person">
-          <select className={inputCls} value={contactId} onChange={(e) => setContactId(e.target.value)} disabled={!customerId}>
-            <option value="">—</option>
-            {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Field>
-        <Field label="PO type">
-          <select className={inputCls} value={poType} onChange={(e) => setPoType(e.target.value)}>
-            <option value="Standard">Standard</option>
-            <option value="Blanket">Blanket</option>
-          </select>
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label="Payment terms">
-            <textarea className={inputCls} rows={2} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. Net 30 from invoice date" />
-          </Field>
+  const poSteps = [
+    { key: "header", title: "PO Header", subtitle: "Customer, dates, and PO type.", icon: <Receipt size={20} aria-hidden /> },
+    { key: "address", title: "Billing & Delivery Address", subtitle: "Set the billing and delivery branches.", icon: <MapPin size={20} aria-hidden /> },
+    { key: "commercial", title: "Commercial", subtitle: "PO value, tax slab, and GST split.", icon: <DollarSign size={20} aria-hidden /> },
+    { key: "review", title: "Review", subtitle: "Confirm the details, then create the PO.", icon: <ClipboardCheck size={20} aria-hidden /> },
+  ];
+  const totalSteps = poSteps.length;
+  const isFirstStep = stepIndex <= 0;
+  const isLastStep = stepIndex >= totalSteps - 1;
+  const stepPct = Math.round(((stepIndex + 1) / totalSteps) * 100);
+  const totalN = num(totalValue);
+
+  const stepStatus = (key: string): WizardStep["status"] => {
+    if (key === "header") return customerId ? "complete" : "empty";
+    if (key === "address") return (billingId || deliveryId || contactId || maxReached >= 1) ? "complete" : "empty";
+    if (key === "commercial") return totalN !== undefined && totalN > 0 ? "complete" : totalValue !== "" ? "error" : "empty";
+    return isLastStep ? "complete" : "empty";
+  };
+  const wizardSteps: WizardStep[] = poSteps.map((s) => ({
+    key: s.key, title: s.title, sublabel: s.subtitle, status: stepStatus(s.key),
+  }));
+
+  const validateStep = (idx: number): boolean => {
+    if (idx === 0 && !customerId) { setErr("Customer is required"); return false; }
+    if (idx === 2 && (totalN === undefined || totalN <= 0)) { setErr("Total value must be a positive number"); return false; }
+    return true;
+  };
+  const goToStep = (i: number) => {
+    if (i < 0 || i >= totalSteps || i > maxReached) return;
+    setStepDir(i >= stepIndex ? 1 : -1);
+    setStepIndex(i);
+  };
+  const goPrev = () => { if (isFirstStep) return; setStepDir(-1); setStepIndex((i) => Math.max(0, i - 1)); };
+  const goNext = () => {
+    if (!validateStep(stepIndex)) return;
+    setErr("");
+    if (isLastStep) return;
+    const n = stepIndex + 1;
+    setStepDir(1); setStepIndex(n); setMaxReached((m) => Math.max(m, n));
+  };
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const el = bodyRef.current?.querySelector<HTMLElement>(
+        "input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+      );
+      el?.focus?.();
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [stepIndex]);
+
+  const gridCls = "grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2";
+  const branchOptions = branches.map((b) => (
+    <option key={b.id} value={b.id}>{b.branch_name}{b.is_primary ? " (primary)" : ""}</option>
+  ));
+  const billingBranchName = branches.find((b) => String(b.id) === billingId)?.branch_name;
+  const deliveryBranchName = branches.find((b) => String(b.id) === deliveryId)?.branch_name;
+  const contactName = contacts.find((c) => String(c.id) === contactId)?.name;
+
+  const gstBox = (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-subtle bg-surface-2 px-3 py-2.5">
+      <label className="inline-flex items-center gap-2 text-sm font-semibold text-primary">
+        <input type="checkbox" checked={interState} onChange={(e) => setInterState(e.target.checked)} />
+        Inter-state supply (IGST)
+      </label>
+      <div className="flex flex-wrap gap-1.5">
+        {interState ? (
+          <GstChip label="IGST" value={`${slabN}%`} />
+        ) : (
+          <>
+            <GstChip label="SGST" value={`${half}%`} />
+            <GstChip label="CGST" value={`${half}%`} />
+          </>
+        )}
+        {num(totalValue) !== undefined && slabN > 0 && (
+          <GstChip label="GST on total" value={inr(Math.round((num(totalValue)! * slabN) / 100 * 100) / 100)} />
+        )}
+      </div>
+    </div>
+  );
+
+  const renderStep = (key: string) => {
+    if (key === "header") {
+      return (
+        <div className={gridCls}>
+          <WizardField label="Customer" required icon="building" filled={!!customerId}>
+            <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+              <option value="">Select customer…</option>
+              {Object.entries(customers).map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+          </WizardField>
+          <WizardField label="Received date" icon="calendar" filled={!!receivedDate}>
+            <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
+          </WizardField>
+          <WizardField label="PO type" icon="hash" filled={!!poType}>
+            <select className={inputCls} value={poType} onChange={(e) => setPoType(e.target.value)}>
+              <option value="Standard">Standard</option>
+              <option value="Blanket">Blanket</option>
+            </select>
+          </WizardField>
+          <WizardField label="Contact person" icon="user" filled={!!contactId}>
+            <select className={inputCls} value={contactId} onChange={(e) => setContactId(e.target.value)} disabled={!customerId}>
+              <option value="">—</option>
+              {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </WizardField>
         </div>
-        <Field label="Tax slab (GST %)">
-          <input type="number" min={0} max={100} step="0.01" className={inputCls} value={taxSlab} onChange={(e) => setTaxSlab(e.target.value)} placeholder="e.g. 18" />
-        </Field>
-        <Field label="Total value (₹)" required>
-          <input type="number" min={0} step="0.01" className={inputCls} value={totalValue} onChange={(e) => setTotalValue(e.target.value)} />
-        </Field>
-        <div className="sm:col-span-2 flex flex-wrap items-center gap-3 rounded-xl border border-subtle bg-surface-2 px-3 py-2.5">
-          <label className="inline-flex items-center gap-2 text-sm font-semibold text-primary">
-            <input type="checkbox" checked={interState} onChange={(e) => setInterState(e.target.checked)} />
-            Inter-state supply (IGST)
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {interState ? (
-              <GstChip label="IGST" value={`${slabN}%`} />
-            ) : (
-              <>
-                <GstChip label="SGST" value={`${half}%`} />
-                <GstChip label="CGST" value={`${half}%`} />
-              </>
-            )}
-            {num(totalValue) !== undefined && slabN > 0 && (
-              <GstChip label="GST on total" value={inr(Math.round((num(totalValue)! * slabN) / 100 * 100) / 100)} />
-            )}
+      );
+    }
+    if (key === "address") {
+      return (
+        <div className={gridCls}>
+          <WizardField label="Billing branch" icon="map" filled={!!billingId}>
+            <select className={inputCls} value={billingId} onChange={(e) => setBillingId(e.target.value)} disabled={!customerId}>
+              <option value="">—</option>
+              {branchOptions}
+            </select>
+          </WizardField>
+          <WizardField label="Delivery branch" icon="map" filled={!!deliveryId}>
+            <select className={inputCls} value={deliveryId} onChange={(e) => setDeliveryId(e.target.value)} disabled={!customerId}>
+              <option value="">—</option>
+              {branchOptions}
+            </select>
+          </WizardField>
+        </div>
+      );
+    }
+    if (key === "commercial") {
+      return (
+        <div className={gridCls}>
+          <div className="sm:col-span-2">
+            <WizardField label="Payment terms">
+              <textarea className={inputCls} rows={2} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. Net 30 from invoice date" />
+            </WizardField>
           </div>
+          <WizardField label="Tax slab (GST %)" icon="hash" filled={taxSlab !== ""}>
+            <input type="number" min={0} max={100} step="0.01" className={inputCls} value={taxSlab} onChange={(e) => setTaxSlab(e.target.value)} placeholder="e.g. 18" />
+          </WizardField>
+          <WizardField label="Total value (₹)" required icon="hash" filled={totalN !== undefined && totalN > 0}>
+            <input type="number" min={0} step="0.01" className={inputCls} value={totalValue} onChange={(e) => setTotalValue(e.target.value)} />
+          </WizardField>
+          <div className="sm:col-span-2">{gstBox}</div>
         </div>
+      );
+    }
+    // review
+    return (
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-4 md:grid-cols-3">
+          <InfoItem label="Customer">{customers[Number(customerId)] || "—"}</InfoItem>
+          <InfoItem label="Received date">{receivedDate ? fmtDate(receivedDate) : "—"}</InfoItem>
+          <InfoItem label="PO type">{poType}</InfoItem>
+          <InfoItem label="Contact person">{contactName || "—"}</InfoItem>
+          <InfoItem label="Billing branch">{billingBranchName || "—"}</InfoItem>
+          <InfoItem label="Delivery branch">{deliveryBranchName || "—"}</InfoItem>
+          <InfoItem label="Tax slab">{taxSlab !== "" ? `${slabN}%` : "—"}</InfoItem>
+          <InfoItem label="Total value" numeric>{totalN !== undefined ? inr(totalN) : "—"}</InfoItem>
+          <InfoItem label="GST">{interState ? `IGST ${slabN}%` : `SGST ${half}% + CGST ${half}%`}</InfoItem>
+        </div>
+        {paymentTerms.trim() && (
+          <InfoItem label="Payment terms">{paymentTerms}</InfoItem>
+        )}
       </div>
-      {err && <div className="mt-2 text-sm text-rose-600">{err}</div>}
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          <Receipt size={15} /> {busy ? "Creating…" : "Create PO"}
-        </button>
-      </div>
-    </Modal>
+    );
+  };
+
+  const currentStep = poSteps[stepIndex];
+  return (
+    <WizardShell
+      onClose={onClose}
+      contentRef={bodyRef}
+      steps={wizardSteps}
+      currentIndex={stepIndex}
+      maxReached={maxReached}
+      onSelectStep={goToStep}
+      ariaLabel="Purchase order wizard steps"
+      topBar={
+        <WizardTopBar
+          title="New Purchase Order"
+          stepIndex={stepIndex}
+          totalSteps={totalSteps}
+          stepPct={stepPct}
+        />
+      }
+      footer={
+        <WizardFooter
+          stepIndex={stepIndex}
+          totalSteps={totalSteps}
+          isFirstStep={isFirstStep}
+          isLastStep={isLastStep}
+          busy={busy}
+          onPrev={goPrev}
+          onNext={goNext}
+          onSubmit={() => void submit()}
+          submitLabel="Create PO"
+          submitBusyLabel="Creating…"
+        />
+      }
+    >
+      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+        <SectionHeaderBanner title={currentStep.title} description={currentStep.subtitle} icon={currentStep.icon} />
+        {err && <div className="mb-4 text-sm text-danger" role="alert">{err}</div>}
+        {renderStep(currentStep.key)}
+      </WizardStepCard>
+    </WizardShell>
   );
 }
 
@@ -517,28 +672,30 @@ function AllocateModal({
   };
 
   return (
-    <Modal title="Allocate to Project" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <div className="text-xs text-muted">
-          PO total {inr(po.total_value)} · already allocated {inr(allocatedSum)} · unallocated {inr(remaining)}
-        </div>
-        <Field label="Project" required>
-          <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Select project…</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Amount (₹)" required error={amountErr || undefined}>
-          <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy || !projectId || !!amountErr || amount === ""}>
-          {busy ? "Saving…" : "Allocate"}
-        </button>
-      </div>
-    </Modal>
+    <FinanceModalShell
+      title="Allocate to Project"
+      subtitle="Distribute this purchase order value across a delivery project."
+      icon={<Layers size={20} aria-hidden />}
+      onClose={onClose}
+      busy={busy}
+      onSubmit={() => void submit()}
+      submitLabel="Allocate"
+      submitBusyLabel="Saving…"
+      submitDisabled={busy || !projectId || !!amountErr || amount === ""}
+    >
+      <InfoChip>
+        PO total {inr(po.total_value)} · already allocated {inr(allocatedSum)} · unallocated {inr(remaining)}
+      </InfoChip>
+      <WizardField label="Project" required icon="building">
+        <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          <option value="">Select project…</option>
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </WizardField>
+      <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
+        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </WizardField>
+    </FinanceModalShell>
   );
 }
 
@@ -562,9 +719,11 @@ export function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
   const projects = useNameMap("/api/projects?limit=100");
   const pos = useNameMap("/api/purchase-orders?limit=100", "po_number");
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let alive = true;
@@ -576,7 +735,7 @@ export function InvoicesPage() {
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page]);
+  }, [tab, search, page, reloadKey]);
 
   const columns: Column<any>[] = [
     { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number}</span> },
@@ -612,6 +771,18 @@ export function InvoicesPage() {
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
         emptyMessage={`No ${tab.replace(/_/g, " ").toLowerCase()} invoices`}
+        rowActions={canWrite ? (r) => (
+          <RowActions
+            entity="invoice"
+            itemLabel={r.invoice_number}
+            onEdit={() => crmNavigate(`invoices/${r.id}`)}
+            deleteUrl={`/api/invoices/${r.id}`}
+            onDeleted={load}
+            notify={showToast}
+            canEdit
+            canDelete
+          />
+        ) : undefined}
       />
       {showNew && (
         <InvoiceFormModal
@@ -646,6 +817,10 @@ function InvoiceFormModal({
   const [taxAmount, setTaxAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [maxReached, setMaxReached] = useState(0);
+  const [stepDir, setStepDir] = useState<1 | -1>(1);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     crmGet<any[]>("/api/projects?limit=100").then((r) => setProjects(r.data || [])).catch(() => {});
@@ -687,41 +862,107 @@ function InvoiceFormModal({
     }
   };
 
-  return (
-    <Modal title="New Invoice" onClose={onClose} wide fullScreen>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Project" required>
-          <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Select project…</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Purchase order (active)">
-          <select className={inputCls} value={poId} onChange={(e) => setPoId(e.target.value)}>
-            <option value="">— No PO —</option>
-            {pos.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.po_number} (balance {inr(p.balance_value)})
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Invoice date" required>
-          <input type="date" className={inputCls} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
-        </Field>
-        <Field label="Due date">
-          <input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-        </Field>
-        <Field label="Sub-total (₹)" required>
-          <input type="number" min={0} step="0.01" className={inputCls} value={subTotal} onChange={(e) => setSubTotal(e.target.value)} />
-        </Field>
-        <Field label="Tax amount (₹) — override">
-          <input type="number" min={0} step="0.01" className={inputCls} value={taxAmount} onChange={(e) => setTaxAmount(e.target.value)} placeholder="Leave blank to auto-compute" />
-          <span className="mt-1 block text-xs text-muted">
-            Computed from the PO tax slab when left blank{selectedPo?.tax_slab != null ? ` (${selectedPo.tax_slab}%)` : ""}.
-          </span>
-        </Field>
-        <div className="sm:col-span-2 flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-2 px-3 py-2.5">
+  const invSteps = [
+    { key: "details", title: "Invoice Details", subtitle: "Link the project and PO, and set the dates.", icon: <FileText size={20} aria-hidden /> },
+    { key: "amounts", title: "Amounts & Review", subtitle: "Enter the sub-total and tax, then review the grand total.", icon: <IndianRupee size={20} aria-hidden /> },
+  ];
+  const totalSteps = invSteps.length;
+  const isFirstStep = stepIndex <= 0;
+  const isLastStep = stepIndex >= totalSteps - 1;
+  const stepPct = Math.round(((stepIndex + 1) / totalSteps) * 100);
+  const subValid = num(subTotal);
+
+  const stepStatus = (key: string): WizardStep["status"] => {
+    if (key === "details") return projectId && invoiceDate ? "complete" : (projectId || invoiceDate) ? "partial" : "empty";
+    return subValid !== undefined && subValid > 0 ? "complete" : subTotal !== "" ? "error" : "empty";
+  };
+  const wizardSteps: WizardStep[] = invSteps.map((s) => ({
+    key: s.key, title: s.title, sublabel: s.subtitle, status: stepStatus(s.key),
+  }));
+
+  const validateStep = (idx: number): boolean => {
+    if (idx === 0) {
+      if (!projectId) { setErr("Project is required"); return false; }
+      if (!invoiceDate) { setErr("Invoice date is required"); return false; }
+    }
+    return true;
+  };
+  const goToStep = (i: number) => {
+    if (i < 0 || i >= totalSteps || i > maxReached) return;
+    setStepDir(i >= stepIndex ? 1 : -1);
+    setStepIndex(i);
+  };
+  const goPrev = () => { if (isFirstStep) return; setStepDir(-1); setStepIndex((i) => Math.max(0, i - 1)); };
+  const goNext = () => {
+    if (!validateStep(stepIndex)) return;
+    setErr("");
+    if (isLastStep) return;
+    const n = stepIndex + 1;
+    setStepDir(1); setStepIndex(n); setMaxReached((m) => Math.max(m, n));
+  };
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const el = bodyRef.current?.querySelector<HTMLElement>(
+        "input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+      );
+      el?.focus?.();
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [stepIndex]);
+
+  const gridCls = "grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2";
+
+  const renderStep = (key: string) => {
+    if (key === "details") {
+      return (
+        <div className={gridCls}>
+          <WizardField label="Project" required icon="building" filled={!!projectId}>
+            <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">Select project…</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </WizardField>
+          <WizardField label="Purchase order (active)" icon="hash" filled={!!poId}>
+            <select className={inputCls} value={poId} onChange={(e) => setPoId(e.target.value)}>
+              <option value="">— No PO —</option>
+              {pos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.po_number} (balance {inr(p.balance_value)})
+                </option>
+              ))}
+            </select>
+          </WizardField>
+          <WizardField label="Invoice date" required icon="calendar" filled={!!invoiceDate}>
+            <input type="date" className={inputCls} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+          </WizardField>
+          <WizardField label="Due date" icon="calendar" filled={!!dueDate}>
+            <input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+          </WizardField>
+        </div>
+      );
+    }
+    // amounts & review
+    return (
+      <div className="space-y-6">
+        <div className={gridCls}>
+          <WizardField label="Sub-total (₹)" required icon="hash" filled={subValid !== undefined && subValid > 0}>
+            <input type="number" min={0} step="0.01" className={inputCls} value={subTotal} onChange={(e) => setSubTotal(e.target.value)} />
+          </WizardField>
+          <WizardField
+            label="Tax amount (₹) — override"
+            icon="hash"
+            filled={taxAmount !== ""}
+            info={
+              <span className="mt-1 block text-xs text-muted">
+                Computed from the PO tax slab when left blank{selectedPo?.tax_slab != null ? ` (${selectedPo.tax_slab}%)` : ""}.
+              </span>
+            }
+          >
+            <input type="number" min={0} step="0.01" className={inputCls} value={taxAmount} onChange={(e) => setTaxAmount(e.target.value)} placeholder="Leave blank to auto-compute" />
+          </WizardField>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-2 px-3 py-2.5">
           <IndianRupee size={15} className="text-muted" />
           <span className="text-sm text-secondary">
             Preview — Sub-total {inr(subN)} + Tax {inr(previewTax)} =
@@ -729,14 +970,48 @@ function InvoiceFormModal({
           <span className="text-sm font-bold text-primary">Grand total {inr(previewGrand)}</span>
         </div>
       </div>
-      {err && <div className="mt-2 text-sm text-rose-600">{err}</div>}
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Creating…" : "Create Invoice"}
-        </button>
-      </div>
-    </Modal>
+    );
+  };
+
+  const currentStep = invSteps[stepIndex];
+  return (
+    <WizardShell
+      onClose={onClose}
+      contentRef={bodyRef}
+      steps={wizardSteps}
+      currentIndex={stepIndex}
+      maxReached={maxReached}
+      onSelectStep={goToStep}
+      ariaLabel="Invoice wizard steps"
+      topBar={
+        <WizardTopBar
+          title="New Invoice"
+          stepIndex={stepIndex}
+          totalSteps={totalSteps}
+          stepPct={stepPct}
+        />
+      }
+      footer={
+        <WizardFooter
+          stepIndex={stepIndex}
+          totalSteps={totalSteps}
+          isFirstStep={isFirstStep}
+          isLastStep={isLastStep}
+          busy={busy}
+          onPrev={goPrev}
+          onNext={goNext}
+          onSubmit={() => void submit()}
+          submitLabel="Create Invoice"
+          submitBusyLabel="Creating…"
+        />
+      }
+    >
+      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+        <SectionHeaderBanner title={currentStep.title} description={currentStep.subtitle} icon={currentStep.icon} />
+        {err && <div className="mb-4 text-sm text-danger" role="alert">{err}</div>}
+        {renderStep(currentStep.key)}
+      </WizardStepCard>
+    </WizardShell>
   );
 }
 
@@ -879,6 +1154,59 @@ export function InvoiceDetailPage() {
   );
 }
 
+/** Compact, single-screen finance dialog re-skinned to the shared wizard look
+ * (dark themed body + SectionHeaderBanner + wizard-style footer, NO stepper). */
+function FinanceModalShell({
+  title,
+  subtitle,
+  icon,
+  onClose,
+  onSubmit,
+  submitLabel,
+  submitBusyLabel,
+  submitDisabled,
+  busy,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  onClose: () => void;
+  onSubmit: () => void;
+  submitLabel: string;
+  submitBusyLabel: string;
+  submitDisabled?: boolean;
+  busy?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Modal title={<span className="sr-only">{title}</span>} onClose={onClose}>
+      <div className="crm-wizard wiz-noise -mx-5 -my-4 rounded-b-modal px-5 py-5">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        <div className="space-y-5">{children}</div>
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            type="button"
+            className="btn-depth inline-flex h-10 items-center gap-1.5 rounded-xl border border-[color:var(--wiz-border)] bg-transparent px-3.5 text-sm font-semibold text-[color:var(--wiz-text)] disabled:opacity-50"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`}
+            onClick={onSubmit}
+            disabled={submitDisabled}
+          >
+            {busy ? submitBusyLabel : submitLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function RecordPaymentModal({
   invoice,
   onClose,
@@ -920,37 +1248,38 @@ function RecordPaymentModal({
   };
 
   return (
-    <Modal title="Record Payment" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <div className="text-xs text-muted">Outstanding balance: <b>{inr(balance)}</b></div>
-        <Field label="Payment date" required>
-          <input type="date" className={inputCls} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-        </Field>
-        <Field label="Amount (₹)" required error={amountErr || undefined}>
-          <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-        </Field>
-        <Field label="Payment mode">
-          <select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option>Cash</option>
-            <option>Bank Transfer</option>
-            <option>Cheque</option>
-            <option>UPI</option>
-          </select>
-        </Field>
-        <Field label="Reference number">
-          <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque no." />
-        </Field>
-        <Field label="Notes">
-          <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy || amount === "" || !!amountErr || !paymentDate}>
-          {busy ? "Saving…" : "Record Payment"}
-        </button>
-      </div>
-    </Modal>
+    <FinanceModalShell
+      title="Record Payment"
+      subtitle={`Outstanding balance ${inr(balance)}. Log a receipt against this invoice.`}
+      icon={<IndianRupee size={20} aria-hidden />}
+      onClose={onClose}
+      busy={busy}
+      onSubmit={() => void submit()}
+      submitLabel="Record Payment"
+      submitBusyLabel="Saving…"
+      submitDisabled={busy || amount === "" || !!amountErr || !paymentDate}
+    >
+      <WizardField label="Payment date" required icon="calendar" filled={!!paymentDate}>
+        <input type="date" className={inputCls} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+      </WizardField>
+      <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
+        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </WizardField>
+      <WizardField label="Payment mode" icon="hash" filled={!!mode}>
+        <select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}>
+          <option>Cash</option>
+          <option>Bank Transfer</option>
+          <option>Cheque</option>
+          <option>UPI</option>
+        </select>
+      </WizardField>
+      <WizardField label="Reference number" icon="hash" filled={!!reference}>
+        <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque no." />
+      </WizardField>
+      <WizardField label="Notes">
+        <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </WizardField>
+    </FinanceModalShell>
   );
 }
 
@@ -985,22 +1314,31 @@ function RecordTdsModal({
   };
 
   return (
-    <Modal title="Record TDS" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="TDS amount (₹)" error={amountErr || undefined}>
-          <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Leave blank for default" />
+    <FinanceModalShell
+      title="Record TDS"
+      subtitle="Record tax deducted at source against this invoice."
+      icon={<Receipt size={20} aria-hidden />}
+      onClose={onClose}
+      busy={busy}
+      onSubmit={() => void submit()}
+      submitLabel="Record TDS"
+      submitBusyLabel="Saving…"
+      submitDisabled={busy || !!amountErr}
+    >
+      <WizardField
+        label="TDS amount (₹)"
+        icon="hash"
+        error={amountErr || undefined}
+        filled={amtN !== undefined && amtN > 0}
+        info={
           <span className="mt-1 block text-xs text-muted">
             Defaults to the configured TDS rate on the invoice sub-total when left blank.
           </span>
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy || !!amountErr}>
-          {busy ? "Saving…" : "Record TDS"}
-        </button>
-      </div>
-    </Modal>
+        }
+      >
+        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Leave blank for default" />
+      </WizardField>
+    </FinanceModalShell>
   );
 }
 
@@ -1039,20 +1377,21 @@ function TdsPaymentModal({
   };
 
   return (
-    <Modal title="TDS Payment" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <div className="text-xs text-muted">TDS balance: <b>{inr(balance)}</b></div>
-        <Field label="Amount (₹)" required error={amountErr || undefined}>
-          <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy || amount === "" || !!amountErr}>
-          {busy ? "Saving…" : "Record TDS Payment"}
-        </button>
-      </div>
-    </Modal>
+    <FinanceModalShell
+      title="TDS Payment"
+      subtitle={`TDS balance ${inr(balance)}. Record a payment against the deducted tax.`}
+      icon={<IndianRupee size={20} aria-hidden />}
+      onClose={onClose}
+      busy={busy}
+      onSubmit={() => void submit()}
+      submitLabel="Record TDS Payment"
+      submitBusyLabel="Saving…"
+      submitDisabled={busy || amount === "" || !!amountErr}
+    >
+      <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
+        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </WizardField>
+    </FinanceModalShell>
   );
 }
 
@@ -1067,6 +1406,7 @@ const TDS_TABS = [
 ];
 
 export function TdsPage() {
+  const canWrite = useHasRole("Finance") && useCanEditTab("invoices");
   const [tab, setTab] = useState("Pending");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -1074,6 +1414,9 @@ export function TdsPage() {
   const [meta, setMeta] = useState<Meta | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const [toast, showToast] = useToast();
+  const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let alive = true;
@@ -1085,7 +1428,7 @@ export function TdsPage() {
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page]);
+  }, [tab, search, page, reloadKey]);
 
   const columns: Column<any>[] = [
     { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number || `Invoice #${r.invoice_id}`}</span> },
@@ -1098,6 +1441,7 @@ export function TdsPage() {
 
   return (
     <div className="space-y-4">
+      {toast}
       <h1 className="text-display text-lg font-bold text-primary">TDS Register</h1>
       <Tabs tabs={TDS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
       {error && <ErrorBox error={error} />}
@@ -1111,6 +1455,17 @@ export function TdsPage() {
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`invoices/${r.invoice_id}`)}
         emptyMessage={`No ${tab.replace(/_/g, " ").toLowerCase()} TDS records`}
+        rowActions={canWrite ? (r) => (
+          <RowActions
+            entity="TDS record"
+            itemLabel={r.invoice_number || `Invoice #${r.invoice_id}`}
+            deleteUrl={`/api/tds/${r.id}`}
+            onDeleted={load}
+            notify={showToast}
+            canEdit={false}
+            canDelete
+          />
+        ) : undefined}
       />
     </div>
   );

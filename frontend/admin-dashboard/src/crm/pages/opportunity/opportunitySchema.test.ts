@@ -6,6 +6,10 @@ import {
   SALES_STAGE_OPTIONS,
   WFO_REMOTE_OPTIONS,
   WORK_LOCATION_OPTIONS,
+  fieldMatchesShowWhen,
+  fieldVisible,
+  isFieldShown,
+  stripHiddenFields,
 } from "./opportunitySchema";
 
 describe("opportunity schema form options", () => {
@@ -73,5 +77,37 @@ describe("opportunity schema form options", () => {
     expect(forSales.some((o) => o.value === "Sales Validation")).toBe(true);
     expect(forNonSales.some((o) => o.value === "Sales Validation")).toBe(false);
     expect(forNonSales.map((o) => o.value)).toEqual(["Sales Verify"]);
+  });
+
+  it("shows Replacement Engineer only when Position Type is Replacement", () => {
+    const tm = OPPORTUNITY_SCHEMA.find((s) => s.key === "timeAndMaterial")!;
+    const keys = tm.fields!.map((f) => f.key);
+    expect(keys.indexOf("tm_closing_date")).toBeLessThan(keys.indexOf("tm_replacement_engineer"));
+    expect(keys.indexOf("tm_replacement_engineer")).toBeLessThan(keys.indexOf("tm_duration_months"));
+    const eng = tm.fields!.find((f) => f.key === "tm_replacement_engineer")!;
+    expect(eng.searchable).toBe(true);
+    expect(eng.optionsSource).toBe("engineers");
+    expect(eng.showWhen).toEqual({ field: "tm_position_type", equals: "Replacement" });
+    expect(eng.dependsOn).toEqual({ field: "customer_id", hint: "Select a customer first." });
+    expect(fieldVisible(tm, eng, "T&M")).toBe(true);
+    expect(fieldMatchesShowWhen(eng, {}, { tm_position_type: "New" })).toBe(false);
+    expect(fieldMatchesShowWhen(eng, {}, { tm_position_type: "Replacement" })).toBe(true);
+    expect(isFieldShown(tm, eng, "T&M", {}, { tm_position_type: "New" })).toBe(false);
+    expect(isFieldShown(tm, eng, "T&M", {}, { tm_position_type: "Replacement" })).toBe(true);
+    expect(isFieldShown(tm, eng, "Retainer", {}, { tm_position_type: "Replacement" })).toBe(false);
+    const strippedNew = stripHiddenFields(
+      { tm_position_type: "New", tm_replacement_engineer: "42", tm_role: "Engineer" },
+      "T&M",
+      {},
+      { tm_position_type: "New", tm_replacement_engineer: "42" },
+    );
+    expect(strippedNew.tm_replacement_engineer).toBeUndefined();
+    const strippedRep = stripHiddenFields(
+      { tm_position_type: "Replacement", tm_replacement_engineer: "42", tm_role: "Engineer" },
+      "T&M",
+      {},
+      { tm_position_type: "Replacement", tm_replacement_engineer: "42" },
+    );
+    expect(strippedRep.tm_replacement_engineer).toBe("42");
   });
 });

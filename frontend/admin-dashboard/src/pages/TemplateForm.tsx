@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -123,6 +123,25 @@ function readExpRange(j: JobConfig): { min: number; max: number } {
   const rawMin = (j as any).expMin ?? (j as any).exp_min ?? w["expMin"] ?? w["exp_min"];
   const rawMax = (j as any).expMax ?? (j as any).exp_max ?? w["expMax"] ?? w["exp_max"];
   return { min: clampInt(rawMin ?? 0, 0, 40), max: clampInt(rawMax ?? 0, 0, 40) };
+}
+
+/* Section header in the shared "New Opportunity wizard" banner language, using
+ * this page's own tokens: a gradient icon tile (fx-glow) + title + description.
+ * Structure mirrors the CRM SectionHeaderBanner; visual-only, no logic. */
+function SectionBanner({ icon, title, description }: { icon: ReactNode; title: string; description?: string }) {
+  return (
+    <header className="relative mb-2 overflow-hidden rounded-card border border-subtle bg-surface-1 px-4 py-4">
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-brand-500/15 via-transparent to-violet-500/10" />
+      <div aria-hidden className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full bg-brand-500/20 blur-3xl" />
+      <div className="relative z-[1] flex items-start gap-3">
+        <span className="fx-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-card bg-gradient-to-br from-brand-600 to-violet-600 text-white">{icon}</span>
+        <div className="min-w-0">
+          <h3 className="text-base font-bold text-primary">{title}</h3>
+          {description ? <p className="mt-0.5 text-sm text-muted">{description}</p> : null}
+        </div>
+      </div>
+    </header>
+  );
 }
 
 export function TemplateFormPage({
@@ -1144,6 +1163,13 @@ export function TemplateFormPage({
 
           {step === 1 ? (
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="md:col-span-2">
+              <SectionBanner
+                icon={<Info className="w-5 h-5" />}
+                title="Template Basics"
+                description="Name the role, set difficulty and interview mode, and define how the interview ends."
+              />
+            </div>
             <div>
               <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Job title</label>
               <input
@@ -1455,6 +1481,11 @@ export function TemplateFormPage({
           </div>
         ) : step === 2 ? (
           <div className="mt-6 space-y-5">
+            <SectionBanner
+              icon={<Zap className="w-5 h-5" />}
+              title="Skills, JD & Question Source"
+              description="Set experience, skills and JD, then choose how questions are generated — dynamic AI, manual, or Question Bank."
+            />
             <div>
               <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Years of experience</div>
               <p className="text-xs text-muted mt-1 mb-2">Used for question generation and saved on the template.</p>

@@ -5,13 +5,14 @@
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * zebra-free 48px table rows, right-aligned numerics, one primary action per screen. */
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRightLeft, Bot, Copy, ExternalLink, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Bot, Copy, ExternalLink, FileText, GitBranch, Plus, Save, UsersRound, X } from "lucide-react";
 import { CrmApiError, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
@@ -19,6 +20,33 @@ import {
   AiThinking, ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import {
+  SectionHeaderBanner, FieldLabel, WizardField,
+} from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------------ */
 /* Shared types + helpers                                              */
@@ -349,6 +377,18 @@ export function ProfilesListPage({
             </div>
           }
           emptyMessage={bucket === "active" ? "No active applications" : "No rejected applications"}
+          rowActions={canCreate ? (r) => (
+            <RowActions
+              entity="candidate profile"
+              itemLabel={r.candidate_name || `Profile #${r.id}`}
+              onEdit={() => crmNavigate(`profiles/${r.id}`)}
+              deleteUrl={`/api/candidate-profiles/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit
+              canDelete
+            />
+          ) : undefined}
         />
       )}
 
@@ -427,58 +467,70 @@ function NewProfileModal({ onClose, onCreated }: { onClose: () => void; onCreate
   };
 
   return (
-    <Modal title="New Candidate Profile" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="Candidate" required>
-          <input
-            className={`${inputCls} mb-1.5`}
-            placeholder="Type to filter candidates…"
-            value={candSearch}
-            onChange={(e) => setCandSearch(e.target.value)}
-          />
-          <select className={inputCls} value={candidateId} onChange={(e) => setCandidateId(e.target.value)}>
-            <option value="">Select candidate…</option>
-            {filteredCandidates.map((c) => (
-              <option key={c.id} value={c.id}>
-                {candName(c)}{c.email ? ` — ${c.email}` : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Opportunity" required>
-          <select className={inputCls} value={opportunityId} onChange={(e) => setOpportunityId(e.target.value)}>
-            <option value="">Select opportunity…</option>
-            {opportunities.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.opp_id ? `${o.opp_id} — ` : ""}{o.title || `Opportunity #${o.id}`}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Current CTC">
-            <input type="number" min={0} className={inputCls} value={currentCtc} onChange={(e) => setCurrentCtc(e.target.value)} />
-          </Field>
-          <Field label="Expected CTC">
-            <input type="number" min={0} className={inputCls} value={expectedCtc} onChange={(e) => setExpectedCtc(e.target.value)} />
-          </Field>
-        </div>
-        {hike !== null && (
-          <div className="rounded-control bg-info-soft px-3 py-2 text-xs font-semibold text-info">
-            Hike preview: {hike}%
+    <Modal
+      title={<span className="sr-only">New Candidate Profile</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="New Candidate Profile"
+        subtitle="Link a candidate to an opportunity and capture their commercials."
+        icon={<UsersRound size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <div>
+            <FieldLabel label="Candidate" required />
+            <input
+              className={`${inputCls} mb-1.5`}
+              placeholder="Type to filter candidates…"
+              value={candSearch}
+              onChange={(e) => setCandSearch(e.target.value)}
+            />
+            <select className={inputCls} value={candidateId} onChange={(e) => setCandidateId(e.target.value)}>
+              <option value="">Select candidate…</option>
+              {filteredCandidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {candName(c)}{c.email ? ` — ${c.email}` : ""}
+                </option>
+              ))}
+            </select>
           </div>
-        )}
-        <Field label="Notes">
-          <textarea className={inputCls} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
-        {error && <ErrorBox error={error} />}
-        <div className="flex justify-end gap-2 pt-1">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "Creating…" : "Create Profile"}
-          </button>
+          <WizardField label="Opportunity" required icon="building">
+            <select className={inputCls} value={opportunityId} onChange={(e) => setOpportunityId(e.target.value)}>
+              <option value="">Select opportunity…</option>
+              {opportunities.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.opp_id ? `${o.opp_id} — ` : ""}{o.title || `Opportunity #${o.id}`}
+                </option>
+              ))}
+            </select>
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Current CTC" icon="hash" filled={currentCtc !== ""}>
+              <input type="number" min={0} className={inputCls} value={currentCtc} onChange={(e) => setCurrentCtc(e.target.value)} />
+            </WizardField>
+            <WizardField label="Expected CTC" icon="hash" filled={expectedCtc !== ""}>
+              <input type="number" min={0} className={inputCls} value={expectedCtc} onChange={(e) => setExpectedCtc(e.target.value)} />
+            </WizardField>
+          </div>
+          {hike !== null && (
+            <div className="rounded-control bg-info-soft px-3 py-2 text-xs font-semibold text-info">
+              Hike preview: {hike}%
+            </div>
+          )}
+          <WizardField label="Notes">
+            <textarea className={inputCls} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </WizardField>
+          {error && <ErrorBox error={error} />}
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+              {busy ? "Creating…" : "Create Profile"}
+            </button>
+          </div>
         </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -803,43 +855,54 @@ function TransitionModal({
   };
 
   return (
-    <Modal title="Change Pipeline Status" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <div className="text-sm text-secondary">
-          Current status: <StatusBadge status={currentStatus} />
-        </div>
-        <Field label="New status" required>
-          <select className={inputCls} value={newStatus} onChange={(e) => setNewStatus(e.target.value)}>
-            <option value="">Select new status…</option>
-            {allowed.map((s) => (
-              <option key={s} value={s} className={REJECTION_LIKE.has(s) ? "font-semibold text-danger" : ""}>
-                {REJECTION_LIKE.has(s) ? `⛔ ${label(s)}` : label(s)}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {newStatus && REJECTION_LIKE.has(newStatus) && (
-          <div className="rounded-control bg-danger-soft px-3 py-2 text-xs font-semibold text-danger">
-            This is a rejection/withdrawal — the profile moves to the Rejected bucket.
+    <Modal
+      title={<span className="sr-only">Change Pipeline Status</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Change Pipeline Status"
+        subtitle="Move this profile to its next pipeline stage with a mandatory comment."
+        icon={<GitBranch size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <div className="text-sm text-secondary">
+            Current status: <StatusBadge status={currentStatus} />
           </div>
-        )}
-        <Field label="Comment" required error={commentError}>
-          <textarea
-            className={`${inputCls} ${commentError ? "input-error" : ""}`}
-            rows={3}
-            placeholder="Why is this status changing? (mandatory, min 5 characters)"
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-          />
-        </Field>
-        {error && <ErrorBox error={error} />}
-        <div className="flex justify-end gap-2 pt-1">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "Updating…" : "Update Status"}
-          </button>
+          <WizardField label="New status" required>
+            <select className={inputCls} value={newStatus} onChange={(e) => setNewStatus(e.target.value)}>
+              <option value="">Select new status…</option>
+              {allowed.map((s) => (
+                <option key={s} value={s} className={REJECTION_LIKE.has(s) ? "font-semibold text-danger" : ""}>
+                  {REJECTION_LIKE.has(s) ? `⛔ ${label(s)}` : label(s)}
+                </option>
+              ))}
+            </select>
+          </WizardField>
+          {newStatus && REJECTION_LIKE.has(newStatus) && (
+            <div className="rounded-control bg-danger-soft px-3 py-2 text-xs font-semibold text-danger">
+              This is a rejection/withdrawal — the profile moves to the Rejected bucket.
+            </div>
+          )}
+          <WizardField label="Comment" required error={commentError}>
+            <textarea
+              className={`${inputCls} ${commentError ? "input-error" : ""}`}
+              rows={3}
+              placeholder="Why is this status changing? (mandatory, min 5 characters)"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+            />
+          </WizardField>
+          {error && <ErrorBox error={error} />}
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+              {busy ? "Updating…" : "Update Status"}
+            </button>
+          </div>
         </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1180,30 +1243,41 @@ function NewOfferModal({
   };
 
   return (
-    <Modal title="New Offer" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Offer date" required>
-            <input type="date" className={inputCls} value={offerDate} onChange={(e) => setOfferDate(e.target.value)} />
-          </Field>
-          <Field label="CTC" required>
-            <input type="number" min={0} className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} />
-          </Field>
-          <Field label="Joining date">
-            <input type="date" className={inputCls} value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
-          </Field>
-          <Field label="Expiry date">
-            <input type="date" className={inputCls} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
-          </Field>
+    <Modal
+      title={<span className="sr-only">New Offer</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="New Offer"
+        subtitle="Record the offered CTC and key dates for this candidate."
+        icon={<FileText size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Offer date" required icon="calendar" filled={!!offerDate}>
+              <input type="date" className={inputCls} value={offerDate} onChange={(e) => setOfferDate(e.target.value)} />
+            </WizardField>
+            <WizardField label="CTC" required icon="hash" filled={ctc !== ""}>
+              <input type="number" min={0} className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} />
+            </WizardField>
+            <WizardField label="Joining date" icon="calendar" filled={!!joiningDate}>
+              <input type="date" className={inputCls} value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
+            </WizardField>
+            <WizardField label="Expiry date" icon="calendar" filled={!!expiryDate}>
+              <input type="date" className={inputCls} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+            </WizardField>
+          </div>
+          {error && <ErrorBox error={error} />}
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+              {busy ? "Creating…" : "Create Offer"}
+            </button>
+          </div>
         </div>
-        {error && <ErrorBox error={error} />}
-        <div className="flex justify-end gap-2 pt-1">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "Creating…" : "Create Offer"}
-          </button>
-        </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }

@@ -51,30 +51,13 @@ export const ROLE_OPTIONS = [
 ];
 
 export const WORK_LOCATION_OPTIONS = [
-  { value: "Bangalore", label: "Bangalore" },
-  { value: "Mumbai", label: "Mumbai" },
-  { value: "Pune", label: "Pune" },
-  { value: "Delhi", label: "Delhi" },
-  { value: "Gurgaon", label: "Gurgaon" },
-  { value: "Noida", label: "Noida" },
-  { value: "Hyderabad", label: "Hyderabad" },
-  { value: "Chennai", label: "Chennai" },
-  { value: "Kolkata", label: "Kolkata" },
-  { value: "Ahmedabad", label: "Ahmedabad" },
-  { value: "Jaipur", label: "Jaipur" },
-  { value: "Chandigarh", label: "Chandigarh" },
-  { value: "Kochi", label: "Kochi" },
-  { value: "Coimbatore", label: "Coimbatore" },
-  { value: "Indore", label: "Indore" },
-  { value: "Nagpur", label: "Nagpur" },
-  { value: "Thiruvananthapuram", label: "Thiruvananthapuram" },
-  { value: "Mysore", label: "Mysore" },
-  { value: "Visakhapatnam", label: "Visakhapatnam" },
-  { value: "Bhubaneswar", label: "Bhubaneswar" },
-  { value: "Lucknow", label: "Lucknow" },
-  { value: "Vadodara", label: "Vadodara" },
-  { value: "Nashik", label: "Nashik" },
-  { value: "Remote", label: "Remote" },
+  ...([
+    "Bangalore", "Mumbai", "Pune", "Delhi", "Gurgaon", "Noida", "Hyderabad",
+    "Chennai", "Kolkata", "Ahmedabad", "Jaipur", "Chandigarh", "Kochi",
+    "Coimbatore", "Indore", "Nagpur", "Thiruvananthapuram", "Mysore",
+    "Visakhapatnam", "Bhubaneswar", "Lucknow", "Vadodara", "Nashik", "Surat",
+    "Remote",
+  ].map((v) => ({ value: v, label: v }))),
 ];
 
 export const WFO_REMOTE_OPTIONS = [
@@ -129,11 +112,18 @@ export interface FieldDef {
     | "workLocation"
     | "wfoRemote"
     | "onboardingStatus"
-    | "appraisalCycle";
-  /** Auto-populated from another entity; editable but badged "auto-filled". */
+    | "appraisalCycle"
+    | "engineers";
+  /** Auto-populated from another entity; rendered read-only with an "auto-filled" badge. */
   autoFilledFrom?: "customer" | "contact" | "hiringManager";
   /** Field is disabled until this other field has a value (dependency, with reason). */
   dependsOn?: { field: string; hint: string };
+  /**
+   * Value-conditional visibility: render only when another field's current value
+   * equals `equals` (exact string) or is one of the listed values (array).
+   * Evaluated against core + details; independent of opportunity-type gating.
+   */
+  showWhen?: { field: string; equals: string | string[] };
   /** Show a "+" affordance next to this select to create a new master inline. */
   addNew?: "customer" | "branch" | "contact" | "hiringManager" | "role";
   /** Derived/computed read-only cell. */
@@ -182,12 +172,6 @@ export interface SectionDef {
 // Re-export for consumers that import from schema; prefer ../lib/customerType for logic.
 export { customerTypeOptionsForPo, normalizeCustomerType } from "../../lib/customerType";
 
-export const CUSTOMER_TYPE_OPTIONS = [
-  { value: "NN", label: "NN — New customer (no PO yet)" },
-  { value: "EN", label: "EN — Existing, new domain/branch" },
-  { value: "EE", label: "EE — Existing customer" },
-];
-
 export const SALES_STAGE_OPTIONS = [
   { value: "Sales Validation", label: "Sales Validation" },
   { value: "Sales Verify", label: "Sales Verify" },
@@ -211,6 +195,7 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
     title: "Customer Details",
     kind: "fields",
     fields: [
+      { key: "opp_id", label: "Opportunity ID", type: "readonly", helperText: "Auto-generated on save." },
       { key: "customer_id", label: "Customer", type: "select", required: true, optionsSource: "customers",
         addNew: "customer", searchable: true, next: "branch_id" },
       { key: "branch_id", label: "Branch", type: "select", required: true, optionsSource: "branches",
@@ -239,8 +224,7 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "rfi_received_date", label: "Received Date", type: "date", required: true,
         placeholder: "dd-MMM-yyyy", helperText: "Format: dd-MMM-yyyy", next: "opp_type" },
       { key: "opp_type", label: "Opportunity Type", type: "select", required: true,
-        options: OPPORTUNITY_TYPES.map((t) => ({ value: t.value, label: t.label })), next: "opp_id" },
-      { key: "opp_id", label: "Opportunity ID", type: "readonly", helperText: "Auto-generated on save." },
+        options: OPPORTUNITY_TYPES.map((t) => ({ value: t.value, label: t.label })) },
     ],
   },
 
@@ -259,6 +243,11 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "tm_closing_date", label: "Closing Date", type: "date", next: "tm_position_type" },
       { key: "tm_position_type", label: "Position Type", type: "select",
         options: [{ value: "New", label: "New" }, { value: "Replacement", label: "Replacement" }],
+        next: "tm_duration_months" },
+      { key: "tm_replacement_engineer", label: "Replacement Engineer", type: "select",
+        searchable: true, optionsSource: "engineers", visibleFor: ["T&M"],
+        showWhen: { field: "tm_position_type", equals: "Replacement" },
+        dependsOn: { field: "customer_id", hint: "Select a customer first." },
         next: "tm_duration_months" },
       { key: "tm_duration_months", label: "Duration (In Month)", type: "number", min: 0, next: "tm_jd_attachments" },
       { key: "tm_jd_attachments", label: "Customer JD Attachments", type: "file", multiple: true,
@@ -416,13 +405,44 @@ export function fieldVisible(section: SectionDef, field: FieldDef, type: Opportu
   return !!type && field.visibleFor.includes(type);
 }
 
+/**
+ * Value-conditional visibility (`showWhen`). Looks up the referenced field in
+ * core values first, then details. No showWhen → always true.
+ */
+export function fieldMatchesShowWhen(
+  field: FieldDef,
+  values: Record<string, unknown> = {},
+  details: Record<string, unknown> = {},
+): boolean {
+  if (!field.showWhen) return true;
+  const raw = values[field.showWhen.field] ?? details[field.showWhen.field];
+  const cur = String(raw ?? "");
+  const eq = field.showWhen.equals;
+  return Array.isArray(eq) ? eq.map(String).includes(cur) : cur === String(eq);
+}
+
+/** Type gating + showWhen — use this wherever a field is rendered or validated. */
+export function isFieldShown(
+  section: SectionDef,
+  field: FieldDef,
+  type: OpportunityType | "",
+  values: Record<string, unknown> = {},
+  details: Record<string, unknown> = {},
+): boolean {
+  return fieldVisible(section, field, type) && fieldMatchesShowWhen(field, values, details);
+}
+
 /** All field keys that are VALID (visible) for a type — used client + mirrored server-side. */
-export function visibleFieldKeys(type: OpportunityType): string[] {
+export function visibleFieldKeys(
+  type: OpportunityType,
+  values: Record<string, unknown> = {},
+  details: Record<string, unknown> = {},
+): string[] {
   const keys: string[] = [];
   for (const s of OPPORTUNITY_SCHEMA) {
     if (!sectionVisible(s, type)) continue;
     for (const f of s.fields || []) {
-      if (fieldVisible(s, f, type)) keys.push(f.key);
+      if (isFieldShown(s, f, type, values, details)) keys.push(f.key);
     }
   }
   return keys;
@@ -432,8 +452,10 @@ export function visibleFieldKeys(type: OpportunityType): string[] {
 export function stripHiddenFields<T extends Record<string, unknown>>(
   data: T,
   type: OpportunityType,
+  values: Record<string, unknown> = {},
+  details: Record<string, unknown> = data as Record<string, unknown>,
 ): Partial<T> {
-  const allowed = new Set(visibleFieldKeys(type));
+  const allowed = new Set(visibleFieldKeys(type, values, details));
   // table/attachment sections are always allowed
   ["skills", "ctc_slab", "attachments"].forEach((k) => allowed.add(k));
   const out: Record<string, unknown> = {};

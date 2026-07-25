@@ -1,17 +1,20 @@
-/** Projects — list (status tabs) + detail (Overview, Team, Communication Matrix,
- * Timesheets, POs & Invoices) incl. one-click "Create PO". */
+/** Projects — list (status tabs) + detail (Overview, Team, Timesheet,
+ * PO & Invoices, Communication Matrix) incl. one-click "Create PO". */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
+import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import {
   ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { CreateProjectWizard, EditProjectWizard } from "../components/EditProjectWizard";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -23,16 +26,30 @@ type Project = {
   billing_cycle_start_day: number;
   billing_cycle_end_day: number;
   billing_frequency: string;
+  recurring_billing?: boolean | null;
   max_billable_hours_day: number | null;
   max_billable_hours_month: number | null;
   max_billable_days_month: number | null;
   no_billing_period_days: number | null;
+  holidays_billable?: boolean | null;
+  weekoff_billable?: boolean | null;
+  hours_required_half_day?: number | null;
+  hours_required_full_day?: number | null;
+  hours_required_half_day_comp_off?: number | null;
+  hours_required_full_day_comp_off?: number | null;
+  is_max_billable_hours_per_day?: boolean | null;
+  is_max_billable_hours_per_month?: boolean | null;
+  is_max_billable_days_per_month?: boolean | null;
+  is_initial_no_billing_period?: boolean | null;
+  initial_no_billing_qty?: number | null;
+  initial_no_billing_period?: string | null;
   status: string;
   created_at: string | null;
 };
 
 type TeamMember = {
   id: number;
+  pe_id?: number;
   employee_id: number;
   employee_name: string | null;
   employee_email: string | null;
@@ -57,11 +74,12 @@ type CommEntry = {
 type ProjectDetail = Project & {
   customer_name?: string | null;
   opportunity_title?: string | null;
+  branch_id?: number | null;
+  branch_name?: string | null;
   team: TeamMember[];
   communication_matrix: CommEntry[];
 };
 
-const BILLING_FREQUENCIES = ["Monthly", "Bi_Weekly", "Weekly"];
 const PROJECT_STATUSES = ["Active", "Completed", "On_Hold"];
 const WORK_MODES = ["Remote", "Onsite", "Hybrid"];
 const BILLING_UNITS = ["Hourly", "Daily", "Monthly"];
@@ -157,130 +175,31 @@ export function ProjectsListPage() {
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
           emptyMessage={`No ${pretty(tab).toLowerCase()} projects`}
+          rowActions={canCreate ? (r) => (
+            <RowActions
+              entity="project"
+              itemLabel={r.name}
+              onEdit={() => crmNavigate(`projects/${r.id}`)}
+              deleteUrl={`/api/projects/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit
+              canDelete
+            />
+          ) : undefined}
         />
       )}
       {showNew && (
-        <NewProjectModal
+        <CreateProjectWizard
           opps={opps}
           customers={customers}
           onClose={() => setShowNew(false)}
-          onDone={(p) => { setShowNew(false); showToast("Project created"); crmNavigate(`projects/${p.id}`); }}
-          onError={(m) => showToast(m, "err")}
+          onSaved={(p) => { setShowNew(false); crmNavigate(`projects/${p.id}`); }}
+          notify={showToast}
         />
       )}
       {toast}
     </div>
-  );
-}
-
-function NewProjectModal({
-  opps, customers, onClose, onDone, onError,
-}: {
-  opps: any[];
-  customers: any[];
-  onClose: () => void;
-  onDone: (project: Project) => void;
-  onError: (msg: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [oppId, setOppId] = useState("");
-  const [customerId, setCustomerId] = useState("");
-  const [startDay, setStartDay] = useState("1");
-  const [endDay, setEndDay] = useState("31");
-  const [frequency, setFrequency] = useState("Monthly");
-  const [maxHrsDay, setMaxHrsDay] = useState("");
-  const [maxHrsMonth, setMaxHrsMonth] = useState("");
-  const [maxDaysMonth, setMaxDaysMonth] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-
-  const onOppChange = (v: string) => {
-    setOppId(v);
-    const opp = opps.find((o) => String(o.id) === v);
-    if (opp?.customer_id) setCustomerId(String(opp.customer_id)); // customer auto-derived
-  };
-
-  const submit = async () => {
-    const errs: Record<string, string> = {};
-    if (!name.trim()) errs.name = "Name is required";
-    if (!oppId) errs.opp = "Opportunity is required";
-    if (!customerId) errs.customer = "Customer is required";
-    const sd = Number(startDay), ed = Number(endDay);
-    if (!(sd >= 1 && sd <= 31)) errs.startDay = "Must be 1–31";
-    if (!(ed >= 1 && ed <= 31)) errs.endDay = "Must be 1–31";
-    setErrors(errs);
-    if (Object.keys(errs).length) return;
-    setBusy(true);
-    try {
-      const res = await crmPost<Project>("/api/projects", {
-        name: name.trim(),
-        opportunity_id: Number(oppId),
-        customer_id: Number(customerId),
-        billing_cycle_start_day: sd,
-        billing_cycle_end_day: ed,
-        billing_frequency: frequency,
-        max_billable_hours_day: numOrUndef(maxHrsDay),
-        max_billable_hours_month: numOrUndef(maxHrsMonth),
-        max_billable_days_month: numOrUndef(maxDaysMonth),
-      });
-      onDone(res.data);
-    } catch (e: any) {
-      onError(e?.message || "Failed to create project");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="New Project" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="Name" required error={errors.name}>
-          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Opportunity" required error={errors.opp}>
-          <select className={inputCls} value={oppId} onChange={(e) => onOppChange(e.target.value)}>
-            <option value="">Select opportunity…</option>
-            {opps.map((o) => (
-              <option key={o.id} value={o.id}>{o.title}{o.customer_name ? ` — ${o.customer_name}` : ""}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Customer" required error={errors.customer}>
-          <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">Select customer…</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Billing cycle start day" error={errors.startDay}>
-            <input type="number" min={1} max={31} className={inputCls} value={startDay} onChange={(e) => setStartDay(e.target.value)} />
-          </Field>
-          <Field label="Billing cycle end day" error={errors.endDay}>
-            <input type="number" min={1} max={31} className={inputCls} value={endDay} onChange={(e) => setEndDay(e.target.value)} />
-          </Field>
-        </div>
-        <Field label="Billing frequency">
-          <select className={inputCls} value={frequency} onChange={(e) => setFrequency(e.target.value)}>
-            {BILLING_FREQUENCIES.map((f) => <option key={f} value={f}>{pretty(f)}</option>)}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Max billable hrs/day">
-            <input type="number" min={0} max={24} className={inputCls} value={maxHrsDay} onChange={(e) => setMaxHrsDay(e.target.value)} />
-          </Field>
-          <Field label="Max billable hrs/month">
-            <input type="number" min={0} className={inputCls} value={maxHrsMonth} onChange={(e) => setMaxHrsMonth(e.target.value)} />
-          </Field>
-          <Field label="Max billable days/month">
-            <input type="number" min={0} max={31} className={inputCls} value={maxDaysMonth} onChange={(e) => setMaxDaysMonth(e.target.value)} />
-          </Field>
-        </div>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create project"}</button>
-      </div>
-    </Modal>
   );
 }
 
@@ -307,13 +226,21 @@ export function ProjectDetailPage() {
   if (error) return <ErrorBox error={error} onRetry={load} />;
   if (!project) return <Spinner label="Loading project…" />;
 
+  const crumbs = [
+    { label: "Customers", to: "customers" },
+    ...(project.customer_id
+      ? [{ label: project.customer_name || `Customer #${project.customer_id}`, to: `customers/${project.customer_id}` }]
+      : []),
+    ...(project.branch_id
+      ? [{ label: project.branch_name || `Branch #${project.branch_id}`, to: `branch-policy/${project.branch_id}` }]
+      : []),
+    { label: project.name },
+  ];
+
   return (
     <div className="space-y-4">
+      <CrmBreadcrumb items={crumbs} />
       <div className="flex flex-wrap items-center gap-3">
-        <CrmLink to="projects" className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300">
-          Projects
-        </CrmLink>
-        <span className="text-muted">/</span>
         <h1 className="text-display text-xl font-bold text-primary">{project.name}</h1>
         <StatusBadge status={project.status} />
       </div>
@@ -321,9 +248,9 @@ export function ProjectDetailPage() {
         tabs={[
           { key: "overview", label: "Overview" },
           { key: "team", label: "Team", count: project.team?.length },
+          { key: "timesheets", label: "Timesheet" },
+          { key: "finance", label: "PO & Invoices" },
           { key: "comm", label: "Communication Matrix", count: project.communication_matrix?.length },
-          { key: "timesheets", label: "Timesheets" },
-          { key: "finance", label: "POs & Invoices" },
         ]}
         active={tab}
         onChange={setTab}
@@ -394,11 +321,11 @@ function OverviewTab({
         <Info label="Created" value={fmtDate(project.created_at)} />
       </div>
       {showEdit && (
-        <EditProjectModal
-          project={project}
+        <EditProjectWizard
+          initial={project}
           onClose={() => setShowEdit(false)}
-          onDone={() => { setShowEdit(false); showToast("Project updated"); reload(); }}
-          onError={(m) => showToast(m, "err")}
+          onSaved={() => { setShowEdit(false); reload(); }}
+          notify={showToast}
         />
       )}
       {showPo && (
@@ -414,99 +341,6 @@ function OverviewTab({
         />
       )}
     </div>
-  );
-}
-
-function EditProjectModal({
-  project, onClose, onDone, onError,
-}: {
-  project: ProjectDetail;
-  onClose: () => void;
-  onDone: () => void;
-  onError: (msg: string) => void;
-}) {
-  const [name, setName] = useState(project.name);
-  const [startDay, setStartDay] = useState(String(project.billing_cycle_start_day));
-  const [endDay, setEndDay] = useState(String(project.billing_cycle_end_day));
-  const [frequency, setFrequency] = useState(project.billing_frequency);
-  const [maxHrsDay, setMaxHrsDay] = useState(project.max_billable_hours_day != null ? String(project.max_billable_hours_day) : "");
-  const [maxHrsMonth, setMaxHrsMonth] = useState(project.max_billable_hours_month != null ? String(project.max_billable_hours_month) : "");
-  const [maxDaysMonth, setMaxDaysMonth] = useState(project.max_billable_days_month != null ? String(project.max_billable_days_month) : "");
-  const [status, setStatus] = useState(project.status);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    const errs: Record<string, string> = {};
-    if (!name.trim()) errs.name = "Name is required";
-    const sd = Number(startDay), ed = Number(endDay);
-    if (!(sd >= 1 && sd <= 31)) errs.startDay = "Must be 1–31";
-    if (!(ed >= 1 && ed <= 31)) errs.endDay = "Must be 1–31";
-    setErrors(errs);
-    if (Object.keys(errs).length) return;
-    setBusy(true);
-    try {
-      await crmPut(`/api/projects/${project.id}`, {
-        name: name.trim(),
-        billing_cycle_start_day: sd,
-        billing_cycle_end_day: ed,
-        billing_frequency: frequency,
-        max_billable_hours_day: numOrUndef(maxHrsDay) ?? null,
-        max_billable_hours_month: numOrUndef(maxHrsMonth) ?? null,
-        max_billable_days_month: numOrUndef(maxDaysMonth) ?? null,
-        status,
-      });
-      onDone();
-    } catch (e: any) {
-      onError(e?.message || "Failed to update project");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="Edit Project" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="Name" required error={errors.name}>
-          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Billing cycle start day" error={errors.startDay}>
-            <input type="number" min={1} max={31} className={inputCls} value={startDay} onChange={(e) => setStartDay(e.target.value)} />
-          </Field>
-          <Field label="Billing cycle end day" error={errors.endDay}>
-            <input type="number" min={1} max={31} className={inputCls} value={endDay} onChange={(e) => setEndDay(e.target.value)} />
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Billing frequency">
-            <select className={inputCls} value={frequency} onChange={(e) => setFrequency(e.target.value)}>
-              {BILLING_FREQUENCIES.map((f) => <option key={f} value={f}>{pretty(f)}</option>)}
-            </select>
-          </Field>
-          <Field label="Status">
-            <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-              {PROJECT_STATUSES.map((s) => <option key={s} value={s}>{pretty(s)}</option>)}
-            </select>
-          </Field>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Max billable hrs/day">
-            <input type="number" min={0} max={24} className={inputCls} value={maxHrsDay} onChange={(e) => setMaxHrsDay(e.target.value)} />
-          </Field>
-          <Field label="Max billable hrs/month">
-            <input type="number" min={0} className={inputCls} value={maxHrsMonth} onChange={(e) => setMaxHrsMonth(e.target.value)} />
-          </Field>
-          <Field label="Max billable days/month">
-            <input type="number" min={0} max={31} className={inputCls} value={maxDaysMonth} onChange={(e) => setMaxDaysMonth(e.target.value)} />
-          </Field>
-        </div>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save changes"}</button>
-      </div>
-    </Modal>
   );
 }
 
@@ -597,7 +431,15 @@ function TeamTab({
   const [editRow, setEditRow] = useState<TeamMember | null>(null);
 
   const columns: Column<TeamMember>[] = [
-    { key: "employee_name", label: "Employee", render: (r) => <span className="font-semibold">{r.employee_name || `#${r.employee_id}`}</span> },
+    {
+      key: "employee_name",
+      label: "Employee",
+      render: (r) => (
+        <span className="font-semibold text-brand-600 dark:text-brand-300">
+          {r.employee_name || `#${r.employee_id}`}
+        </span>
+      ),
+    },
     { key: "onboarding_date", label: "Onboarding", render: (r) => fmtDate(r.onboarding_date) },
     { key: "work_mode", label: "Work mode", render: (r) => pretty(r.work_mode) },
     {
@@ -609,7 +451,10 @@ function TeamTab({
       ? [{
           key: "actions", label: "",
           render: (r: TeamMember) => (
-            <button className={btnSecondary} onClick={() => setEditRow(r)}>
+            <button
+              className={btnSecondary}
+              onClick={(e) => { e.stopPropagation(); setEditRow(r); }}
+            >
               <Pencil size={13} /> Edit
             </button>
           ),
@@ -626,7 +471,12 @@ function TeamTab({
           </button>
         </div>
       )}
-      <DataTable<TeamMember> columns={columns} rows={project.team || []} emptyMessage="No employees assigned" />
+      <DataTable<TeamMember>
+        columns={columns}
+        rows={project.team || []}
+        emptyMessage="No employees assigned"
+        onRowClick={(r) => crmNavigate(`project-employees/${r.pe_id ?? r.id}`)}
+      />
       {showAssign && (
         <AssignEmployeeModal
           projectId={project.id}

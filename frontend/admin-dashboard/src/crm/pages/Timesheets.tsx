@@ -2,21 +2,47 @@
  * header info card, daily entries grid with server-computed billables, collapsible
  * invoice-preview section (Finance/Admin can generate the invoice), summary rollup,
  * submit/approve/reject workflow. */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { BellRing, Check, ChevronDown, FilePlus2, History, Plus, Receipt, Save, Send, X } from "lucide-react";
+import { BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
 import { crmDelete, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -44,6 +70,7 @@ type Entry = {
   attendance_status: string | null;
   leave_type: string | null;
   leave_period: string | null;
+  leave_reason?: string | null;
   location: string | null;
   billable_hours: number | null;
   billable_days: number | null;
@@ -56,6 +83,7 @@ type BillingPolicy = {
   week_off_billable: boolean;
   leave_billable: boolean;
   holidays_billable: boolean;
+  comp_off_billable: boolean;
   min_hours_full_day: number;
   min_hours_half_day: number;
 };
@@ -75,6 +103,10 @@ type TimesheetDetail = Timesheet & {
   employee_code?: string | null;
   project_employee_id?: number | null;
   billing_policy?: BillingPolicy | null;
+  /** Project-scoped leave-type → billable; same for every employee on the project. */
+  leave_billable_by_type?: Record<string, boolean>;
+  /** Leave balances by type: PE pool when mapped, else employee yearly balances. */
+  leave_balances_by_type?: Record<string, number>;
   max_billable_hours_day?: number | null;
   holiday_dates?: string[];
   entries: Entry[];
@@ -103,7 +135,10 @@ type Summary = {
   actual_billable_day?: number | null;
   total_leave_days?: number | null;
   total_leave_billable_days?: number | null;
+  total_loss_of_pay_days?: number | null;
   comp_off_earned?: number | null;
+  comp_off_billed?: number | null;
+  comp_off_billed_hours?: number | null;
   comp_off_credited?: number | null;
   approved_time?: { approved_at: string | null; approver_name: string | null } | null;
   reason_for_rejection?: string | null;
@@ -117,6 +152,7 @@ type InvoiceLineItem = {
   total_billed_qty: number;
   rate_per_unit: number;
   leave_billable_days: number;
+  comp_off_billable_qty?: number | null;
   amount: number;
 };
 
@@ -137,6 +173,7 @@ type EntryRow = {
   attendance_status: string;
   leave_type: string;
   leave_period: string;
+  leave_reason: string;
   location: string;
   view_flag: boolean;
   entry_project_id: string;
@@ -148,9 +185,7 @@ type EntryRow = {
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 const TS_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"];
-const DAY_TYPES = ["Working", "Week_Off", "Holiday"] as const;
 const ATTENDANCE = ["Present", "Week_Off", "Holiday", "Leave", "Absent", "Half_Day"];
-const LEAVE_PERIODS = ["", "Full", "Half_AM", "Half_PM"];
 const LOCATIONS: { value: string; label: string }[] = [
   { value: "Onsite", label: "On Site" },
   { value: "Remote", label: "Offshore/Remote" },
@@ -161,9 +196,11 @@ const billableDayFromHours = (hours: number) => (hours > 0 ? round2(hours / 8) :
 
 /** Client-side mirror of server compute_billables (invoice days use thresholds; display uses hours/8). */
 function computeBillables(
-  row: Pick<EntryRow, "day_type" | "is_working" | "hours_worked" | "attendance_status" | "leave_period">,
+  row: Pick<EntryRow, "day_type" | "is_working" | "hours_worked" | "attendance_status" | "leave_period" | "leave_type">,
   policy: BillingPolicy,
   maxDayHours?: number | null,
+  leaveBillableByType?: Record<string, boolean> | null,
+  paidLeaveDays?: number | null,
 ): { billable_hours: number; billable_day: number } {
   let hours = Number(row.hours_worked || 0);
   if (maxDayHours != null && hours > maxDayHours) hours = maxDayHours;
@@ -172,10 +209,22 @@ function computeBillables(
   const working = row.day_type === "Working" && row.is_working;
 
   if (!working && row.day_type !== "Working") {
-    if (hours > 0 && policy.week_off_billable) {
-      const bh = hours;
-      const days = bh >= policy.min_hours_full_day ? 1 : bh >= policy.min_hours_half_day ? 0.5 : 0;
-      return { billable_hours: bh, billable_day: billableDayFromHours(bh) };
+    if (att === "Holiday") {
+      // Worked holiday → Comp Off Billable; pure holiday-off → holidays_billable.
+      if (hours > 0) {
+        if (!policy.comp_off_billable) return { billable_hours: 0, billable_day: 0 };
+        return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+      }
+      return policy.holidays_billable
+        ? {
+            billable_hours: policy.min_hours_full_day,
+            billable_day: billableDayFromHours(policy.min_hours_full_day),
+          }
+        : { billable_hours: 0, billable_day: 0 };
+    }
+    // Week Off worked hours → Comp Off Billable (not week_off_billable).
+    if (hours > 0 && policy.comp_off_billable) {
+      return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
     }
     return { billable_hours: 0, billable_day: 0 };
   }
@@ -186,18 +235,107 @@ function computeBillables(
     return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
   }
   if (att === "Leave") {
-    if (policy.leave_billable) {
-      const days = lp === "Half_AM" || lp === "Half_PM" ? 0.5 : 1;
-      return { billable_hours: 0, billable_day: billableDayFromHours(days * 8) };
+    const typeName = (row.leave_type || "").trim();
+    if (/loss.*pay/i.test(typeName)) {
+      return { billable_hours: 0, billable_day: 0 };
     }
-    return { billable_hours: 0, billable_day: 0 };
+    const perType = leaveBillableByType && typeName
+      ? leaveBillableByType[typeName]
+      : undefined;
+    const isLeaveBillable = perType !== undefined ? perType : policy.leave_billable;
+    if (!isLeaveBillable) {
+      return { billable_hours: 0, billable_day: 0 };
+    }
+    // Bill only the paid portion when LOP split is known.
+    if (paidLeaveDays != null) {
+      if (paidLeaveDays <= 0) return { billable_hours: 0, billable_day: 0 };
+      const half = paidLeaveDays <= 0.5;
+      const bh = half ? policy.min_hours_half_day : policy.min_hours_full_day;
+      return { billable_hours: bh, billable_day: billableDayFromHours(bh) };
+    }
+    const half = lp === "Half_AM" || lp === "Half_PM";
+    const bh = half ? policy.min_hours_half_day : policy.min_hours_full_day;
+    return { billable_hours: bh, billable_day: billableDayFromHours(bh) };
   }
   if (att === "Holiday") {
+    if (hours > 0) {
+      if (!policy.comp_off_billable) return { billable_hours: 0, billable_day: 0 };
+      return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+    }
     return policy.holidays_billable
-      ? { billable_hours: 0, billable_day: billableDayFromHours(8) }
+      ? {
+          billable_hours: policy.min_hours_full_day,
+          billable_day: billableDayFromHours(policy.min_hours_full_day),
+        }
       : { billable_hours: 0, billable_day: 0 };
   }
   return { billable_hours: 0, billable_day: 0 };
+}
+
+/** Live mirror of server comp_off_earned / comp_off_billed (day fractions). */
+function liveCompOffDayFraction(
+  entries: EntryRow[],
+  policy: BillingPolicy,
+  mode: "earned" | "billed",
+): number {
+  const wantBill = mode === "billed";
+  if (wantBill !== !!policy.comp_off_billable) return 0;
+  return round2(entries.reduce((s, e) => {
+    const hours = Number(e.hours_worked || 0);
+    if (hours <= 0) return s;
+    const isOff = e.day_type === "Week_Off" || e.day_type === "Holiday"
+      || e.attendance_status === "Week_Off" || e.attendance_status === "Holiday";
+    if (!isOff) return s;
+    if (hours >= policy.min_hours_full_day) return s + 1;
+    if (hours >= policy.min_hours_half_day) return s + 0.5;
+    return s;
+  }, 0));
+}
+
+const isCompOffName = (name: string) => /comp.*off/i.test(name || "");
+const isLopName = (name: string) => /loss.*pay/i.test(name || "");
+
+/** Per-row paid vs LOP split mirroring server classify_timesheet_leave_paid_vs_lop. */
+function classifyLeavePaidVsLop(
+  entries: EntryRow[],
+  leaveBalances: Record<string, number>,
+): { paidDays: number[]; lopDays: number[]; totalLop: number } {
+  const runningUsed: Record<string, number> = {};
+  const paidDays: number[] = [];
+  const lopDays: number[] = [];
+  let totalLop = 0;
+  entries.forEach((e) => {
+    if (e.attendance_status !== "Leave" || !e.leave_type) {
+      paidDays.push(0);
+      lopDays.push(0);
+      return;
+    }
+    const half = e.leave_period === "Half_AM" || e.leave_period === "Half_PM";
+    const req = half ? 0.5 : 1;
+    const name = e.leave_type;
+    if (isCompOffName(name)) {
+      paidDays.push(req);
+      lopDays.push(0);
+      runningUsed[name] = (runningUsed[name] || 0) + req;
+      return;
+    }
+    if (isLopName(name)) {
+      paidDays.push(0);
+      lopDays.push(req);
+      totalLop += req;
+      return;
+    }
+    const avail = Math.max(Number(leaveBalances[name] ?? 0), 0);
+    const used = runningUsed[name] || 0;
+    const remaining = Math.max(avail - used, 0);
+    const paid = Math.min(req, remaining);
+    const lop = round2(req - paid);
+    paidDays.push(paid);
+    lopDays.push(lop);
+    totalLop += lop;
+    runningUsed[name] = used + paid;
+  });
+  return { paidDays, lopDays, totalLop: round2(totalLop) };
 }
 
 const dayTypeLabel = (v: string) => {
@@ -225,6 +363,13 @@ const tsStatusLabel = (status?: string | null) => {
 };
 const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : "—");
 const pretty = (s?: string | null) => (s ? String(s).replace(/_/g, " ") : "—");
+const leavePeriodLabel = (p?: string | null) => {
+  if (!p) return "—";
+  if (p === "Half_AM") return "Half AM";
+  if (p === "Half_PM") return "Half PM";
+  if (p === "Full") return "Full Day";
+  return pretty(p);
+};
 const weekday = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "long" });
 const entryDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString();
 const inr = (v?: number | null) =>
@@ -449,6 +594,18 @@ export function TimesheetsListPage() {
                   </select>
                 </>
               }
+              rowActions={canManage ? (r) => (
+                <RowActions
+                  entity="timesheet"
+                  itemLabel={`${projectName(r.project_id)} · ${MONTHS[(r.month || 1) - 1]} ${r.year}`}
+                  onEdit={() => crmNavigate(`timesheets/${r.id}`)}
+                  deleteUrl={`/api/timesheets/${r.id}`}
+                  onDeleted={load}
+                  notify={showToast}
+                  canEdit
+                  canDelete
+                />
+              ) : undefined}
             />
           )}
         </>
@@ -567,41 +724,346 @@ function NewTimesheetModal({
   }
 
   return (
-    <Modal title={locked ? "Add Timesheet" : "New Timesheet"} onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="Project" required error={errors.project}>
-          <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={locked}>
-            <option value="">Select project…</option>
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Employee" required error={errors.employee}>
-          <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={locked || !projectId}>
-            <option value="">{projectId ? "Select employee…" : "Select a project first"}</option>
-            {employeeOptions.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </Field>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Month">
-            <select className={inputCls} value={month} onChange={(e) => setMonth(e.target.value)} disabled={locked}>
-              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+    <Modal
+      title={<span className="sr-only">{locked ? "Add Timesheet" : "New Timesheet"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={locked ? "Add Timesheet" : "New Timesheet"}
+        subtitle="Pick the project, employee, and month — a full-month day grid is generated automatically."
+        icon={<Clock size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <WizardField label="Project" required error={errors.project} icon="building">
+            <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={locked}>
+              <option value="">Select project…</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-          </Field>
-          <Field label="Year" error={errors.year}>
-            <input type="number" min={2000} max={2100} className={inputCls} value={year} onChange={(e) => setYear(e.target.value)} disabled={locked} />
-          </Field>
+          </WizardField>
+          <WizardField label="Employee" required error={errors.employee} icon="user">
+            <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={locked || !projectId}>
+              <option value="">{projectId ? "Select employee…" : "Select a project first"}</option>
+              {employeeOptions.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </WizardField>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Month" icon="calendar">
+              <select className={inputCls} value={month} onChange={(e) => setMonth(e.target.value)} disabled={locked}>
+                {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Year" error={errors.year} icon="hash" filled={!errors.year && year.trim() !== ""}>
+              <input type="number" min={2000} max={2100} className={inputCls} value={year} onChange={(e) => setYear(e.target.value)} disabled={locked} />
+            </WizardField>
+          </div>
+          {!locked && (
+            <InfoChip>A full month day grid will be generated automatically.</InfoChip>
+          )}
         </div>
         {!locked && (
-          <p className="text-xs text-muted">A full month day grid will be generated automatically.</p>
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create timesheet"}</button>
+          </div>
         )}
-      </div>
-      {!locked && (
-        <div className="mt-5 flex justify-end gap-2">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Creating…" : "Create timesheet"}</button>
+      </WizFormShell>
+    </Modal>
+  );
+}
+
+/* ================================================================ APPLY LEAVE (grid) */
+
+const LEAVE_PERIOD_SEGMENTS = [
+  { value: "Full", label: "Full Day" },
+  { value: "Half_AM", label: "Half AM" },
+  { value: "Half_PM", label: "Half PM" },
+] as const;
+
+/** Small apply-leave dialog for 0-hour Absent rows (and Change on Leave rows).
+ * Uses leaveBalances from the detail page — same map as billing / LOP classification.
+ * Visual-only premium chrome; leave_type / leave_period / note + Apply rules unchanged. */
+function TimesheetApplyLeaveDialog({
+  dateLabel,
+  leaveBalances,
+  usedByType,
+  initialType,
+  initialPeriod,
+  initialReason,
+  onClose,
+  onApply,
+}: {
+  dateLabel: string;
+  leaveBalances: Record<string, number>;
+  /** Days already requested on other Leave rows for each type (excludes this row). */
+  usedByType: Record<string, number>;
+  initialType?: string;
+  initialPeriod?: string;
+  initialReason?: string;
+  onClose: () => void;
+  onApply: (leaveType: string, leavePeriod: string, leaveReason: string) => void;
+}) {
+  const reduce = useReducedMotion();
+  const typeSelectRef = useRef<HTMLSelectElement>(null);
+  const available = useMemo(
+    () => Object.entries(leaveBalances)
+      .map(([name, bal]) => ({ name, bal: Number(bal) || 0 }))
+      .filter((t) => t.bal > 0)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [leaveBalances],
+  );
+  const [leaveType, setLeaveType] = useState(() => {
+    if (initialType && Number(leaveBalances[initialType] ?? 0) > 0) return initialType;
+    return "";
+  });
+  const [leavePeriod, setLeavePeriod] = useState(
+    () => (initialPeriod && ["Full", "Half_AM", "Half_PM"].includes(initialPeriod) ? initialPeriod : "Full"),
+  );
+  const [leaveReason, setLeaveReason] = useState(() => (initialReason || "").slice(0, 255));
+
+  const reqDays = leavePeriod === "Half_AM" || leavePeriod === "Half_PM" ? 0.5 : 1;
+  const selectedBal = leaveType ? Number(leaveBalances[leaveType] ?? 0) : 0;
+  const usedElsewhere = leaveType ? Number(usedByType[leaveType] ?? 0) : 0;
+  const remaining = round2(Math.max(selectedBal - usedElsewhere, 0));
+  const projected = round2(remaining - reqDays);
+  const compOff = leaveType ? isCompOffName(leaveType) : false;
+  const exceeds = !!leaveType && !compOff && projected < 0;
+  const canApply = !!leaveType && available.length > 0 && !exceeds;
+  const noteLen = leaveReason.length;
+  const counterCls =
+    noteLen >= 240 ? "text-amber-400"
+      : noteLen >= 200 ? "text-yellow-400/90"
+        : "text-[color:var(--wiz-muted)]";
+
+  useEffect(() => {
+    const t = window.setTimeout(() => typeSelectRef.current?.focus(), 40);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  return (
+    <Modal
+      title={(
+        <div className="flex min-w-0 items-center gap-3 pr-2">
+          <span className="fx-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#6D5DFB] to-[#8B7BFF] text-white shadow-[0_8px_24px_rgba(109,93,251,0.35)]">
+            <CalendarDays size={20} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <div className="text-base font-bold tracking-tight text-[color:var(--wiz-text)]">Apply leave</div>
+            <div className="truncate text-xs font-medium text-[color:var(--wiz-muted)]">{dateLabel}</div>
+          </div>
         </div>
       )}
+      onClose={onClose}
+      ariaLabel={`Apply leave — ${dateLabel}`}
+      scopeClassName="crm-wizard wiz-noise"
+      panelClassName="wiz-apply-leave-panel"
+      headerClassName="wiz-apply-leave-header"
+      bodyClassName="relative overflow-hidden !px-5 !py-5 sm:!px-6"
+    >
+      {/* Animated aurora + sheen (static when reduced-motion) */}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden>
+        <div className={`wiz-aurora-blob wiz-aurora-a${reduce ? " !opacity-30" : ""}`} />
+        <div className={`wiz-aurora-blob wiz-aurora-b${reduce ? " !opacity-25" : ""}`} />
+        <div className={`wiz-aurora-blob wiz-aurora-c${reduce ? " !opacity-20" : ""}`} />
+        {!reduce && <div className="wiz-aurora-sheen" />}
+        <div
+          className="absolute inset-0 opacity-[0.35]"
+          style={{
+            backgroundImage:
+              "linear-gradient(135deg, rgba(109,93,251,0.08), transparent 45%, rgba(139,123,255,0.06))",
+          }}
+        />
+      </div>
+
+      <div className="relative z-10 space-y-5">
+        {available.length === 0 ? (
+          <p className="rounded-xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-input-bg)]/60 px-3 py-3 text-sm text-[color:var(--wiz-muted)]">
+            No leave balance available
+          </p>
+        ) : (
+          <Field label="Leave type" required>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                ref={typeSelectRef}
+                className={`${inputCls} min-w-0 flex-1`}
+                value={leaveType}
+                onChange={(e) => setLeaveType(e.target.value)}
+                aria-label="Leave type"
+              >
+                <option value="">Select…</option>
+                {available.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name} — {round2(t.bal)} day(s)
+                  </option>
+                ))}
+              </select>
+              {leaveType ? (
+                <span
+                  className="inline-flex shrink-0 items-center rounded-full bg-[rgba(109,93,251,0.18)] px-2.5 py-1 text-xs font-semibold text-[#c4b5fd] ring-1 ring-inset ring-[rgba(139,123,255,0.35)]"
+                  title={`Available balance: ${remaining} day(s)`}
+                >
+                  {remaining} day{remaining === 1 ? "" : "s"}
+                </span>
+              ) : null}
+            </div>
+          </Field>
+        )}
+
+        <Field label="Leave period">
+          <div
+            className="flex flex-wrap gap-1.5 rounded-xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-input-bg)]/70 p-1"
+            role="group"
+            aria-label="Leave period"
+          >
+            {LEAVE_PERIOD_SEGMENTS.map((seg) => {
+              const selected = leavePeriod === seg.value;
+              return (
+                <button
+                  key={seg.value}
+                  type="button"
+                  disabled={available.length === 0}
+                  aria-pressed={selected}
+                  onClick={() => setLeavePeriod(seg.value)}
+                  className={[
+                    "min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200",
+                    selected
+                      ? "btn-gradient text-white shadow-[0_6px_16px_rgba(109,93,251,0.35)]"
+                      : "bg-transparent text-[color:var(--wiz-muted)] hover:bg-white/5 hover:text-[color:var(--wiz-text)]",
+                    available.length === 0 ? "cursor-not-allowed opacity-50" : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  {seg.label}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+
+        <Field label="Note / Reason">
+          <textarea
+            className={`${inputCls} min-h-[4.5rem] resize-y`}
+            value={leaveReason}
+            maxLength={255}
+            placeholder="Optional note for this leave day…"
+            disabled={available.length === 0}
+            onChange={(e) => setLeaveReason(e.target.value.slice(0, 255))}
+            aria-label="Leave note or reason"
+          />
+          <motion.p
+            className={`mt-1 text-right text-xs font-medium tabular-nums ${counterCls}`}
+            animate={reduce ? undefined : { opacity: 1 }}
+            key={noteLen >= 240 ? "warn" : noteLen >= 200 ? "mid" : "ok"}
+          >
+            {noteLen}/255
+          </motion.p>
+        </Field>
+
+        {leaveType && (
+          <div className="rounded-xl border border-[color:var(--wiz-border-strong)] bg-[rgba(15,23,41,0.55)] px-3 py-2.5 text-sm text-[color:var(--wiz-muted)] backdrop-blur-sm">
+            <div>
+              Current balance:{" "}
+              <span className="font-semibold text-[color:var(--wiz-text)]">{remaining}</span> day(s)
+            </div>
+            <div>
+              After apply:{" "}
+              <span className={`font-semibold ${exceeds ? "text-danger" : "text-[color:var(--wiz-text)]"}`}>
+                {compOff ? round2(remaining - reqDays) : Math.max(projected, 0)}
+              </span>
+              {" "}day(s)
+              {compOff && <span className="ml-1 text-xs">(comp-off)</span>}
+            </div>
+            {exceeds && (
+              <p className="mt-1 text-xs font-semibold text-danger" role="alert">
+                Requested {reqDays} day(s) exceeds remaining balance ({remaining}).
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 border-t border-[color:var(--wiz-border)] pt-4">
+          <button
+            type="button"
+            className={`${btnSecondary} !bg-transparent !border-[color:var(--wiz-border-strong)] hover:!bg-white/5`}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={`${btnPrimary} btn-gradient !border-0 px-5 shadow-[0_8px_24px_rgba(109,93,251,0.35)] transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50`}
+            disabled={!canApply}
+            onClick={() => {
+              if (!canApply) return;
+              onApply(leaveType, leavePeriod, leaveReason.trim());
+            }}
+          >
+            Apply
+          </button>
+        </div>
+      </div>
     </Modal>
+  );
+}
+
+/** Colored attendance / day-status pill (read-only display). */
+function AttendanceStatusPill({ status }: { status: string }) {
+  const label = pretty(status);
+  const tone =
+    status === "Present" ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+      : status === "Leave" ? "bg-violet-500/15 text-violet-300 ring-violet-500/30"
+        : status === "Absent" ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+          : status === "Half_Day" ? "bg-sky-500/15 text-sky-300 ring-sky-500/30"
+            : "bg-surface-2 text-muted ring-white/10";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${tone}`}
+      title={label}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Applied-leave chip: type · period, optional note icon, optional Change. */
+function LeaveAppliedChip({
+  leaveType,
+  leavePeriod,
+  leaveReason,
+  onChange,
+}: {
+  leaveType: string;
+  leavePeriod: string;
+  leaveReason?: string;
+  onChange?: () => void;
+}) {
+  const period = leavePeriodLabel(leavePeriod);
+  const label = `${leaveType || "—"} · ${period}`;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span
+        className="inline-flex max-w-[14rem] items-center gap-1 rounded-full bg-violet-500/15 px-2.5 py-0.5 text-xs font-semibold text-violet-200 ring-1 ring-inset ring-violet-500/30"
+        title={leaveReason ? `${label} — ${leaveReason}` : label}
+      >
+        <span className="truncate">{label}</span>
+        {leaveReason ? (
+          <MessageSquare
+            size={12}
+            className="shrink-0 opacity-80"
+            aria-label={`Note: ${leaveReason}`}
+          />
+        ) : null}
+      </span>
+      {onChange && (
+        <button
+          type="button"
+          className={`${btnSecondary} !px-2 !py-0.5 text-xs`}
+          onClick={onChange}
+        >
+          Change
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -616,7 +1078,8 @@ export function TimesheetDetailPage() {
   const [dirty, setDirty] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [employeeName, setEmployeeName] = useState("");
-  const [leaveTypes, setLeaveTypes] = useState<string[]>([]);
+  const [leaveBalances, setLeaveBalances] = useState<Record<string, number>>({});
+  const [applyLeaveRow, setApplyLeaveRow] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<"submit" | "approve" | null>(null);
@@ -628,6 +1091,7 @@ export function TimesheetDetailPage() {
     week_off_billable: false,
     leave_billable: false,
     holidays_billable: false,
+    comp_off_billable: false,
     min_hours_full_day: 8,
     min_hours_half_day: 4,
   };
@@ -639,35 +1103,84 @@ export function TimesheetDetailPage() {
     return "Working";
   };
 
-  const toRows = (list: Entry[], policy: BillingPolicy, maxDay?: number | null): EntryRow[] =>
-    list.map((e) => {
+  const resolvedDefaultHours = (maxDay?: number | null): string => {
+    if (maxDay != null && Number(maxDay) > 0) return String(Number(maxDay));
+    return "8";
+  };
+
+  const toRows = (
+    list: Entry[],
+    policy: BillingPolicy,
+    maxDay?: number | null,
+    leaveByType?: Record<string, boolean> | null,
+    balances?: Record<string, number>,
+  ): EntryRow[] => {
+    const bases = list.map((e) => {
       const day_type = inferDayType(e);
-      const base = {
+      const isWorking = day_type === "Working";
+      // Legacy auto-fill was 8.5; prefer project max (or 8) so Hours Worked matches policy.
+      const defHrs = resolvedDefaultHours(maxDay);
+      let hoursWorked = e.hours_worked != null ? String(e.hours_worked) : "0";
+      if (isWorking && (Number(hoursWorked) === 8.5) && Number(defHrs) !== 8.5) {
+        hoursWorked = defHrs;
+      }
+      return {
         entry_date: e.entry_date,
         day_of_week: e.day_of_week || weekday(e.entry_date),
         day_type,
-        is_working: day_type === "Working",
-        hours_worked: e.hours_worked != null ? String(e.hours_worked) : "0",
+        is_working: isWorking,
+        hours_worked: hoursWorked,
         attendance_status: e.attendance_status || (day_type === "Holiday" ? "Holiday" : day_type === "Week_Off" ? "Week_Off" : "Present"),
         leave_type: e.leave_type || "",
         leave_period: e.leave_period || "",
+        leave_reason: e.leave_reason || "",
         location: e.location || "Onsite",
         view_flag: !!e.view_flag,
         entry_project_id: e.entry_project_id ? String(e.entry_project_id) : "",
-      };
-      const live = dirty
-        ? computeBillables(base, policy, maxDay)
-        : {
-            billable_hours: e.billable_hours ?? 0,
-            billable_day: e.billable_day ?? billableDayFromHours(e.billable_hours ?? 0),
-          };
+        billable_hours: 0,
+        billable_days: e.billable_days,
+        billable_day: 0,
+      } as EntryRow;
+    });
+    const split = classifyLeavePaidVsLop(bases, balances || {});
+    return bases.map((base, i) => {
+      const live = computeBillables(
+        base, policy, maxDay, leaveByType,
+        base.attendance_status === "Leave" ? split.paidDays[i] : null,
+      );
       return {
         ...base,
         billable_hours: live.billable_hours,
-        billable_days: e.billable_days,
         billable_day: live.billable_day,
       };
     });
+  };
+
+  const applyLeaveBalances = useCallback((data: TimesheetDetail) => {
+    if (data.leave_balances_by_type && Object.keys(data.leave_balances_by_type).length) {
+      setLeaveBalances(data.leave_balances_by_type);
+      return;
+    }
+    // Fallback: employee yearly balances (self or HR endpoint).
+    const toMap = (rows: any[] | undefined) => {
+      const m: Record<string, number> = {};
+      (rows || []).forEach((b: any) => {
+        if (b.leave_type_name != null) m[b.leave_type_name] = Number(b.balance ?? 0);
+      });
+      return m;
+    };
+    if (!data.employee_id) return;
+    crmGet<any[]>(`/api/employees/${data.employee_id}/leave-balances?year=${data.year}`)
+      .then((r) => setLeaveBalances(toMap(r.data)))
+      .catch(() => {
+        crmGet<any[]>(`/api/me/leave-balances?year=${data.year}`)
+          .then((r) => setLeaveBalances(toMap(r.data)))
+          .catch(() => {});
+      });
+  }, []);
+
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
 
   const load = useCallback(async () => {
     setError("");
@@ -675,10 +1188,27 @@ export function TimesheetDetailPage() {
       const res = await crmGet<TimesheetDetail>(`/api/timesheets/${id}`);
       setTs(res.data);
       const policy = res.data.billing_policy || defaultPolicy;
-      setEntries(toRows(res.data.entries || [], policy, res.data.max_billable_hours_day));
-      setDirty(false);
+      const maxDay = res.data.max_billable_hours_day;
+      const balMap = res.data.leave_balances_by_type || {};
+      const rows = toRows(
+        res.data.entries || [],
+        policy,
+        maxDay,
+        res.data.leave_billable_by_type,
+        balMap,
+      );
+      setEntries(rows);
+      // Persist legacy 8.5 → project-default (e.g. 8) rewrite on next Save.
+      const rewritten = (res.data.entries || []).some((e, i) => {
+        const dayType = inferDayType(e);
+        return dayType === "Working"
+          && Number(e.hours_worked) === 8.5
+          && Number(rows[i]?.hours_worked) !== 8.5;
+      });
+      setDirty(rewritten && (res.data.status === "Draft" || res.data.status === "Rejected"));
       if (res.data.summary) setSummary(res.data.summary);
       else crmGet<Summary>(`/api/timesheets/${id}/summary`).then((s) => setSummary(s.data)).catch(() => {});
+      applyLeaveBalances(res.data);
       if (!res.data.project_title || !res.data.employee_name) {
         crmGet<any>(`/api/projects/${res.data.project_id}`)
           .then((p) => {
@@ -691,60 +1221,152 @@ export function TimesheetDetailPage() {
     } catch (e: any) {
       setError(e?.message || "Failed to load timesheet");
     }
-  }, [id]);
+  }, [id, applyLeaveBalances]);
   useEffect(() => { load(); }, [load]);
 
+  // Live refresh when returning to this tab after editing project policy — skip if dirty.
   useEffect(() => {
-    crmGet<any[]>("/api/leave-policy-types?limit=100")
-      .then((r) => setLeaveTypes((r.data || []).map((t: any) => t.name).filter(Boolean)))
-      .catch(() => {});
-  }, []);
+    const maybeReload = () => {
+      if (document.visibilityState === "hidden") return;
+      if (dirtyRef.current) return;
+      load();
+    };
+    const onFocus = () => maybeReload();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") maybeReload();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [load]);
 
+  // leave balances loaded via applyLeaveBalances inside load() (and focus refetch)
+
+  const reduceMotion = useReducedMotion();
   const holidaySet = useMemo(() => new Set(ts?.holiday_dates || []), [ts?.holiday_dates]);
   const policy = ts?.billing_policy || defaultPolicy;
 
+  const leaveSplit = useMemo(
+    () => classifyLeavePaidVsLop(entries, leaveBalances),
+    [entries, leaveBalances],
+  );
+
   const liveSummary = useMemo(() => {
     const hours = entries.reduce((s, e) => s + Number(e.hours_worked || 0), 0);
-    const billableHours = entries.reduce((s, e) => s + (e.billable_hours || 0), 0);
+    const billableHours = entries.reduce((s, e, i) => {
+      const live = computeBillables(
+        e, policy, ts?.max_billable_hours_day, ts?.leave_billable_by_type,
+        e.attendance_status === "Leave" ? leaveSplit.paidDays[i] : null,
+      );
+      return s + (live.billable_hours || 0);
+    }, 0);
     const actualBillableDay = billableDayFromHours(billableHours);
-    const workingDays = entries.filter((e) => e.day_type === "Working").length;
+    const totalLeaveDays = round2(entries.reduce((s, e) => {
+      if (e.attendance_status !== "Leave") return s;
+      const half = e.leave_period === "Half_AM" || e.leave_period === "Half_PM";
+      return s + (half ? 0.5 : 1);
+    }, 0));
     return {
       hours,
       billableHours,
       actualBillableDay,
-      totalLeaveDays: round2(workingDays - actualBillableDay),
+      totalLeaveDays,
+      totalLopDays: leaveSplit.totalLop,
+      compOffEarned: liveCompOffDayFraction(entries, policy, "earned"),
+      compOffBilled: liveCompOffDayFraction(entries, policy, "billed"),
     };
-  }, [entries]);
+  }, [entries, leaveSplit, policy, ts?.max_billable_hours_day, ts?.leave_billable_by_type]);
+
+  const applyLeaveDialog = useMemo(() => {
+    if (applyLeaveRow == null) return null;
+    const row = entries[applyLeaveRow];
+    if (!row) return null;
+    const usedByType: Record<string, number> = {};
+    entries.forEach((e, i) => {
+      if (i === applyLeaveRow) return;
+      if (e.attendance_status !== "Leave" || !e.leave_type) return;
+      const half = e.leave_period === "Half_AM" || e.leave_period === "Half_PM";
+      usedByType[e.leave_type] = (usedByType[e.leave_type] || 0) + (half ? 0.5 : 1);
+    });
+    return { row, idx: applyLeaveRow, usedByType };
+  }, [applyLeaveRow, entries]);
 
   if (error) return <ErrorBox error={error} onRetry={load} />;
   if (!ts) return <Spinner label="Loading timesheet…" />;
 
   const editable = ts.status === "Draft" || ts.status === "Rejected";
 
+  /** Default Hours Worked from project max billable hrs/day; fall back to 8. */
+  const defaultHoursWorked = (): string => resolvedDefaultHours(ts.max_billable_hours_day);
+
   const applyDayType = (row: EntryRow, dayType: string): Partial<EntryRow> => {
     if (dayType === "Holiday") {
-      return { day_type: dayType, is_working: false, hours_worked: "0", attendance_status: "Holiday", leave_type: "", leave_period: "" };
+      return { day_type: dayType, is_working: false, hours_worked: "0", attendance_status: "Holiday", leave_type: "", leave_period: "", leave_reason: "" };
     }
     if (dayType === "Week_Off") {
-      return { day_type: dayType, is_working: false, hours_worked: "0", attendance_status: "Week_Off", leave_type: "", leave_period: "" };
+      return { day_type: dayType, is_working: false, hours_worked: "0", attendance_status: "Week_Off", leave_type: "", leave_period: "", leave_reason: "" };
     }
-    return { day_type: "Working", is_working: true, hours_worked: row.hours_worked === "0" ? "8.5" : row.hours_worked, attendance_status: "Present" };
+    return {
+      day_type: "Working",
+      is_working: true,
+      hours_worked: row.hours_worked === "0" ? defaultHoursWorked() : row.hours_worked,
+      attendance_status: "Present",
+    };
   };
 
   const updateEntry = (idx: number, patch: Partial<EntryRow>) => {
-    setEntries((prev) => prev.map((row, i) => {
-      if (i !== idx) return row;
-      let next = { ...row, ...patch };
-      if (patch.day_type) next = { ...next, ...applyDayType(next, patch.day_type) };
-      if (patch.attendance_status === "Leave" && !next.leave_type) next.leave_type = "";
-      if (patch.attendance_status && patch.attendance_status !== "Leave") {
-        next.leave_type = "";
-        next.leave_period = "";
-      }
-      next = applyHoursAttendanceRule(next);
-      const live = computeBillables(next, policy, ts.max_billable_hours_day);
-      return { ...next, billable_hours: live.billable_hours, billable_day: live.billable_day };
-    }));
+    setEntries((prev) => {
+      const nextRows = prev.map((row, i) => {
+        if (i !== idx) return row;
+        let next = { ...row, ...patch };
+        if (patch.day_type) next = { ...next, ...applyDayType(next, patch.day_type) };
+        if (patch.attendance_status === "Leave" && !next.leave_type) next.leave_type = "";
+        if (patch.attendance_status && patch.attendance_status !== "Leave") {
+          next.leave_type = "";
+          next.leave_period = "";
+          next.leave_reason = "";
+        }
+        // Hours Worked = 0 on a working day → Attendance = Absent (Apply leave via dialog).
+        // Typing hours back re-derives Present/Half via applyHoursAttendanceRule.
+        // Week Off / Holiday: keep attendance as-is; do not force hours back to 0.
+        if (patch.hours_worked !== undefined && next.day_type === "Working") {
+          const hw = Number(next.hours_worked || 0);
+          if (hw === 0) {
+            next.attendance_status = "Absent";
+            next.leave_type = "";
+            next.leave_period = "";
+            next.leave_reason = "";
+          } else if (next.attendance_status === "Leave") {
+            next.attendance_status = "Present";
+            next.leave_type = "";
+            next.leave_period = "";
+            next.leave_reason = "";
+          }
+        }
+        // Soft hour-cap: clamp Week Off / Working hours to project max when set.
+        if (patch.hours_worked !== undefined && next.day_type !== "Holiday") {
+          const cap = ts.max_billable_hours_day;
+          const parsed = Number(next.hours_worked || 0);
+          if (cap != null && Number(cap) > 0 && parsed > Number(cap)) {
+            next.hours_worked = String(Number(cap));
+          }
+        }
+        next = applyHoursAttendanceRule(next);
+        return next;
+      });
+      // Recompute billables with LOP-aware paid portion across the whole sheet.
+      const split = classifyLeavePaidVsLop(nextRows, leaveBalances);
+      return nextRows.map((row, i) => {
+        const live = computeBillables(
+          row, policy, ts.max_billable_hours_day, ts.leave_billable_by_type,
+          row.attendance_status === "Leave" ? split.paidDays[i] : null,
+        );
+        return { ...row, billable_hours: live.billable_hours, billable_day: live.billable_day };
+      });
+    });
     setDirty(true);
   };
 
@@ -761,6 +1383,8 @@ export function TimesheetDetailPage() {
         leave_type: e.attendance_status === "Leave" && e.leave_type && e.leave_type !== "Not Applied"
           ? e.leave_type : null,
         leave_period: e.leave_period || null,
+        leave_reason: e.attendance_status === "Leave" && e.leave_reason
+          ? e.leave_reason.slice(0, 255) : null,
         location: e.location || "Onsite",
         view_flag: e.view_flag,
         entry_project_id: e.entry_project_id ? Number(e.entry_project_id) : null,
@@ -789,11 +1413,12 @@ export function TimesheetDetailPage() {
     }
   };
 
-  const cellCls = "px-2 py-1.5";
-  const miniInput = `${inputCls} !px-2 !py-1 text-xs`;
+  const cellCls = "border-r border-white/[0.04] px-3 py-2.5 last:border-r-0";
+  const miniInput = `${inputCls} !rounded-lg !px-2.5 !py-1.5 text-xs ${focusRing}`;
+  const GRID_COLS = 11;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* ------------------------------------------------ header */}
       <div className="flex flex-wrap items-center gap-3">
         <CrmLink to="timesheets" className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300">
@@ -837,10 +1462,19 @@ export function TimesheetDetailPage() {
               <button className={btnPrimary} onClick={saveEntries} disabled={saving || !dirty}>
                 <Save size={15} /> {saving ? "Saving…" : "Save entries"}
               </button>
-              <button className={btnSecondary} onClick={() => setConfirm("submit")} disabled={saving}>
+              <button
+                className={btnSecondary}
+                onClick={() => setConfirm("submit")}
+                disabled={saving}
+              >
                 <Send size={15} /> Submit
               </button>
             </>
+          )}
+          {editable && leaveSplit.totalLop > 0 && (
+            <span className="text-xs font-semibold text-secondary" role="status">
+              Excess leave converts to Loss of Pay ({leaveSplit.totalLop} day{leaveSplit.totalLop === 1 ? "" : "s"}) — non-billable.
+            </span>
           )}
           {ts.status === "Submitted" && isStaff && (
             <>
@@ -863,29 +1497,30 @@ export function TimesheetDetailPage() {
 
       {/* ------------------------------------------------ timesheet details (daily grid) */}
       <div className="elev-1 overflow-hidden rounded-panel">
-        <div className="border-b border-subtle px-4 py-3 text-sm font-bold text-primary">Timesheet Details</div>
-        <div className="overflow-x-auto">
-        <table className="w-full min-w-max text-sm lg:min-w-0">
-          <thead>
-            <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-              <th className={cellCls}>S No</th>
-              <th className={cellCls}>Date</th>
-              <th className={cellCls}>Week Day</th>
-              <th className={cellCls}>Working/Not Working</th>
-              <th className={cellCls}>Hours Worked</th>
-              <th className={cellCls}>Attendance</th>
-              <th className={cellCls}>Leave Applied</th>
-              <th className={cellCls}>Leave Period</th>
-              <th className={`${cellCls} text-right`}>Billable Hours</th>
-              <th className={`${cellCls} text-right`}>Billable Day</th>
-              <th className={cellCls}>View</th>
-              <th className={cellCls}>Location</th>
+        <div className="border-b border-subtle px-4 py-3.5 text-sm font-bold tracking-wide text-primary">
+          Timesheet Details
+        </div>
+        <div className="overflow-x-auto" role="region" aria-label="Timesheet daily entries" tabIndex={0}>
+        <table className="w-full min-w-[72rem] border-collapse text-sm">
+          <thead className="sticky top-0 z-10">
+            <tr className="border-b border-subtle bg-surface-2/95 text-left text-[11px] font-bold uppercase tracking-wider text-muted backdrop-blur-sm">
+              <th scope="col" className={cellCls}>S No</th>
+              <th scope="col" className={cellCls}>Date</th>
+              <th scope="col" className={cellCls}>Week Day</th>
+              <th scope="col" className={cellCls}>Working/Not Working</th>
+              <th scope="col" className={cellCls}>Hours Worked</th>
+              <th scope="col" className={cellCls}>Attendance</th>
+              <th scope="col" className={cellCls}>Leave Applied</th>
+              <th scope="col" className={`${cellCls} text-right`}>Billable Hours</th>
+              <th scope="col" className={`${cellCls} text-right`}>Billable Day</th>
+              <th scope="col" className={cellCls}>View</th>
+              <th scope="col" className={cellCls}>Location</th>
             </tr>
           </thead>
           <tbody>
             {entries.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-muted">
+                <td colSpan={GRID_COLS} className="px-4 py-10 text-center text-muted">
                   No entries. {editable ? "This timesheet was created without pre-generated days." : ""}
                 </td>
               </tr>
@@ -893,61 +1528,99 @@ export function TimesheetDetailPage() {
             {entries.map((e, i) => {
               const isLeave = e.attendance_status === "Leave";
               const isCalendarHoliday = holidaySet.has(e.entry_date) || e.day_type === "Holiday";
+              const isWeekOff = e.day_type === "Week_Off";
+              const hoursNum = Number(e.hours_worked || 0);
+              const weekendWorked = (isWeekOff || isCalendarHoliday) && hoursNum > 0;
+              const hoursEditable = editable && !isCalendarHoliday
+                && (e.day_type === "Working" || isWeekOff);
               const attendanceOptions = isCalendarHoliday
                 ? ["Holiday"]
                 : e.day_type === "Week_Off"
                   ? ATTENDANCE.filter((a) => ["Week_Off", "Leave", "Absent", "Half_Day"].includes(a))
                   : ATTENDANCE.filter((a) => a !== "Holiday");
+              const zebra = i % 2 === 1 ? "bg-white/[0.02]" : "";
+              const weekendHl = weekendWorked
+                ? (policy.comp_off_billable
+                  ? "bg-violet-500/[0.08] ring-1 ring-inset ring-violet-500/20"
+                  : "bg-teal-500/[0.08] ring-1 ring-inset ring-teal-500/20")
+                : "";
+              const rowMotion = reduceMotion
+                ? undefined
+                : { initial: { opacity: 0, y: 4 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, delay: Math.min(i * 0.012, 0.25) } };
               return (
-                <tr
+                <motion.tr
                   key={e.entry_date}
-                  className={`border-b border-subtle ${e.day_type === "Working" ? "" : "bg-surface-2"}`}
+                  {...(rowMotion || {})}
+                  className={`border-b border-white/[0.04] transition-colors hover:bg-brand-500/[0.06] ${zebra} ${
+                    e.day_type === "Working" ? "" : "bg-surface-2/40"
+                  } ${weekendHl}`}
                 >
-                  <td className={`${cellCls} text-muted`}>{i + 1}</td>
+                  <td className={`${cellCls} tabular-nums text-muted`}>{i + 1}</td>
                   <td className={`${cellCls} whitespace-nowrap font-semibold text-primary`}>
                     {entryDate(e.entry_date)}
                   </td>
                   <td className={`${cellCls} whitespace-nowrap text-secondary`}>{e.day_of_week}</td>
                   <td className={cellCls}>
-                    <select
-                      className={`${miniInput} !w-28`}
-                      value={e.day_type}
-                      disabled={!editable || isCalendarHoliday}
-                      onChange={(ev) => updateEntry(i, { day_type: ev.target.value })}
+                    <span
+                      className="inline-flex items-center rounded-lg bg-surface-2 px-2.5 py-1 text-xs font-medium text-secondary ring-1 ring-inset ring-white/10"
+                      title="Calendar-driven — not editable"
+                      aria-label={`Working status: ${dayTypeLabel(e.day_type)}`}
                     >
-                      {DAY_TYPES.map((d) => (
-                        <option key={d} value={d} disabled={d === "Holiday" && !isCalendarHoliday}>{dayTypeLabel(d)}</option>
-                      ))}
-                    </select>
+                      {dayTypeLabel(e.day_type)}
+                    </span>
                   </td>
                   <td className={cellCls}>
-                    <input
-                      type="number" min={0} max={24} step={0.5}
-                      className={`${miniInput} !w-20`}
-                      value={e.hours_worked}
-                      disabled={!editable || isCalendarHoliday || e.day_type !== "Working"}
-                      onChange={(ev) => updateEntry(i, { hours_worked: ev.target.value })}
-                      onBlur={(ev) => {
-                        const parsed = parseFloat(ev.target.value);
-                        if (!Number.isNaN(parsed)) {
-                          updateEntry(i, { hours_worked: String(parsed) });
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="number" min={0} max={24} step={0.5}
+                        className={`${miniInput} !w-20`}
+                        value={e.hours_worked}
+                        disabled={!hoursEditable}
+                        aria-label={`Hours worked ${entryDate(e.entry_date)}`}
+                        title={
+                          ts.max_billable_hours_day != null
+                            ? `Max ${ts.max_billable_hours_day} h/day`
+                            : undefined
                         }
-                      }}
-                    />
+                        onChange={(ev) => updateEntry(i, { hours_worked: ev.target.value })}
+                        onBlur={(ev) => {
+                          const parsed = parseFloat(ev.target.value);
+                          if (!Number.isNaN(parsed)) {
+                            updateEntry(i, { hours_worked: String(parsed) });
+                          }
+                        }}
+                      />
+                      {weekendWorked && (
+                        <span
+                          className={
+                            policy.comp_off_billable
+                              ? "inline-flex items-center rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200 ring-1 ring-inset ring-violet-500/35"
+                              : "inline-flex items-center rounded-full bg-teal-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-200 ring-1 ring-inset ring-teal-500/35"
+                          }
+                          title={
+                            policy.comp_off_billable
+                              ? "Comp Off Billable ON — billed to client, no leave credit"
+                              : "Comp Off Billable OFF — leave credit on approval, not billed"
+                          }
+                        >
+                          {policy.comp_off_billable ? "Billable (comp-off)" : "Comp-off credit"}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className={cellCls}>
-                    {isCalendarHoliday ? (
-                      <span className="text-sm font-medium text-secondary" title="Locked from client holiday calendar">
-                        Holiday
-                      </span>
+                    {!editable || isCalendarHoliday ? (
+                      <AttendanceStatusPill status={isCalendarHoliday ? "Holiday" : e.attendance_status} />
                     ) : (
                       <select
                         className={`${miniInput} !w-28`}
                         value={e.attendance_status}
-                        disabled={!editable}
+                        aria-label={`Attendance ${entryDate(e.entry_date)}`}
                         onChange={(ev) => updateEntry(i, {
                           attendance_status: ev.target.value,
-                          ...(ev.target.value !== "Leave" ? { leave_type: "", leave_period: "" } : {}),
+                          ...(ev.target.value !== "Leave"
+                            ? { leave_type: "", leave_period: "", leave_reason: "" }
+                            : {}),
                         })}
                       >
                         {attendanceOptions.map((a) => (
@@ -957,42 +1630,36 @@ export function TimesheetDetailPage() {
                     )}
                   </td>
                   <td className={cellCls}>
-                    <select
-                      className={`${miniInput} !w-28`}
-                      value={e.leave_type || "Not Applied"}
-                      disabled={!editable || !isLeave}
-                      onChange={(ev) => updateEntry(i, {
-                        leave_type: ev.target.value === "Not Applied" ? "" : ev.target.value,
-                      })}
-                    >
-                      <option value="Not Applied">Not Applied</option>
-                      {leaveTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    {editable && e.attendance_status === "Absent" && e.day_type === "Working" ? (
+                      <button
+                        type="button"
+                        className={`${btnPrimary} !bg-brand-600/90 !px-2.5 !py-1 text-xs`}
+                        onClick={() => setApplyLeaveRow(i)}
+                      >
+                        Apply leave
+                      </button>
+                    ) : isLeave && e.leave_type ? (
+                      <LeaveAppliedChip
+                        leaveType={e.leave_type}
+                        leavePeriod={e.leave_period}
+                        leaveReason={e.leave_reason}
+                        onChange={editable ? () => setApplyLeaveRow(i) : undefined}
+                      />
+                    ) : null}
                   </td>
-                  <td className={cellCls}>
-                    <select
-                      className={`${miniInput} !w-24`}
-                      value={e.leave_period || ""}
-                      disabled={!editable || !isLeave}
-                      onChange={(ev) => updateEntry(i, { leave_period: ev.target.value })}
-                    >
-                      <option value="">NA</option>
-                      {LEAVE_PERIODS.filter(Boolean).map((p) => (
-                        <option key={p} value={p}>{p === "Half_AM" ? "Half AM" : p === "Half_PM" ? "Half PM" : pretty(p)}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className={`${cellCls} text-right font-semibold text-secondary`}>
+                  <td className={`${cellCls} text-right font-semibold tabular-nums text-secondary`}>
                     {e.billable_hours ?? "—"}
                   </td>
-                  <td className={`${cellCls} text-right font-semibold text-secondary`}>
+                  <td className={`${cellCls} text-right font-semibold tabular-nums text-secondary`}>
                     {e.billable_day ?? "—"}
                   </td>
                   <td className={cellCls}>
                     <input
                       type="checkbox"
+                      className={`rounded ${focusRing}`}
                       checked={e.view_flag}
                       disabled={!editable}
+                      aria-label={`View flag ${entryDate(e.entry_date)}`}
                       onChange={(ev) => updateEntry(i, { view_flag: ev.target.checked })}
                     />
                   </td>
@@ -1001,19 +1668,47 @@ export function TimesheetDetailPage() {
                       className={`${miniInput} !w-32`}
                       value={e.location || "Onsite"}
                       disabled={!editable}
+                      aria-label={`Location ${entryDate(e.entry_date)}`}
                       onChange={(ev) => updateEntry(i, { location: ev.target.value })}
                     >
                       {LOCATIONS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </select>
                   </td>
-                </tr>
+                </motion.tr>
               );
             })}
           </tbody>
         </table>
         </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-subtle px-4 py-2.5 text-[11px] text-muted">
+          <span className="font-semibold uppercase tracking-wide text-secondary">Legend</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-400/80" aria-hidden /> Present
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-violet-400/80" aria-hidden /> Leave
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-amber-400/80" aria-hidden /> Absent
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-slate-400/70" aria-hidden /> Week Off
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-sky-400/80" aria-hidden /> Holiday
+          </span>
+          <span className="mx-1 h-3 w-px bg-white/10" aria-hidden />
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex rounded-full bg-violet-500/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-violet-200">Billable</span>
+            Comp Off Billable ON
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex rounded-full bg-teal-500/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-teal-200">Credit</span>
+            Comp Off Billable OFF
+          </span>
+        </div>
         {dirty && (
-          <div className="border-t border-subtle bg-warning-soft px-4 py-2 text-xs font-semibold text-warning">
+          <div className="border-t border-subtle bg-warning-soft px-4 py-2 text-xs font-semibold text-warning" role="status">
             Unsaved changes — billable hours/days are recomputed by the server after saving.
           </div>
         )}
@@ -1024,7 +1719,8 @@ export function TimesheetDetailPage() {
 
       {/* ------------------------------------------------ summary / calculated fields */}
       <div className="glass rounded-panel p-4 sm:p-5">
-        <h2 className="text-sm font-bold text-primary">Summary</h2>
+        <h2 className="mb-1 text-sm font-bold tracking-wide text-primary">Summary</h2>
+        <p className="mb-3 text-xs text-muted">Rollup of days, hours, leave, and billables for this period.</p>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           <Stat label="Total Days" value={num(summary?.total_days)} />
           <Stat label="Total Working Days" value={num(summary?.working_days)} />
@@ -1034,12 +1730,14 @@ export function TimesheetDetailPage() {
           <Stat label="Total Week off" value={num(summary?.total_week_off)} />
           <Stat label="Total Billable Days" value={num(summary?.total_billable_days)} />
           <Stat label="Total Leave Days" value={num(dirty ? liveSummary.totalLeaveDays : summary?.total_leave_days ?? summary?.leave_days)} />
-          <Stat label="Total No of Days Worked" value={num(summary?.total_no_of_days_worked)} />
+          <Stat label="Total Loss of Pay Days" value={num(dirty ? liveSummary.totalLopDays : summary?.total_loss_of_pay_days)} />
+          <Stat label="Actual Working Days" value={num(summary?.total_no_of_days_worked)} />
           <Stat label="Actual Billable Day" value={num(dirty ? liveSummary.actualBillableDay : summary?.actual_billable_day ?? summary?.actual_billable_days)} />
           <Stat label="Total Holiday" value={num(summary?.holidays)} />
           <Stat label="Total Billable Hours" value={num(summary?.total_billable_hours)} />
           <Stat label="Total Leave Billable Days" value={num(summary?.total_leave_billable_days)} />
-          <Stat label="Comp-Off Earned" value={num(summary?.comp_off_earned)} />
+          <Stat label="Comp-Off Earned" value={num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)} />
+          <Stat label="Comp-Off Billed" value={num(dirty ? liveSummary.compOffBilled : summary?.comp_off_billed)} />
           <Stat label="Comp-Off Credited" value={num(summary?.comp_off_credited)} />
         </div>
         <div className="mt-4 grid gap-x-6 gap-y-4 border-t border-subtle pt-4 sm:grid-cols-3">
@@ -1112,6 +1810,27 @@ export function TimesheetDetailPage() {
           onError={(m) => showToast(m, "err")}
         />
       )}
+      {applyLeaveDialog && (
+        <TimesheetApplyLeaveDialog
+          key={`apply-leave-${applyLeaveDialog.idx}-${applyLeaveDialog.row.entry_date}`}
+          dateLabel={entryDate(applyLeaveDialog.row.entry_date)}
+          leaveBalances={leaveBalances}
+          usedByType={applyLeaveDialog.usedByType}
+          initialType={applyLeaveDialog.row.leave_type || ""}
+          initialPeriod={applyLeaveDialog.row.leave_period || "Full"}
+          initialReason={applyLeaveDialog.row.leave_reason || ""}
+          onClose={() => setApplyLeaveRow(null)}
+          onApply={(leaveType, leavePeriod, leaveReason) => {
+            updateEntry(applyLeaveDialog.idx, {
+              attendance_status: "Leave",
+              leave_type: leaveType,
+              leave_period: leavePeriod,
+              leave_reason: leaveReason,
+            });
+            setApplyLeaveRow(null);
+          }}
+        />
+      )}
       {toast}
     </div>
   );
@@ -1130,9 +1849,9 @@ function LabeledValue({ label, value, wrap }: { label: string; value: React.Reac
 /** Summary "calculated field" tile (v3 glass KPI tile). */
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="glass fx-gradient-border fx-lift rounded-card px-3 py-2.5">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
-      <div className="mt-0.5 font-display text-lg font-bold tabular-nums text-primary">{value}</div>
+    <div className="glass fx-gradient-border fx-lift rounded-xl px-3.5 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
+      <div className="mt-1 font-display text-lg font-bold tabular-nums text-primary">{value}</div>
     </div>
   );
 }
@@ -1252,6 +1971,7 @@ function InvoiceDetailsSection({
                           <th className={`${cell} text-right`}>Total Billed Hour / Qty</th>
                           <th className={`${cell} text-right`}>Rate Per Hour / Day</th>
                           <th className={`${cell} text-right`}>Leave</th>
+                          <th className={`${cell} text-right`}>Comp-off</th>
                           <th className={`${cell} text-right`}>Amount</th>
                           <th className={cell}>Invoice</th>
                         </tr>
@@ -1259,7 +1979,7 @@ function InvoiceDetailsSection({
                       <tbody>
                         {preview.line_items.length === 0 && (
                           <tr>
-                            <td colSpan={8} className="px-4 py-6 text-center text-muted">No invoice line items</td>
+                            <td colSpan={9} className="px-4 py-6 text-center text-muted">No invoice line items</td>
                           </tr>
                         )}
                         {preview.line_items.map((li) => (
@@ -1270,6 +1990,7 @@ function InvoiceDetailsSection({
                             <td className={`${cell} text-right text-secondary`}>{li.total_billed_qty}</td>
                             <td className={`${cell} text-right text-secondary`}>{inr(li.rate_per_unit)}</td>
                             <td className={`${cell} text-right text-secondary`}>{li.leave_billable_days}</td>
+                            <td className={`${cell} text-right text-secondary`}>{li.comp_off_billable_qty ?? 0}</td>
                             <td className={`${cell} text-right font-semibold text-primary`}>{inr(li.amount)}</td>
                             <td className={cell}>{invoiceCell}</td>
                           </tr>
@@ -1277,7 +1998,7 @@ function InvoiceDetailsSection({
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-strong">
-                          <td colSpan={6} className={`${cell} text-right text-xs font-bold uppercase tracking-wide text-muted`}>
+                          <td colSpan={7} className={`${cell} text-right text-xs font-bold uppercase tracking-wide text-muted`}>
                             Sub-total
                           </td>
                           <td className={`${cell} text-right text-base font-bold text-primary`}>
@@ -1997,20 +2718,30 @@ function RejectModal({
   };
 
   return (
-    <Modal title="Reject Timesheet" onClose={onClose}>
-      <Field label="Rejection reason" required error={error}>
-        <textarea
-          className={`${inputCls} min-h-24`}
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Explain why this timesheet is being rejected (min 10 characters)…"
-        />
-      </Field>
-      <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnDanger} onClick={submit} disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>
-      </div>
+    <Modal
+      title={<span className="sr-only">Reject Timesheet</span>}
+      onClose={onClose}
+      bodyClassName="!px-0 !py-0"
+    >
+      <WizFormShell
+        title="Reject Timesheet"
+        subtitle="Provide a clear reason (minimum 10 characters). The employee will be notified."
+        icon={<X size={20} aria-hidden />}
+      >
+        <WizardField label="Rejection reason" required error={error}>
+          <textarea
+            className={`${inputCls} min-h-24`}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Explain why this timesheet is being rejected (min 10 characters)…"
+          />
+        </WizardField>
+        <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnDanger} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }

@@ -70,8 +70,6 @@ export const INTERVIEW_NAV_VIEWS: InterviewView[] = [
 ];
 
 /** Admin and CEO are both super-admins (CEO is the top tier). */
-export const SUPERADMIN_ROLES = ["Admin", "CEO"] as const;
-
 export function isAdmin(roles: string[]): boolean {
   return roles.includes("Admin") || roles.includes("CEO");
 }

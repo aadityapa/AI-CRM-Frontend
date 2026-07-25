@@ -1,0 +1,449 @@
+/**
+ * Premium CRM wizard theme — scoped under `.crm-wizard`.
+ * Compact enterprise typography + solid dark navy (screenshot match).
+ */
+.crm-wizard {
+  --wiz-bg: #0b1220;
+  --wiz-card: #121a2e;
+  --wiz-elevated: #161f36;
+  --wiz-input-bg: #0f1729;
+  --wiz-border: rgba(255, 255, 255, 0.06);
+  --wiz-border-strong: rgba(255, 255, 255, 0.12);
+  --wiz-primary: #6d5dfb;
+  --wiz-primary-hover: #8b7bff;
+  --wiz-success: #22c55e;
+  --wiz-text: #ffffff;
+  --wiz-muted: #9ca3af;
+  --wiz-label: #94a3b8;
+  --wiz-radius: 20px;
+  --wiz-radius-sm: 12px;
+  --wiz-glow: 0 0 40px rgba(109, 93, 251, 0.25);
+  /* Compact type scale (screenshot) */
+  --wiz-fs-label: 11px;
+  --wiz-fs-body: 13px;
+  --wiz-fs-sm: 12px;
+  --wiz-fs-xs: 11px;
+  --wiz-fs-title: 15px;
+  --wiz-fs-section: 20px;
+  --wiz-fs-step: 13px;
+  --wiz-fs-step-sub: 11px;
+  color: var(--wiz-text);
+  background: var(--wiz-bg) !important;
+  font-size: var(--wiz-fs-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.crm-wizard.wiz-noise {
+  background-color: var(--wiz-bg) !important;
+  background-image:
+    radial-gradient(ellipse 70% 40% at 50% -10%, rgba(109, 93, 251, 0.12), transparent 55%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+/* Kill light-theme token bleed inside wizard */
+.crm-wizard,
+.crm-wizard .text-primary,
+.crm-wizard .text-secondary {
+  color: var(--wiz-text);
+}
+
+.crm-wizard .text-muted,
+.crm-wizard .text-secondary {
+  color: var(--wiz-muted) !important;
+}
+
+.crm-wizard .bg-surface-0,
+.crm-wizard .bg-surface-1,
+.crm-wizard .bg-surface-2 {
+  background-color: var(--wiz-card) !important;
+}
+
+.crm-wizard .wiz-glass {
+  background: rgba(18, 26, 46, 0.85);
+  border: 1px solid var(--wiz-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.crm-wizard .wiz-card {
+  background: var(--wiz-card);
+  border: 1px solid var(--wiz-border);
+  border-radius: 24px;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(109, 93, 251, 0.06);
+}
+
+/* ---- Compact labels & fields ---- */
+.crm-wizard label > span:first-child,
+.crm-wizard .wiz-field-label {
+  font-size: var(--wiz-fs-label) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
+  color: var(--wiz-label) !important;
+  text-transform: none;
+  margin-bottom: 0.35rem !important;
+}
+
+.crm-wizard .input-recessed,
+.crm-wizard input:not([type="checkbox"]):not([type="radio"]),
+.crm-wizard select,
+.crm-wizard textarea,
+.crm-wizard button.min-w-0 {
+  height: 42px !important;
+  min-height: 42px !important;
+  font-size: var(--wiz-fs-body) !important;
+  line-height: 1.3 !important;
+  border-radius: 10px !important;
+  border-color: var(--wiz-border) !important;
+  background: var(--wiz-input-bg) !important;
+  color: var(--wiz-text) !important;
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.crm-wizard textarea {
+  height: auto !important;
+  min-height: 88px !important;
+}
+
+.crm-wizard .input-recessed::placeholder,
+.crm-wizard input::placeholder,
+.crm-wizard textarea::placeholder {
+  color: #64748b !important;
+  font-size: var(--wiz-fs-sm) !important;
+}
+
+.crm-wizard .input-recessed:hover:not(:disabled):not(:focus):not(:focus-within),
+.crm-wizard input:hover:not(:disabled):not(:focus),
+.crm-wizard select:hover:not(:disabled):not(:focus),
+.crm-wizard button.min-w-0:hover:not(:disabled):not(:focus) {
+  border-color: rgba(109, 93, 251, 0.4) !important;
+}
+
+.crm-wizard .input-recessed:focus,
+.crm-wizard .input-recessed:focus-within,
+.crm-wizard input:focus,
+.crm-wizard select:focus,
+.crm-wizard textarea:focus,
+.crm-wizard button.min-w-0:focus {
+  outline: none !important;
+  border-color: var(--wiz-primary) !important;
+  box-shadow: 0 0 0 3px rgba(109, 93, 251, 0.25) !important;
+  transform: scale(1.005);
+}
+
+.crm-wizard .btn-gradient {
+  background-image: linear-gradient(135deg, #6d5dfb 0%, #8b7bff 100%) !important;
+  box-shadow: 0 8px 24px rgba(109, 93, 251, 0.35);
+  font-size: var(--wiz-fs-sm) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.crm-wizard .btn-gradient:hover:not(:disabled) {
+  background-image: linear-gradient(135deg, #7a6bff 0%, #9a8cff 100%) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(109, 93, 251, 0.45);
+}
+
+.crm-wizard .wiz-pulse-ring {
+  animation: wiz-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes wiz-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 93, 251, 0.45); }
+  50% { box-shadow: 0 0 0 6px rgba(109, 93, 251, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-wizard .wiz-pulse-ring,
+  .crm-wizard .input-recessed:focus,
+  .crm-wizard .btn-gradient:hover:not(:disabled) {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* Modal overlay scoped with crm-wizard: keep a dimmed glass backdrop (not solid page bg). */
+.crm-wizard.wiz-noise.fixed.inset-0 {
+  background-color: rgba(7, 10, 22, 0.78) !important;
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -15%, rgba(109, 93, 251, 0.22), transparent 58%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E") !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* Glassy apply-leave panel surface */
+.crm-wizard .wiz-apply-leave-panel {
+  position: relative;
+  background: rgba(18, 26, 46, 0.72) !important;
+  border: 1px solid rgba(109, 93, 251, 0.35) !important;
+  border-radius: 1.25rem !important;
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.55),
+    0 0 48px rgba(109, 93, 251, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  overflow: hidden;
+}
+
+.crm-wizard .wiz-apply-leave-header {
+  background: transparent !important;
+  border-bottom-color: rgba(109, 93, 251, 0.18) !important;
+}
+
+@keyframes wiz-aurora-drift-a {
+  0%, 100% { transform: translate(-8%, -6%) scale(1); }
+  50% { transform: translate(10%, 8%) scale(1.12); }
+}
+@keyframes wiz-aurora-drift-b {
+  0%, 100% { transform: translate(12%, 4%) scale(1.05); }
+  50% { transform: translate(-10%, -10%) scale(0.92); }
+}
+@keyframes wiz-aurora-drift-c {
+  0%, 100% { transform: translate(0%, 10%) scale(0.95); }
+  50% { transform: translate(-6%, -4%) scale(1.1); }
+}
+@keyframes wiz-sheen-sweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.crm-wizard .wiz-aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  pointer-events: none;
+  opacity: 0.45;
+  will-change: transform;
+}
+.crm-wizard .wiz-aurora-a {
+  width: 14rem;
+  height: 14rem;
+  top: -3rem;
+  left: -2rem;
+  background: radial-gradient(circle, #6d5dfb 0%, transparent 70%);
+  animation: wiz-aurora-drift-a 14s ease-in-out infinite;
+}
+.crm-wizard .wiz-aurora-b {
+  width: 12rem;
+  height: 12rem;
+  top: 30%;
+  right: -3rem;
+  background: radial-gradient(circle, #8b7bff 0%, transparent 70%);
+  animation: wiz-aurora-drift-b 18s ease-in-out infinite;
+}
+.crm-wizard .wiz-aurora-c {
+  width: 11rem;
+  height: 11rem;
+  bottom: -2rem;
+  left: 25%;
+  background: radial-gradient(circle, rgba(109, 93, 251, 0.8) 0%, transparent 70%);
+  animation: wiz-aurora-drift-c 16s ease-in-out infinite;
+}
+.crm-wizard .wiz-aurora-sheen {
+  position: absolute;
+  inset: -40%;
+  pointer-events: none;
+  opacity: 0.12;
+  background: conic-gradient(from 0deg, transparent, rgba(139, 123, 255, 0.55), transparent 40%);
+  animation: wiz-sheen-sweep 28s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-wizard .wiz-aurora-a,
+  .crm-wizard .wiz-aurora-b,
+  .crm-wizard .wiz-aurora-c,
+  .crm-wizard .wiz-aurora-sheen {
+    animation: none !important;
+  }
+}
+
+/* ================================================================== Moonlit wizard ambience
+ * Used by WizardAurora behind Opportunity / Customer / Employee full-screen wizards.
+ */
+.crm-wizard .wiz-moonlit-panel {
+  position: relative;
+  background: rgba(11, 18, 32, 0.92) !important;
+  box-shadow:
+    0 0 0 1px rgba(109, 93, 251, 0.22),
+    0 0 60px rgba(109, 93, 251, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+.crm-wizard .wiz-moonlit-header,
+.crm-wizard .wiz-moonlit-footer {
+  background: rgba(18, 26, 46, 0.72) !important;
+  border-color: rgba(109, 93, 251, 0.18) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.crm-wizard .wiz-moonlit-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.crm-wizard .wiz-moonlit-form-card {
+  background: rgba(18, 26, 46, 0.88) !important;
+  border-color: rgba(109, 93, 251, 0.28) !important;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.35),
+    0 0 32px rgba(109, 93, 251, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.wiz-moonlit-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(56px);
+  opacity: 0.38;
+  will-change: transform;
+}
+.wiz-moonlit-blob-a {
+  width: 22rem;
+  height: 22rem;
+  top: -6rem;
+  left: -4rem;
+  background: radial-gradient(circle, #6d5dfb 0%, transparent 68%);
+  animation: wiz-moonlit-drift-a 18s ease-in-out infinite;
+}
+.wiz-moonlit-blob-b {
+  width: 18rem;
+  height: 18rem;
+  bottom: 8%;
+  right: -5rem;
+  background: radial-gradient(circle, #8b7bff 0%, transparent 70%);
+  animation: wiz-moonlit-drift-b 22s ease-in-out infinite;
+}
+.wiz-moonlit-blob-c {
+  width: 16rem;
+  height: 16rem;
+  bottom: -3rem;
+  left: 35%;
+  background: radial-gradient(circle, rgba(109, 93, 251, 0.75) 0%, transparent 70%);
+  animation: wiz-moonlit-drift-c 20s ease-in-out infinite;
+}
+
+.wiz-moonlit-beam {
+  position: absolute;
+  top: -10%;
+  right: -5%;
+  width: 70%;
+  height: 85%;
+  background: linear-gradient(
+    215deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(139, 123, 255, 0.1) 28%,
+    transparent 62%
+  );
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.wiz-moonlit-moon-wrap {
+  position: absolute;
+  top: 1.5rem;
+  right: 2.5rem;
+  width: 7.5rem;
+  height: 7.5rem;
+  animation: wiz-moonlit-breathe 10s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.wiz-moonlit-moon-halo {
+  position: absolute;
+  inset: -28%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.28) 0%,
+    rgba(139, 123, 255, 0.18) 35%,
+    transparent 70%
+  );
+  filter: blur(8px);
+}
+.wiz-moonlit-moon {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 32% 28%, #ffffff 0%, #f0eeff 35%, #c8c0ff 70%, #8b7bff 100%);
+  box-shadow:
+    0 0 28px rgba(255, 255, 255, 0.35),
+    0 0 56px rgba(109, 93, 251, 0.35),
+    inset -10px -8px 20px rgba(109, 93, 251, 0.25);
+}
+.wiz-moonlit-crater {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(109, 93, 251, 0.12);
+  box-shadow: inset 1px 1px 2px rgba(11, 18, 32, 0.15);
+}
+.wiz-moonlit-crater-1 { width: 18%; height: 18%; top: 28%; left: 38%; }
+.wiz-moonlit-crater-2 { width: 12%; height: 12%; top: 52%; left: 58%; }
+.wiz-moonlit-crater-3 { width: 10%; height: 10%; top: 42%; left: 22%; }
+
+.wiz-moonlit-stars {
+  position: absolute;
+  inset: 0;
+}
+.wiz-moonlit-star {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 4px rgba(139, 123, 255, 0.6);
+  animation: wiz-moonlit-twinkle 3.6s ease-in-out infinite;
+}
+
+.wiz-moonlit-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(11, 18, 32, 0.25) 0%, rgba(11, 18, 32, 0.55) 55%, rgba(11, 18, 32, 0.72) 100%),
+    radial-gradient(ellipse 80% 50% at 85% 0%, transparent 0%, rgba(11, 18, 32, 0.35) 70%);
+}
+
+@keyframes wiz-moonlit-drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6%, 8%) scale(1.08); }
+}
+@keyframes wiz-moonlit-drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1.05); }
+  50% { transform: translate(-8%, -6%) scale(0.94); }
+}
+@keyframes wiz-moonlit-drift-c {
+  0%, 100% { transform: translate(0, 0) scale(0.98); }
+  50% { transform: translate(5%, -7%) scale(1.1); }
+}
+@keyframes wiz-moonlit-breathe {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.92; }
+  50% { transform: translate(-4px, 6px) scale(1.04); opacity: 1; }
+}
+@keyframes wiz-moonlit-twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.9); }
+  50% { opacity: 0.95; transform: scale(1.15); }
+}
+
+.wiz-moonlit--static .wiz-moonlit-blob-a,
+.wiz-moonlit--static .wiz-moonlit-blob-b,
+.wiz-moonlit--static .wiz-moonlit-blob-c,
+.wiz-moonlit--static .wiz-moonlit-moon-wrap,
+.wiz-moonlit--static .wiz-moonlit-star {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiz-moonlit-blob-a,
+  .wiz-moonlit-blob-b,
+  .wiz-moonlit-blob-c,
+  .wiz-moonlit-moon-wrap,
+  .wiz-moonlit-star {
+    animation: none !important;
+  }
+}

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>KARNEX AI HR</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
   <script>try{var _t=localStorage.getItem("karnexTheme");var _kd=_t==="dark"||(_t!=="light"&&(localStorage.getItem("karnexUiDark")==="1"||(!_t&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)));if(_kd)document.documentElement.classList.add("kx-dark");}catch(e){}</script>
@@ -3672,6 +3672,544 @@
       max-width: 440px;
     }
 
+    /* ============ STARTUP / LANDING (July 2026 premium redesign) ============
+       Every rule here is scoped to #screenStartup: the shared .startup-screen /
+       .startup-container / .hero-* skin is also used by the invite-welcome and
+       device-test screens and must stay untouched. Visual language mirrors the
+       auth screen redesign (--auth-* region further down) so landing -> login
+       reads as one product. Animations are transform/opacity only; the single
+       pointermove handler (inline module after the section markup) is
+       rAF-throttled and disabled for touch + prefers-reduced-motion. */
+    #screenStartup {
+      --lp-bg: #050816;
+      --lp-surface: #0f172a;
+      --lp-primary: #6366f1;
+      --lp-violet: #8b5cf6;
+      --lp-cyan: #22d3ee;
+      --lp-muted: #94a3b8;
+      --lp-text: #e2e8f0;
+      --lp-mx: 50vw;
+      --lp-my: 42vh;
+      background: var(--lp-bg);
+      overflow: hidden;
+      padding: 96px 24px 48px;
+      font-family: "Inter", "Segoe UI", Tahoma, Arial, sans-serif;
+    }
+    #screenStartup.leaving {
+      opacity: 0;
+      transform: scale(0.992);
+      pointer-events: none;
+    }
+    /* ---------- layered background ---------- */
+    #screenStartup .lp-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    #screenStartup .lp-bg > div { position: absolute; }
+    #screenStartup .lp-aurora {
+      inset: -45%;
+      background:
+        radial-gradient(34% 30% at 24% 28%, rgba(99, 102, 241, 0.34), transparent 68%),
+        radial-gradient(30% 28% at 74% 22%, rgba(139, 92, 246, 0.26), transparent 70%),
+        radial-gradient(26% 26% at 62% 74%, rgba(34, 211, 238, 0.13), transparent 72%),
+        radial-gradient(38% 34% at 30% 78%, rgba(99, 102, 241, 0.16), transparent 70%);
+      animation: lpAurora 52s ease-in-out infinite alternate;
+      will-change: transform;
+    }
+    #screenStartup .lp-grid {
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+      background-size: 56px 56px;
+      -webkit-mask-image: radial-gradient(70% 70% at 50% 42%, #000 30%, transparent 100%);
+      mask-image: radial-gradient(70% 70% at 50% 42%, #000 30%, transparent 100%);
+    }
+    #screenStartup .lp-orb {
+      border-radius: 50%;
+      filter: blur(30px); /* static filter — only transform is animated */
+      opacity: 0.55;
+      will-change: transform;
+    }
+    #screenStartup .lp-orb--indigo {
+      width: 340px; height: 340px; top: -110px; left: -80px;
+      background: radial-gradient(circle at 35% 32%, rgba(99, 102, 241, 0.5), transparent 70%);
+      animation: lpOrb 13s ease-in-out infinite;
+    }
+    #screenStartup .lp-orb--violet {
+      width: 400px; height: 400px; right: -130px; bottom: -150px;
+      background: radial-gradient(circle at 60% 55%, rgba(139, 92, 246, 0.42), transparent 70%);
+      animation: lpOrb 16s ease-in-out infinite reverse;
+    }
+    #screenStartup .lp-orb--cyan {
+      width: 240px; height: 240px; right: 16%; top: -90px;
+      background: radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.3), transparent 70%);
+      animation: lpOrb 18s ease-in-out 1.4s infinite;
+    }
+    /* CSS-only particle field: two 2px dots, many box-shadows, opacity twinkle */
+    #screenStartup .lp-stars {
+      width: 2px; height: 2px; left: 0; top: 0;
+      border-radius: 50%;
+      background: transparent;
+      box-shadow:
+        5vw 18vh 0 rgba(226, 232, 240, 0.55), 12vw 64vh 0 rgba(226, 232, 240, 0.35),
+        18vw 30vh 0 rgba(226, 232, 240, 0.5), 24vw 82vh 0 rgba(226, 232, 240, 0.3),
+        30vw 12vh 0 rgba(226, 232, 240, 0.45), 36vw 48vh 0 rgba(226, 232, 240, 0.3),
+        44vw 8vh 0 rgba(226, 232, 240, 0.5), 52vw 70vh 0 rgba(226, 232, 240, 0.35),
+        58vw 24vh 0 rgba(226, 232, 240, 0.5), 66vw 88vh 0 rgba(226, 232, 240, 0.3),
+        72vw 36vh 0 rgba(226, 232, 240, 0.45), 78vw 14vh 0 rgba(226, 232, 240, 0.55),
+        84vw 58vh 0 rgba(226, 232, 240, 0.35), 90vw 28vh 0 rgba(226, 232, 240, 0.5),
+        95vw 76vh 0 rgba(226, 232, 240, 0.35), 9vw 90vh 0 rgba(226, 232, 240, 0.3),
+        41vw 92vh 0 rgba(226, 232, 240, 0.35), 63vw 6vh 0 rgba(226, 232, 240, 0.45),
+        87vw 92vh 0 rgba(226, 232, 240, 0.3), 15vw 8vh 0 rgba(226, 232, 240, 0.4);
+      animation: lpTwinkle 7s ease-in-out infinite;
+    }
+    #screenStartup .lp-stars--b {
+      box-shadow:
+        8vw 40vh 0 rgba(165, 180, 252, 0.5), 21vw 16vh 0 rgba(165, 180, 252, 0.35),
+        27vw 60vh 0 rgba(165, 180, 252, 0.45), 34vw 90vh 0 rgba(34, 211, 238, 0.35),
+        40vw 26vh 0 rgba(165, 180, 252, 0.4), 48vw 84vh 0 rgba(165, 180, 252, 0.3),
+        55vw 44vh 0 rgba(34, 211, 238, 0.4), 61vw 66vh 0 rgba(165, 180, 252, 0.35),
+        69vw 10vh 0 rgba(165, 180, 252, 0.5), 75vw 78vh 0 rgba(165, 180, 252, 0.3),
+        81vw 42vh 0 rgba(34, 211, 238, 0.35), 88vw 12vh 0 rgba(165, 180, 252, 0.45),
+        93vw 52vh 0 rgba(165, 180, 252, 0.35), 3vw 72vh 0 rgba(165, 180, 252, 0.4),
+        46vw 4vh 0 rgba(165, 180, 252, 0.35), 97vw 88vh 0 rgba(165, 180, 252, 0.3);
+      animation-delay: 3.5s;
+    }
+    #screenStartup .lp-bloom {
+      width: 900px; height: 620px; left: 50%; top: 44%;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(closest-side, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.06) 55%, transparent 100%);
+    }
+    #screenStartup .lp-noise {
+      inset: 0;
+      opacity: 0.035;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 160px 160px;
+    }
+    #screenStartup .lp-spotlight {
+      inset: 0;
+      background: radial-gradient(440px 440px at var(--lp-mx) var(--lp-my), rgba(129, 140, 248, 0.1), transparent 70%);
+    }
+    /* ---------- slim glass top bar (visual only) ---------- */
+    #screenStartup .lp-topbar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 28px;
+      background: linear-gradient(180deg, rgba(5, 8, 22, 0.6), rgba(5, 8, 22, 0));
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    }
+    #screenStartup .lp-topbar-logo { height: 26px; width: auto; }
+    /* ---------- layout + typography ---------- */
+    #screenStartup .startup-container {
+      grid-template-columns: 1.06fr 0.94fr;
+      gap: 56px;
+      z-index: 2;
+    }
+    #screenStartup .hero-title {
+      font-family: "Space Grotesk", "Inter", "Segoe UI", sans-serif;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      font-size: clamp(46px, 5.6vw, 78px);
+      line-height: 1.05;
+      color: #f8fafc;
+      margin: 0 0 18px;
+      max-width: none;
+    }
+    #screenStartup .hero-title .lp-line {
+      display: inline-block;
+      opacity: 0;
+      animation: lpRise 0.7s cubic-bezier(0.22, 0.68, 0.32, 1) 0.05s both;
+    }
+    #screenStartup .hero-title span.italic {
+      font-style: normal;
+      display: inline-block;
+      background: linear-gradient(90deg, #818cf8, #a78bfa 35%, #22d3ee 72%, #818cf8);
+      background-size: 220% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      animation:
+        lpRise 0.7s cubic-bezier(0.22, 0.68, 0.32, 1) 0.16s both,
+        lpGradientSweep 8s ease-in-out 1s infinite alternate;
+    }
+    #screenStartup .hero-desc {
+      color: #cbd5e1;
+      font-size: 16px;
+      line-height: 1.65;
+      max-width: 520px;
+      margin-bottom: 24px;
+      opacity: 0;
+      animation: lpFade 0.8s ease 0.28s both;
+    }
+    /* ---------- feature badges ---------- */
+    #screenStartup .lp-badges {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0;
+      margin: 0 0 28px;
+    }
+    #screenStartup .lp-badge {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.55);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+      color: #cbd5e1;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      opacity: 0;
+      animation: lpRise 0.6s ease both;
+      transition: transform 0.25s ease, box-shadow 0.25s ease;
+    }
+    #screenStartup .lp-badge::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(129, 140, 248, 0.55), rgba(139, 92, 246, 0.25) 50%, rgba(34, 211, 238, 0.3));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+    #screenStartup .lp-badge svg { width: 14px; height: 14px; flex: none; stroke: #a5b4fc; }
+    #screenStartup .lp-badge:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 22px rgba(99, 102, 241, 0.25);
+    }
+    #screenStartup .lp-badge:nth-child(1) { animation-delay: 0.36s; }
+    #screenStartup .lp-badge:nth-child(2) { animation-delay: 0.42s; }
+    #screenStartup .lp-badge:nth-child(3) { animation-delay: 0.48s; }
+    #screenStartup .lp-badge:nth-child(4) { animation-delay: 0.54s; }
+    #screenStartup .lp-badge:nth-child(5) { animation-delay: 0.6s; }
+    /* ---------- CTA (same element + inline onclick, restyled only) ---------- */
+    #screenStartup .hero-actions {
+      margin-bottom: 4px;
+      opacity: 0;
+      animation: lpFade 0.7s ease 0.5s both;
+    }
+    #screenStartup .hero-actions .btn-primary {
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 15px 34px;
+      min-width: 200px;
+      border: none;
+      border-radius: 999px;
+      cursor: pointer;
+      font-family: "Space Grotesk", "Inter", sans-serif;
+      font-size: 15.5px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      color: #fff;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      box-shadow: 0 10px 30px rgba(99, 102, 241, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+      transition: transform 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease;
+      animation: lpCtaPulse 3.6s ease-in-out 1.8s infinite;
+    }
+    #screenStartup .hero-actions .btn-primary::after {
+      /* border shine sweep */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+      transform: translateX(-130%);
+      animation: lpShine 4.5s ease-in-out 2.2s infinite;
+      pointer-events: none;
+    }
+    #screenStartup .hero-actions .btn-primary svg {
+      width: 17px;
+      height: 17px;
+      flex: none;
+      transition: transform 0.22s ease;
+    }
+    #screenStartup .hero-actions .btn-primary:hover {
+      animation: none;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      transform: translateY(-2px);
+      filter: brightness(1.08);
+      box-shadow: 0 16px 44px rgba(139, 92, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+    #screenStartup .hero-actions .btn-primary:hover svg { transform: translateX(3px); }
+    #screenStartup .hero-actions .btn-primary:active {
+      transform: translateY(0) scale(0.97);
+      filter: brightness(0.98);
+    }
+    #screenStartup .hero-actions .btn-primary:focus-visible {
+      outline: 2px solid #a5b4fc;
+      outline-offset: 3px;
+    }
+    /* ---------- trust row + muted note ---------- */
+    #screenStartup .lp-trust {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0;
+      margin: 24px 0 0;
+      opacity: 0;
+      animation: lpFade 0.8s ease 0.66s both;
+    }
+    #screenStartup .lp-trust li {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(15, 23, 42, 0.45);
+      color: #94a3b8;
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+    #screenStartup .lp-trust svg { width: 13px; height: 13px; flex: none; stroke: #10b981; }
+    #screenStartup .startup-login-card {
+      margin-top: 16px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: #8b99b3;
+      font-size: 12.5px;
+      max-width: 520px;
+      opacity: 0;
+      animation: lpFade 0.8s ease 0.78s both;
+    }
+    /* ---------- hero visual: glass card + halo + orbit + tilt ---------- */
+    #screenStartup .hero-visual {
+      overflow: visible;
+      z-index: 2;
+      opacity: 0;
+      animation: lpFade 0.9s ease 0.35s both;
+    }
+    #screenStartup .lp-hero-float {
+      position: relative;
+      animation: lpFloat 6s ease-in-out 1.4s infinite;
+      will-change: transform;
+    }
+    #screenStartup .lp-halo {
+      position: absolute;
+      inset: -12%;
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(99, 102, 241, 0.32), rgba(139, 92, 246, 0.14) 55%, transparent 100%);
+      filter: blur(24px); /* static filter — animation is opacity/scale only */
+      animation: lpHalo 5s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+    #screenStartup .lp-orbit {
+      position: absolute;
+      inset: -26px;
+      animation: lpOrbit 22s linear infinite;
+      pointer-events: none;
+      z-index: 2;
+      will-change: transform;
+    }
+    #screenStartup .lp-orbit i {
+      position: absolute;
+      border-radius: 50%;
+    }
+    #screenStartup .lp-orbit i:nth-child(1) {
+      width: 8px; height: 8px; top: 4%; left: 50%;
+      background: #818cf8;
+      box-shadow: 0 0 12px 3px rgba(129, 140, 248, 0.65);
+    }
+    #screenStartup .lp-orbit i:nth-child(2) {
+      width: 6px; height: 6px; bottom: 10%; left: 7%;
+      background: #22d3ee;
+      box-shadow: 0 0 10px 3px rgba(34, 211, 238, 0.55);
+    }
+    #screenStartup .lp-orbit i:nth-child(3) {
+      width: 5px; height: 5px; top: 38%; right: 2%;
+      background: #a78bfa;
+      box-shadow: 0 0 10px 2px rgba(167, 139, 250, 0.6);
+    }
+    #screenStartup .lp-tilt {
+      position: relative;
+      z-index: 1;
+      transform: perspective(950px);
+      transition: transform 0.18s ease-out;
+      will-change: transform;
+    }
+    #screenStartup .lp-hero-card {
+      position: relative;
+      border-radius: 22px;
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.5);
+      box-shadow: 0 34px 80px rgba(2, 4, 16, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    #screenStartup .lp-hero-card::before {
+      /* gradient hairline border */
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(129, 140, 248, 0.8), rgba(139, 92, 246, 0.4) 45%, rgba(34, 211, 238, 0.25));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      mask-composite: exclude;
+      pointer-events: none;
+      z-index: 3;
+    }
+    #screenStartup .lp-hero-card::after {
+      /* top sheen */
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 90px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0));
+      pointer-events: none;
+      z-index: 2;
+    }
+    #screenStartup .lp-hero-card img {
+      display: block;
+      width: min(100%, 430px);
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      filter: saturate(1.06) contrast(1.04);
+    }
+    #screenStartup .lp-reflection {
+      /* in-card fade + reflected glow under the robot */
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 38%;
+      background:
+        linear-gradient(180deg, rgba(5, 8, 22, 0), rgba(5, 8, 22, 0.5) 85%),
+        linear-gradient(180deg, rgba(129, 140, 248, 0.07), transparent 55%);
+      pointer-events: none;
+      z-index: 1;
+    }
+    #screenStartup .lp-ground {
+      position: absolute;
+      left: 10%; right: 10%; bottom: -34px;
+      height: 48px;
+      background: radial-gradient(50% 100% at 50% 0%, rgba(99, 102, 241, 0.3), transparent 75%);
+      filter: blur(8px); /* static */
+      pointer-events: none;
+    }
+    /* ---------- keyframes (transform/opacity + small box-shadow pulses) ---------- */
+    @keyframes lpAurora {
+      from { transform: translate3d(-2%, -1%, 0) rotate(0deg) scale(1); }
+      to { transform: translate3d(2.5%, 2%, 0) rotate(5deg) scale(1.06); }
+    }
+    @keyframes lpOrb {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(14px, -18px, 0) scale(1.05); }
+    }
+    @keyframes lpTwinkle {
+      0%, 100% { opacity: 0.9; }
+      50% { opacity: 0.3; }
+    }
+    @keyframes lpRise {
+      from { opacity: 0; transform: translateY(22px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes lpFade {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes lpGradientSweep {
+      from { background-position: 0% 50%; }
+      to { background-position: 100% 50%; }
+    }
+    @keyframes lpShine {
+      0%, 55% { transform: translateX(-130%); }
+      80%, 100% { transform: translateX(130%); }
+    }
+    @keyframes lpCtaPulse {
+      0%, 100% { box-shadow: 0 10px 30px rgba(99, 102, 241, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+      50% { box-shadow: 0 12px 44px rgba(139, 92, 246, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+    }
+    @keyframes lpFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    @keyframes lpHalo {
+      0%, 100% { opacity: 0.7; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.04); }
+    }
+    @keyframes lpOrbit {
+      to { transform: rotate(360deg); }
+    }
+    /* ---------- responsive ---------- */
+    @media (max-width: 900px) {
+      #screenStartup { padding: 84px 18px 48px; }
+      #screenStartup .startup-container {
+        grid-template-columns: 1fr;
+        gap: 40px;
+        text-align: center;
+      }
+      #screenStartup .hero-content {
+        max-width: 560px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      #screenStartup .hero-desc { margin-left: auto; margin-right: auto; }
+      #screenStartup .lp-badges,
+      #screenStartup .lp-trust,
+      #screenStartup .hero-actions { justify-content: center; }
+      #screenStartup .startup-login-card { margin-left: auto; margin-right: auto; }
+      #screenStartup .lp-hero-card img { width: min(100%, 320px); }
+      #screenStartup .lp-orb--violet { display: none; }
+    }
+    /* ---------- reduced motion: static gradients, everything visible ---------- */
+    @media (prefers-reduced-motion: reduce) {
+      #screenStartup .lp-aurora,
+      #screenStartup .lp-orb,
+      #screenStartup .lp-stars,
+      #screenStartup .lp-orbit,
+      #screenStartup .lp-hero-float,
+      #screenStartup .lp-halo,
+      #screenStartup .hero-actions .btn-primary,
+      #screenStartup .hero-actions .btn-primary::after {
+        animation: none;
+      }
+      #screenStartup .hero-title .lp-line,
+      #screenStartup .hero-title span.italic,
+      #screenStartup .hero-desc,
+      #screenStartup .lp-badge,
+      #screenStartup .hero-actions,
+      #screenStartup .lp-trust,
+      #screenStartup .startup-login-card,
+      #screenStartup .hero-visual {
+        animation: none;
+        opacity: 1;
+        transform: none;
+      }
+      #screenStartup .lp-spotlight { display: none; }
+      #screenStartup .lp-stars { opacity: 0.5; }
+      #screenStartup .lp-tilt { transition: none; }
+      #screenStartup .lp-badge,
+      #screenStartup .hero-actions .btn-primary,
+      #screenStartup .hero-actions .btn-primary svg { transition: none; }
+    }
+
     /* --- Candidate Welcome screen (Feature 1, May 2026) --------------------- */
     .invite-welcome-screen { background: #0d111a; }
     .invite-welcome-container { gap: 48px; }
@@ -6159,23 +6697,87 @@
     </div>
   </section>
 
-  <section id="screenStartup" class="startup-screen active">
+  <section id="screenStartup" class="startup-screen active" aria-labelledby="landingTitle">
+    <div class="lp-bg" aria-hidden="true">
+      <div class="lp-aurora"></div>
+      <div class="lp-grid"></div>
+      <div class="lp-orb lp-orb--indigo"></div>
+      <div class="lp-orb lp-orb--violet"></div>
+      <div class="lp-orb lp-orb--cyan"></div>
+      <div class="lp-stars"></div>
+      <div class="lp-stars lp-stars--b"></div>
+      <div class="lp-bloom"></div>
+      <div class="lp-noise"></div>
+      <div class="lp-spotlight"></div>
+    </div>
+    <header class="lp-topbar">
+      <img src="assets/karnex-logo-light.svg" alt="KARNEX" class="lp-topbar-logo" width="120" height="28" decoding="async" draggable="false">
+    </header>
     <div class="startup-container">
       <div class="hero-content">
-        <h1 class="hero-title">Karnex CRM <span class="italic">+ AI Hiring</span></h1>
+        <h1 id="landingTitle" class="hero-title"><span class="lp-line">Karnex CRM</span> <span class="italic">+ AI Hiring</span></h1>
         <p class="hero-desc">Your staffing CRM and AI-driven interview platform in one place — from sales and sourcing to technical assessment and evaluation.</p>
+        <ul class="lp-badges" role="list" aria-label="Platform capabilities">
+          <li class="lp-badge"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>Enterprise CRM</li>
+          <li class="lp-badge"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>AI Interviews</li>
+          <li class="lp-badge"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>ATS</li>
+          <li class="lp-badge"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v3m5-8v8m5-12v12"/></svg>Analytics</li>
+          <li class="lp-badge"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Secure</li>
+        </ul>
         <div class="hero-actions">
-          <button class="btn-primary" onclick="document.getElementById('screenStartup').classList.remove('active'); document.getElementById('screenAuth').classList.add('active'); switchAuthMode('login');">Login</button>
+          <button class="btn-primary" aria-label="Log in to Karnex" onclick="document.getElementById('screenStartup').classList.remove('active'); document.getElementById('screenAuth').classList.add('active'); switchAuthMode('login');"><span>Login</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
         </div>
+        <ul class="lp-trust" role="list" aria-label="Platform assurances">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Enterprise Ready</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Secure Authentication</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>AI Powered</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Fast Performance</li>
+        </ul>
         <div class="startup-login-card">Sign in with your Karnex account to continue. Register from the login panel if you are a first-time user.</div>
       </div>
       <div class="hero-visual">
-        <div class="bot-vfx-ring" aria-hidden="true"></div>
-        <div class="bot-scanline" aria-hidden="true"></div>
-        <img src="assets/3d_robot_avatar.png" alt="3D AI Robot Interviewer">
+        <div class="lp-hero-float">
+          <div class="lp-halo" aria-hidden="true"></div>
+          <div class="lp-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="lp-tilt">
+            <div class="lp-hero-card">
+              <img src="assets/3d_robot_avatar.png" alt="3D AI Robot Interviewer" loading="lazy" decoding="async">
+              <div class="lp-reflection" aria-hidden="true"></div>
+            </div>
+          </div>
+          <div class="lp-ground" aria-hidden="true"></div>
+        </div>
       </div>
     </div>
   </section>
+  <script>
+    /* Landing spotlight + hero tilt — single rAF-throttled pointermove.
+       Disabled on touch (pointer: coarse) and prefers-reduced-motion. */
+    (function () {
+      var s = document.getElementById("screenStartup");
+      if (!s || !window.matchMedia) return;
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches || !matchMedia("(pointer: fine)").matches) return;
+      var tilt = s.querySelector(".lp-tilt");
+      var px = 0, py = 0, raf = 0;
+      function apply() {
+        raf = 0;
+        s.style.setProperty("--lp-mx", px + "px");
+        s.style.setProperty("--lp-my", py + "px");
+        if (tilt) {
+          var nx = px / window.innerWidth - 0.5;
+          var ny = py / window.innerHeight - 0.5;
+          tilt.style.transform = "perspective(950px) rotateX(" + (-ny * 6).toFixed(2) + "deg) rotateY(" + (nx * 6).toFixed(2) + "deg)";
+        }
+      }
+      s.addEventListener("pointermove", function (e) {
+        px = e.clientX; py = e.clientY;
+        if (!raf) raf = requestAnimationFrame(apply);
+      }, { passive: true });
+      s.addEventListener("pointerleave", function () {
+        if (tilt) tilt.style.transform = "";
+      }, { passive: true });
+    })();
+  </script>
 
   <!--
     Candidate Welcome Page (Feature 1, May 2026)

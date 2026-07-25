@@ -2,19 +2,19 @@
  * education, experience, skills and linked candidate-profiles tabs. */
 import React, { useCallback, useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Linkedin, Mail, MessageCircle, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from "lucide-react";
+import { Briefcase, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2, User } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { RowActions } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   ConfirmModal,
   EmptyState,
   ErrorBox,
-  Field,
   Modal,
   Spinner,
   StatusBadge,
@@ -24,6 +24,33 @@ import {
   inputCls,
   useToast,
 } from "../components/ui";
+import {
+  SectionHeaderBanner, WizardField,
+} from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------------ types */
 
@@ -240,6 +267,18 @@ export function CandidatesListPage() {
             </>
           }
           emptyMessage="No candidates found"
+          rowActions={canWrite ? (r) => (
+            <RowActions
+              entity="candidate"
+              itemLabel={candName(r)}
+              onEdit={() => crmNavigate(`candidates/${r.id}`)}
+              deleteUrl={`/api/candidates/${r.id}`}
+              onDeleted={load}
+              notify={showToast}
+              canEdit
+              canDelete
+            />
+          ) : undefined}
         />
       )}
 
@@ -344,89 +383,95 @@ function CandidateFormModal({
   const secHead = "sm:col-span-2 mt-1 border-t border-subtle pt-3 text-xs font-bold uppercase tracking-wide text-muted";
 
   return (
-    <Modal title={isEdit ? "Edit Candidate" : "New Candidate"} onClose={onClose} wide fullScreen>
+    <Modal
+      title={<span className="sr-only">{isEdit ? "Edit Candidate" : "New Candidate"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={isEdit ? "Edit Candidate" : "New Candidate"}
+        subtitle="Capture the candidate's personal, professional, and compensation details."
+        icon={<User size={20} aria-hidden />}
+      >
       {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
         <div className={secHead}>Name</div>
-        <Field label="Salutation">
+        <WizardField label="Salutation">
           <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
             <option value="">—</option>
             {["Mr", "Ms", "Mrs", "Dr", "Mx"].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-        </Field>
-        <Field label="First name" required>
+        </WizardField>
+        <WizardField label="First name" required icon="user" filled={!!form.first_name.trim()}>
           <input className={inputCls} value={form.first_name} onChange={(e) => set("first_name", e.target.value)} />
-        </Field>
-        <Field label="Middle name">
+        </WizardField>
+        <WizardField label="Middle name" icon="user">
           <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
-        </Field>
-        <Field label="Last name">
+        </WizardField>
+        <WizardField label="Last name" icon="user">
           <input className={inputCls} value={form.last_name} onChange={(e) => set("last_name", e.target.value)} />
-        </Field>
+        </WizardField>
 
         <div className={secHead}>Basic details</div>
-        <Field label="Email" required>
+        <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
           <input className={inputCls} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
-        </Field>
-        <Field label="Phone">
+        </WizardField>
+        <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
           <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
-        </Field>
-        <Field label="Date of birth">
+        </WizardField>
+        <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
           <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
-        </Field>
-        <Field label="Gender">
+        </WizardField>
+        <WizardField label="Gender">
           <select className={inputCls} value={form.gender} onChange={(e) => set("gender", e.target.value)}>
             <option value="">Select…</option>
             {["Male", "Female", "Other", "Prefer not to say"].map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
-        </Field>
-        <Field label="Experience (years)">
+        </WizardField>
+        <WizardField label="Experience (years)" icon="hash" filled={form.experience_years !== ""}>
           <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} onChange={(e) => set("experience_years", e.target.value)} />
-        </Field>
-        <Field label="Notice period">
+        </WizardField>
+        <WizardField label="Notice period">
           <input className={inputCls} value={form.notice_period} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label="Current address">
-            <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
-          </Field>
-        </div>
-        <div className="sm:col-span-2">
-          <Field label="Permanent address">
-            <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
-          </Field>
-        </div>
+        </WizardField>
+        <WizardField className="sm:col-span-2" label="Current address">
+          <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
+        </WizardField>
+        <WizardField className="sm:col-span-2" label="Permanent address">
+          <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
+        </WizardField>
 
         <div className={secHead}>Professional</div>
-        <Field label="Technical domain">
+        <WizardField label="Technical domain">
           <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Backend, Data Engineering" />
-        </Field>
-        <Field label="Roles">
+        </WizardField>
+        <WizardField label="Roles">
           <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
-        </Field>
-        <Field label="Designation">
+        </WizardField>
+        <WizardField label="Designation">
           <select className={inputCls} value={form.designation_id} onChange={(e) => set("designation_id", e.target.value)}>
             <option value="">None</option>
             {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
-        </Field>
-        <Field label="LinkedIn URL">
+        </WizardField>
+        <WizardField label="LinkedIn URL" icon={<Linkedin size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
           <input className={inputCls} value={form.linkedin_url} onChange={(e) => set("linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/…" />
-        </Field>
-        <Field label="Preferred location">
+        </WizardField>
+        <WizardField label="Preferred location" icon="map">
           <select className={inputCls} value={form.preferred_location_id} onChange={(e) => set("preferred_location_id", e.target.value)}>
             <option value="">None</option>
             {locations.map((l) => <option key={l.id} value={l.id}>{locLabel(l)}</option>)}
           </select>
-        </Field>
+        </WizardField>
 
         <div className={secHead}>Compensation</div>
-        <Field label="Current CTC (annual)">
+        <WizardField label="Current CTC (annual)" icon="hash" filled={form.current_ctc !== ""}>
           <input className={inputCls} type="number" min={0} value={form.current_ctc} onChange={(e) => set("current_ctc", e.target.value)} />
-        </Field>
-        <Field label="Expected CTC (annual)">
+        </WizardField>
+        <WizardField label="Expected CTC (annual)" icon="hash" filled={form.expected_ctc !== ""}>
           <input className={inputCls} type="number" min={0} value={form.expected_ctc} onChange={(e) => set("expected_ctc", e.target.value)} />
-        </Field>
+        </WizardField>
 
         <div className={secHead}>Separation</div>
         <div className="flex items-end gap-4 pb-1">
@@ -436,17 +481,18 @@ function CandidateFormModal({
           </label>
         </div>
         {form.resignation_status && (
-          <Field label="Last working day">
+          <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
             <input className={inputCls} type="date" value={form.last_working_day} onChange={(e) => set("last_working_day", e.target.value)} />
-          </Field>
+          </WizardField>
         )}
       </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
+      <div className={wizFooterRow}>
+        <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+        <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
           {busy ? "Saving…" : isEdit ? "Save changes" : "Create Candidate"}
         </button>
       </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -918,41 +964,52 @@ function LogOutreachModal({
   };
 
   return (
-    <Modal title="Log outreach" onClose={onClose} fullScreen>
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="space-y-3">
-        <Field label="Channel" required>
-          <select className={inputCls} value={channel} onChange={(e) => setChannel(e.target.value)}>
-            {OUTREACH_CHANNELS.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </Field>
-        <Field label="Note" required error={noteErr}>
-          <textarea
-            className={inputCls}
-            rows={4}
-            value={note}
-            onChange={(e) => {
-              setNote(e.target.value);
-              if (noteErr) setNoteErr("");
-            }}
-            placeholder="What was discussed? Next steps? (min 5 characters)"
-          />
-        </Field>
-        <Field label="Outcome (optional)">
-          <input
-            className={inputCls}
-            value={outcome}
-            onChange={(e) => setOutcome(e.target.value)}
-            placeholder="e.g. Interested, Call back next week, No answer"
-          />
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : "Log outreach"}
-        </button>
-      </div>
+    <Modal
+      title={<span className="sr-only">Log outreach</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Log outreach"
+        subtitle="Record a call, email, or message so the team stays in sync on this candidate."
+        icon={<MessageSquarePlus size={20} aria-hidden />}
+      >
+        {error && <div className="mb-3"><ErrorBox error={error} /></div>}
+        <div className="space-y-5">
+          <WizardField label="Channel" required>
+            <select className={inputCls} value={channel} onChange={(e) => setChannel(e.target.value)}>
+              {OUTREACH_CHANNELS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </WizardField>
+          <WizardField label="Note" required error={noteErr}>
+            <textarea
+              className={inputCls}
+              rows={4}
+              value={note}
+              onChange={(e) => {
+                setNote(e.target.value);
+                if (noteErr) setNoteErr("");
+              }}
+              placeholder="What was discussed? Next steps? (min 5 characters)"
+            />
+          </WizardField>
+          <WizardField label="Outcome (optional)" filled={!!outcome.trim()}>
+            <input
+              className={inputCls}
+              value={outcome}
+              onChange={(e) => setOutcome(e.target.value)}
+              placeholder="e.g. Interested, Call back next week, No answer"
+            />
+          </WizardField>
+        </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : "Log outreach"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1078,33 +1135,44 @@ function EducationModal({
   };
 
   return (
-    <Modal title={item ? "Edit education" : "Add education"} onClose={onClose} fullScreen>
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="space-y-3">
-        <Field label="Course" required>
-          <input className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. B.Tech Computer Science" />
-        </Field>
-        <Field label="Institution">
-          <input className={inputCls} value={institution} onChange={(e) => setInstitution(e.target.value)} />
-        </Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Start date">
-            <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </Field>
-          <Field label="End date">
-            <input className={inputCls} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </Field>
+    <Modal
+      title={<span className="sr-only">{item ? "Edit education" : "Add education"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={item ? "Edit education" : "Add education"}
+        subtitle="Add a qualification, the awarding institution, and dates."
+        icon={<GraduationCap size={20} aria-hidden />}
+      >
+        {error && <div className="mb-3"><ErrorBox error={error} /></div>}
+        <div className="space-y-5">
+          <WizardField label="Course" required filled={!!course.trim()}>
+            <input className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. B.Tech Computer Science" />
+          </WizardField>
+          <WizardField label="Institution" icon="building" filled={!!institution.trim()}>
+            <input className={inputCls} value={institution} onChange={(e) => setInstitution(e.target.value)} />
+          </WizardField>
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Start date" icon="calendar" filled={!!startDate}>
+              <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </WizardField>
+            <WizardField label="End date" icon="calendar" filled={!!endDate}>
+              <input className={inputCls} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </WizardField>
+          </div>
+          <WizardField label="Certificate URL" filled={!!certificateUrl.trim()}>
+            <input className={inputCls} value={certificateUrl} onChange={(e) => setCertificateUrl(e.target.value)} placeholder="https://…" />
+          </WizardField>
         </div>
-        <Field label="Certificate URL">
-          <input className={inputCls} value={certificateUrl} onChange={(e) => setCertificateUrl(e.target.value)} placeholder="https://…" />
-        </Field>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : "Save"}
-        </button>
-      </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1152,34 +1220,45 @@ function ExperienceModal({
   };
 
   return (
-    <Modal title={item ? "Edit experience" : "Add experience"} onClose={onClose} fullScreen>
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="space-y-3">
-        <Field label="Company" required>
-          <input className={inputCls} value={company} onChange={(e) => setCompany(e.target.value)} />
-        </Field>
-        <Field label="Job title">
-          <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-        </Field>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Start date">
-            <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </Field>
-          <Field label="End date">
-            <input className={inputCls} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={isCurrent} />
-          </Field>
+    <Modal
+      title={<span className="sr-only">{item ? "Edit experience" : "Add experience"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={item ? "Edit experience" : "Add experience"}
+        subtitle="Add a previous or current role, employer, and dates."
+        icon={<Briefcase size={20} aria-hidden />}
+      >
+        {error && <div className="mb-3"><ErrorBox error={error} /></div>}
+        <div className="space-y-5">
+          <WizardField label="Company" required icon="building" filled={!!company.trim()}>
+            <input className={inputCls} value={company} onChange={(e) => setCompany(e.target.value)} />
+          </WizardField>
+          <WizardField label="Job title" icon="user" filled={!!jobTitle.trim()}>
+            <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+          </WizardField>
+          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+            <WizardField label="Start date" icon="calendar" filled={!!startDate}>
+              <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </WizardField>
+            <WizardField label="End date" icon="calendar" filled={!!endDate && !isCurrent}>
+              <input className={inputCls} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={isCurrent} />
+            </WizardField>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
+            <input type="checkbox" checked={isCurrent} onChange={(e) => setIsCurrent(e.target.checked)} />
+            Currently working here
+          </label>
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
-          <input type="checkbox" checked={isCurrent} onChange={(e) => setIsCurrent(e.target.checked)} />
-          Currently working here
-        </label>
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : "Save"}
-        </button>
-      </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1233,28 +1312,41 @@ function CandidateSkillsModal({
   const shown = all.filter((s) => s.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <Modal title="Edit skills" onClose={onClose} fullScreen>
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <input className={`${inputCls} mb-3`} placeholder="Filter skills…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      <div className="max-h-72 space-y-1 overflow-y-auto rounded-control border border-subtle p-2">
-        {shown.length === 0 && <div className="py-4 text-center text-sm text-muted">No skills found</div>}
-        {shown.map((s) => (
-          <label
-            key={s.id}
-            className="flex cursor-pointer items-center gap-2 rounded-control px-2 py-1.5 text-sm text-primary hover:bg-surface-2"
-          >
-            <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} />
-            {s.name}
-            {s.category && <span className="text-xs text-muted">({s.category})</span>}
-          </label>
-        ))}
-      </div>
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={save} disabled={busy}>
-          {busy ? "Saving…" : "Save skills"}
-        </button>
-      </div>
+    <Modal
+      title={<span className="sr-only">Edit skills</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Edit skills"
+        subtitle="Select the skills this candidate has. Filter to find skills quickly."
+        icon={<ListChecks size={20} aria-hidden />}
+      >
+        {error && <div className="mb-3"><ErrorBox error={error} /></div>}
+        <WizardField label="Filter skills">
+          <input className={inputCls} placeholder="Filter skills…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        </WizardField>
+        <div className="mt-4 max-h-72 space-y-1 overflow-y-auto rounded-control border border-subtle p-2">
+          {shown.length === 0 && <div className="py-4 text-center text-sm text-muted">No skills found</div>}
+          {shown.map((s) => (
+            <label
+              key={s.id}
+              className="flex cursor-pointer items-center gap-2 rounded-control px-2 py-1.5 text-sm text-primary hover:bg-surface-2"
+            >
+              <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} />
+              {s.name}
+              {s.category && <span className="text-xs text-muted">({s.category})</span>}
+            </label>
+          ))}
+        </div>
+        <div className={wizFooterRow}>
+          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={save} disabled={busy}>
+            {busy ? "Saving…" : "Save skills"}
+          </button>
+        </div>
+      </WizFormShell>
     </Modal>
   );
 }

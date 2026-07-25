@@ -40,6 +40,7 @@ export function DataTable<T extends { id?: number | string }>({
   onSort,
   onPage,
   onRowClick,
+  rowActions,
   filters,
   emptyMessage = "No records found",
 }: {
@@ -53,10 +54,33 @@ export function DataTable<T extends { id?: number | string }>({
   onSort?: (by: string) => void;
   onPage?: (page: number) => void;
   onRowClick?: (row: T) => void;
+  /** Optional last column (right-aligned). Clicks inside stopPropagation from row navigation. */
+  rowActions?: (row: T) => React.ReactNode;
   filters?: React.ReactNode;
   emptyMessage?: string;
 }) {
   const reduce = useReducedMotion();
+  const allColumns: Column<T>[] = rowActions
+    ? [
+        ...columns,
+        {
+          key: "_row_actions",
+          label: "",
+          align: "right",
+          className: "w-24",
+          render: (row) => (
+            <div
+              className="flex justify-end"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              {rowActions(row)}
+            </div>
+          ),
+        },
+      ]
+    : columns;
+  const colCount = allColumns.length;
   return (
     <div className="elev-1 overflow-hidden rounded-panel">
       {(onSearch || filters) && (
@@ -82,7 +106,7 @@ export function DataTable<T extends { id?: number | string }>({
           {/* Sticky opaque header: surface bg + subtle bottom border. */}
           <thead className="sticky top-0 z-10 bg-surface-1">
             <tr className="border-b border-subtle text-left">
-              {columns.map((c) => (
+              {allColumns.map((c) => (
                 <th
                   key={c.key}
                   className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-muted ${
@@ -116,7 +140,7 @@ export function DataTable<T extends { id?: number | string }>({
               /* Skeleton loading rows (.shimmer recipe) — same geometry as data rows. */
               Array.from({ length: SKELETON_ROWS }).map((_, r) => (
                 <tr key={`skeleton-${r}`} className="border-b border-subtle">
-                  {columns.map((c, i) => (
+                  {allColumns.map((c, i) => (
                     <td key={c.key} className="h-12 px-4 py-2 align-middle">
                       <div
                         className={`shimmer h-3.5 rounded-control ${SKELETON_WIDTHS[(r + i) % SKELETON_WIDTHS.length]} ${
@@ -130,7 +154,7 @@ export function DataTable<T extends { id?: number | string }>({
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length}>
+                <td colSpan={colCount}>
                   <EmptyState message={emptyMessage} />
                 </td>
               </tr>
@@ -150,7 +174,7 @@ export function DataTable<T extends { id?: number | string }>({
                   }`}
                   onClick={() => onRowClick && onRowClick(row)}
                 >
-                  {columns.map((c) => (
+                  {allColumns.map((c) => (
                     <td
                       key={c.key}
                       className={`h-12 px-4 py-2 align-middle text-secondary ${

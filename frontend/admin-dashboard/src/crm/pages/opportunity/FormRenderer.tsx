@@ -2,17 +2,36 @@
  * ONE schema-driven renderer for the Opportunity form (Part 3). It renders any
  * section/field from `opportunitySchema` — there is no per-type form component.
  */
-import React from "react";
+import { Check, Lock, Plus, Building2, Mail, Phone, User, MapPin, Hash, Calendar, type LucideIcon } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Plus } from "lucide-react";
+import React from "react";
 import { Field, inputCls } from "../../components/ui";
+import { SearchableSelect } from "../../components/SearchableSelect";
+import {
+  InfoChip,
+  AutoFilledBadge,
+  guessFieldIcon,
+  lockedInputCls as wizLockedCls,
+  type FieldIconKind,
+} from "../../components/wizard";
 import {
   fieldVisible,
-  sectionVisible,
+  fieldMatchesShowWhen,
   type FieldDef,
   type OpportunityType,
   type SectionDef,
 } from "./opportunitySchema";
+
+const FIELD_ICONS: Record<FieldIconKind, LucideIcon> = {
+  building: Building2,
+  mail: Mail,
+  phone: Phone,
+  user: User,
+  map: MapPin,
+  hash: Hash,
+  calendar: Calendar,
+  lock: Lock,
+};
 
 export type OptionList = { value: string; label: string }[];
 export type OptionsMap = Record<string, OptionList>;
@@ -34,12 +53,12 @@ export interface FieldRenderProps {
   onAddNew?: (kind: NonNullable<FieldDef["addNew"]>, f: FieldDef) => void;
 }
 
-const badge =
-  "ml-2 rounded-full bg-surface-2 px-1.5 py-0.5 text-xs font-semibold text-muted align-middle";
-
 /* Error state composes the token .input-error recipe on the flat input
  * (danger border at rest/hover, danger focus ring) — see styles/tokens.css. */
 const inputErrCls = "input-error";
+
+/** Locked / read-only control look (auto-filled mirrors + committed searchable selects). */
+const lockedInputCls = wizLockedCls;
 
 const SELECT_PLACEHOLDER = "— Select —";
 
@@ -60,149 +79,6 @@ function formatDisplayDate(iso: string): string {
   const d = new Date(iso + "T00:00:00");
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "-");
-}
-
-/** Filterable combobox for `searchable: true` select fields. */
-function SearchableSelect({
-  id,
-  value,
-  options,
-  disabled,
-  err,
-  describedBy,
-  placeholder,
-  onChange,
-  onBlur,
-  registerRef,
-  className,
-}: {
-  id: string;
-  value: string;
-  options: OptionList;
-  disabled?: boolean;
-  err?: string;
-  describedBy?: string;
-  placeholder?: string;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  registerRef?: (el: HTMLElement | null) => void;
-  className: string;
-}) {
-  const rootRef = React.useRef<HTMLDivElement | null>(null);
-  const listId = `${id}-listbox`;
-  const selected = options.find((o) => o.value === value);
-  const [open, setOpen] = React.useState(false);
-  const [query, setQuery] = React.useState("");
-  const [highlight, setHighlight] = React.useState(0);
-
-  React.useEffect(() => {
-    if (!open) setQuery("");
-  }, [open, value]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(
-      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
-    );
-  }, [options, query]);
-
-  React.useEffect(() => {
-    setHighlight(0);
-  }, [query, open]);
-
-  const pick = (v: string) => {
-    onChange(v);
-    setOpen(false);
-    setQuery("");
-  };
-
-  const display = open ? query : (selected?.label || "");
-
-  return (
-    <div
-      ref={rootRef}
-      className="relative"
-    >
-      <input
-        id={id}
-        type="text"
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={listId}
-        aria-autocomplete="list"
-        aria-required={undefined}
-        aria-invalid={!!err || undefined}
-        aria-describedby={describedBy}
-        disabled={disabled}
-        className={className}
-        placeholder={placeholder || SELECT_PLACEHOLDER}
-        value={display}
-        autoComplete="off"
-        ref={(el) => registerRef?.(el)}
-        onFocus={() => { if (!disabled) setOpen(true); }}
-        onBlur={onBlur}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onKeyDown={(e) => {
-          if (disabled) return;
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setOpen(true);
-            setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setHighlight((h) => Math.max(h - 1, 0));
-          } else if (e.key === "Enter" && open) {
-            e.preventDefault();
-            const hit = filtered[highlight];
-            if (hit) pick(hit.value);
-          } else if (e.key === "Escape") {
-            setOpen(false);
-            setQuery("");
-          }
-        }}
-      />
-      {open && !disabled && (
-        <ul
-          id={listId}
-          role="listbox"
-          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-control border border-subtle bg-surface-1 py-1 shadow-raised"
-        >
-          {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-muted">No matches</li>
-          ) : filtered.map((o, i) => (
-            <li
-              key={o.value}
-              role="option"
-              aria-selected={o.value === value}
-              className={`cursor-pointer px-3 py-2 text-sm ${
-                i === highlight ? "bg-surface-2 text-primary" : "text-secondary hover:bg-surface-2"
-              }`}
-              onMouseEnter={() => setHighlight(i)}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                pick(o.value);
-              }}
-            >
-              {o.label}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
 }
 
 function FieldControl({
@@ -247,9 +123,31 @@ function FieldControl({
   } as const;
 
   let control: React.ReactNode;
+  const lockedCls = `${lockedInputCls} ${err ? inputErrCls : ""} ${
+    disabled ? "opacity-50 cursor-not-allowed" : ""
+  }`;
+
   switch (f.type) {
     case "select":
-      if (f.searchable) {
+      /* Auto-filled selects (e.g. Customer Type) are display-only — change via source dropdown. */
+      if (f.autoFilledFrom) {
+        const opts = optionsFor(f, options);
+        const label = opts.find((o) => o.value === String(value ?? ""))?.label || String(value ?? "");
+        control = (
+          <input
+            id={f.key}
+            readOnly
+            value={label}
+            aria-required={f.required || undefined}
+            aria-invalid={!!err || undefined}
+            aria-describedby={describedBy}
+            className={lockedCls}
+            ref={(el) => registerRef?.(f.key, el)}
+            onBlur={() => onBlur(f)}
+            placeholder={SELECT_PLACEHOLDER}
+          />
+        );
+      } else if (f.searchable) {
         control = (
           <SearchableSelect
             id={f.key}
@@ -280,7 +178,8 @@ function FieldControl({
     case "richtext":
       control = (
         <textarea {...common} rows={f.type === "richtext" ? 6 : 3} value={String(value ?? "")}
-          placeholder={f.placeholder} onChange={(e) => onChange(f, e.target.value)} />
+          placeholder={f.placeholder} onChange={(e) => onChange(f, e.target.value)}
+          readOnly={!!f.autoFilledFrom} className={f.autoFilledFrom ? lockedCls : common.className} />
       );
       break;
     case "checkbox":
@@ -296,7 +195,7 @@ function FieldControl({
     case "readonly":
       control = (
         <input {...common} readOnly value={String(value ?? "")} placeholder={f.helperText || "Auto-generated on save"}
-          className={`${inputCls} bg-surface-2 opacity-80`} />
+          className={`${lockedInputCls} pl-9`} />
       );
       break;
     case "date":
@@ -344,11 +243,20 @@ function FieldControl({
         : f.type === "email" ? "email"
         : f.type === "tel" ? "tel"
         : "text";
+      const autoLocked = !!f.autoFilledFrom;
       control = (
-        <input {...common} type={inputType} value={String(value ?? "")} placeholder={f.placeholder}
+        <input
+          {...common}
+          type={inputType}
+          value={String(value ?? "")}
+          placeholder={f.placeholder}
           step={f.type === "currency" ? "0.01" : undefined}
-          min={f.min} max={f.max}
-          onChange={(e) => onChange(f, e.target.value)} />
+          min={f.min}
+          max={f.max}
+          readOnly={autoLocked}
+          className={autoLocked ? lockedCls : common.className}
+          onChange={autoLocked ? undefined : (e) => onChange(f, e.target.value)}
+        />
       );
     }
   }
@@ -369,11 +277,15 @@ function FieldControl({
           </button>
         </div>
       ) : control}
-      {showAutoBadge && <span className={badge}>auto-filled</span>}
+      {showAutoBadge && <AutoFilledBadge />}
       {f.helperText && f.type !== "readonly" && (
-        <p id={`${f.key}-help`} className="mt-1 text-xs text-muted">{f.helperText}</p>
+        <p id={`${f.key}-help`} className="mt-1 text-[11px] text-muted">{f.helperText}</p>
       )}
-      {reason && <p id={`${f.key}-hint`} className="mt-1 text-xs text-muted">{reason}</p>}
+      {reason && (
+        <InfoChip>
+          <span id={`${f.key}-hint`}>{reason}</span>
+        </InfoChip>
+      )}
       {err && (
         <motion.p id={`${f.key}-err`} role="alert" className="mt-1 text-xs text-danger"
           initial={reduce ? { opacity: 0 } : { opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
@@ -392,17 +304,53 @@ function FieldControl({
       ? "ring-1 ring-strong"
       : "";
 
+  const iconKind = f.type === "readonly" ? undefined : guessFieldIcon(f.key, f.type);
+  // Opportunity ID (readonly): lock on the right only — no leading icon.
+  // Auto-filled emails/phones: green check (not lock), matching the target mockup.
+  const showLock = f.type === "readonly";
+  const isFilled = !showLock && !err && strValue !== "";
+  const Lead = iconKind ? FIELD_ICONS[iconKind] : null;
+  const needsPad = !!Lead;
+
   return (
     <div className={`rounded-control transition-shadow duration-micro ease-smooth ${stateRing}`}>
-      <Field label={f.label} required={f.required} error={undefined}>{wrapped}</Field>
+      <Field label={f.label} required={f.required} error={undefined}>
+        <div className="relative">
+          {Lead && needsPad && (
+            <span className="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-[color:var(--wiz-muted,#9CA3AF)]">
+              <Lead size={15} aria-hidden />
+            </span>
+          )}
+          <div
+            className={
+              needsPad
+                ? "[&_input]:pl-10 [&_select]:pl-10 [&_textarea]:pl-10 [&_button.min-w-0]:pl-10"
+                : undefined
+            }
+          >
+            {wrapped}
+          </div>
+          {(showLock || isFilled) && !f.addNew && (
+            <span className="pointer-events-none absolute right-3.5 top-1/2 z-[1] -translate-y-1/2">
+              {showLock ? (
+                <Lock size={14} className="text-[color:var(--wiz-muted,#9CA3AF)]" aria-hidden />
+              ) : (
+                <Check size={15} className="text-[color:var(--wiz-success,#22C55E)]" strokeWidth={2.5} aria-hidden />
+              )}
+            </span>
+          )}
+        </div>
+      </Field>
     </div>
   );
 }
 
 /** Renders one section's field grid (kind: "fields"). Tables/attachments render elsewhere. */
 export function SectionFields(props: FieldRenderProps) {
-  const { section, type } = props;
-  const fields = (section.fields || []).filter((f) => fieldVisible(section, f, type));
+  const { section, type, values, details } = props;
+  const fields = (section.fields || []).filter(
+    (f) => fieldVisible(section, f, type) && fieldMatchesShowWhen(f, values, details),
+  );
   if (!fields.length) {
     if (section.fieldsVisibleFor && type && !section.fieldsVisibleFor.includes(type)) {
       return <p className="text-sm italic text-muted">Not applicable for this opportunity type.</p>;
@@ -427,4 +375,3 @@ export function SectionFields(props: FieldRenderProps) {
   );
 }
 
-export { sectionVisible };

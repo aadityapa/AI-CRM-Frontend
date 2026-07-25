@@ -11,7 +11,7 @@
 import {
   OPPORTUNITY_SCHEMA,
   OPPORTUNITY_TYPES,
-  fieldVisible,
+  isFieldShown,
   sectionVisible,
   stripHiddenFields,
   type OpportunityType,
@@ -155,7 +155,12 @@ export function buildSubmitPayload(state: OpportunityFormState): Record<string, 
   }
   const rawDetails = state.detailsByType[type] || {};
   const details = sanitizeDetails(
-    stripHiddenFields(rawDetails as Record<string, unknown>, type) as Record<string, unknown>,
+    stripHiddenFields(
+      rawDetails as Record<string, unknown>,
+      type,
+      state.core,
+      rawDetails as Record<string, unknown>,
+    ) as Record<string, unknown>,
   );
   return {
     ...core,
@@ -249,9 +254,10 @@ export function requiredProgress(state: OpportunityFormState): number {
     if (!sectionVisible(section, type)) continue;
     for (const f of section.fields || []) {
       if (!f.required) continue;
-      if (!fieldVisible(section, f, type)) continue;
+      const detailBucket = (state.detailsByType[type as OpportunityType] || {}) as Record<string, unknown>;
+      if (!isFieldShown(section, f, type, state.core, detailBucket)) continue;
       total += 1;
-      const val = isCoreKey(f.key) ? state.core[f.key] : (state.detailsByType[type as OpportunityType] || {})[f.key];
+      const val = isCoreKey(f.key) ? state.core[f.key] : detailBucket[f.key];
       if (has(val)) filled += 1;
     }
   }

@@ -10,9 +10,9 @@
  * List `?status=` accepts a single status value; multi-status tabs fetch unfiltered
  * and filter client-side within the page.
  */
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowLeft, Bot, CalendarPlus, Check, Copy, ExternalLink, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, X,
+  ArrowLeft, Bot, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileUp, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, X,
 } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
 import type { Meta } from "../api";
@@ -27,6 +27,33 @@ import {
   AiThinking, ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import {
+  SectionHeaderBanner, FieldLabel, WizardField, InfoChip, lockedInputCls,
+} from "../components/wizard";
+
+/** Local single-screen shell — applies the shared New Opportunity wizard look
+ * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * Visual-only wrapper: no field, state, or submit logic lives here. */
+function WizFormShell({
+  title, subtitle, icon, children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Shared footer container for the reskinned single-screen dialogs. */
+const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
 
 /* ------------------------------------------------------------------ types */
 
@@ -315,76 +342,85 @@ function DecisionModal({
 
   return (
     <Modal
-      title={`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number} — ${stageLabel}`}
+      title={<span className="sr-only">{`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number} — ${stageLabel}`}</span>}
       onClose={onClose}
       fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
-      <div className="space-y-3">
-        <div className="text-sm text-secondary">
-          {kind === "approve"
-            ? <>Approve <span className="font-semibold">“{req.title}”</span>? You may add an optional comment for the activity log.</>
-            : <>Reject <span className="font-semibold">“{req.title}”</span>. A reason of at least 10 characters is required; the creator will be notified.</>}
-        </div>
-        {needsRmgJd && (
-          <div className="space-y-3 rounded-xl border border-subtle bg-surface-2 p-3">
-            <div className="text-xs font-bold uppercase tracking-wide text-muted">Customer JD (reference)</div>
-            {customerJd.length === 0 ? (
-              <p className="text-sm text-muted">No customer JD uploaded on the opportunity.</p>
-            ) : (
-              <ul className="space-y-1">
-                {customerJd.map((a) => (
-                  <li key={a.id}><FileLink url={a.file_url} label={a.file_name || "Customer JD"} /></li>
-                ))}
-              </ul>
-            )}
-            <Field label="RMG JD (text)" required={!jdFile && existingRmgJd.length === 0} error={err && !rmgJdText.trim() && !jdFile && !existingRmgJd.length ? err : ""}>
-              <textarea
-                className={inputCls}
-                rows={6}
-                value={rmgJdText}
-                onChange={(e) => { setRmgJdText(e.target.value); if (err) setErr(""); }}
-                placeholder="Paste or type the job description TA will use for ATS scoring…"
-              />
-            </Field>
-            <Field label="RMG JD (PDF / Word)">
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx"
-                className="block w-full text-sm"
-                onChange={(e) => { setJdFile(e.target.files?.[0] || null); if (err) setErr(""); }}
-              />
-              {jdFile && <p className="mt-1 text-xs text-muted">{jdFile.name}</p>}
-              {existingRmgJd.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {existingRmgJd.map((a) => (
-                    <li key={a.id} className="text-sm"><FileLink url={a.file_url} label={a.file_name || "RMG JD"} /></li>
+      <WizFormShell
+        title={`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number}`}
+        subtitle={kind === "approve"
+          ? `Approve this requirement at the ${stageLabel} stage.`
+          : `Reject this requirement at the ${stageLabel} stage — a reason is required.`}
+        icon={<ClipboardCheck size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <div className="text-sm text-secondary">
+            {kind === "approve"
+              ? <>Approve <span className="font-semibold">“{req.title}”</span>? You may add an optional comment for the activity log.</>
+              : <>Reject <span className="font-semibold">“{req.title}”</span>. A reason of at least 10 characters is required; the creator will be notified.</>}
+          </div>
+          {needsRmgJd && (
+            <div className="space-y-4 rounded-xl border border-subtle bg-surface-2 p-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-muted">Customer JD (reference)</div>
+              {customerJd.length === 0 ? (
+                <p className="text-sm text-muted">No customer JD uploaded on the opportunity.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {customerJd.map((a) => (
+                    <li key={a.id}><FileLink url={a.file_url} label={a.file_name || "Customer JD"} /></li>
                   ))}
                 </ul>
               )}
-            </Field>
-            {err && <p className="text-sm text-rose-600">{err}</p>}
+              <WizardField label="RMG JD (text)" required={!jdFile && existingRmgJd.length === 0} error={err && !rmgJdText.trim() && !jdFile && !existingRmgJd.length ? err : ""}>
+                <textarea
+                  className={inputCls}
+                  rows={6}
+                  value={rmgJdText}
+                  onChange={(e) => { setRmgJdText(e.target.value); if (err) setErr(""); }}
+                  placeholder="Paste or type the job description TA will use for ATS scoring…"
+                />
+              </WizardField>
+              <WizardField label="RMG JD (PDF / Word)" icon={<FileUp size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  className="block w-full text-sm"
+                  onChange={(e) => { setJdFile(e.target.files?.[0] || null); if (err) setErr(""); }}
+                />
+                {jdFile && <p className="mt-1 text-xs text-muted">{jdFile.name}</p>}
+                {existingRmgJd.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {existingRmgJd.map((a) => (
+                      <li key={a.id} className="text-sm"><FileLink url={a.file_url} label={a.file_name || "RMG JD"} /></li>
+                    ))}
+                  </ul>
+                )}
+              </WizardField>
+              {err && <p className="text-sm text-danger">{err}</p>}
+            </div>
+          )}
+          <WizardField
+            label={kind === "approve" ? "Comment (optional)" : "Rejection reason"}
+            required={kind === "reject"}
+            error={kind === "reject" ? err : ""}
+          >
+            <textarea
+              className={inputCls}
+              rows={3}
+              value={text}
+              onChange={(e) => { setText(e.target.value); if (err) setErr(""); }}
+              placeholder={kind === "reject" ? "Why is this requirement being rejected?" : "Optional comment…"}
+            />
+          </WizardField>
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${kind === "reject" ? btnDanger : btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
+              {busy ? "Working…" : kind === "approve" ? <><Check size={15} /> Approve</> : <><X size={15} /> Reject</>}
+            </button>
           </div>
-        )}
-        <Field
-          label={kind === "approve" ? "Comment (optional)" : "Rejection reason"}
-          required={kind === "reject"}
-          error={kind === "reject" ? err : ""}
-        >
-          <textarea
-            className={inputCls}
-            rows={3}
-            value={text}
-            onChange={(e) => { setText(e.target.value); if (err) setErr(""); }}
-            placeholder={kind === "reject" ? "Why is this requirement being rejected?" : "Optional comment…"}
-          />
-        </Field>
-        <div className="flex justify-end gap-2">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={kind === "reject" ? btnDanger : btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "Working…" : kind === "approve" ? <><Check size={15} /> Approve</> : <><X size={15} /> Reject</>}
-          </button>
         </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -519,75 +555,79 @@ function RequirementFormModal({
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
   return (
-    <Modal title={editing ? `Edit ${initial!.req_number}` : "New Requirement"} onClose={onClose} wide fullScreen>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <Modal
+      title={<span className="sr-only">{editing ? `Edit ${initial!.req_number}` : "New Requirement"}</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title={editing ? `Edit ${initial!.req_number}` : "New Requirement"}
+        subtitle="Capture the role, experience band, budget, and required skills for this hiring requirement."
+        icon={<ClipboardList size={20} aria-hidden />}
+      >
+      <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
         {!editing && (
-          <div className="sm:col-span-2">
-            <Field label="Opportunity" required error={errors.opportunity_id}>
-              <select className={inputCls} value={form.opportunity_id} onChange={(e) => set("opportunity_id", e.target.value)}>
-                <option value="">Select an opportunity…</option>
-                {opps.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.opp_id} — {o.title}{o.customer_name ? ` (${o.customer_name})` : ""}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
+          <WizardField className="sm:col-span-2" label="Opportunity" required error={errors.opportunity_id} icon="building">
+            <select className={inputCls} value={form.opportunity_id} onChange={(e) => set("opportunity_id", e.target.value)}>
+              <option value="">Select an opportunity…</option>
+              {opps.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.opp_id} — {o.title}{o.customer_name ? ` (${o.customer_name})` : ""}
+                </option>
+              ))}
+            </select>
+          </WizardField>
         )}
-        <div className="sm:col-span-2">
-          <Field label="Title" required error={errors.title}>
-            <input className={inputCls} value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Senior Java Developer" />
-          </Field>
-        </div>
-        <div className="sm:col-span-2">
-          <Field label="Description">
-            <textarea className={inputCls} rows={3} value={form.description} onChange={(e) => set("description", e.target.value)} />
-          </Field>
-        </div>
-        <Field label="No. of positions" required error={errors.no_of_positions}>
+        <WizardField className="sm:col-span-2" label="Title" required error={errors.title} filled={!!form.title.trim() && !errors.title}>
+          <input className={inputCls} value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Senior Java Developer" />
+        </WizardField>
+        <WizardField className="sm:col-span-2" label="Description">
+          <textarea className={inputCls} rows={3} value={form.description} onChange={(e) => set("description", e.target.value)} />
+        </WizardField>
+        <WizardField label="No. of positions" required error={errors.no_of_positions} icon="hash" filled={form.no_of_positions.trim() !== "" && !errors.no_of_positions}>
           <input className={inputCls} type="number" min={1} value={form.no_of_positions} onChange={(e) => set("no_of_positions", e.target.value)} />
-        </Field>
-        <Field label="Priority">
+        </WizardField>
+        <WizardField label="Priority">
           <select className={inputCls} value={form.priority} onChange={(e) => set("priority", e.target.value)}>
             {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
-        </Field>
-        <Field label="Experience min (yrs)" error={errors.experience_min}>
+        </WizardField>
+        <WizardField label="Experience min (yrs)" error={errors.experience_min} icon="hash" filled={form.experience_min.trim() !== "" && !errors.experience_min}>
           <input className={inputCls} type="number" min={0} step="0.5" value={form.experience_min} onChange={(e) => set("experience_min", e.target.value)} />
-        </Field>
-        <Field label="Experience max (yrs)" error={errors.experience_max}>
+        </WizardField>
+        <WizardField label="Experience max (yrs)" error={errors.experience_max} icon="hash" filled={form.experience_max.trim() !== "" && !errors.experience_max}>
           <input className={inputCls} type="number" min={0} step="0.5" value={form.experience_max} onChange={(e) => set("experience_max", e.target.value)} />
-        </Field>
-        <Field label="Budget CTC min" error={errors.budget_ctc_min}>
+        </WizardField>
+        <WizardField label="Budget CTC min" error={errors.budget_ctc_min} icon="hash" filled={form.budget_ctc_min.trim() !== "" && !errors.budget_ctc_min}>
           <input className={inputCls} type="number" min={0} value={form.budget_ctc_min} onChange={(e) => set("budget_ctc_min", e.target.value)} />
-        </Field>
-        <Field label="Budget CTC max" error={errors.budget_ctc_max}>
+        </WizardField>
+        <WizardField label="Budget CTC max" error={errors.budget_ctc_max} icon="hash" filled={form.budget_ctc_max.trim() !== "" && !errors.budget_ctc_max}>
           <input className={inputCls} type="number" min={0} value={form.budget_ctc_max} onChange={(e) => set("budget_ctc_max", e.target.value)} />
-        </Field>
-        <Field label="Work mode">
+        </WizardField>
+        <WizardField label="Work mode">
           <select className={inputCls} value={form.work_mode} onChange={(e) => set("work_mode", e.target.value)}>
             <option value="">—</option>
             {WORK_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
-        </Field>
-        <Field label="Location">
+        </WizardField>
+        <WizardField label="Location" icon="map">
           <select className={inputCls} value={form.location_id} onChange={(e) => set("location_id", e.target.value)}>
             <option value="">—</option>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>{l.city}{l.state ? `, ${l.state}` : ""} ({l.country})</option>
             ))}
           </select>
-        </Field>
-        <Field label="Target closure date">
+        </WizardField>
+        <WizardField label="Target closure date" icon="calendar" filled={!!form.target_closure_date}>
           <input className={inputCls} type="date" value={form.target_closure_date} onChange={(e) => set("target_closure_date", e.target.value)} />
-        </Field>
+        </WizardField>
       </div>
 
       {/* skills editor */}
-      <div className="mt-4">
+      <div className="mt-6">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs font-semibold text-secondary">Skills</span>
+          <FieldLabel label="Skills" />
           <button
             type="button"
             className={smallBtn}
@@ -597,9 +637,9 @@ function RequirementFormModal({
           </button>
         </div>
         {rows.length === 0 && (
-          <div className="rounded-lg border border-dashed border-strong px-3 py-2.5 text-xs text-muted">
+          <InfoChip>
             No skills yet — mandatory skills drive the ATS score (50 of 100 points).
-          </div>
+          </InfoChip>
         )}
         <div className="space-y-2">
           {rows.map((r, i) => (
@@ -633,7 +673,7 @@ function RequirementFormModal({
               </select>
               <button
                 type="button"
-                className="rounded-lg p-1.5 text-muted hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                className="rounded-lg p-1.5 text-muted hover:bg-danger-soft hover:text-danger"
                 onClick={() => setRows((rs) => rs.filter((_, idx) => idx !== i))}
                 aria-label="Remove skill"
               >
@@ -642,15 +682,16 @@ function RequirementFormModal({
             </div>
           ))}
         </div>
-        {errors.skills && <div className="mt-1 text-xs text-rose-600">{errors.skills}</div>}
+        {errors.skills && <div className="mt-1 text-xs text-danger">{errors.skills}</div>}
       </div>
 
-      <div className="mt-5 flex justify-end gap-2">
-        <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={btnPrimary} onClick={submit} disabled={busy}>
+      <div className={wizFooterRow}>
+        <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+        <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
           {busy ? "Saving…" : editing ? "Save changes" : "Create requirement"}
         </button>
       </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1017,27 +1058,40 @@ function JobPostingsTab({
       )}
 
       {showLink && (
-        <Modal title="Public application link" onClose={() => setShowLink(false)}>
-          <p className="mb-3 text-sm text-secondary">
-            Share this link on Naukri, LinkedIn, or anywhere else. Candidates fill in their name, email,
-            phone and experience and upload a resume — submissions appear in this requirement’s Resumes tab.
-          </p>
-          <div className="flex items-center gap-2">
-            <input
-              className={inputCls}
-              readOnly
-              value={applyUrl}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <button className={btnPrimary} onClick={copyApplyUrl}>
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <a className={btnSecondary} href={applyUrl} target="_blank" rel="noreferrer">
-              <ExternalLink size={14} /> Preview form
-            </a>
-          </div>
+        <Modal
+          title={<span className="sr-only">Public application link</span>}
+          onClose={() => setShowLink(false)}
+          bodyClassName="!px-0 !py-0"
+        >
+          <WizFormShell
+            title="Public application link"
+            subtitle="Share this link so candidates can apply directly into this requirement."
+            icon={<Link2 size={20} aria-hidden />}
+          >
+            <InfoChip>
+              Share this link on Naukri, LinkedIn, or anywhere else. Candidates fill in their name, email,
+              phone and experience and upload a resume — submissions appear in this requirement’s Resumes tab.
+            </InfoChip>
+            <div className="mt-4">
+              <FieldLabel label="Application link" />
+              <div className="flex items-center gap-2">
+                <input
+                  className={lockedInputCls}
+                  readOnly
+                  value={applyUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button className={`${btnPrimary} h-10 shrink-0 rounded-xl`} onClick={copyApplyUrl}>
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <a className={`${btnSecondary} h-10 rounded-xl`} href={applyUrl} target="_blank" rel="noreferrer">
+                <ExternalLink size={14} /> Preview form
+              </a>
+            </div>
+          </WizFormShell>
         </Modal>
       )}
       {error ? (
@@ -1046,28 +1100,39 @@ function JobPostingsTab({
         <DataTable<JobPosting> columns={columns} rows={postings} loading={loading} emptyMessage="No job postings yet" />
       )}
       {showAdd && (
-        <Modal title="Add job posting" onClose={() => setShowAdd(false)} fullScreen>
-          <div className="space-y-3">
-            <Field label="Portal" required>
-              <select className={inputCls} value={portal} onChange={(e) => setPortal(e.target.value)}>
-                {JOB_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="Job post URL" required error={urlErr}>
-              <input
-                className={inputCls}
-                value={url}
-                onChange={(e) => { setUrl(e.target.value); if (urlErr) setUrlErr(""); }}
-                placeholder="https://www.naukri.com/job/…"
-              />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <button className={btnSecondary} onClick={() => setShowAdd(false)} disabled={busy}>Cancel</button>
-              <button className={btnPrimary} onClick={addPosting} disabled={busy}>
-                {busy ? "Adding…" : "Add posting"}
-              </button>
+        <Modal
+          title={<span className="sr-only">Add job posting</span>}
+          onClose={() => setShowAdd(false)}
+          fullScreen
+          bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+        >
+          <WizFormShell
+            title="Add job posting"
+            subtitle="Record where this requirement is advertised so sourcing stays tracked."
+            icon={<Link2 size={20} aria-hidden />}
+          >
+            <div className="space-y-5">
+              <WizardField label="Portal" required>
+                <select className={inputCls} value={portal} onChange={(e) => setPortal(e.target.value)}>
+                  {JOB_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </WizardField>
+              <WizardField label="Job post URL" required error={urlErr} icon={<Link2 size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />} filled={!!url.trim() && !urlErr}>
+                <input
+                  className={inputCls}
+                  value={url}
+                  onChange={(e) => { setUrl(e.target.value); if (urlErr) setUrlErr(""); }}
+                  placeholder="https://www.naukri.com/job/…"
+                />
+              </WizardField>
+              <div className={wizFooterRow}>
+                <button className={`${btnSecondary} h-10 rounded-xl`} onClick={() => setShowAdd(false)} disabled={busy}>Cancel</button>
+                <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={addPosting} disabled={busy}>
+                  {busy ? "Adding…" : "Add posting"}
+                </button>
+              </div>
             </div>
-          </div>
+          </WizFormShell>
         </Modal>
       )}
     </div>
@@ -1105,19 +1170,17 @@ function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void 
   const details = (b.score_details || {}) as Record<string, unknown>;
   return (
     <Modal
-      title={
-        <span className="inline-flex flex-wrap items-center gap-2">
-          ATS breakdown — {row.candidate_name}
-          {/* AI-computed score gets the reserved gradient-text accent */}
-          <span className="bg-clip-text font-extrabold text-transparent [background-image:var(--ai-gradient)]">
-            {row.ats_score ?? "—"}/100
-          </span>
-        </span>
-      }
+      title={<span className="sr-only">{`ATS breakdown — ${row.candidate_name}`}</span>}
       onClose={onClose}
       wide
       fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
+      <WizFormShell
+        title={`ATS breakdown — ${row.candidate_name}`}
+        subtitle={`AI-computed match score ${row.ats_score ?? "—"}/100 against the requirement JD and skills.`}
+        icon={<ScanLine size={20} aria-hidden />}
+      >
       <div className="space-y-4">
         <div>
           <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Matched skills</div>
@@ -1192,6 +1255,7 @@ function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void 
           </table>
         </div>
       </div>
+      </WizFormShell>
     </Modal>
   );
 }
@@ -1216,52 +1280,63 @@ function UploadResumeModal({
   if (source) fields.source_portal = source;
 
   return (
-    <Modal title="Upload resume" onClose={onClose} fullScreen>
-      <div className="space-y-3">
-        <Field label="Candidate name" required error={nameErr}>
-          <input
-            className={inputCls}
-            value={name}
-            onChange={(e) => { setName(e.target.value); if (nameErr) setNameErr(""); }}
-            placeholder="Full name"
-          />
-        </Field>
-        <Field label="Email">
-          <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </Field>
-        <Field label="Phone">
-          <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </Field>
-        <Field label="Source portal">
-          <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
-            <option value="">—</option>
-            {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </Field>
-        <div>
-          {name.trim() ? (
-            <FileUploadButton
-              path={`/api/requirements/${req.id}/resumes`}
-              fields={fields}
-              label="Choose file & upload"
-              accept=".pdf,.doc,.docx,.txt"
-              onDone={() => { toast("Resume uploaded"); onUploaded(); onClose(); }}
-              onError={(m) => toast(m, "err")}
+    <Modal
+      title={<span className="sr-only">Upload resume</span>}
+      onClose={onClose}
+      fullScreen
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Upload resume"
+        subtitle="Add an applicant's resume to this requirement for ATS scoring."
+        icon={<FileUp size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <WizardField label="Candidate name" required error={nameErr} icon="user" filled={!!name.trim() && !nameErr}>
+            <input
+              className={inputCls}
+              value={name}
+              onChange={(e) => { setName(e.target.value); if (nameErr) setNameErr(""); }}
+              placeholder="Full name"
             />
-          ) : (
-            <button
-              type="button"
-              className={btnSecondary}
-              onClick={() => setNameErr("Candidate name is required before uploading")}
-            >
-              Choose file & upload
-            </button>
-          )}
-          <p className="mt-1.5 text-xs text-muted">
-            Accepted: .pdf, .doc, .docx, .txt — the upload starts as soon as you pick a file.
-          </p>
+          </WizardField>
+          <WizardField label="Email" icon="mail" filled={!!email.trim()}>
+            <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </WizardField>
+          <WizardField label="Phone" icon="phone" filled={!!phone.trim()}>
+            <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </WizardField>
+          <WizardField label="Source portal">
+            <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
+              <option value="">—</option>
+              {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </WizardField>
+          <div>
+            {name.trim() ? (
+              <FileUploadButton
+                path={`/api/requirements/${req.id}/resumes`}
+                fields={fields}
+                label="Choose file & upload"
+                accept=".pdf,.doc,.docx,.txt"
+                onDone={() => { toast("Resume uploaded"); onUploaded(); onClose(); }}
+                onError={(m) => toast(m, "err")}
+              />
+            ) : (
+              <button
+                type="button"
+                className={btnSecondary}
+                onClick={() => setNameErr("Candidate name is required before uploading")}
+              >
+                Choose file & upload
+              </button>
+            )}
+            <InfoChip>
+              Accepted: .pdf, .doc, .docx, .txt — the upload starts as soon as you pick a file.
+            </InfoChip>
+          </div>
         </div>
-      </div>
+      </WizFormShell>
     </Modal>
   );
 }

@@ -105,17 +105,32 @@ export function CrmLink({
   className,
   children,
   title,
+  "aria-label": ariaLabel,
+  onMouseEnter,
+  onMouseLeave,
+  onFocus,
+  onBlur,
 }: {
   to: string;
   className?: string;
   children: React.ReactNode;
   title?: string;
+  "aria-label"?: string;
+  onMouseEnter?: React.MouseEventHandler<HTMLAnchorElement>;
+  onMouseLeave?: React.MouseEventHandler<HTMLAnchorElement>;
+  onFocus?: React.FocusEventHandler<HTMLAnchorElement>;
+  onBlur?: React.FocusEventHandler<HTMLAnchorElement>;
 }) {
   return (
     <a
       href={crmUrl(to)}
       title={title}
+      aria-label={ariaLabel}
       className={className}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
       onClick={(e) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
