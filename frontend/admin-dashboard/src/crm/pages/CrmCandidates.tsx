@@ -2,14 +2,17 @@
  * education, experience, skills and linked candidate-profiles tabs. */
 import React, { useCallback, useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Briefcase, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2, User } from "lucide-react";
+import { Briefcase, FileText, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2, User } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
+import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
+import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   ConfirmModal,
@@ -28,8 +31,8 @@ import {
   SectionHeaderBanner, WizardField,
 } from "../components/wizard";
 
-/** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+/** Local single-screen shell — applies the shared wizard look
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -40,7 +43,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -56,21 +59,38 @@ const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--
 
 type Candidate = {
   id: number;
+  salutation?: string | null;
   first_name: string;
+  middle_name?: string | null;
   last_name?: string | null;
   full_name?: string;
   email: string;
   phone?: string | null;
+  date_of_birth?: string | null;
+  gender?: string | null;
+  experience_years?: number | null;
+  notice_period?: string | null;
   current_address?: string | null;
   permanent_address?: string | null;
   technical_domain?: string | null;
+  roles?: string | null;
   designation_id?: number | null;
   cv_url?: string | null;
   linkedin_url?: string | null;
   resignation_status?: boolean;
   last_working_day?: string | null;
+  resignation_certificate_url?: string | null;
+  current_ctc?: number | null;
   expected_ctc?: number | null;
   preferred_location_id?: number | null;
+  /** --- Zoho NEXUS export fields --- */
+  zoho_candidate_id?: string | null;
+  city?: string | null;
+  /** Full preferred-location list; preferred_location_id is the primary one. */
+  preferred_locations?: string | null;
+  recruiter_email?: string | null;
+  cv_original_filename?: string | null;
+  source_created_date?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -94,11 +114,19 @@ type Experience = {
   is_current?: boolean;
 };
 
+/** One application by this candidate — the opportunity they applied to and how far
+ * it got. Sourced from GET /api/candidates/{id} → profiles[]. */
 type LinkedProfile = {
   id: number;
   opportunity_id: number;
+  opportunity_opp_id?: string | null;
   opportunity_title: string;
+  customer_name?: string | null;
   pipeline_status: string;
+  expected_ctc?: number | null;
+  applied_on?: string | null;
+  ta_owner_name?: string | null;
+  interview_rounds?: number;
 };
 
 type CandidateDetail = Candidate & {
@@ -129,6 +157,15 @@ const fmtDateTime = (v?: string | null) => {
   return isNaN(d.getTime()) ? "—" : d.toLocaleString();
 };
 const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
+/** CTC is stored in rupees; recruiters read and quote it in lakhs. 2200000 -> "22.00". */
+const LAKH = 100000;
+const fmtLac = (v?: number | null) =>
+  v === null || v === undefined ? "—" : (Number(v) / LAKH).toFixed(2);
+/** Lakhs typed into a form -> rupees for the API. */
+const lacToRupees = (v: string) => (v === "" ? null : Math.round(Number(v) * LAKH));
+/** Rupees from the API -> lakhs for a form field. */
+const rupeesToLac = (v?: number | null) =>
+  v === null || v === undefined ? "" : String(Number(v) / LAKH);
 const candName = (c: Candidate) => c.full_name || [c.first_name, c.last_name].filter(Boolean).join(" ");
 const locLabel = (l: LocationOpt) => [l.city, l.state, l.country].filter(Boolean).join(", ");
 
@@ -151,8 +188,10 @@ const CHANNEL_ICONS: Record<string, React.ComponentType<{ size?: number | string
 function useMaster<T = any>(path: string): T[] {
   const [items, setItems] = useState<T[]>([]);
   useEffect(() => {
-    crmGet<T[]>(`${path}${path.includes("?") ? "&" : "?"}limit=100`)
-      .then((r) => setItems(r.data || []))
+    // Page through: `limit` is clamped to 100 server-side, so a single request
+    // silently truncated masters that have grown past that (skills, locations).
+    fetchAllMaster<T>(path)
+      .then(setItems)
       .catch(() => {});
   }, [path]);
   return items;
@@ -162,6 +201,10 @@ function useMaster<T = any>(path: string): T[] {
 
 export function CandidatesListPage() {
   const canWrite = useHasRole(...WRITE_ROLES);
+  // Applying a candidate to a requirement is TA's job (sourcing) — Admin/CEO pass too.
+  const isTAUser = useHasRole("TA");
+  // Roles allowed to create a Candidate Profile (POST /api/candidate-profiles).
+  const canApply = useHasRole("TA", "Sales", "RMG");
   const skills = useMaster<SkillOpt>("/api/skills?is_active=true");
 
   const [rows, setRows] = useState<Candidate[]>([]);
@@ -171,9 +214,12 @@ export function CandidatesListPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [skillId, setSkillId] = useState("");
+  // "" = all, "yes" = resume on file, "no" = still missing a CV
+  const [hasCv, setHasCv] = useState("");
   const [domain, setDomain] = useState("");
   const [debounced, setDebounced] = useState({ search: "", domain: "" });
   const [showCreate, setShowCreate] = useState(false);
+  const [applyFor, setApplyFor] = useState<Candidate | null>(null);
   const [toast, showToast] = useToast();
 
   useEffect(() => {
@@ -195,6 +241,7 @@ export function CandidatesListPage() {
           search: debounced.search,
           skill_id: skillId,
           technical_domain: debounced.domain,
+          has_cv: hasCv === "" ? undefined : hasCv === "yes",
         })}`,
       );
       setRows(res.data || []);
@@ -204,7 +251,7 @@ export function CandidatesListPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debounced, skillId]);
+  }, [page, debounced, skillId, hasCv]);
 
   useEffect(() => {
     load();
@@ -212,10 +259,33 @@ export function CandidatesListPage() {
 
   const columns: Column<Candidate>[] = [
     { key: "full_name", label: "Name", render: (r) => <span className="font-semibold">{candName(r)}</span> },
-    { key: "email", label: "Email" },
+    { key: "email", label: "Email", render: (r) => displayEmail(r.email) },
     { key: "phone", label: "Phone", render: (r) => r.phone || "—" },
+    { key: "city", label: "City", render: (r) => r.city || "—" },
+    {
+      key: "experience_years",
+      label: "Exp (yrs)",
+      align: "right",
+      render: (r) => (r.experience_years ?? "—"),
+    },
     { key: "technical_domain", label: "Domain", render: (r) => r.technical_domain || "—" },
-    { key: "expected_ctc", label: "Expected CTC", render: (r) => fmtMoney(r.expected_ctc) },
+    { key: "current_ctc", label: "Current CTC (Lac)", align: "right", render: (r) => fmtLac(r.current_ctc) },
+    { key: "expected_ctc", label: "Expected CTC (Lac)", align: "right", render: (r) => fmtLac(r.expected_ctc) },
+    {
+      key: "cv_url",
+      label: "CV",
+      render: (r) =>
+        r.cv_url ? (
+          <span
+            className="inline-flex items-center gap-1 text-xs font-semibold text-success"
+            title={r.cv_original_filename || "Resume on file"}
+          >
+            <FileText size={13} /> Yes
+          </span>
+        ) : (
+          <span className="text-xs text-muted">—</span>
+        ),
+    },
   ];
 
   return (
@@ -244,6 +314,19 @@ export function CandidatesListPage() {
           filters={
             <>
               <select
+                className={`${inputCls} !w-40`}
+                value={hasCv}
+                onChange={(e) => {
+                  setHasCv(e.target.value);
+                  setPage(1);
+                }}
+                aria-label="Filter by whether a CV is on file"
+              >
+                <option value="">CV: any</option>
+                <option value="yes">Has CV</option>
+                <option value="no">No CV</option>
+              </select>
+              <select
                 className={`${inputCls} !w-48`}
                 value={skillId}
                 onChange={(e) => {
@@ -268,16 +351,33 @@ export function CandidatesListPage() {
           }
           emptyMessage="No candidates found"
           rowActions={canWrite ? (r) => (
-            <RowActions
-              entity="candidate"
-              itemLabel={candName(r)}
-              onEdit={() => crmNavigate(`candidates/${r.id}`)}
-              deleteUrl={`/api/candidates/${r.id}`}
-              onDeleted={load}
-              notify={showToast}
-              canEdit
-              canDelete
-            />
+            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {/* Every candidate gets this — applying creates a Candidate Profile,
+                  which needs no CV. It used to be hidden without one because the
+                  old flow went through the requirement/ATS route. */}
+              {canApply && (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:!text-indigo-600"
+                  title="Apply to an opportunity"
+                  aria-label={`Apply ${candName(r)} to an opportunity`}
+                  onClick={(e) => { e.stopPropagation(); setApplyFor(r); }}
+                >
+                  <Briefcase size={15} />
+                </button>
+              )}
+              <RowActions
+                entity="candidate"
+                itemLabel={candName(r)}
+                onView={() => crmNavigate(`candidates/${r.id}`)}
+                onEdit={() => crmNavigate(`candidates/${r.id}`)}
+                deleteUrl={`/api/candidates/${r.id}`}
+                onDeleted={() => afterListDelete(r.id, setRows, load)}
+                notify={showToast}
+                canEdit
+                canDelete
+              />
+            </span>
           ) : undefined}
         />
       )}
@@ -290,6 +390,15 @@ export function CandidatesListPage() {
             showToast("Candidate created");
             crmNavigate(`candidates/${c.id}`);
           }}
+        />
+      )}
+      {applyFor && (
+        <ApplyToOpportunityModal
+          mode="pick-opportunity"
+          candidateId={applyFor.id}
+          candidateName={candName(applyFor)}
+          onClose={() => setApplyFor(null)}
+          onApplied={(msg) => { showToast(msg); load(); }}
         />
       )}
       {toast}
@@ -324,12 +433,15 @@ function CandidateFormModal({
     gender: init.gender || "",
     experience_years: init.experience_years !== null && init.experience_years !== undefined ? String(init.experience_years) : "",
     notice_period: init.notice_period || "",
+    city: init.city || "",
+    preferred_locations: init.preferred_locations || "",
+    recruiter_email: init.recruiter_email || "",
     technical_domain: initial?.technical_domain || "",
     roles: init.roles || "",
     designation_id: initial?.designation_id ? String(initial.designation_id) : "",
     linkedin_url: initial?.linkedin_url || "",
-    current_ctc: init.current_ctc !== null && init.current_ctc !== undefined ? String(init.current_ctc) : "",
-    expected_ctc: initial?.expected_ctc !== null && initial?.expected_ctc !== undefined ? String(initial.expected_ctc) : "",
+    current_ctc: rupeesToLac(init.current_ctc),
+    expected_ctc: rupeesToLac(initial?.expected_ctc),
     preferred_location_id: initial?.preferred_location_id ? String(initial.preferred_location_id) : "",
     current_address: initial?.current_address || "",
     permanent_address: initial?.permanent_address || "",
@@ -357,12 +469,15 @@ function CandidateFormModal({
       gender: form.gender || null,
       experience_years: form.experience_years !== "" ? Number(form.experience_years) : null,
       notice_period: form.notice_period.trim() || null,
+      city: form.city.trim() || null,
+      preferred_locations: form.preferred_locations.trim() || null,
+      recruiter_email: form.recruiter_email.trim() || null,
       technical_domain: form.technical_domain.trim() || null,
       roles: form.roles.trim() || null,
       designation_id: form.designation_id ? Number(form.designation_id) : null,
       linkedin_url: form.linkedin_url.trim() || null,
-      current_ctc: form.current_ctc !== "" ? Number(form.current_ctc) : null,
-      expected_ctc: form.expected_ctc !== "" ? Number(form.expected_ctc) : null,
+      current_ctc: lacToRupees(form.current_ctc),
+      expected_ctc: lacToRupees(form.expected_ctc),
       preferred_location_id: form.preferred_location_id ? Number(form.preferred_location_id) : null,
       current_address: form.current_address.trim() || null,
       permanent_address: form.permanent_address.trim() || null,
@@ -387,6 +502,7 @@ function CandidateFormModal({
       title={<span className="sr-only">{isEdit ? "Edit Candidate" : "New Candidate"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -395,7 +511,7 @@ function CandidateFormModal({
         icon={<User size={20} aria-hidden />}
       >
       {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
         <div className={secHead}>Name</div>
         <WizardField label="Salutation">
           <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
@@ -416,6 +532,14 @@ function CandidateFormModal({
         <div className={secHead}>Basic details</div>
         <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
           <input className={inputCls} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+          {/* Kept visible and editable so it can be replaced, but flagged — this
+              address is a system placeholder, not a way to reach the candidate. */}
+          {isPlaceholderEmail(form.email) && (
+            <p className="mt-1 text-xs text-warning">
+              Placeholder address — this candidate had no email in Zoho. Replace it with
+              their real one.
+            </p>
+          )}
         </WizardField>
         <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
           <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
@@ -442,9 +566,19 @@ function CandidateFormModal({
           <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
         </WizardField>
 
+        <WizardField label="City">
+          <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="e.g. Bangalore" />
+        </WizardField>
+
         <div className={secHead}>Professional</div>
         <WizardField label="Technical domain">
           <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Backend, Data Engineering" />
+        </WizardField>
+        <WizardField label="Recruiter">
+          <input className={inputCls} value={form.recruiter_email} onChange={(e) => set("recruiter_email", e.target.value)} placeholder="recruiter@karnex.in" />
+        </WizardField>
+        <WizardField label="Preferred locations" info="Comma separated when the candidate is open to several.">
+          <input className={inputCls} value={form.preferred_locations} onChange={(e) => set("preferred_locations", e.target.value)} placeholder="e.g. Bangalore, Pune" />
         </WizardField>
         <WizardField label="Roles">
           <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
@@ -466,11 +600,11 @@ function CandidateFormModal({
         </WizardField>
 
         <div className={secHead}>Compensation</div>
-        <WizardField label="Current CTC (annual)" icon="hash" filled={form.current_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} value={form.current_ctc} onChange={(e) => set("current_ctc", e.target.value)} />
+        <WizardField label="Current CTC (Lac)" icon="hash" filled={form.current_ctc !== ""}>
+          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} onChange={(e) => set("current_ctc", e.target.value)} />
         </WizardField>
-        <WizardField label="Expected CTC (annual)" icon="hash" filled={form.expected_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} value={form.expected_ctc} onChange={(e) => set("expected_ctc", e.target.value)} />
+        <WizardField label="Expected CTC (Lac)" icon="hash" filled={form.expected_ctc !== ""}>
+          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} onChange={(e) => set("expected_ctc", e.target.value)} />
         </WizardField>
 
         <div className={secHead}>Separation</div>
@@ -505,6 +639,8 @@ export function CandidateDetailPage() {
   const params = useCrmParams();
   const id = params.id;
   const canWrite = useHasRole(...WRITE_ROLES);
+  // Applying a candidate to a requirement is TA's job (sourcing) — Admin/CEO pass too.
+  const isTAUser = useHasRole("TA");
 
   const [data, setData] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState("");
@@ -516,12 +652,35 @@ export function CandidateDetailPage() {
   const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [toast, showToast] = useToast();
+  const [parsing, setParsing] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
 
   const load = useCallback(() => {
     crmGet<CandidateDetail>(`/api/candidates/${id}`)
       .then((r) => setData(r.data))
       .catch((e: any) => setError(e?.message || "Failed to load candidate"));
   }, [id]);
+
+  const parseCv = async () => {
+    setParsing(true);
+    try {
+      const res = await crmPost<{
+        autofilled?: { fields?: string[]; skills?: number; education?: number; experience?: number };
+      }>(`/api/candidates/${id}/parse-cv`, {});
+      const f = res.data?.autofilled;
+      const parts: string[] = [];
+      if (f?.fields?.length) parts.push(`${f.fields.length} field${f.fields.length === 1 ? "" : "s"}`);
+      if (f?.skills) parts.push(`${f.skills} skill${f.skills === 1 ? "" : "s"}`);
+      if (f?.education) parts.push(`${f.education} education`);
+      if (f?.experience) parts.push(`${f.experience} experience`);
+      showToast(parts.length ? `Filled ${parts.join(", ")} from the CV` : "CV parsed — nothing new to add");
+      load();
+    } catch (e: any) {
+      showToast(e?.message || "Failed to parse CV", "err");
+    } finally {
+      setParsing(false);
+    }
+  };
 
   useEffect(() => {
     setData(null);
@@ -572,8 +731,33 @@ export function CandidateDetailPage() {
   ];
 
   const profileCols: Column<LinkedProfile>[] = [
-    { key: "opportunity_title", label: "Opportunity", render: (r) => <span className="font-semibold">{r.opportunity_title}</span> },
+    {
+      key: "opportunity_title",
+      label: "Opportunity",
+      render: (r) => (
+        <div className="min-w-0">
+          <div className="font-semibold truncate">{r.opportunity_title}</div>
+          {r.opportunity_opp_id && (
+            <div className="font-mono text-xs opacity-60">{r.opportunity_opp_id}</div>
+          )}
+        </div>
+      ),
+    },
+    { key: "customer_name", label: "Customer", render: (r) => r.customer_name || "—" },
     { key: "pipeline_status", label: "Pipeline Status", render: (r) => <StatusBadge status={r.pipeline_status} /> },
+    {
+      key: "interview_rounds",
+      label: "Rounds",
+      align: "right",
+      render: (r) => (r.interview_rounds ? String(r.interview_rounds) : "—"),
+    },
+    { key: "expected_ctc", label: "Expected CTC (Lac)", align: "right", render: (r) => fmtLac(r.expected_ctc) },
+    { key: "ta_owner_name", label: "TA", render: (r) => r.ta_owner_name || "—" },
+    {
+      key: "applied_on",
+      label: "Applied",
+      render: (r) => (r.applied_on ? new Date(r.applied_on).toLocaleDateString() : "—"),
+    },
   ];
 
   return (
@@ -587,12 +771,33 @@ export function CandidateDetailPage() {
           <div>
             <h1 className="text-display text-xl font-bold text-primary">{candName(data)}</h1>
             <div className="mt-1 text-sm text-muted">
-              {data.email}
+              {displayEmail(data.email)}
               {data.phone ? ` · ${data.phone}` : ""}
             </div>
           </div>
           <div className="flex items-center gap-3">
             <FileLink url={data.cv_url} label="View CV" />
+            {isTAUser && data.cv_url && (
+              <button
+                type="button"
+                className={`${btnPrimary} h-10 rounded-xl`}
+                onClick={() => setApplyOpen(true)}
+                title="Apply this candidate directly to an open requirement — CV and details attach automatically"
+              >
+                <Briefcase size={15} /> Apply to Opportunity
+              </button>
+            )}
+            {canWrite && data.cv_url && (
+              <button
+                type="button"
+                className={`${btnSecondary} h-10 rounded-xl`}
+                onClick={parseCv}
+                disabled={parsing}
+                title="Extract domain, experience, skills, education and CTC from the CV into the fields below"
+              >
+                {parsing ? "Parsing CV…" : "Auto-fill from CV"}
+              </button>
+            )}
             {canWrite && (
               <FileUploadButton
                 path={`/api/candidates/${data.id}/cv`}
@@ -600,7 +805,32 @@ export function CandidateDetailPage() {
                 accept=".pdf,.doc,.docx"
                 onDone={(d) => {
                   setData({ ...data, cv_url: d?.cv_url || data.cv_url });
-                  showToast("CV uploaded");
+                  showToast("CV uploaded — details auto-filled from CV");
+                  load();
+                }}
+                onError={(m) => showToast(m, "err")}
+              />
+            )}
+            {/* Resignation / relieving certificate — TA attaches it here when the
+                candidate hands it over. Stored on the candidate, so it shows on
+                every Candidate Profile for them (Sales / Sales Head can open it). */}
+            {data.resignation_certificate_url && (
+              <FileLink url={data.resignation_certificate_url} label="Resignation certificate" />
+            )}
+            {canWrite && (
+              <FileUploadButton
+                path={`/api/candidates/${data.id}/resignation-certificate`}
+                label={data.resignation_certificate_url ? "Replace resignation cert." : "Upload resignation cert."}
+                accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                onDone={(d) => {
+                  setData({
+                    ...data,
+                    resignation_certificate_url:
+                      d?.resignation_certificate_url || data.resignation_certificate_url,
+                    resignation_status: d?.resignation_status ?? data.resignation_status,
+                  });
+                  showToast("Resignation certificate uploaded");
+                  load();
                 }}
                 onError={(m) => showToast(m, "err")}
               />
@@ -764,6 +994,15 @@ export function CandidateDetailPage() {
           busy={deleteBusy}
           onConfirm={confirmDelete}
           onClose={() => setDeleting(null)}
+        />
+      )}
+      {applyOpen && (
+        <ApplyToOpportunityModal
+          mode="pick-opportunity"
+          candidateId={data.id}
+          candidateName={candName(data)}
+          onClose={() => setApplyOpen(false)}
+          onApplied={(msg) => { showToast(msg); load(); }}
         />
       )}
       {toast}
@@ -968,6 +1207,7 @@ function LogOutreachModal({
       title={<span className="sr-only">Log outreach</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -1054,12 +1294,24 @@ function PersonalInfoGrid({ c }: { c: CandidateDetail }) {
   const designation = designations.find((d) => d.id === c.designation_id);
   const location = locations.find((l) => l.id === c.preferred_location_id);
 
+  // Every stored field is shown. Several of these (salutation, middle name, DOB,
+  // gender, experience, notice period, roles, current CTC) were captured by the
+  // form and saved, but never rendered back — so the page under-reported what the
+  // record actually held.
   const rows: [string, React.ReactNode][] = [
+    ["Salutation", c.salutation || "—"],
     ["First name", c.first_name],
+    ["Middle name", c.middle_name || "—"],
     ["Last name", c.last_name || "—"],
-    ["Email", c.email],
+    ["Email", displayEmail(c.email)],
     ["Phone", c.phone || "—"],
+    ["Gender", c.gender || "—"],
+    ["Date of birth", fmtDate(c.date_of_birth)],
+    ["City", c.city || "—"],
+    ["Experience (years)", c.experience_years ?? "—"],
+    ["Notice period", c.notice_period || "—"],
     ["Technical domain", c.technical_domain || "—"],
+    ["Roles", c.roles || "—"],
     ["Designation", designation ? designation.name : c.designation_id ? `#${c.designation_id}` : "—"],
     [
       "LinkedIn",
@@ -1071,17 +1323,27 @@ function PersonalInfoGrid({ c }: { c: CandidateDetail }) {
         "—"
       ),
     ],
-    ["Expected CTC", fmtMoney(c.expected_ctc)],
-    ["Preferred location", location ? locLabel(location) : c.preferred_location_id ? `#${c.preferred_location_id}` : "—"],
+    ["Current CTC (Lac)", fmtLac(c.current_ctc)],
+    ["Expected CTC (Lac)", fmtLac(c.expected_ctc)],
+    [
+      "Preferred location",
+      // The full list when the export carried several; otherwise the single FK.
+      c.preferred_locations ||
+        (location ? locLabel(location) : c.preferred_location_id ? `#${c.preferred_location_id}` : "—"),
+    ],
     ["Resignation status", c.resignation_status ? "Resigned / serving notice" : "Not resigned"],
     ["Last working day", fmtDate(c.last_working_day)],
     ["Current address", c.current_address || "—"],
     ["Permanent address", c.permanent_address || "—"],
+    ["Recruiter", c.recruiter_email || "—"],
+    ["CV file", c.cv_original_filename || "—"],
+    ["Zoho ID", c.zoho_candidate_id ? <span className="font-mono text-xs">{c.zoho_candidate_id}</span> : "—"],
+    ["Added in Zoho", fmtDate(c.source_created_date)],
     ["Created", fmtDate(c.created_at)],
   ];
 
   return (
-    <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+    <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
       {rows.map(([label, value]) => (
         <div key={label}>
           <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
@@ -1139,6 +1401,7 @@ function EducationModal({
       title={<span className="sr-only">{item ? "Edit education" : "Add education"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -1154,7 +1417,7 @@ function EducationModal({
           <WizardField label="Institution" icon="building" filled={!!institution.trim()}>
             <input className={inputCls} value={institution} onChange={(e) => setInstitution(e.target.value)} />
           </WizardField>
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="Start date" icon="calendar" filled={!!startDate}>
               <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </WizardField>
@@ -1224,6 +1487,7 @@ function ExperienceModal({
       title={<span className="sr-only">{item ? "Edit experience" : "Add experience"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -1239,7 +1503,7 @@ function ExperienceModal({
           <WizardField label="Job title" icon="user" filled={!!jobTitle.trim()}>
             <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
           </WizardField>
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="Start date" icon="calendar" filled={!!startDate}>
               <input className={inputCls} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </WizardField>
@@ -1283,8 +1547,8 @@ function CandidateSkillsModal({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    crmGet<SkillOpt[]>("/api/skills?limit=100&is_active=true")
-      .then((r) => setAll(r.data || []))
+    fetchAllMaster<SkillOpt>("/api/skills", { is_active: true })
+      .then((rows) => setAll(rows))
       .catch((e: any) => setError(e?.message || "Failed to load skills"));
   }, []);
 
@@ -1316,6 +1580,7 @@ function CandidateSkillsModal({
       title={<span className="sr-only">Edit skills</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell

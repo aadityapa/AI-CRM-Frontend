@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateBillingBases,
   calculateCtcSlabRow,
+  calculateRfiValue,
+  resolveRfiPeriodMonths,
   validateCtcExperience,
 } from "./ctcSlab";
 
@@ -26,6 +28,38 @@ describe("Candidate CTC Slab calculations", () => {
       actualBillingDays: 237,
       actualBillingHours: 1896,
     });
+  });
+
+  it("uses Max Billable Hours/Month (branch Billing Properties) as the contractual hours basis", () => {
+    // All off-days billable → calendar hours = 365 × 8 = 2920 when no cap.
+    const allBillable = {
+      ...base,
+      holidaysBillable: true,
+      weekoffBillable: true,
+      leaveBillable: true,
+    };
+    expect(calculateBillingBases(allBillable).actualBillingHours).toBe(2920);
+    // Cap set → it REPLACES the calendar derivation: hours = cap × 12.
+    expect(
+      calculateBillingBases({ ...allBillable, maxBillableHoursMonth: 176 }).actualBillingHours,
+    ).toBe(2112);
+    expect(
+      calculateBillingBases({ ...base, maxBillableHoursMonth: 176 }).actualBillingHours,
+    ).toBe(2112); // overrides even when calendar hours (1816) are lower
+    // Blank/0 cap → calendar derivation unchanged.
+    expect(
+      calculateBillingBases({ ...allBillable, maxBillableHoursMonth: 0 }).actualBillingHours,
+    ).toBe(2920);
+    // Revenue chain: Monthly = 1414.77 × 176 = 2,48,999.52; Annual = monthly × 12.
+    const row = calculateCtcSlabRow(
+      { rate: 1414.77, management_cost_pct: 30, hike_pct: 10 },
+      { ...allBillable, billingType: "Per Hour", maxBillableHoursMonth: 176 },
+    );
+    expect(row.revenue_monthly).toBe(248999.52);
+    expect(row.revenue_annual).toBe(2987994.24);
+    // Rest of the chain unchanged: budget = annual × 0.70; approved = budget ÷ 1.10.
+    expect(row.engineering_budget).toBe(2091595.97);
+    expect(row.approved_ctc_lac).toBe(1901450.88);
   });
 
   it.each([
@@ -164,5 +198,36 @@ describe("Candidate CTC Slab calculations", () => {
   it("validates experience ordering", () => {
     expect(validateCtcExperience({ exp_min: 5, exp_max: 3 })).toContain("Exp Min");
     expect(validateCtcExperience({ exp_min: 3, exp_max: 5 })).toBe("");
+  });
+
+  it("computes RFI Value = Annual Revenue × (Period / 12) × Positions", () => {
+    expect(calculateRfiValue({
+      revenueAnnual: 1_200_000,
+      periodMonths: 6,
+      positionsCount: 2,
+    })).toBe(1_200_000);
+    expect(calculateRfiValue({
+      revenueAnnual: 1_200_000,
+      periodMonths: "",
+      positionsCount: 2,
+    })).toBeNull();
+    expect(calculateRfiValue({
+      revenueAnnual: "",
+      periodMonths: 6,
+      positionsCount: 2,
+    })).toBeNull();
+  });
+
+  it("resolves Fixed_Price period from project_duration_months when T&M duration absent", () => {
+    expect(resolveRfiPeriodMonths("Fixed_Price", {
+      project_duration_months: 9,
+    })).toBe(9);
+    expect(resolveRfiPeriodMonths("Fixed_Price", {
+      tm_duration_months: 6,
+      project_duration_months: 9,
+    })).toBe(6);
+    expect(resolveRfiPeriodMonths("T&M", {
+      project_duration_months: 9,
+    })).toBeUndefined();
   });
 });

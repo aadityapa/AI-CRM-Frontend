@@ -3,7 +3,7 @@
  * deactivate): HR / Admin. Customer→branch cascading selects scope a holiday
  * to one customer or branch ("Customer" type). */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, Pencil, Plus, Power } from "lucide-react";
+import { CalendarDays, Eye, Pencil, Plus, Power, Search } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { HolidayNameField } from "../components/HolidayNameField";
 import { useHasRole } from "../CrmApp";
@@ -14,7 +14,7 @@ import {
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -25,7 +25,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -79,8 +79,10 @@ export function HolidaysPage() {
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
   const [modal, setModal] = useState<{ initial?: Holiday } | null>(null);
   const [deactivating, setDeactivating] = useState<Holiday | null>(null);
+  const [viewing, setViewing] = useState<Holiday | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, showToast] = useToast();
+  const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,15 +112,32 @@ export function HolidaysPage() {
     return (id?: number | null) => (id == null ? null : m.get(id) || `#${id}`);
   }, [customers]);
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((h) =>
+      [
+        h.name,
+        h.holiday_date,
+        h.holiday_type,
+        h.observance,
+        h.year,
+        customerName(h.customer_id),
+        h.branch_id != null ? `branch ${h.branch_id}` : "",
+        MONTHS[new Date(`${h.holiday_date}T00:00:00`).getMonth()],
+      ].some((v) => String(v ?? "").toLowerCase().includes(q)),
+    );
+  }, [rows, search, customerName]);
+
   const byMonth = useMemo(() => {
     const groups = new Map<number, Holiday[]>();
-    rows.forEach((h) => {
+    filtered.forEach((h) => {
       const m = new Date(`${h.holiday_date}T00:00:00`).getMonth();
       if (!groups.has(m)) groups.set(m, []);
       groups.get(m)!.push(h);
     });
     return [...groups.entries()].sort((a, b) => a[0] - b[0]);
-  }, [rows]);
+  }, [filtered]);
 
   const deactivate = async () => {
     if (!deactivating) return;
@@ -152,6 +171,16 @@ export function HolidaysPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[14rem] flex-1">
+          <input
+            className={`${inputCls} !pl-9`}
+            placeholder="Search holidays…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search holidays"
+          />
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
+        </div>
         <select
           className={`${inputCls} !w-28`}
           value={year}
@@ -175,13 +204,17 @@ export function HolidaysPage() {
         <Spinner label="Loading holidays…" />
       ) : error ? (
         <ErrorBox error={error} onRetry={load} />
-      ) : rows.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="glass fx-gradient-border rounded-card">
           <EmptyState
             icon={<CalendarDays size={22} />}
-            message={`No ${showInactive ? "deactivated " : ""}holidays for ${year}`}
-            actionLabel={canWrite && !showInactive ? "Add Holiday" : undefined}
-            onAction={canWrite && !showInactive ? () => setModal({}) : undefined}
+            message={
+              search.trim()
+                ? "No holidays match your search"
+                : `No ${showInactive ? "deactivated " : ""}holidays for ${year}`
+            }
+            actionLabel={canWrite && !showInactive && !search.trim() ? "Add Holiday" : undefined}
+            onAction={canWrite && !showInactive && !search.trim() ? () => setModal({}) : undefined}
           />
         </div>
       ) : (
@@ -205,7 +238,7 @@ export function HolidaysPage() {
                       <th className={cell}>Observance</th>
                       <th className={cell}>Scope</th>
                       <th className={cell}>Status</th>
-                      {canWrite && <th className={`${cell} text-right`}><span className="sr-only">Actions</span></th>}
+                      <th className={`${cell} text-right`}><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -222,9 +255,17 @@ export function HolidaysPage() {
                             : "All"}
                         </td>
                         <td className={cell}><StatusBadge status={h.is_active ? "Active" : "Inactive"} /></td>
-                        {canWrite && (
-                          <td className={`${cell} text-right`}>
-                            <span className="inline-flex gap-1">
+                        <td className={`${cell} text-right`}>
+                          <span className="inline-flex gap-1">
+                            <button
+                              className={iconBtn}
+                              title="View holiday"
+                              aria-label={`View holiday ${h.name}`}
+                              onClick={() => setViewing(h)}
+                            >
+                              <Eye size={15} />
+                            </button>
+                            {canWrite && (
                               <button
                                 className={iconBtn}
                                 title="Edit holiday"
@@ -233,19 +274,19 @@ export function HolidaysPage() {
                               >
                                 <Pencil size={15} />
                               </button>
-                              {h.is_active && (
-                                <button
-                                  className={`${iconBtn} hover:!text-danger`}
-                                  title="Deactivate holiday"
-                                  aria-label={`Deactivate holiday ${h.name}`}
-                                  onClick={() => setDeactivating(h)}
-                                >
-                                  <Power size={15} />
-                                </button>
-                              )}
-                            </span>
-                          </td>
-                        )}
+                            )}
+                            {canWrite && h.is_active && (
+                              <button
+                                className={`${iconBtn} hover:!text-danger`}
+                                title="Deactivate holiday"
+                                aria-label={`Deactivate holiday ${h.name}`}
+                                onClick={() => setDeactivating(h)}
+                              >
+                                <Power size={15} />
+                              </button>
+                            )}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -265,6 +306,14 @@ export function HolidaysPage() {
           onError={(m) => showToast(m, "err")}
         />
       )}
+      {viewing && (
+        <HolidayViewModal
+          holiday={viewing}
+          customerName={customerName}
+          onClose={() => setViewing(null)}
+          onEdit={canWrite ? () => { const h = viewing; setViewing(null); setModal({ initial: h }); } : undefined}
+        />
+      )}
       {deactivating && (
         <ConfirmModal
           title="Deactivate holiday"
@@ -278,6 +327,66 @@ export function HolidaysPage() {
       )}
       {toast}
     </div>
+  );
+}
+
+/* ================================================================ VIEW MODAL */
+
+/** Read-only holiday details — the row "View" action. Everyone with holiday
+ *  access can open it; Edit is offered only to users who may write. */
+function HolidayViewModal({
+  holiday,
+  customerName,
+  onClose,
+  onEdit,
+}: {
+  holiday: Holiday;
+  customerName: (id?: number | null) => string | null;
+  onClose: () => void;
+  onEdit?: () => void;
+}) {
+  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
+    <div className="flex flex-col gap-0.5 border-b border-subtle py-2 last:border-b-0 sm:flex-row sm:items-baseline sm:gap-3">
+      <span className="w-44 shrink-0 text-xs font-bold uppercase tracking-wide text-muted">{label}</span>
+      <span className="min-w-0 text-sm text-primary">{value ?? "—"}</span>
+    </div>
+  );
+
+  return (
+    <Modal
+      title={holiday.name}
+      onClose={onClose}
+      footer={
+        <div className="flex justify-end gap-2">
+          {onEdit && (
+            <button type="button" className={btnPrimary} onClick={onEdit}>
+              Edit
+            </button>
+          )}
+          <button type="button" className={btnSecondary} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-0">
+        <Row label="Holiday" value={holiday.name} />
+        <Row label="Date" value={fmtDate(holiday.holiday_date)} />
+        <Row label="Day" value={holiday.holiday_date ? weekday(holiday.holiday_date) : "—"} />
+        <Row label="Year" value={holiday.year || (holiday.holiday_date || "").slice(0, 4) || "—"} />
+        <Row label="Type" value={holiday.holiday_type || "—"} />
+        <Row label="Observance" value={holiday.observance || "Mandatory"} />
+        <Row
+          label="Scope"
+          value={
+            holiday.customer_id
+              ? `${customerName(holiday.customer_id)}${holiday.branch_id ? ` · Branch #${holiday.branch_id}` : ""}`
+              : "All customers"
+          }
+        />
+        <Row label="Status" value={<StatusBadge status={holiday.is_active ? "Active" : "Inactive"} />} />
+      </div>
+    </Modal>
   );
 }
 
@@ -364,6 +473,7 @@ function HolidayFormModal({
       title={<span className="sr-only">{initial ? "Edit Holiday" : "Add Holiday"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -372,7 +482,7 @@ function HolidayFormModal({
         icon={<CalendarDays size={20} aria-hidden />}
       >
         <form onSubmit={submit} className="space-y-5">
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <HolidayNameField
               valueId={nameId}
               valueName={name}
@@ -386,7 +496,7 @@ function HolidayFormModal({
               <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
             </WizardField>
           </div>
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="Type">
               <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
                 {HOLIDAY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -398,7 +508,7 @@ function HolidayFormModal({
               </select>
             </WizardField>
           </div>
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="Customer (optional)" error={errors.customer} icon="building">
               <select
                 className={inputCls}

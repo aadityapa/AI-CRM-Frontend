@@ -67,6 +67,25 @@ let _submitInterviewInFlight = false;
 /** Backend grace window to finalize mic transcript before /submit (ms). */
 const FINALIZE_GRACE_MS = 12000;
 
+/**
+ * How long Send Response waits for the microphone to finish transcribing.
+ *
+ * Two very different situations were sharing one 8-second ceiling:
+ *
+ *  - We ALREADY have a transcript. The wait is only to catch the last word or
+ *    two still in the recorder. The answer is not at risk, so a long ceiling
+ *    buys nothing and costs the candidate a visible pause on every question.
+ *
+ *  - We have NOTHING yet. Here the wait is the answer itself — cutting it short
+ *    would submit an empty response and waste the question. This one stays
+ *    generous.
+ *
+ * Both are ceilings, not delays: the promise resolves as soon as the recorder
+ * flushes, which is usually well inside them.
+ */
+const SUBMIT_TAIL_GRACE_MS = 2500;
+const SUBMIT_TRANSCRIPT_WAIT_MS = 8000;
+
 let _unloadGuardInstalled = false;
 
 /** When true, mic stop skips server transcription so End Interview stays instant. */
@@ -163,6 +182,150 @@ function _prepareQuestionVisual(targetEl, questionText) {
   targetEl.innerText = spoken;
 }
 
+/* ---------------------------------------------------------------------------
+ * Question audio: prefetch + progressive playback
+ *
+ * Previously every question's audio was requested only at the moment it had to
+ * be spoken, and `await res.blob()` waited for the last byte before playback
+ * could begin. Two full waits, back to back, in front of every question.
+ *
+ * Now: while the candidate answers question N we ask the server to synthesise
+ * N+1 (`/candidate/tts/prewarm`), and playback starts from the first chunk
+ * instead of the last.
+ * ------------------------------------------------------------------------- */
+
+/** Questions we've already asked the server to warm, so we ask only once. */
+const _prewarmedQuestions = new Set();
+
+/**
+ * Ask the server to synthesise a question's audio ahead of time.
+ * Fire-and-forget: a failed prefetch just means the live path does the work.
+ */
+export function prewarmQuestionAudio(text) {
+  const spoken = String(text || "").trim();
+  if (!spoken || _prewarmedQuestions.has(spoken)) return;
+  _prewarmedQuestions.add(spoken);
+  // Keep the set from growing across a long interview.
+  if (_prewarmedQuestions.size > 40) {
+    _prewarmedQuestions.delete(_prewarmedQuestions.values().next().value);
+  }
+  try {
+    const fd = new FormData();
+    fd.append("text", spoken);
+    apiFetch("/candidate/tts/prewarm", { method: "POST", body: fd }).catch(() => {});
+  } catch (_) {
+    // never block the interview on a prefetch
+  }
+}
+
+/** Discard a prefetch that is no longer valid (adaptive follow-up replaced it). */
+export function invalidatePrewarmedQuestion(text) {
+  const spoken = String(text || "").trim();
+  if (spoken) _prewarmedQuestions.delete(spoken);
+}
+
+/**
+ * Build an <audio> for a question, starting playback as early as possible.
+ *
+ * Prefers MediaSource-free progressive streaming: pointing the element straight
+ * at the response URL lets the browser start decoding on the first chunk. Falls
+ * back to the blob path where that is not possible, so behaviour is unchanged
+ * on anything that cannot stream.
+ */
+async function _questionAudioElement(spoken) {
+  const fd = new FormData();
+  fd.append("text", spoken);
+  const res = await apiFetch("/candidate/tts", { method: "POST", body: fd });
+  if (!res.ok) throw new Error("TTS request failed");
+
+  // A JSON body means the server reported an error rather than sending audio.
+  const contentType = String(res.headers.get("content-type") || "");
+  if (contentType.includes("application/json")) {
+    throw new Error("TTS unavailable");
+  }
+
+  // Progressive path: consume the stream and hand each chunk to the browser as
+  // it lands, so audio begins while synthesis is still running server-side.
+  if (res.body && typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")) {
+    try {
+      return await _streamingAudioElement(res);
+    } catch (_) {
+      // fall through to the blob path below — correctness beats latency
+    }
+  }
+
+  const blob = await res.blob();
+  if (!blob.size) throw new Error("Empty TTS audio");
+  return new Audio(URL.createObjectURL(blob));
+}
+
+/** Feed a fetch stream into a MediaSource so playback can start on chunk 1. */
+function _streamingAudioElement(res) {
+  return new Promise((resolve, reject) => {
+    const mediaSource = new MediaSource();
+    const audio = new Audio();
+    audio.src = URL.createObjectURL(mediaSource);
+    let settled = false;
+
+    mediaSource.addEventListener("sourceopen", async () => {
+      let buffer;
+      try {
+        buffer = mediaSource.addSourceBuffer("audio/mpeg");
+      } catch (err) {
+        if (!settled) { settled = true; reject(err); }
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const queue = [];
+      let done = false;
+
+      const pump = () => {
+        if (buffer.updating) return;
+        if (queue.length) {
+          try {
+            buffer.appendBuffer(queue.shift());
+          } catch (err) {
+            if (!settled) { settled = true; reject(err); }
+          }
+          return;
+        }
+        if (done && mediaSource.readyState === "open") {
+          try { mediaSource.endOfStream(); } catch (_) { /* already ended */ }
+        }
+      };
+
+      buffer.addEventListener("updateend", pump);
+
+      try {
+        for (;;) {
+          const { value, done: finished } = await reader.read();
+          if (finished) break;
+          if (value && value.byteLength) {
+            queue.push(value);
+            // The first chunk is enough to start playing — resolve now so the
+            // caller can call play() while the rest is still downloading.
+            if (!settled) { settled = true; resolve(audio); }
+            pump();
+          }
+        }
+        done = true;
+        pump();
+      } catch (err) {
+        done = true;
+        if (!settled) { settled = true; reject(err); }
+      }
+
+      if (!settled) { settled = true; reject(new Error("Empty TTS stream")); }
+    });
+
+    // Don't hang forever if sourceopen never fires.
+    setTimeout(() => {
+      if (!settled) { settled = true; reject(new Error("TTS stream timeout")); }
+    }, 6000);
+  });
+}
+
 /**
  * Fetch and play TTS for a question.
  * Resolves when playback **ends** (not when play() starts) so mic can open after the AI finishes speaking.
@@ -189,13 +352,7 @@ async function _speakQuestionAudioOnly(text) {
   _setMicUi(false);
   console.info("[INTERVIEW] AI speaking started");
   try {
-    const fd = new FormData();
-    fd.append("text", spoken);
-    const res = await apiFetch("/candidate/tts", { method: "POST", body: fd });
-    if (!res.ok) throw new Error("TTS request failed");
-    const blob = await res.blob();
-    if (!blob.size) throw new Error("Empty TTS audio");
-    const audio = new Audio(URL.createObjectURL(blob));
+    const audio = await _questionAudioElement(spoken);
     // Feature 5: hint the browser to buffer audio bytes ASAP so play() resolves
     // instantly when we call it — eliminating the visible "question on screen
     // but no voice yet" gap.
@@ -501,6 +658,10 @@ function _setResponseProcessingUi(on, message) {
 function _setEndingOverlayText(message) {
   const card = document.querySelector("#interviewEndingOverlay .qc-ending-card");
   if (card) card.textContent = message || "Submitting your interview...";
+}
+
+export function showCandidateToast(message, durationMs = 1500) {
+  return _showCandidateToast(message, durationMs);
 }
 
 function _showCandidateToast(message, durationMs = 1500) {
@@ -1482,7 +1643,8 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     if (existingTranscript) {
       if (!String(spokenAnswerText || "").trim()) _setSpokenAnswer(existingTranscript);
       if (recorderActive || isMicListening) {
-        await waitForMicTranscriptionIdleWithTimeout(8000);
+        // We already hold the answer — this only catches trailing words.
+        await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TAIL_GRACE_MS);
       }
     } else if (awaitingTranscript) {
       _pendingManualSubmit = true;
@@ -1490,7 +1652,8 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       _setResponseProcessingUi(true, "Processing answer…");
       _setInterviewPhase("evaluating");
       console.info("[SUBMIT] Processing answer — waiting for transcript");
-      await waitForMicTranscriptionIdleWithTimeout(8000);
+      // Nothing captured yet: this wait IS the answer, so keep it generous.
+      await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TRANSCRIPT_WAIT_MS);
       if (!_pendingManualSubmit) {
         _answerSubmitInFlight = false;
         return;
@@ -1620,6 +1783,10 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       if (resp.next.tts_invalidate) {
         lastSpokenQuestion = "";
         _cancelActiveSpeech();
+        // The server swapped in an adaptive follow-up, so any audio we warmed
+        // for the old question is now wrong. Warm the replacement instead.
+        invalidatePrewarmedQuestion(resp.next.question);
+        prewarmQuestionAudio(resp.next.question);
       }
       await _transitionToNextQuestion(resp.next, loadSeq, { fastTransition: true });
       _logTurnEvent("next_question_displayed", { question_index: state.currentQuestionIndex });

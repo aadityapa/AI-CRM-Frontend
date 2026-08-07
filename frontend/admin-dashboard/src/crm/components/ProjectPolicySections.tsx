@@ -4,7 +4,7 @@
  */
 import React, { useState } from "react";
 import { CircleDot, Clock3, FolderKanban, Hash, Plus, Repeat, Timer, Trash2 } from "lucide-react";
-import { btnSecondary, inputCls } from "./ui";
+import { btnSecondary, inputCls, ConfirmModal } from "./ui";
 import { InfoChip, WizardField } from "./wizard";
 import { LeaveBillingPolicyModal } from "./LeaveBillingPolicyModal";
 
@@ -28,10 +28,10 @@ export const PROJECT_STATUSES = ["Active", "Completed", "On_Hold"];
 export const NO_BILLING_QTY_UNITS = ["Hours", "Days", "Week", "Month", "Year"];
 
 export const LEAVE_CREDIT_TYPE_CHOICES = [
-  "Monthly", "Quarterly", "Annually", "Credit Week-Off/Holiday",
+  "Monthly", "Quarterly", "Yearly",
 ];
 export const LEAVE_EXPIRE_CHOICES = [
-  "Monthly", "Quarterly", "Annually", "Carry Forward",
+  "Monthly", "Quarterly", "Yearly",
 ];
 
 export type LeaveType = { id: number; name: string };
@@ -42,9 +42,13 @@ export type LeaveRow = {
   leave_type_id: string;
   name: string;
   leave_credit_type: string;
+  /** Start_Of_Period | End_Of_Period — when the cycle credit is granted. */
+  leave_credit_timing: string;
   leave_credit_balance: string;
   initial_credit_balance: string;
   leave_expire: string;
+  /** Start_Of_Period | End_Of_Period — when the cycle remainder lapses. */
+  leave_expire_timing: string;
   is_max_limit: boolean;
   maximum_carry_forward: string;
   effective_date: string;
@@ -55,9 +59,11 @@ export const emptyLeaveRow = (): LeaveRow => ({
   leave_type_id: "",
   name: "",
   leave_credit_type: "",
+  leave_credit_timing: "Start_Of_Period",
   leave_credit_balance: "",
   initial_credit_balance: "",
   leave_expire: "",
+  leave_expire_timing: "End_Of_Period",
   is_max_limit: false,
   maximum_carry_forward: "0",
   effective_date: "",
@@ -75,6 +81,7 @@ function formatLeaveDate(iso: string): string {
 export type PolicyFormState = {
   holidays_billable: boolean;
   weekoff_billable: boolean;
+  comp_off_billable: boolean;
   hours_required_half_day: string;
   hours_required_full_day: string;
   hours_required_half_day_comp_off: string;
@@ -97,6 +104,7 @@ export type PolicyFormState = {
 export const defaultPolicyForm = (): PolicyFormState => ({
   holidays_billable: false,
   weekoff_billable: false,
+  comp_off_billable: false,
   hours_required_half_day: "",
   hours_required_full_day: "",
   hours_required_half_day_comp_off: "",
@@ -145,6 +153,7 @@ export function policyPayloadFromForm(pol: PolicyFormState) {
   return {
     holidays_billable: pol.holidays_billable,
     weekoff_billable: pol.weekoff_billable,
+    comp_off_billable: pol.comp_off_billable,
     hours_required_half_day: numOrNull(pol.hours_required_half_day),
     hours_required_full_day: numOrNull(pol.hours_required_full_day),
     hours_required_half_day_comp_off: numOrNull(pol.hours_required_half_day_comp_off),
@@ -224,17 +233,27 @@ export function LeaveHolidayBillingSection({
         </div>
       )}
       <div className="flex flex-wrap gap-6 rounded-xl border border-subtle bg-surface-2/30 px-4 py-3">
-        <label className="flex items-center gap-2 text-sm font-medium text-primary">
+        <label className="flex items-center gap-2 text-sm font-medium text-primary" title="When ON, holiday hours worked bill as normal worked time (no Comp-Off leave). Also bills pure holiday-off days. Precedence over Comp Off Billable.">
           <input type="checkbox" className={chk} checked={pol.holidays_billable}
             onChange={(e) => setP("holidays_billable", e.target.checked)} />
           Holidays Billable
         </label>
-        <label className="flex items-center gap-2 text-sm font-medium text-primary">
+        <label className="flex items-center gap-2 text-sm font-medium text-primary" title="When ON, weekend hours worked bill as normal worked time (no Comp-Off leave). Precedence over Comp Off Billable.">
           <input type="checkbox" className={chk} checked={pol.weekoff_billable}
             onChange={(e) => setP("weekoff_billable", e.target.checked)} />
           Week Off Billable
         </label>
+        <label className="flex items-center gap-2 text-sm font-medium text-primary" title="When ON (and Holidays/Week Off Billable are off), weekend/holiday hours worked are BILLED to the client as Comp-Off (added to the invoice) instead of crediting Comp-Off leave.">
+          <input type="checkbox" className={chk} checked={pol.comp_off_billable}
+            onChange={(e) => setP("comp_off_billable", e.target.checked)} />
+          Comp Off Billable
+        </label>
       </div>
+      <p className="text-xs text-muted">
+        Holidays / Week Off Billable: bill worked holiday or weekend hours as normal (no Comp-Off credit).
+        Comp Off Billable (below, if set): bill as Comp-Off when the direct flag is off.
+        If both off: not billed; Comp-Off leave is credited on submit.
+      </p>
       <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
         <WizardField
           label="Hours Required Half Day"
@@ -303,6 +322,8 @@ export function LeaveBillingPolicySection({
 }) {
   const [editing, setEditing] = useState<LeaveRow | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState<LeaveRow | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const openNew = () => {
     setEditing(emptyLeaveRow());
@@ -330,11 +351,9 @@ export function LeaveBillingPolicySection({
               <th className={thCls}>Name</th>
               <th className={thCls}>Leave Credit Type *</th>
               <th className={thCls}>Leave Credit Balance</th>
-              <th className={thCls}>Initial Credit Balance</th>
               <th className={thCls}>Leave Expire *</th>
               <th className={thCls}>Is Max Limit</th>
               <th className={thCls}>Maximum Carry Forward</th>
-              <th className={thCls}>Effective Date</th>
               <th className={thCls} />
             </tr>
           </thead>
@@ -366,7 +385,6 @@ export function LeaveBillingPolicySection({
                     )}
                   </td>
                   <td className={tdCls}>{r.leave_credit_balance || "—"}</td>
-                  <td className={tdCls}>{r.initial_credit_balance || "—"}</td>
                   <td className={tdCls}>
                     {r.leave_expire || "—"}
                     {errors[`expire_${i}`] && (
@@ -375,14 +393,13 @@ export function LeaveBillingPolicySection({
                   </td>
                   <td className={tdCls}>{r.is_max_limit ? "Yes" : "No"}</td>
                   <td className={tdCls}>{r.maximum_carry_forward || "0"}</td>
-                  <td className={tdCls}>{formatLeaveDate(r.effective_date)}</td>
                   <td className={tdCls}>
                     <button
                       type="button"
                       className="rounded-control p-1.5 text-muted transition-colors hover:bg-danger-soft hover:text-danger"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void onDeleteRow(r);
+                        setDeleting(r);
                       }}
                       aria-label="Remove leave policy row"
                     >
@@ -414,6 +431,33 @@ export function LeaveBillingPolicySection({
             closeModal();
           }}
           onAddType={onAddType}
+        />
+      )}
+      {deleting && (
+        <ConfirmModal
+          title="Delete a leave policy?"
+          message={
+            <>
+              Do you want to delete this leave billing policy
+              {leaveNameOf(deleting) !== "—" ? <> (<b>{leaveNameOf(deleting)}</b>)</> : null}?
+              This cannot be undone.
+            </>
+          }
+          confirmLabel="Delete"
+          danger
+          busy={deleteBusy}
+          onConfirm={() => {
+            void (async () => {
+              setDeleteBusy(true);
+              try {
+                await onDeleteRow(deleting);
+                setDeleting(null);
+              } finally {
+                setDeleteBusy(false);
+              }
+            })();
+          }}
+          onClose={() => { if (!deleteBusy) setDeleting(null); }}
         />
       )}
     </>

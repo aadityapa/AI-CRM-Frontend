@@ -36,7 +36,7 @@ type LeavePolicyRow = {
   id: number; leave_name?: string | null; leave_credit_type?: string | null; leave_expire?: string | null;
   is_max_limit?: boolean; prorate_balance_credit?: boolean; leave_credit_balance?: number | null;
   initial_credit_balance?: number | null; maximum_carry_forward?: number | null;
-  leave_credit_timing?: string | null; effective_date?: string | null;
+  leave_credit_timing?: string | null; leave_expire_timing?: string | null; effective_date?: string | null;
 };
 type LinkedProject = { id: number; name: string; status?: string | null };
 type BranchPolicy = {
@@ -130,7 +130,8 @@ export function BranchPolicyPage() {
     if (!data) return;
     await crmPost(`/api/customer-leave-policies`, {
       customer_id: data.customer_id, branch_id: data.id, leave_type_id: null,
-      leave_credit_type: "Monthly", leave_credit_timing: "Start_of_Month",
+      leave_credit_type: "Monthly", leave_credit_timing: "Start_Of_Period",
+      leave_expire: "Yearly", leave_expire_timing: "End_Of_Period",
     }).catch((e: any) => setErr(String(e?.message || e)));
     load();
   };
@@ -149,6 +150,7 @@ export function BranchPolicyPage() {
     { key: "initial_credit_balance", label: "Initial Bal", render: (r) => num(r.initial_credit_balance) },
     { key: "maximum_carry_forward", label: "Max Carry Fwd", render: (r) => num(r.maximum_carry_forward) },
     { key: "leave_credit_timing", label: "Credit Timing", render: (r) => r.leave_credit_timing || "—" },
+    { key: "leave_expire_timing", label: "Expire Timing", render: (r) => r.leave_expire_timing || "—" },
     { key: "effective_date", label: "Effective Date", render: (r) => r.effective_date || "—" },
   ];
 
@@ -180,10 +182,10 @@ export function BranchPolicyPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       {toast}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <CrmBreadcrumb items={[
             { label: "Customers", to: "customers" },
             { label: data.customer_name || `Customer #${data.customer_id}`, to: `customers/${data.customer_id}` },
@@ -205,7 +207,7 @@ export function BranchPolicyPage() {
 
       {/* 1 — Branch Identity */}
       <Block title="Branch Identity">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           <Info label="Customer">{data.customer_name || data.customer_id}</Info>
           <Info label="Branch Name">{data.branch_name}</Info>
           <Info label="Branch Legal Name">{data.branch_legal_name || "—"}</Info>
@@ -217,7 +219,7 @@ export function BranchPolicyPage() {
 
       {/* 2 — Projects (drill-down to Project detail) */}
       <Block title="Projects" hint="Click a project to open Overview / Team / Timesheet / PO & Invoices.">
-        <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard label="Projects" value={String(data.linked_projects.length)} />
         </div>
         {data.linked_projects.length === 0
@@ -252,14 +254,14 @@ export function BranchPolicyPage() {
       </Block>
 
       {/* 4 — Leave & Holiday Billing Policy */}
-      <Block title="Leave & Holiday Billing Policy">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <Block title="Leave & Holiday Billing Policy" hint="Holidays/Weekoff Billable bill worked holiday/weekend as normal (before Comp Off Billable). Both off → Comp-Off leave credit on submit.">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {chk("Holidays Billable", "holidays_billable")}
           {chk("Weekoff Billable", "weekoff_billable")}
           {chk("Leave Billable", "leave_billable")}
           {chk("Comp Off Billable", "comp_off_billable")}
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           {numF("Hours Required Half Day", "hours_required_half_day")}
           {numF("Hours Required Full Day", "hours_required_full_day")}
           {numF("Working Hours Per Day", "working_hours_per_day")}
@@ -270,7 +272,7 @@ export function BranchPolicyPage() {
 
       {/* 5 — Billing Properties */}
       <Block title="Billing Properties">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           <Field label="Billing Frequency">
             {edit
               ? <input className={inputCls} value={v.billing_frequency ?? ""} onChange={(e) => setF("billing_frequency", e.target.value)} />

@@ -672,7 +672,7 @@ export function CandidateInterviewsPage({
               </div>
             ) : null}
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 ml-auto">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-3 sm:ml-auto">
             <div className="rounded-card border border-subtle px-4 py-3">
               <div className="text-xs font-black uppercase tracking-widest text-muted">Avg score</div>
               <div className="mt-1 text-xl font-extrabold text-primary">{candidate.avg_score}%</div>
@@ -681,7 +681,7 @@ export function CandidateInterviewsPage({
               <div className="text-xs font-black uppercase tracking-widest text-muted">Best</div>
               <div className="mt-1 text-xl font-extrabold text-primary">{analytics.bestScore}%</div>
             </div>
-            <div className="rounded-card border border-subtle px-4 py-3 col-span-2 sm:col-span-1">
+            <div className="rounded-card border border-subtle px-4 py-3">
               <div className="text-xs font-black uppercase tracking-widest text-muted">Status</div>
               <div className="mt-1 text-xl font-extrabold text-primary truncate">{candidate.status}</div>
             </div>
@@ -1132,7 +1132,7 @@ function AnalyticsTab({
       <div className="lg:col-span-5 space-y-4">
         <div className="bg-surface-1 border border-subtle rounded-card p-5">
           <div className="text-sm font-extrabold tracking-tight">Score averages</div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-card border border-subtle p-3">
               <div className="text-xs font-black uppercase tracking-widest text-muted">Communication</div>
               <div className="mt-1 text-xl font-extrabold text-primary">{analytics.avgComm}%</div>

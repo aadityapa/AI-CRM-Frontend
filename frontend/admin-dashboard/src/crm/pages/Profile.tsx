@@ -152,7 +152,7 @@ export function ProfilePage() {
 
       <section className="mt-6 rounded-card border border-subtle bg-surface-1 p-6 shadow-raised">
         <h2 className="fx-hairline-b mb-4 pb-2 text-base font-bold text-primary">Details</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Full name" required>
             <input className={inputCls} value={form.full_name} onChange={(e) => set("full_name", e.target.value)} />
           </Field>
@@ -179,7 +179,7 @@ export function ProfilePage() {
 
       <section className="mt-6 rounded-card border border-subtle bg-surface-1 p-6 shadow-raised">
         <h2 className="fx-hairline-b mb-4 pb-2 text-base font-bold text-primary">Account</h2>
-        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted">Roles / Permissions</dt>
             <dd className="mt-1 flex flex-wrap gap-1.5">
@@ -370,7 +370,7 @@ function ChangePasswordCard({ toast }: { toast: (m: string, k?: "ok" | "err") =>
       <h2 className="fx-hairline-b mb-4 flex items-center gap-2 pb-2 text-base font-bold text-primary">
         <KeyRound size={16} /> Change password
       </h2>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Current password">
           <input type="password" autoComplete="current-password" className={inputCls} value={current} onChange={(e) => setCurrent(e.target.value)} />
         </Field>

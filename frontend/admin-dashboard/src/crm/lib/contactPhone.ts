@@ -22,9 +22,13 @@ export function phoneFromContact(contact: ContactLike | null | undefined): strin
  * eligible as Contact Person; HM list is limited to is_hiring_manager.
  */
 export function splitBranchContacts(branchContacts: ContactLike[]) {
+  const flagged = branchContacts.filter((c) => c.is_hiring_manager);
   return {
     contactPersons: branchContacts,
-    hiringManagers: branchContacts.filter((c) => c.is_hiring_manager),
+    // Contacts explicitly flagged "Hiring Manager" take priority; when none are
+    // flagged (e.g. imported contacts), offer every branch contact so the
+    // Hiring Manager dropdown is never empty.
+    hiringManagers: flagged.length ? flagged : branchContacts,
   };
 }
 

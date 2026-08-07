@@ -141,7 +141,7 @@ export function PipelineStageCard({
   return (
     <div className={`p-4 transition-shadow duration-micro ease-smooth hover:shadow-overlay ${cardCls}`}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${tone}`} aria-hidden />
           <div className="text-sm font-semibold text-secondary">{name}</div>
         </div>
@@ -409,7 +409,7 @@ export function RecentCandidatesTable({
         ) : null}
       </div>
 
-      <div className="overflow-auto">
+      <div className="overflow-x-auto">
         <table className="w-full min-w-max text-sm lg:min-w-0">
           <thead>
             <tr className="border-b border-subtle text-left">
@@ -922,7 +922,7 @@ export function HrDashboard({
                 {loading ? "Syncing…" : "Live from database"}
               </div>
             </div>
-            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {derived.pipeline.map((p) => (
                 <PipelineStageCard key={p.name} name={p.name} count={p.count} color={p.color} percent={p.percent} />
               ))}

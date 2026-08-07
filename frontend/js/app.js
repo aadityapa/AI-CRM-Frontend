@@ -25,6 +25,7 @@ import {
   submitInterview,
   cancelAutoAdvance,
   submitAutoAdvanceNow,
+  showCandidateToast,
 } from "./candidate.js";
 import {
   downloadLatestReportExcel,
@@ -59,8 +60,24 @@ import {
 } from "./interview_security.js";
 import { startFaceMonitoring, stopFaceMonitoring } from "./face_detection.js";
 import { runDeviceTestGate, hideDeviceTestGate, readPersistedDeviceTestState } from "./device_test.js";
+import {
+  applyRulesConfig,
+  bindKeyboardBlockedNotice,
+  runInterviewRulesGate,
+} from "./interview_rules.js";
 const inviteTokenFromUrl = new URLSearchParams(window.location.search).get("invite") || "";
 const hrFocusFromUrl = new URLSearchParams(window.location.search).get("focus") || "";
+
+/**
+ * The template's interview format (duration / question count), read from the
+ * invite lookup. Held here so the rules screen can quote the real numbers.
+ * Empty until the lookup responds; the rules screen degrades to "—" gracefully.
+ */
+let _inviteInterviewConfig = {};
+
+// A key that does nothing, with no explanation, reads as a broken page. The
+// security module emits this (throttled) whenever it swallows a keypress.
+bindKeyboardBlockedNotice((msg) => showCandidateToast(msg, 2600));
 
 (function gateProductionConsole() {
   try {
@@ -899,6 +916,16 @@ function showCandidateWelcome() {
           const nameEl = document.getElementById("inviteWelcomeName");
           const subEl = document.getElementById("inviteWelcomeSubtitle");
           const metaEl = document.getElementById("inviteWelcomeMeta");
+          // Capture the template's format so the rules screen can state the
+          // real duration and question count instead of a generic promise.
+          _inviteInterviewConfig = {
+            timing_mode: schedule.timing_mode || data.timing_mode,
+            time_limit_sec: schedule.time_limit_sec ?? data.time_limit_sec,
+            num_questions:
+              schedule.num_questions ?? schedule.num_q ?? data.num_questions ?? data.num_q,
+          };
+          applyRulesConfig(_inviteInterviewConfig);
+
           const candidate = String(schedule.candidate_name || "").trim();
           if (candidate && nameEl) nameEl.textContent = `, ${candidate}`;
           if (subEl && schedule.job_title) {
@@ -1086,6 +1113,12 @@ async function bootstrapInviteFlow() {
   console.info("[STEP-1] Interview page opened", { invite: inviteTokenFromUrl ? "present" : "none" });
   while (true) {
     await showCandidateWelcome();
+
+    // Rules BEFORE the device test: the candidate should know what they are
+    // consenting to before they start granting camera and microphone access.
+    const acknowledged = await runInterviewRulesGate({ config: _inviteInterviewConfig });
+    if (!acknowledged) continue; // "Back" — return to the welcome screen
+
     const passed = await runDeviceTestGate();
     if (!passed) {
       // Candidate hit "Back" — return to welcome screen instead of redirecting.

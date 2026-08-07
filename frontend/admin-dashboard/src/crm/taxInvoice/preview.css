@@ -1,0 +1,325 @@
+/* White A4 Tax Invoice preview — scoped so app dark chrome does not bleed in. */
+.kxTaxShell {
+  --navy: #173b7a;
+  --orange: #f59e0b;
+  --border: #d9e2ec;
+  --ink: #1f2937;
+  --muted: #64748b;
+  --light: #f8fafc;
+  color: var(--ink);
+  background: transparent;
+}
+
+.kxTaxPageWrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0 1rem;
+}
+
+.kxTaxScaleFrame {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.kxTaxPage {
+  width: 210mm;
+  min-height: 297mm;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 8mm 9mm 6mm;
+  background: #ffffff;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(23, 59, 122, 0.12);
+  font-family: Inter, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.35;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transform-origin: top center;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.kxTaxPage * {
+  box-sizing: border-box;
+}
+
+.kxTaxHeader {
+  display: flex;
+  border: 1px solid var(--border);
+}
+
+.kxTaxHeaderLeft {
+  width: 52%;
+  padding: 8px 10px;
+}
+
+.kxTaxHeaderRight {
+  width: 48%;
+  padding: 8px 10px;
+  border-left: 1px solid var(--border);
+}
+
+.kxTaxLogo {
+  height: 36px;
+  margin-bottom: 4px;
+}
+
+.kxTaxSellerName {
+  font-weight: 700;
+  color: var(--navy);
+  font-size: 10.5pt;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.kxTaxIconLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 8pt;
+  line-height: 1.35;
+  margin-top: 2px;
+  white-space: pre-line;
+}
+
+.kxTaxIconLine svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--navy);
+}
+
+.kxTaxMeta {
+  color: var(--muted);
+  font-size: 8.5pt;
+  line-height: 1.35;
+  margin-top: 2px;
+  white-space: pre-line;
+}
+
+.kxTaxTitle {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin: 0 0 8px;
+  text-align: left;
+}
+
+.kxTaxMetaBody {
+}
+
+.kxTaxMetaTable {
+  width: auto;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+  min-width: 0;
+}
+
+.kxTaxMetaTable td {
+  padding: 2px 0;
+}
+
+.kxTaxMetaTable .k {
+  color: var(--muted);
+  white-space: nowrap;
+  padding-right: 2px;
+}
+
+.kxTaxMetaTable .sep {
+  color: var(--muted);
+  padding: 0 6px 0 2px;
+}
+
+.kxTaxCards {
+  display: flex;
+  gap: 6px;
+}
+
+.kxTaxCard {
+  flex: 1;
+  border: 1px solid var(--border);
+}
+
+.kxTaxCardH {
+  background: var(--navy);
+  color: #fff;
+  font-weight: 700;
+  font-size: 8.5pt;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+}
+
+.kxTaxCardB {
+  padding: 6px 8px;
+  font-size: 8.5pt;
+  line-height: 1.4;
+  min-height: 72px;
+  white-space: pre-line;
+  background: #fff;
+}
+
+.kxTaxCardB .muted {
+  color: var(--muted);
+}
+
+.kxTaxServices {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  table-layout: fixed;
+}
+
+.kxTaxServices th {
+  background: var(--navy);
+  color: #fff;
+  font-weight: 600;
+  font-size: 8pt;
+  padding: 5px 4px;
+  text-align: left;
+}
+
+.kxTaxServices td {
+  border-top: 1px solid var(--border);
+  padding: 4px;
+  font-size: 8.5pt;
+  vertical-align: top;
+  height: 18px;
+  background: #fff;
+}
+
+.kxTaxServices .c {
+  text-align: center;
+}
+
+.kxTaxServices .r {
+  text-align: right;
+}
+
+.kxTaxGstRow {
+  display: flex;
+  gap: 6px;
+}
+
+.kxTaxGstBox {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.kxTaxGstBox table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+}
+
+.kxTaxGstBox td {
+  padding: 3px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.kxTaxGstBox tr:first-child td {
+  border-top: 0;
+}
+
+.kxTaxGstBox .val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.kxTaxGrand {
+  background: var(--navy);
+  color: #fff;
+  font-weight: 700;
+}
+
+.kxTaxWords {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  font-size: 8.5pt;
+  background: var(--light);
+}
+
+.kxTaxRs {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 3px;
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.kxTaxFooter3 {
+  display: flex;
+  gap: 6px;
+}
+
+.kxTaxFooter3 > div {
+  flex: 1;
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  font-size: 8pt;
+  background: #fff;
+}
+
+.kxTaxFooter3 h4 {
+  margin: 0 0 4px;
+  color: var(--navy);
+  font-size: 8.5pt;
+  letter-spacing: 0.03em;
+}
+
+.kxTaxSeal {
+  height: 48px;
+  margin-top: 4px;
+}
+
+.kxTaxContact {
+  margin-top: auto;
+  background: var(--navy);
+  color: #fff;
+  text-align: center;
+  padding: 5px 8px;
+  font-size: 8pt;
+  letter-spacing: 0.02em;
+}
+
+.kxTaxContact span {
+  margin: 0 8px;
+}
+
+@media print {
+  .kxTaxPrintHide {
+    display: none !important;
+  }
+  .kxTaxScaleFrame {
+    height: auto !important;
+  }
+  .kxTaxPage {
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+    width: 210mm;
+    min-height: 297mm;
+    transform: none !important;
+  }
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}

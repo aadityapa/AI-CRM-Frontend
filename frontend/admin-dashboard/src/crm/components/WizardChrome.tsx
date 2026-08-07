@@ -21,10 +21,9 @@ const SECTION_HELPERS: Record<string, string> = {
   customerDetails: "Select the customer, branch, and key contacts for this opportunity.",
   rfiDetails: "Capture the request title, dates, and opportunity type.",
   timeAndMaterial: "Define the position, role, location, and engagement details.",
-  leaveHoliday: "Configure leave, holiday, and week-off billing rules.",
-  commercial: "Set billing type, rates, and commercial terms.",
-  ctcSlab: "Define candidate CTC bands and revenue assumptions.",
-  workPage: "Stage, scope, and contract duration for the work page.",
+  leaveHoliday: "Estimation only for costing. Holidays come from the selected branch's own holiday calendar; Leave prefills only when a leave policy is linked to the branch (else 0); Weekoff always calculates to the standard 104 (52 weekends). The APPLIED leave policy always comes from branch/project settings, not this form.",
+  commercial: "Billing type, hours, and RFI Value (auto from CTC Annual Revenue × Period ÷ 12 × Positions).",
+  ctcSlab: "Define candidate CTC bands and revenue assumptions — enter these before Commercial Details.",
   attachments: "Attach customer JDs and supporting documents.",
   skillEval: "Required skills and evaluation criteria.",
   onboardingStatus: "Track onboarding progress for this opportunity.",
@@ -120,7 +119,7 @@ export function WizardTopBar({
         <span className="hidden text-xs font-medium text-muted sm:inline">
           Step {safeStep} of {safeTotal}
         </span>
-        <div className="ml-auto flex flex-wrap items-center gap-3">
+        <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
           {showAutosave && autosaveStatus != null && (
             <AutosaveIndicator status={autosaveStatus} savedAt={savedAt ?? null} />
           )}
@@ -425,7 +424,7 @@ export function WizardFooter({
   const safeStep = Math.min(stepIndex + 1, safeTotal);
 
   return (
-    <div className="flex w-full items-center gap-3">
+    <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
       {/* Left / center: step progress only */}
       <div className="hidden min-w-0 flex-1 flex-col items-start gap-1.5 sm:flex">
         <span className="text-[11px] font-medium tabular-nums text-muted">
@@ -442,7 +441,7 @@ export function WizardFooter({
       </div>
 
       {/* Both Previous and Next (or Submit) anchored to the right */}
-      <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
+      <div className="ml-auto flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
         <button
           type="button"
           className={`${btnSecondary} gap-1 ${isFirstStep ? "opacity-40" : ""}`}

@@ -66,17 +66,28 @@ export function PerformanceRadar({
   confidence,
   problemSolving,
   overall,
+  /**
+   * False when the template assessed technical substance only. The Comm and
+   * Conf axes are then dropped rather than plotted at zero — a zero on a radar
+   * reads as a failing score, not as "we did not measure this".
+   */
+  includeCommunication = true,
 }: {
   communication: number;
   technical: number;
   confidence: number;
   problemSolving: number;
   overall: number;
+  includeCommunication?: boolean;
 }) {
   const data: RadarRow[] = [
-    { subject: "Comm", A: communication, full: "Communication" },
+    ...(includeCommunication
+      ? [{ subject: "Comm", A: communication, full: "Communication" }]
+      : []),
     { subject: "Tech", A: technical, full: "Technical" },
-    { subject: "Conf", A: confidence, full: "Confidence" },
+    ...(includeCommunication
+      ? [{ subject: "Conf", A: confidence, full: "Confidence" }]
+      : []),
     { subject: "Solve", A: problemSolving, full: "Problem solving" },
     { subject: "Overall", A: overall, full: "Overall" },
   ];

@@ -14,6 +14,15 @@ export function normalizePercent(raw: unknown, fallback = 0): number {
   return Math.max(0, Math.min(100, Math.round(scaled)));
 }
 
+/** For fields that are ALREADY a 0–100 percentage (e.g. *_percent from the
+ *  backend). Never rescales — clamps + rounds only. Using normalizePercent on
+ *  these wrongly ×10s a genuine low percent (5% → 50%) for weak candidates. */
+export function asPercent(raw: unknown, fallback = 0): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(fallback)));
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 export function overallFromReport(report: Record<string, unknown> | undefined, fallback: number): number {
   if (!report) return normalizePercent(fallback, fallback);
   return normalizePercent(

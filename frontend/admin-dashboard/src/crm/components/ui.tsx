@@ -11,8 +11,6 @@ import { AnimatedNumber } from "./motion3d";
 /* Mirrors the motion tokens in src/styles/tokens.css (--dur-*, --ease-out).
  * framer-motion needs raw numbers — keep in sync with tokens.css. */
 const DUR = { fast: 0.1, base: 0.15, slow: 0.25 } as const;
-const EASE_OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
-
 /* Shared focus-visible ring (readable on glass — 2px surface gap + brand halo). */
 export const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-ring";
 
@@ -33,6 +31,20 @@ export function statusColor(status: string): string {
   return "bg-surface-2 text-secondary";
 }
 
+/** Display-name overrides for stored status values (DB values stay unchanged). */
+export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
+  Customer_Interview: "Customer Interviewing",
+  // "Shortlisted" on its own was ambiguous — we shortlist internally too. This
+  // stage specifically means the CUSTOMER shortlisted them. Label only: the
+  // stored value stays `Shortlisted`, so no migration and no data rewrite.
+  Shortlisted: "Customer Shortlisted",
+  Customer_Approval: "Customer Approved",
+};
+
+export function statusLabel(status: string): string {
+  return STATUS_LABEL_OVERRIDES[status] ?? String(status).replace(/_/g, " ");
+}
+
 export function StatusBadge({ status, label }: { status?: string | null; label?: string }) {
   if (!status) return null;
   return (
@@ -40,7 +52,31 @@ export function StatusBadge({ status, label }: { status?: string | null; label?:
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset ring-subtle ${statusColor(status)}`}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden />
-      {label ?? String(status).replace(/_/g, " ")}
+      {label ?? statusLabel(String(status))}
+    </span>
+  );
+}
+
+/** Provenance chip: which layer of the leave-policy chain governs a PE leave row. */
+export const POLICY_SOURCE_LABELS: Record<string, string> = {
+  project: "Project override",
+  branch: "Branch policy",
+  customer: "Customer default",
+};
+
+export function PolicySourceChip({ source }: { source?: string | null }) {
+  if (!source) return null;
+  const label = POLICY_SOURCE_LABELS[source] || source;
+  const cls =
+    source === "project"
+      ? "bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+      : "bg-surface-2 text-secondary";
+  return (
+    <span
+      className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}
+      title={`Crediting rules inherited from the ${label.toLowerCase()}`}
+    >
+      {label}
     </span>
   );
 }
@@ -53,11 +89,11 @@ export function StatusBadge({ status, label }: { status?: string | null; label?:
  * micro-lift over .btn-depth; bg-brand-600 stays as the paint fallback and
  * keeps the solid-button hover overrides in styles/tokens.css engaged. */
 export const btnPrimary =
-  "btn-depth btn-gradient inline-flex items-center gap-1.5 rounded-control bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed";
+  "btn-depth btn-gradient inline-flex min-h-[40px] items-center gap-1.5 rounded-control bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed";
 export const btnSecondary =
-  "btn-depth inline-flex items-center gap-1.5 rounded-control px-3.5 py-2 text-sm font-semibold text-primary disabled:cursor-not-allowed";
+  "btn-depth inline-flex min-h-[40px] items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3.5 py-2 text-sm font-semibold text-primary disabled:cursor-not-allowed";
 export const btnDanger =
-  "btn-depth inline-flex items-center gap-1.5 rounded-control bg-danger px-3.5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed";
+  "btn-depth inline-flex min-h-[40px] items-center gap-1.5 rounded-control bg-danger px-3.5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed";
 
 /* ---------- Modal + ConfirmModal ---------- */
 export function Modal({
@@ -108,8 +144,10 @@ export function Modal({
   const returnFocusRef = React.useRef<Element | null>(null);
   /** Full viewport takeover — used for create/edit forms (`fullScreen` or legacy `wide`). */
   const isFullPage = !!(fullScreen || wide);
-  const pageBg = deep ? "bg-surface-0" : "bg-surface-3";
-  const chromeBg = deep ? "bg-surface-1" : "bg-surface-3";
+  /* Full-page forms use surface-0 so the scroll body matches `.crm-wizard` (--wiz-bg)
+     and a short shell can't leave a white band below the fold. */
+  const pageBg = deep || isFullPage ? "bg-surface-0" : "bg-surface-3";
+  const chromeBg = deep || isFullPage ? "bg-surface-1" : "bg-surface-3";
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -150,13 +188,13 @@ export function Modal({
   const scopeCls = scopeClassName ? ` ${scopeClassName}` : "";
   const outerCls = (isFullPage
     ? `fixed inset-0 z-[200] flex flex-col ${pageBg}`
-    : "fixed inset-0 z-[200] flex items-center justify-center bg-backdrop p-4 [backdrop-filter:blur(var(--glass-blur))] [-webkit-backdrop-filter:blur(var(--glass-blur))]") + scopeCls;
+    : "fixed inset-0 z-[200] flex items-center justify-center bg-backdrop p-3 sm:p-4 [backdrop-filter:blur(var(--glass-blur))] [-webkit-backdrop-filter:blur(var(--glass-blur))]") + scopeCls;
   const panelCls = [
     isFullPage
       ? "flex h-[100dvh] w-full max-w-none flex-col overflow-hidden"
       : medium
-        ? "elev-3 flex w-full max-w-3xl max-h-[85vh] flex-col overflow-hidden rounded-modal"
-        : "elev-3 w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-modal",
+        ? "elev-3 flex w-full max-w-3xl max-h-[90dvh] flex-col overflow-hidden rounded-modal"
+        : "elev-3 flex w-full max-w-lg max-h-[90dvh] flex-col overflow-hidden rounded-modal",
     panelClassName || "",
   ].filter(Boolean).join(" ");
 
@@ -180,7 +218,7 @@ export function Modal({
         transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 28 }}
       >
         <div className={[
-          `sticky top-0 z-20 flex shrink-0 items-center justify-between border-b border-subtle ${chromeBg} px-5 py-3.5 sm:px-8 ${isFullPage ? "" : "rounded-t-modal"}`,
+          `sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-subtle ${chromeBg} px-4 py-3.5 sm:px-8 ${isFullPage ? "" : "rounded-t-modal"}`,
           headerClassName || "",
         ].filter(Boolean).join(" ")}>
           <div className="min-w-0 flex-1 text-base font-bold text-primary">{title}</div>
@@ -195,18 +233,24 @@ export function Modal({
         <div
           className={[
             isFullPage
-              ? `relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 sm:px-8 sm:py-6 ${deep ? "bg-surface-0" : ""}`
+              ? `relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-8 sm:py-6 ${pageBg}`
               : medium
-                ? "min-h-0 flex-1 overflow-y-auto px-5 py-4"
-                : "px-5 py-4",
+                ? "min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
+                : "min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5",
             bodyClassName || "",
           ].filter(Boolean).join(" ")}
         >
+          {/*
+            Full-page forms that nest their own overflow-y-auto (e.g. New Opportunity
+            with bodyClassName overflow-hidden) need a height-bounded flex child.
+            h-full + min-h-0 keeps that chain working; tall WizFormShell content still
+            extends the Modal body's scroll when the body itself scrolls.
+          */}
           <div className={isFullPage ? "relative flex h-full min-h-0 w-full max-w-none flex-col" : undefined}>{children}</div>
         </div>
         {isFullPage && footer && (
           <div className={[
-            `sticky bottom-0 z-20 shrink-0 border-t border-subtle ${chromeBg} px-5 py-3 sm:px-8`,
+            `wiz-chrome-footer sticky bottom-0 z-20 shrink-0 border-t border-subtle ${chromeBg} px-5 py-3 sm:px-8`,
             footerClassName || "",
           ].filter(Boolean).join(" ")}>
             {footer}
@@ -263,7 +307,7 @@ export function ConfirmModal({
           ) : null}
         </div>
       </div>
-      <div className="mt-5 flex justify-end gap-2">
+      <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button className={btnSecondary} onClick={onClose} disabled={anyBusy}>
           {blocked ? "Close" : "Cancel"}
         </button>
@@ -478,7 +522,7 @@ export function Field({
 
 /* Recessed at rest, rises to E1 + brand focus ring on focus (tokens.css). */
 export const inputCls =
-  "input-recessed w-full rounded-control px-3 py-2 text-sm text-primary placeholder:text-muted";
+  "input-recessed min-h-[40px] w-full rounded-control px-3 py-2 text-sm text-primary placeholder:text-muted";
 
 /* ---------- Toast (minimal) ---------- */
 export function useToast(): [React.ReactNode, (msg: string, kind?: "ok" | "err") => void] {

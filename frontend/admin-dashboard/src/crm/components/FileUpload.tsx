@@ -46,7 +46,7 @@ export function FileUploadButton({
         <Upload size={15} /> {pct !== null ? `Uploading ${pct}%` : label}
       </button>
       {pct !== null && (
-        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
           <div className="h-full bg-sky-500 transition-all" style={{ width: `${pct}%` }} />
         </div>
       )}
@@ -128,7 +128,7 @@ async function renderPdfToContainer(
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
-    canvas.className = "mb-3 w-full rounded border border-slate-200 bg-white shadow-sm dark:border-slate-700";
+    canvas.className = "mb-3 w-full rounded border border-subtle bg-surface-1 shadow-sm";
     canvas.style.height = "auto";
     const ctx = canvas.getContext("2d");
     if (!ctx) continue;
@@ -138,7 +138,7 @@ async function renderPdfToContainer(
   }
   if (pdf.numPages > maxPages) {
     const note = document.createElement("p");
-    note.className = "pb-2 text-center text-xs text-slate-500";
+    note.className = "pb-2 text-center text-xs text-muted";
     note.textContent = `Showing first ${maxPages} of ${pdf.numPages} pages — use Download for the full file.`;
     container.appendChild(note);
   }
@@ -291,31 +291,31 @@ function FilePreviewModal({
             <Download size={14} /> Download
           </button>
         </div>
-        {loading && <p className="py-10 text-center text-sm text-slate-500">Loading file…</p>}
+        {loading && <p className="py-10 text-center text-sm text-muted">Loading file…</p>}
         {error && (
           <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
             {error}
           </p>
         )}
         {kind === "pdf" && !error && pdfPainting && (
-          <p className="text-center text-sm text-slate-500">Rendering resume…</p>
+          <p className="text-center text-sm text-muted">Rendering resume…</p>
         )}
         <div
           ref={pdfHostRef}
           className={
             kind === "pdf" && !error
-              ? "max-h-[65vh] min-h-[200px] overflow-y-auto rounded-lg bg-slate-100 p-2 dark:bg-slate-900"
+              ? "max-h-[65vh] min-h-[200px] overflow-y-auto rounded-lg bg-surface-2 p-2"
               : "hidden"
           }
         />
         {!loading && !error && kind === "html" && html && (
           <div
-            className="prose prose-sm max-w-none dark:prose-invert rounded-lg border border-slate-200 bg-white p-4 text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-1.5 [&_th]:border [&_th]:border-slate-200 [&_th]:p-1.5"
+            className="prose prose-sm max-w-none dark:prose-invert rounded-lg border border-subtle bg-surface-1 p-4 text-primary [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-subtle [&_td]:p-1.5 [&_th]:border [&_th]:border-subtle [&_th]:p-1.5"
             dangerouslySetInnerHTML={{ __html: html }}
           />
         )}
         {!loading && !error && kind === "text" && text != null && (
-          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
+          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg border border-subtle bg-surface-2 p-3 text-sm text-primary">
             {text}
           </pre>
         )}
@@ -323,7 +323,7 @@ function FilePreviewModal({
           <img src={blobUrl} alt={title} className="mx-auto max-h-[65vh] max-w-full rounded-lg object-contain" />
         )}
         {!loading && !error && kind === "other" && (
-          <p className="py-6 text-center text-sm text-slate-500">
+          <p className="py-6 text-center text-sm text-muted">
             Preview is not available for this file type{fileExt ? ` (.${fileExt})` : ""}. Use Download to open it locally.
           </p>
         )}
@@ -335,7 +335,7 @@ function FilePreviewModal({
 /** Opens CRM files in an authenticated medium modal (same tab). External URLs open in a new tab. */
 export function FileLink({ url, label = "View file" }: { url?: string | null; label?: string }) {
   const [open, setOpen] = useState(false);
-  if (!url) return <span className="text-xs text-slate-400">—</span>;
+  if (!url) return <span className="text-xs text-muted">—</span>;
 
   const authPath = toAuthPath(url);
   const isCrmFile = !!authPath && authPath.includes("/api/crm-files/");

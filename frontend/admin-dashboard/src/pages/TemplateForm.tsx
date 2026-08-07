@@ -200,6 +200,17 @@ export function TemplateFormPage({
   const [templateInstructions, setTemplateInstructions] = useState("");
   const [questionType, setQuestionType] = useState<QuestionType>("dynamic");
   const [manualQuestionsText, setManualQuestionsText] = useState("");
+  /**
+   * Manual question order. Defaults to "random" because that is what the
+   * platform has always done — an existing template with no stored setting must
+   * keep behaving the way its author saw it behave.
+   */
+  const [manualQuestionOrder, setManualQuestionOrder] = useState<"sequential" | "random">("random");
+  /**
+   * Whether this role is assessed on spoken communication at all. Defaults ON
+   * for the same reason: templates saved before this existed were assessed.
+   */
+  const [communicationRequired, setCommunicationRequired] = useState(true);
   const [qbCategories, setQbCategories] = useState<QbCategoryValue[]>(["technical"]);
   const [qbDifficulties, setQbDifficulties] = useState<QbDifficultyValue[]>(["medium"]);
   const [qbExcludedQuestionIds, setQbExcludedQuestionIds] = useState<string[]>([]);
@@ -499,6 +510,14 @@ export function TemplateFormPage({
     setSuiteSeniority(typeof w.intelligenceSeniority === "string" ? (w.intelligenceSeniority as string) : "");
     setSuiteTechStack(typeof w.intelligenceTechStack === "string" ? (w.intelligenceTechStack as string) : "");
     setAdaptiveNextQuestion(toBoolean((w as any).adaptiveNextQuestion, false));
+    // Both default to the platform's historic behaviour when the template
+    // predates the setting: communication WAS assessed, order WAS shuffled.
+    setCommunicationRequired(toBoolean((w as any).communicationRequired, true));
+    setManualQuestionOrder(
+      String((w as any).manualQuestionOrder || "").toLowerCase() === "sequential"
+        ? "sequential"
+        : "random",
+    );
     setEnableTimeWarnings(
       w.enableTimeWarnings === undefined ? true : toBoolean(w.enableTimeWarnings, true),
     );
@@ -980,6 +999,12 @@ export function TemplateFormPage({
         intelligenceSeniority: suiteSeniority.trim(),
         intelligenceTechStack: suiteTechStack.trim(),
         adaptiveNextQuestion: questionType === "question_bank" ? false : adaptiveNextQuestion,
+        // Is this role assessed on spoken communication at all? When false the
+        // report is technical-only: no communication/confidence scores, and
+        // communication carries no weight in the per-question scores either.
+        communicationRequired,
+        // Manual questions: keep the RMG's order, or shuffle per candidate.
+        manualQuestionOrder,
         expMin,
         expMax,
         previewQuestions:
@@ -1048,7 +1073,7 @@ export function TemplateFormPage({
   };
 
   return (
-    <div className="mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="platform-form-shell mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
         <div>
           <div className="flex items-center gap-2">
@@ -1119,7 +1144,7 @@ export function TemplateFormPage({
         </div>
       ) : null}
 
-      <div className="mt-6 bg-surface-1 border border-subtle rounded-card p-6 shadow-raised">
+      <div className="platform-form-card mt-6 bg-surface-1 border border-subtle rounded-card p-6 shadow-raised">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="fx-glow w-11 h-11 rounded-card bg-gradient-to-br from-brand-600 to-violet-600 flex items-center justify-center">
@@ -1308,7 +1333,7 @@ export function TemplateFormPage({
                     </button>
                   </div>
                   {enableTimeWarnings ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
                       <div>
                         <label className="text-xs font-bold uppercase text-muted">5 min warn</label>
                         <input
@@ -1388,6 +1413,51 @@ export function TemplateFormPage({
               </div>
             </div>
 
+            {/* Communication assessment — for roles where RMG has judged that
+                spoken communication is not a genuine requirement, the report
+                should cover technical substance only. */}
+            <div className="rounded-card border border-subtle p-4 md:col-span-2 bg-surface-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="text-xs font-extrabold tracking-widest uppercase text-muted">
+                    Assess Communication
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-secondary">
+                    {communicationRequired
+                      ? "ON — technical + communication"
+                      : "OFF — technical only"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCommunicationRequired((v) => !v)}
+                  className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors duration-micro ease-smooth ${
+                    communicationRequired
+                      ? "bg-success-soft border-subtle text-success hover:border-strong"
+                      : "bg-surface-2 border-subtle text-secondary hover:border-strong"
+                  }`}
+                >
+                  Toggle
+                </button>
+              </div>
+              <div className="mt-2 text-xs text-muted">
+                {communicationRequired ? (
+                  <>
+                    The report scores communication and confidence alongside technical
+                    performance, and communication carries 10% of every question's score.
+                  </>
+                ) : (
+                  <>
+                    The report covers <span className="font-semibold text-secondary">technical
+                    aspects only</span>. Communication and confidence are not scored, not shown,
+                    and carry no weight in the question scores — a candidate is judged on what
+                    they said, not how they said it. Use this for positions where proper
+                    spoken communication is not a real requirement.
+                  </>
+                )}
+              </div>
+            </div>
+
             <div className="fx-gradient-border rounded-card border border-subtle p-4 md:col-span-2 bg-surface-1">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
@@ -1409,7 +1479,7 @@ export function TemplateFormPage({
                 </button>
               </div>
               {autoAdvanceEnabled ? (
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                   <div>
                     <label className="text-xs font-bold uppercase text-muted">Initial wait (sec)</label>
                     <input type="number" min={2} max={30} value={initialResponseWaitSec}
@@ -1644,7 +1714,7 @@ export function TemplateFormPage({
             </div>
 
             {/* Row 4: Compact domain grid — 4 cols */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
               {INTELLIGENCE_SUITE_CATEGORIES.map((cat) => {
                 const isSelected = selectedCategoryIds.includes(cat.id);
                 const Icon = cat.icon;
@@ -1820,9 +1890,65 @@ export function TemplateFormPage({
                 />
                 <p className="text-xs text-muted mt-1.5">
                   {manualQuestionCount} question{manualQuestionCount === 1 ? "" : "s"} (empty lines ignored, duplicates removed, up to 120
-                  saved). Each candidate interview gets the same pool in a <span className="font-semibold text-secondary">different order</span>{" "}
-                  so parallel sessions do not all see question 1 first.
+                  saved).
                 </p>
+
+                {/* Question order — the pool used to be shuffled unconditionally,
+                    which breaks questions that deliberately build on each other. */}
+                <fieldset className="mt-4">
+                  <legend className="text-xs font-extrabold tracking-widest uppercase text-muted">
+                    Question order
+                  </legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label
+                      className={`flex cursor-pointer gap-2.5 rounded-control border p-3 transition ${
+                        manualQuestionOrder === "sequential"
+                          ? "border-brand-400 bg-brand-50/60 dark:border-brand-500/60 dark:bg-brand-950/30"
+                          : "border-subtle hover:border-strong"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="manualQuestionOrder"
+                        value="sequential"
+                        checked={manualQuestionOrder === "sequential"}
+                        onChange={() => setManualQuestionOrder("sequential")}
+                        className="mt-0.5"
+                      />
+                      <span className="text-sm">
+                        <span className="block font-semibold text-primary">One by one, in order</span>
+                        <span className="block text-xs text-muted mt-0.5">
+                          Asked exactly as listed above. Use this when the questions build on
+                          each other.
+                        </span>
+                      </span>
+                    </label>
+
+                    <label
+                      className={`flex cursor-pointer gap-2.5 rounded-control border p-3 transition ${
+                        manualQuestionOrder === "random"
+                          ? "border-brand-400 bg-brand-50/60 dark:border-brand-500/60 dark:bg-brand-950/30"
+                          : "border-subtle hover:border-strong"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="manualQuestionOrder"
+                        value="random"
+                        checked={manualQuestionOrder === "random"}
+                        onChange={() => setManualQuestionOrder("random")}
+                        className="mt-0.5"
+                      />
+                      <span className="text-sm">
+                        <span className="block font-semibold text-primary">Random order</span>
+                        <span className="block text-xs text-muted mt-0.5">
+                          Same pool, shuffled per candidate, so parallel sessions do not all
+                          see question 1 first.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
               </div>
             )}
 

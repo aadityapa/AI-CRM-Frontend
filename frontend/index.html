@@ -4299,6 +4299,106 @@
       background: rgba(15, 22, 36, 0.72);
       box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
     }
+
+    /* ---- Interview rules gate (Aug 2026) ------------------------------
+       Shares the device-test skin so the pre-interview flow reads as one
+       sequence. Rules that END the interview are visually separated from
+       rules that are merely guidance — a candidate skimming this screen
+       should still catch the two that can cost them the session. */
+    .rules-container { max-width: 860px; margin: 0 auto; width: 100%; }
+    .rules-card {
+      width: 100%;
+      padding: 30px 32px 26px;
+      border-radius: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(15, 22, 36, 0.72);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+    }
+    .rules-head { margin-bottom: 22px; }
+    .rules-chip {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #a5b4fc;
+      background: rgba(99, 102, 241, 0.14);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+    }
+    .rules-title { font-size: clamp(26px, 3.2vw, 38px); margin: 12px 0 8px; }
+    .rules-sub { color: #94a3b8; margin: 0; max-width: 640px; }
+
+    .rules-format {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    .rules-stat {
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .rules-stat-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #8b9bb4;
+      margin-bottom: 6px;
+    }
+    .rules-stat-value { display: block; font-size: 19px; font-weight: 700; color: #e8eefc; }
+
+    .rules-list { list-style: none; padding: 0; margin: 0 0 22px; display: grid; gap: 10px; }
+    .rules-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: #b6c2d6;
+      line-height: 1.55;
+      font-size: 14.5px;
+    }
+    /* The two rules that can END the interview get a red edge, so they are not
+       lost among the merely-helpful ones. */
+    .rules-item--stop {
+      background: rgba(244, 63, 94, 0.07);
+      border-color: rgba(244, 63, 94, 0.26);
+    }
+    .rules-item strong { color: #f1f5f9; display: block; margin-bottom: 2px; font-weight: 650; }
+    .rules-icon { font-size: 19px; line-height: 1.4; flex-shrink: 0; }
+
+    .rules-ack {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.28);
+      color: #dbe3f4;
+      font-size: 14px;
+      line-height: 1.5;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+    .rules-ack input { margin-top: 3px; width: 17px; height: 17px; cursor: pointer; flex-shrink: 0; }
+
+    .rules-actions { display: flex; gap: 12px; justify-content: flex-end; align-items: center; }
+    .rules-actions .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    @media (max-width: 720px) {
+      .rules-card { padding: 22px 18px 20px; }
+      .rules-format { grid-template-columns: 1fr; }
+      .rules-actions { flex-direction: column-reverse; align-items: stretch; }
+    }
     .device-test-head { text-align: left; margin-bottom: 20px; }
     .device-test-title { font-size: clamp(28px, 3.4vw, 40px); margin: 0 0 8px; }
     .device-test-sub { color: #94a3b8; max-width: 720px; }
@@ -6264,6 +6364,75 @@
     .qc-mic-ind span:nth-child(2) { height: 16px; animation-delay: 140ms; }
     .qc-mic-ind span:nth-child(3) { height: 8px; animation-delay: 260ms; }
     @keyframes qcBar { 0%,100% { transform: translateY(0); opacity: 0.55; } 50% { transform: translateY(-2px); opacity: 1; } }
+
+    /* ============================================================= *
+     * Livelier AI interviewer — a breathing halo, radiating voice
+     * ripples and a reactive core so the screen feels like a real,
+     * present interviewer. All keyed off #candidateAiHost.speaking.
+     * ============================================================= */
+    .qc-ai-center::before {
+      content: "";
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 250px; height: 250px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(99,102,241,0.30) 0%, rgba(56,189,248,0.10) 45%, transparent 70%);
+      filter: blur(4px);
+      z-index: 0;
+      pointer-events: none;
+      animation: qcHalo 4.2s ease-in-out infinite;
+    }
+    @keyframes qcHalo {
+      0%, 100% { transform: translate(-50%,-50%) scale(0.9);  opacity: 0.42; }
+      50%      { transform: translate(-50%,-50%) scale(1.06); opacity: 0.80; }
+    }
+    #candidateAiHost.speaking .qc-ai-center::before {
+      animation-duration: 1.9s;
+      background: radial-gradient(circle, rgba(56,189,248,0.44) 0%, rgba(99,102,241,0.16) 45%, transparent 70%);
+    }
+    /* Concentric sound waves emanating from the mic core while speaking. */
+    .qc-mic-core { position: relative; }
+    .qc-mic-core::before, .qc-mic-core::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      border: 2px solid rgba(56,189,248,0.55);
+      opacity: 0;
+      pointer-events: none;
+    }
+    #candidateAiHost.speaking .qc-mic-core::before { animation: qcRipple 1.9s ease-out infinite; }
+    #candidateAiHost.speaking .qc-mic-core::after  { animation: qcRipple 1.9s ease-out infinite .95s; }
+    @keyframes qcRipple {
+      0%   { transform: scale(1);   opacity: 0.55; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    /* Core breathes brighter + orbits quicken while the AI talks. */
+    #candidateAiHost.speaking .qc-mic-core {
+      animation: qcFloat 3.2s ease-in-out infinite, qcSpeakPulse 1.25s ease-in-out infinite;
+      border-color: rgba(56,189,248,0.40);
+    }
+    @keyframes qcSpeakPulse {
+      0%, 100% { box-shadow: 0 30px 90px rgba(56,189,248,0.20), 0 0 0 0 rgba(56,189,248,0.28); }
+      50%      { box-shadow: 0 34px 120px rgba(56,189,248,0.36), 0 0 30px 6px rgba(56,189,248,0.22); }
+    }
+    #candidateAiHost.speaking .qc-orbit.one { animation-duration: 6s; }
+    #candidateAiHost.speaking .qc-orbit.two { animation-duration: 9s; }
+    /* Question reveal: a smoother, more cinematic entrance. */
+    .qc-question-card .cand-question.question-enter {
+      animation: qcQuestionIn 460ms cubic-bezier(0.2,0.7,0.2,1);
+    }
+    @keyframes qcQuestionIn {
+      0%   { opacity: 0; transform: translateY(10px); filter: blur(3px); }
+      100% { opacity: 1; transform: translateY(0);    filter: blur(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .qc-ai-center::before,
+      #candidateAiHost.speaking .qc-mic-core,
+      #candidateAiHost.speaking .qc-mic-core::before,
+      #candidateAiHost.speaking .qc-mic-core::after,
+      .qc-question-card .cand-question.question-enter { animation: none; }
+    }
     /* Response controls (always visible) vs optional live transcript panel (template ON only). */
     .qc-status-tracker {
       margin-top: 12px;
@@ -6814,6 +6983,113 @@
         <div class="bot-vfx-ring" aria-hidden="true"></div>
         <div class="bot-scanline" aria-hidden="true"></div>
         <img src="assets/3d_robot_avatar.png" alt="3D AI Robot Interviewer">
+      </div>
+    </div>
+  </section>
+
+  <!--
+    Interview Rules & Consent (Aug 2026)
+    ===================================
+    The welcome card above is advice ("sit somewhere quiet"). This screen is the
+    contract: what is monitored, what ends the interview, and how long it lasts.
+    A candidate who is terminated for switching tabs must have been told, in
+    plain words, that switching tabs ends the interview.
+
+    Time limit and question count are injected from the template at runtime, so
+    the candidate sees the real numbers rather than a generic promise.
+
+    Continue stays disabled until the acknowledgement box is ticked.
+  -->
+  <section id="screenInterviewRules" class="startup-screen rules-screen" aria-labelledby="interviewRulesTitle" hidden>
+    <div class="startup-container rules-container">
+      <div class="rules-card">
+        <header class="rules-head">
+          <span class="rules-chip">Before you begin</span>
+          <h1 id="interviewRulesTitle" class="rules-title">Interview rules</h1>
+          <p class="rules-sub">
+            This interview is monitored. Please read these rules — they are enforced automatically.
+          </p>
+        </header>
+
+        <div id="interviewRulesFormat" class="rules-format" role="group" aria-label="Interview format">
+          <div class="rules-stat">
+            <span class="rules-stat-label">Duration</span>
+            <span class="rules-stat-value" id="rulesDuration">—</span>
+          </div>
+          <div class="rules-stat">
+            <span class="rules-stat-label">Questions</span>
+            <span class="rules-stat-value" id="rulesQuestions">—</span>
+          </div>
+          <div class="rules-stat">
+            <span class="rules-stat-label">Answer by</span>
+            <span class="rules-stat-value">Speaking</span>
+          </div>
+        </div>
+
+        <ul class="rules-list" role="list">
+          <li class="rules-item rules-item--stop">
+            <span class="rules-icon" aria-hidden="true">⛔</span>
+            <div>
+              <strong>Stay on this tab, in fullscreen.</strong>
+              Leaving fullscreen, switching tabs or switching windows is recorded as a
+              violation. Repeated violations end the interview automatically and submit
+              whatever you have answered so far.
+            </div>
+          </li>
+          <li class="rules-item rules-item--stop">
+            <span class="rules-icon" aria-hidden="true">⌨️</span>
+            <div>
+              <strong>The keyboard is disabled.</strong>
+              You answer by speaking, so typing, copying and pasting are switched off for
+              the whole interview. Use your mouse for the on-screen buttons.
+            </div>
+          </li>
+          <li class="rules-item">
+            <span class="rules-icon" aria-hidden="true">🎙️</span>
+            <div>
+              <strong>Speak your answer, then press Send Response.</strong>
+              The AI reads each question aloud. Your microphone opens automatically when it
+              finishes. Speak clearly and at a normal pace.
+            </div>
+          </li>
+          <li class="rules-item">
+            <span class="rules-icon" aria-hidden="true">📷</span>
+            <div>
+              <strong>Camera and microphone stay on.</strong>
+              Your session is proctored. More than one face in view is recorded as a
+              violation, so please sit alone.
+            </div>
+          </li>
+          <li class="rules-item">
+            <span class="rules-icon" aria-hidden="true">⏱️</span>
+            <div>
+              <strong>The interview ends on its own.</strong>
+              <span id="rulesEndCondition">It submits automatically when the time or the
+              question list runs out</span> — whichever comes first. You do not need to do
+              anything to finish.
+            </div>
+          </li>
+          <li class="rules-item">
+            <span class="rules-icon" aria-hidden="true">↩️</span>
+            <div>
+              <strong>You cannot revisit a question.</strong>
+              Once you send a response the interview moves on. You may skip a question, but
+              a skipped question scores zero.
+            </div>
+          </li>
+        </ul>
+
+        <label class="rules-ack" for="interviewRulesAck">
+          <input type="checkbox" id="interviewRulesAck">
+          <span>I have read and understood these rules, and I consent to being recorded and proctored for this interview.</span>
+        </label>
+
+        <div class="rules-actions">
+          <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
+          <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
+            Continue to device check
+          </button>
+        </div>
       </div>
     </div>
   </section>

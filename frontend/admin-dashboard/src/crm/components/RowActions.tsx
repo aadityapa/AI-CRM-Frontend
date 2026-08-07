@@ -2,9 +2,12 @@
  * Delete opens ConfirmModal; on confirm calls crmDelete then onDeleted.
  * Clicks stopPropagation so they never trigger DataTable onRowClick.
  * After a dependency 409, Delete stays disabled (Close to dismiss);
- * optional onDeactivate exposes a secondary action when hard-delete is blocked. */
+ * optional onDeactivate exposes a secondary action when hard-delete is blocked.
+ *
+ * Callers should update list UI immediately in onDeleted (filter out the row,
+ * then soft-refresh) so the item disappears without navigating away. */
 import React, { useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Eye, Pencil, Trash2 } from "lucide-react";
 import { crmDelete } from "../api";
 import { ConfirmModal, focusRing } from "./ui";
 
@@ -15,9 +18,20 @@ const iconBtn =
 
 export type NotifyFn = (msg: string, kind?: "ok" | "err") => void;
 
+/** Drop a row from list state immediately, then soft-refresh from the server. */
+export function afterListDelete<T extends { id?: number | string }>(
+  id: number | string,
+  setRows: React.Dispatch<React.SetStateAction<T[]>>,
+  reload?: () => void | Promise<void>,
+): void {
+  setRows((prev) => prev.filter((r) => r.id !== id));
+  if (reload) void reload();
+}
+
 export function RowActions({
   entity,
   itemLabel,
+  onView,
   onEdit,
   deleteUrl,
   onDeleted,
@@ -33,10 +47,13 @@ export function RowActions({
   entity: string;
   /** Optional display name shown in the confirm message. */
   itemLabel?: string | null;
+  /** Opens the record's detail view. Rendered as the first (eye) action. */
+  onView?: () => void;
   onEdit?: () => void;
   /** Absolute CRM path, e.g. `/api/projects/12`. */
   deleteUrl: string;
-  onDeleted: () => void;
+  /** Called after a successful DELETE — update list state immediately here. */
+  onDeleted: () => void | Promise<void>;
   notify: NotifyFn;
   canEdit?: boolean;
   canDelete?: boolean;
@@ -51,7 +68,12 @@ export function RowActions({
   const [secondaryBusy, setSecondaryBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  if (!canEdit && !canDelete) return null;
+  if (!canEdit && !canDelete && !onView) return null;
+
+  const article = /^[aeiou]/i.test(entity) ? "an" : "a";
+  const confirmMessage = itemLabel
+    ? <>Do you want to delete this {entity} (<b>{itemLabel}</b>)? This cannot be undone.</>
+    : <>Do you want to delete this {entity}? This cannot be undone.</>;
 
   const doDelete = async () => {
     setBusy(true);
@@ -60,7 +82,7 @@ export function RowActions({
       const res = await crmDelete(deleteUrl);
       notify(res.message || deleteSuccessMessage || `${entity[0].toUpperCase()}${entity.slice(1)} deleted`);
       setConfirming(false);
-      onDeleted();
+      await Promise.resolve(onDeleted());
     } catch (e: any) {
       const msg = e?.message || `Failed to delete ${entity}`;
       setDeleteError(msg);
@@ -78,7 +100,7 @@ export function RowActions({
       notify(deactivateSuccessMessage || `${entity[0].toUpperCase()}${entity.slice(1)} deactivated`);
       setConfirming(false);
       setDeleteError(null);
-      onDeleted();
+      await Promise.resolve(onDeleted());
     } catch (e: any) {
       const msg = e?.message || `Failed to deactivate ${entity}`;
       setDeleteError(msg);
@@ -89,12 +111,30 @@ export function RowActions({
   };
 
   return (
-    <>
-      <span
-        className="inline-flex justify-end gap-1"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
+    // A single stopPropagation wrapper around BOTH the icons AND the confirm
+    // modal. The modal is portaled, but React events still bubble through the
+    // component tree — without this, confirming inside a table whose rows have
+    // onRowClick (e.g. Opportunities) bubbles to the row and navigates away
+    // instead of deleting.
+    <span
+      className="inline-flex justify-end gap-1"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+        {onView && (
+          <button
+            type="button"
+            className={iconBtn}
+            title={`View ${entity}`}
+            aria-label={`View ${entity}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onView();
+            }}
+          >
+            <Eye size={15} />
+          </button>
+        )}
         {canEdit && onEdit && (
           <button
             type="button"
@@ -124,15 +164,10 @@ export function RowActions({
             <Trash2 size={15} />
           </button>
         )}
-      </span>
       {confirming && (
         <ConfirmModal
-          title={`Delete ${entity}?`}
-          message={
-            itemLabel
-              ? <>Are you sure you want to delete <b>{itemLabel}</b>? This cannot be undone.</>
-              : "Are you sure you want to delete this? This cannot be undone."
-          }
+          title={`Delete ${article} ${entity}?`}
+          message={confirmMessage}
           confirmLabel="Delete"
           danger
           busy={busy}
@@ -149,6 +184,6 @@ export function RowActions({
           }}
         />
       )}
-    </>
+    </span>
   );
 }

@@ -25,7 +25,7 @@ import {
 import { SectionHeaderBanner, WizardField, FieldLabel } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -36,7 +36,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -348,6 +348,7 @@ function CreateUserModal({
       title={<span className="sr-only">Create User</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -428,6 +429,7 @@ function EditRolesModal({
     <Modal
       title={<span className="sr-only">{`Edit Roles — ${user.username}`}</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell
@@ -585,6 +587,7 @@ function TabAccessModal({
     <Modal
       title={<span className="sr-only">{`Edit Tab Access — ${user.username}`}</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell

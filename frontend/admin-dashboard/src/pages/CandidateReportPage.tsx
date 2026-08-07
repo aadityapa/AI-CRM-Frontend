@@ -34,6 +34,7 @@ import { invalidateApiCache } from "../api/client";
 import type { Candidate, CandidateInterviewHistory, CandidateInterviewSummary, InterviewRecord } from "../types";
 import { atsStatusFromScore, normalizeScore, weightedCandidateScore } from "../utils/scoreUtils";
 import {
+  asPercent,
   completionRatePercent,
   enrichedTurnsFromRecord,
   introductionTurnFromRecord,
@@ -252,11 +253,22 @@ export function CandidateReportPage({
     const reasons = report?.score_reasons as Record<string, { score?: unknown }> | undefined;
     if (reasons?.overall?.score != null) return normalizePercent(reasons.overall.score, normScore);
     const ss = report?.scoring_summary as Record<string, unknown> | undefined;
-    if (ss?.overall_score_percent != null) return normalizePercent(ss.overall_score_percent, normScore);
+    if (ss?.overall_score_percent != null) return asPercent(ss.overall_score_percent, normScore);
     return overallFromReport(report, normScore);
   }, [report, normScore]);
 
   const scoreReasons = (report?.score_reasons || {}) as Record<string, { score?: number; reason?: string }>;
+
+  /**
+   * Did this role's template assess spoken communication at all?
+   *
+   * When RMG turns it off, the interview is scored on technical substance only —
+   * there is no communication evaluation to show, and Confidence goes with it
+   * because it is derived from the same evaluation. Absent means true: reports
+   * created before the setting existed WERE assessed, and must keep rendering
+   * their scores.
+   */
+  const assessesCommunication = report?.communication_required !== false;
 
   const comm = useMemo(() => {
     if (scoreReasons.communication?.score != null) return normalizePercent(scoreReasons.communication.score, 0);
@@ -1018,17 +1030,43 @@ export function CandidateReportPage({
           </div>
         </motion.section>
 
+        {/* Say WHY communication is absent. Without this, a reader who expects
+            the usual six cards assumes the report is broken or incomplete. */}
+        {!assessesCommunication && (
+          <div className="flex items-start gap-2.5 rounded-card border border-subtle bg-surface-2 px-4 py-3 text-sm">
+            <Award className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+            <p className="text-secondary">
+              <span className="font-semibold text-primary">Technical assessment only.</span>{" "}
+              This position's template has communication assessment switched off, so the
+              candidate was scored purely on technical substance. Communication and
+              confidence were not evaluated and carry no weight in the scores below.
+            </p>
+          </div>
+        )}
+
         {/* Analytics */}
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.25, delay: 0.05 }}
-          className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6"
         >
           {[
-            { label: "Communication", value: comm, reason: scoreReasons.communication?.reason, icon: <User className="w-4 h-4" /> },
+            // Communication and Confidence both come from the communication
+            // evaluation, so both disappear when the template did not ask for
+            // one. Showing them at 0% would read as "the candidate scored zero",
+            // which is a different and much worse claim than "not assessed".
+            ...(assessesCommunication
+              ? [
+                  { label: "Communication", value: comm, reason: scoreReasons.communication?.reason, icon: <User className="w-4 h-4" /> },
+                ]
+              : []),
             { label: "Technical", value: tech, reason: scoreReasons.technical?.reason, icon: <Award className="w-4 h-4" /> },
-            { label: "Confidence", value: conf, reason: scoreReasons.confidence?.reason, icon: <Sparkles className="w-4 h-4" /> },
+            ...(assessesCommunication
+              ? [
+                  { label: "Confidence", value: conf, reason: scoreReasons.confidence?.reason, icon: <Sparkles className="w-4 h-4" /> },
+                ]
+              : []),
             { label: "Problem solving", value: prob, reason: scoreReasons.problem_solving?.reason, icon: <Brain className="w-4 h-4" /> },
             { label: "Completion", value: completion, reason: undefined, icon: <BarChart3 className="w-4 h-4" /> },
             {
@@ -1091,6 +1129,7 @@ export function CandidateReportPage({
                 confidence={conf}
                 problemSolving={prob}
                 overall={overall}
+                includeCommunication={assessesCommunication}
               />
             </Suspense>
           </div>
@@ -1108,7 +1147,7 @@ export function CandidateReportPage({
             <span className="text-xs font-semibold text-muted">{history.interviews?.length || 0} sessions</span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-max text-left text-sm lg:min-w-0">
               <thead>
                 <tr className="text-xs uppercase font-black tracking-widest text-muted border-b border-subtle">
                   <th className="px-6 py-3">Role / template</th>
@@ -1261,7 +1300,13 @@ export function CandidateReportPage({
                     </div>
                     {introductionTurn.evaluationSummary || introductionTurn.interviewFeedback ? (
                       <div className="rounded-card border border-subtle bg-surface-2 p-3">
-                        <p className="text-xs font-black uppercase text-violet-600 dark:text-violet-300 mb-1">Communication note</p>
+                        {/* The intro turn is never scored, so this note stays
+                            useful either way — but calling it a "communication
+                            note" on a technical-only report implies an
+                            assessment that did not happen. */}
+                        <p className="text-xs font-black uppercase text-violet-600 dark:text-violet-300 mb-1">
+                          {assessesCommunication ? "Communication note" : "Interviewer note"}
+                        </p>
                         <p className="text-sm text-secondary">
                           {introductionTurn.evaluationSummary || introductionTurn.interviewFeedback}
                         </p>
@@ -1335,7 +1380,7 @@ export function CandidateReportPage({
                       <p className="text-xs font-black uppercase text-muted mb-1">Candidate answer</p>
                       <p className="text-sm text-secondary whitespace-pre-wrap">{t.answer || "—"}</p>
                     </div>
-                    <ProfessionalAssessmentSections turn={t} />
+                    <ProfessionalAssessmentSections turn={t} includeCommunication={assessesCommunication} />
                     {t.excludedFromScore ? (
                       <div className="rounded-card border border-subtle bg-surface-2 p-3 space-y-1">
                         <p className="text-xs font-black uppercase text-muted">Status</p>
@@ -1412,13 +1457,15 @@ export function CandidateReportPage({
                 ))}
               </ul>
             </div>
-            <div>
-              <p className="text-xs font-bold text-muted uppercase">Communication</p>
-              <p className="mt-1 text-sm text-secondary">
-                Communication score <span className="font-black text-brand-600 dark:text-brand-300">{comm}%</span>
-                {scoreReasons.communication?.reason ? ` — ${scoreReasons.communication.reason}` : " — see breakdown above for tone and clarity signals."}
-              </p>
-            </div>
+            {assessesCommunication && (
+              <div>
+                <p className="text-xs font-bold text-muted uppercase">Communication</p>
+                <p className="mt-1 text-sm text-secondary">
+                  Communication score <span className="font-black text-brand-600 dark:text-brand-300">{comm}%</span>
+                  {scoreReasons.communication?.reason ? ` — ${scoreReasons.communication.reason}` : " — see breakdown above for tone and clarity signals."}
+                </p>
+              </div>
+            )}
             {(Array.isArray(commEval.improvements) && (commEval.improvements as string[]).length) ||
             (Array.isArray(report?.improvements) && (report.improvements as string[]).length) ? (
               <div>

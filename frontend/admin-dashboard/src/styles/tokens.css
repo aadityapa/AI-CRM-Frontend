@@ -16,40 +16,44 @@
 
 :root {
   /* --------------------------------------------------------------- SURFACES
-     Stripe-style ladder on the neutral ramp: soft cool-gray page, white
-     cards. surface-2 is the HOVER/RAISED tint (one step darker than the
-     card, so row-hover reads on white); surface-3 is the modal surface. */
-  --surface-0: var(--neutral-100); /* page background */
-  --surface-1: var(--neutral-0);   /* card */
-  --surface-2: var(--neutral-50);  /* hover tint / popover */
-  --surface-3: var(--neutral-0);   /* modal / command palette */
+     DUNE GLOW (day): warm desert-sand ladder — ivory-sand page, warm-white
+     cards. surface-2 is the HOVER/RAISED tint (one step deeper dune than the
+     card); surface-3 is deep chrome. Night (.dark) is untouched. */
+  --surface-0: #faf6ef; /* page background — warm ivory sand */
+  --surface-1: #fffdf8; /* card — warm white */
+  --surface-2: #f3ede2; /* hover tint / popover — light dune */
+  --surface-3: #ede5d6; /* deep chrome / modal recess */
 
-  --text-primary:   var(--neutral-900);
-  --text-secondary: var(--neutral-600);
-  --text-muted:     #5d6b7e; /* AA-tuned between neutral-500/600: 4.5+ on every surface */
+  --text-primary:   #2b2416; /* warm near-black brown (12+:1 on sand) */
+  --text-secondary: #57503e; /* warm slate-brown (7+:1 on sand) */
+  /* Spec muted #857c66 fails AA on sand (3.3 on s3); AA-tuned warm muted: */
+  --text-muted:     #6e6650; /* ≥4.5:1 on every day surface incl. s3 */
 
-  --border-subtle: rgba(15, 23, 42, 0.08);
-  --border-strong: rgba(15, 23, 42, 0.18);
+  --border-subtle: rgba(87, 70, 38, 0.14);
+  --border-strong: rgba(87, 70, 38, 0.26);
 
   /* -------------------------------------------------------------- ELEVATION
-     Legacy names -> the four canonical levels (flat/raised/overlay/modal). */
+     Legacy names -> the four canonical levels (flat/raised/overlay/modal).
+     Day elev tokens (warm dune shadow + amber top-edge) live in the imported
+     primitives; .dark redefines them for night. */
   --e0: var(--elev-flat);
   --e1-shadow: var(--elev-raised);
   --e2-shadow: var(--elev-overlay);
   --e3-shadow: var(--elev-modal);
 
-  /* Specular edges — kept for compatibility, toned WAY down (calm-premium). */
-  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.40);
-  --edge-shade:     inset 0 -1px 0 rgba(15, 23, 42, 0.04);
+  /* Specular edges — kept for compatibility, toned WAY down (calm-premium).
+     Day: soft amber top-edge glow for cards/KPIs via shared elev classes. */
+  --edge-highlight: inset 0 1px 0 rgba(251, 191, 36, 0.28);
+  --edge-shade:     inset 0 -1px 0 rgba(87, 70, 38, 0.05);
 
   /* ------------------------------------------------------------------ GLASS
      v3: real (but disciplined) translucency — ONLY .glass surfaces are
      translucent; opaque token surfaces stay for tables/busy screens (perf +
      readability). Light: 80% white. Dark: 6% white over the near-black page
      (composites to ~= surface-1, so every verified text pair still holds). */
-  --glass-bg:            rgba(255, 255, 255, 0.80);
+  --glass-bg:            rgba(255, 252, 245, 0.80); /* dune-warmed glass */
   --glass-border-top:    rgba(255, 255, 255, 0.70);
-  --glass-border-bottom: rgba(15, 23, 42, 0.08);
+  --glass-border-bottom: rgba(87, 70, 38, 0.10);
   --glass-blur: 12px;
 
   /* ------------------------------------------------------------------ SHEEN
@@ -61,14 +65,14 @@
     rgba(255, 255, 255, 0.03) 28%,
     rgba(255, 255, 255, 0) 42%
   );
-  --shimmer-tint: rgba(255, 255, 255, 0.55);
-  --recess-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shimmer-tint: rgba(255, 253, 248, 0.55);
+  --recess-shadow: inset 0 1px 2px rgba(87, 70, 38, 0.07);
   --btn-gloss: rgba(255, 255, 255, 0);        /* retired — flat-first buttons */
   --btn-gloss-hover: rgba(255, 255, 255, 0);  /* retired — flat-first buttons */
 
   /* Interactive-control hover tint (theme-aware; used by .btn-depth etc.). */
-  --control-hover:  var(--neutral-100);
-  --control-active: var(--neutral-200);
+  --control-hover:  #f3ede2; /* light dune */
+  --control-active: #eae1d0; /* deeper dune */
 
   /* ------------------------------------------------------ AI ACCENT (ONLY on
      AI-generated / AI-active surfaces — never for generic decoration) */
@@ -85,9 +89,49 @@
   --btn-gradient: linear-gradient(135deg, var(--brand-600) 0%, var(--violet-600) 100%);
   --btn-gradient-hover: linear-gradient(135deg, var(--brand-700) 0%, var(--violet-700) 100%);
   --btn-gradient-active: linear-gradient(135deg, var(--brand-800) 0%, var(--violet-800) 100%);
-  --row-hover: rgba(99, 102, 241, 0.05);
-  --fx-grid-line: rgba(15, 23, 42, 0.05);
-  --fx-spot: rgba(99, 102, 241, 0.05);
+  --row-hover: rgba(217, 119, 6, 0.06);   /* dune amber row tint */
+  --fx-grid-line: rgba(87, 70, 38, 0.06);
+  --fx-spot: rgba(245, 158, 11, 0.06);    /* warm golden spotlight */
+
+  /* ------------------------------------------------------ DUNE GLOW (day)
+     Warm sand aurora mesh — overrides the imported cool defaults for DAY
+     only (.dark redefines its own --aurora-* set, so night is untouched). */
+  --aurora-a: radial-gradient(
+    110% 64% at 50% -12%,
+    rgba(255, 252, 244, 0.55) 0%,
+    rgba(253, 230, 138, 0.16) 38%,
+    rgba(245, 158, 11, 0) 68%
+  );
+  --aurora-b: radial-gradient(
+    80% 55% at 12% 0%,
+    rgba(245, 158, 11, 0.12) 0%,
+    rgba(245, 158, 11, 0) 60%
+  );
+  --aurora-c: radial-gradient(
+    70% 50% at 88% 8%,
+    rgba(217, 119, 6, 0.08) 0%,
+    rgba(217, 119, 6, 0) 60%
+  );
+  --aurora-vignette: radial-gradient(
+    135% 120% at 50% 38%,
+    rgba(87, 70, 38, 0) 60%,
+    rgba(87, 70, 38, 0.04) 100%
+  );
+  --aurora-hero-a: radial-gradient(
+    90% 70% at 30% -10%,
+    rgba(245, 158, 11, 0.16) 0%,
+    rgba(245, 158, 11, 0) 62%
+  );
+  --aurora-hero-b: radial-gradient(
+    70% 56% at 92% 8%,
+    rgba(251, 191, 36, 0.12) 0%,
+    rgba(251, 191, 36, 0) 60%
+  );
+  --aurora-hero-c: radial-gradient(
+    60% 48% at 70% 104%,
+    rgba(217, 119, 6, 0.09) 0%,
+    rgba(217, 119, 6, 0) 58%
+  );
 
   /* ----------------------------------------------------------------- MOTION
      Legacy names -> the two canonical durations + single decel curve.
@@ -146,7 +190,9 @@
     rgba(255, 255, 255, 0) 42%
   );
   --shimmer-tint: rgba(255, 255, 255, 0.06);
-  --recess-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.40);
+  --recess-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(0, 0, 0, 0.28);
 
   --control-hover:  #263349;
   --control-active: #2e3d57;
@@ -185,7 +231,9 @@ html {
    in Tailwind). Radii are intentionally NOT set here; compose with rounded-*.
    ============================================================================ */
 
-/* ---- Elevation recipes: background + border + one of the 4 shadow levels - */
+/* ---- Elevation recipes: background + border + one of the 4 shadow levels.
+        Day elev tokens include a 1px amber top-edge highlight (KPI/card glow);
+        night tokens stay cool slate / deep ink (unchanged). ------------- */
 .elev-1 {
   background-color: var(--surface-1);
   border: var(--bw-1) solid var(--border-subtle);
@@ -220,10 +268,11 @@ html {
    than a shadow are OPT-IN classes for hero surfaces — never blanket-applied.
    ============================================================================ */
 
-/* ---- .fx-aurora: ambient indigo/violet/cyan mesh — ONE fixed, pre-composited
-        gradient layer per shell (App.tsx + CrmApp.tsx). Values are the
-        --aurora-* tokens in design-system/tokens/tokens.css (light + dark).
-        `.moonlight` is the kept legacy alias (same recipe). Deliberately:
+/* ---- .fx-aurora: ambient mesh — ONE fixed, pre-composited gradient layer
+        per shell (App.tsx + CrmApp.tsx). Day = Dune Glow warm sand (--aurora-*
+        in :root); night = indigo/violet/cyan moonlight (`.dark` overrides,
+        untouched). `.moonlight` is the kept legacy alias (same recipe).
+        Deliberately:
         - NO backdrop-filter, NO blur() — plain gradients, ~free to composite;
         - z-index -1 + `isolate` on the shell root, so the mesh paints above
           the shell background but below ALL content (no z-index needed on
@@ -294,6 +343,15 @@ html {
     720px circle at var(--spot-x, 50%) var(--spot-y, -20%),
     var(--fx-spot) 0%,
     rgba(139, 92, 246, 0.02) 45%,
+    transparent 70%
+  );
+}
+/* Day spotlight mid-stop: warm amber (night keeps the violet mid-stop above). */
+html:not(.dark) .fx-spotlight {
+  background: radial-gradient(
+    720px circle at var(--spot-x, 50%) var(--spot-y, -20%),
+    var(--fx-spot) 0%,
+    rgba(217, 119, 6, 0.02) 45%,
     transparent 70%
   );
 }
@@ -412,7 +470,8 @@ html {
 }
 
 /* ---- .fx-hairline-b: gradient hairline along the bottom edge (glass top
-        bars). Pure 1px gradient — subtle, indigo→violet→cyan. */
+        bars). Shared default = original indigo→violet→cyan (night-identical).
+        Day-only gold shimmer via html:not(.dark) — no .dark block edits. */
 .fx-hairline-b {
   position: relative;
 }
@@ -430,6 +489,16 @@ html {
     rgba(99, 102, 241, 0.35) 30%,
     rgba(139, 92, 246, 0.30) 55%,
     rgba(34, 211, 238, 0.22) 78%,
+    transparent 100%
+  );
+}
+html:not(.dark) .fx-hairline-b::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(245, 158, 11, 0.38) 30%,
+    rgba(217, 119, 6, 0.30) 55%,
+    rgba(251, 191, 36, 0.24) 78%,
     transparent 100%
   );
 }
@@ -550,7 +619,8 @@ html {
 }
 
 /* ---- Input: flat-first (legacy name kept). Calm border at rest, brand
-        focus ring on :focus — no more recessed inner shadow. --------------- */
+        focus ring on :focus — no more recessed inner shadow (day). Night
+        adds an inner-well recess under html.dark only; focus ring still wins. */
 .input-recessed {
   background-color: var(--surface-1);
   border: var(--bw-1) solid var(--border-strong);
@@ -572,6 +642,9 @@ html {
 .input-recessed:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+html.dark .input-recessed:not(:disabled):not(:focus):not(:focus-within) {
+  box-shadow: var(--recess-shadow);
 }
 
 /* Error state (compose ON .input-recessed — see inputErrorCls in ui.tsx):
@@ -715,4 +788,142 @@ html {
 .text-display {
   font-family: var(--font-display);
   letter-spacing: -0.01em;
+}
+
+/* ============================================================================
+   NIGHT FORM AMBIENCE — platform pages (HrSetup / QuestionBank / TemplateForm)
+   mirror CRM wizard card depth without importing the CRM kit. Day selectors
+   and :root values are untouched; every rule is html.dark-scoped.
+   ============================================================================ */
+
+/* Page shell: violet crown + edge vignette behind content (not under card text). */
+html.dark .platform-form-shell {
+  position: relative;
+  isolation: isolate;
+}
+html.dark .platform-form-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 40% at 50% -10%, rgba(109, 93, 251, 0.12), transparent 55%),
+    radial-gradient(ellipse 90% 50% at 50% 115%, rgba(109, 93, 251, 0.05), transparent 60%),
+    radial-gradient(ellipse 140% 110% at 50% 50%, transparent 62%, rgba(0, 0, 0, 0.32) 100%);
+}
+
+/* Form cards: heavy float + violet ring/halo + top-edge highlight. */
+html.dark .platform-form-card {
+  box-shadow:
+    0 32px 96px rgba(0, 0, 0, 0.55),
+    0 8px 28px rgba(0, 0, 0, 0.38),
+    0 0 44px rgba(109, 93, 251, 0.10),
+    0 0 0 1px rgba(109, 93, 251, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* SearchableSelect / combobox / date-calendar popovers: recessed deep well. */
+html.dark .ss-popover,
+html.dark .platform-form-popover {
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.40),
+    inset 0 2px 10px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(109, 93, 251, 0.08);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCORE SCALE  (Aug 2026 — Candidate Profiles redesign)
+   ══════════════════════════════════════════════════════════════════════
+   Assessment scores needed their own scale. Reusing success/warning/danger
+   would have conflated "this candidate scored well" with "this operation
+   succeeded" — different meanings that happen to share a colour.
+
+   Deliberately NOT a traffic light: teal / indigo / amber / rose.
+
+   Measured, not assumed: on a near-white surface four hues cannot be both
+   >=3:1 (WCAG 1.4.11, graphical objects) AND separable under protanopia —
+   clearing 3:1 compresses the luminance range until simulated teal and amber
+   collide. So COLOUR IS NOT THE CARRIER. The tier is carried by three
+   non-colour channels:
+     1. the score ring's arc length  (quantitative; survives greyscale + CVD)
+     2. the numeral
+     3. the word — Strong / Good / Moderate / Weak
+   Colour is a fourth, redundant accent.
+
+   Dark surfaces have more luminance headroom, so the dark ring set IS also
+   genuinely CVD-separable (min luminance gap 0.069 across normal/prot/deut/trit).
+
+   Verified contrast — ring strokes vs their own surface (need >=3:1):
+     light  strong 5.38  good 7.77  moderate 4.84  weak 7.89
+     dark   strong 14.16 good 8.33  moderate 5.60  weak 3.80
+   Foreground text vs its soft background (need >=4.5:1):
+     light  strong 4.86  good 6.41  moderate 6.37  weak 6.68
+   ------------------------------------------------------------------ */
+:root {
+  --score-strong-bg:   #ccfbf1;
+  --score-strong-bd:   #5eead4;
+  --score-strong-fg:   #0f766e;
+  --score-strong-ring: #0f766e;
+
+  --score-good-bg:     #e0e7ff;
+  --score-good-bd:     #a5b4fc;
+  --score-good-fg:     #4338ca;
+  --score-good-ring:   #4338ca;
+
+  --score-moderate-bg:   #fef3c7;
+  --score-moderate-bd:   #fcd34d;
+  --score-moderate-fg:   #92400e;
+  --score-moderate-ring: #a16207;
+
+  --score-weak-bg:     #ffe4e6;
+  --score-weak-bd:     #fda4af;
+  --score-weak-fg:     #9f1239;
+  --score-weak-ring:   #9f1239;
+
+  /* No assessment on record — distinct from "scored zero". */
+  --score-none-bg:     var(--surface-2);
+  --score-none-bd:     var(--border-subtle);
+  --score-none-fg:     var(--text-muted);
+  --score-none-ring:   var(--border-strong);
+}
+
+html.dark {
+  --score-strong-bg:   rgba(20, 184, 166, 0.15);
+  --score-strong-bd:   rgba(20, 184, 166, 0.40);
+  --score-strong-fg:   #5eead4;
+  --score-strong-ring: #99f6e4;
+
+  --score-good-bg:     rgba(99, 102, 241, 0.17);
+  --score-good-bd:     rgba(129, 140, 248, 0.42);
+  --score-good-fg:     #a5b4fc;
+  --score-good-ring:   #38bdf8;
+
+  --score-moderate-bg:   rgba(245, 158, 11, 0.15);
+  --score-moderate-bd:   rgba(245, 158, 11, 0.40);
+  --score-moderate-fg:   #fcd34d;
+  --score-moderate-ring: #d97706;
+
+  --score-weak-bg:     rgba(244, 63, 94, 0.15);
+  --score-weak-bd:     rgba(244, 63, 94, 0.40);
+  --score-weak-fg:     #fda4af;
+  --score-weak-ring:   #e11d48;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TABULAR NUMERALS
+   ══════════════════════════════════════════════════════════════════════
+   Proportional digits make a column of scores and CTC figures sit ragged —
+   the decimal points do not line up and the eye cannot compare down the
+   column, which is the entire purpose of a numeric column.
+
+   Applied to every table cell by default, plus a .tnum escape hatch for
+   numerals outside tables (KPI values, score rings, page counts).
+   ------------------------------------------------------------------ */
+table th,
+table td,
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }

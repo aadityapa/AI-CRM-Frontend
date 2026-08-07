@@ -6,12 +6,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Plus, Trash2, Upload } from "lucide-react";
-import { crmGet, crmPost, crmUpload } from "../../api";
+import { crmGet, crmPost, crmPut, crmUpload } from "../../api";
 import { motion as motionTok } from "../../../design-system/tokens/tokens";
 import { Modal, btnSecondary, ErrorBox, inputCls, useToast, ConfirmModal } from "../../components/ui";
 import {
   OPPORTUNITY_SCHEMA, OPPORTUNITY_TYPES, sectionVisible, fieldVisible, fieldMatchesShowWhen,
   STRICT_SEQUENTIAL_MODE, SALES_STAGE_OPTIONS, ONBOARDING_STATUS_OPTIONS,
+  SALES_ONBOARDING_STATUS_VALUES,
   ROLE_OPTIONS, WORK_LOCATION_OPTIONS, BILLING_TYPE_OPTIONS, APPRAISAL_CYCLE_OPTIONS,
   WFO_REMOTE_OPTIONS, LEAVE_POLICY_OPTIONS,
   customerTypeOptionsForPo, normalizeCustomerType,
@@ -24,12 +25,17 @@ import {
   type OpportunityFormState,
 } from "./opportunityFormState";
 import { SectionFields, type OptionsMap } from "./FormRenderer";
+import { SearchableSelect } from "../../components/SearchableSelect";
+import { fetchAllMaster } from "../../lib/fetchAllMaster";
+import { CONTACT_ROLES } from "../../constants/geo";
 import { CustomerFormModal, type Customer } from "../Customers";
 import { branchContactAutofill, emailFromContact, phoneFromContact, splitBranchContacts } from "../../lib/contactPhone";
 import { useHasRole } from "../../CrmApp";
 import {
   calculateBillingBases,
+  calculateRfiValue,
   recalculateCtcSlab,
+  resolveRfiPeriodMonths,
   validateCtcExperience,
   type BillingInputs,
 } from "./ctcSlab";
@@ -75,6 +81,7 @@ const POLICY_BILLING_TYPE_MAP: Record<string, string> = {
 
 const CTC_TRIGGER_KEYS = new Set([
   "billing_type", "hours_per_day", "project_duration_months",
+  "tm_duration_months", "tm_positions_count",
   "holidays", "weekoff", "leave",
   "holidays_billable", "weekoff_billable", "leave_billable",
 ]);
@@ -97,10 +104,15 @@ function ctcBillingInputs(
     holidaysBillable: isTm ? details.holidays_billable : undefined,
     weekoffBillable: isTm ? details.weekoff_billable : undefined,
     leaveBillable: isTm ? details.leave_billable : undefined,
+    // Branch Billing Properties cap (Max Billable Hours / Month) — inherited
+    // from the effective-policy fetch; caps annual billing hours at cap × 12.
+    maxBillableHoursMonth: isTm ? details.max_billable_hours_month : undefined,
   };
 }
 
-/** Recalculate every type through one path; T&M alone receives billing bases. */
+/** Recalculate every type through one path; T&M alone receives billing bases.
+ *  Also derives RFI Value when Annual Revenue × Period × Positions are all set.
+ */
 function recalculateOpportunityState(state: OpportunityFormState): OpportunityFormState {
   const current = { ...(state.detailsByType[state.activeType as OpportunityType] || {}) };
   let details: Record<string, unknown> = current;
@@ -109,9 +121,13 @@ function recalculateOpportunityState(state: OpportunityFormState): OpportunityFo
     details = {
       ...current,
       hours_per_day: current.hours_per_day === undefined ? 8 : current.hours_per_day,
-      holidays: current.holidays === undefined ? 10 : current.holidays,
-      weekoff: current.weekoff === undefined ? 104 : current.weekoff,
-      leave: current.leave === undefined ? 24 : current.leave,
+      // Holidays & Leave stay at 0 until a branch-linked leave policy prefills
+      // them (or the user types values) — never invent 10 / 24. Weekoff is NOT
+      // policy-driven: it's the fixed number of weekend days in a year
+      // (52 weekends × 2 = 104), so it always calculates to 104.
+      holidays: current.holidays === undefined || current.holidays === "" ? 0 : current.holidays,
+      weekoff: current.weekoff === undefined || current.weekoff === "" ? 104 : current.weekoff,
+      leave: current.leave === undefined || current.leave === "" ? 0 : current.leave,
       holidays_billable: current.holidays_billable === undefined ? false : current.holidays_billable,
       weekoff_billable: current.weekoff_billable === undefined ? false : current.weekoff_billable,
       leave_billable: current.leave_billable === undefined ? false : current.leave_billable,
@@ -122,17 +138,45 @@ function recalculateOpportunityState(state: OpportunityFormState): OpportunityFo
     detailsByType = { ...state.detailsByType, "T&M": details };
   }
   const inputs = ctcBillingInputs(state.activeType, details);
+  const ctcSlab = recalculateCtcSlab(state.ctcSlab, inputs);
+  const period = resolveRfiPeriodMonths(state.activeType, details);
+  const rfi = calculateRfiValue({
+    revenueAnnual: ctcSlab[0]?.revenue_annual,
+    periodMonths: period,
+    positionsCount: details.tm_positions_count,
+  });
+  const core = rfi === null
+    ? state.core
+    : { ...state.core, rfi_value: rfi };
   return {
     ...state,
+    core,
     detailsByType,
-    ctcSlab: recalculateCtcSlab(state.ctcSlab, inputs),
+    ctcSlab,
   };
 }
 
-export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void; onCreated?: () => void }) {
+export function NewOpportunityForm({
+  onClose,
+  onCreated,
+  opportunityId,
+  approvalMode = false,
+}: {
+  onClose: () => void;
+  onCreated?: () => void;
+  /** When set, load + PUT this opportunity (same wizard chrome as create). */
+  opportunityId?: number;
+  /** Sales Head reviewing before sign-off: saves any edits, then approves in the
+   * same action, so a correction can never be left un-approved by accident. */
+  approvalMode?: boolean;
+}) {
   const reduce = useReducedMotion();
   const [toast, notify] = useToast();
   const isSales = useHasRole("Sales", "Sales_Head");
+  // A plain Sales person — Sales_Head and Admin keep the full status list, since
+  // they oversee the whole pipeline rather than just opening it.
+  const isSalesOnly = useHasRole("Sales") && !useHasRole("Sales_Head");
+  const isEdit = opportunityId != null;
   const [state, setState] = useState<OpportunityFormState>(() => emptyState());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -142,14 +186,20 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   const [stepDir, setStepDir] = useState<1 | -1>(1);
   const [nextField, setNextField] = useState<string | undefined>("customer_id");
   const [addCustomer, setAddCustomer] = useState(false);
+  // "+" on Contact Person / Hiring Manager → create a new contact for the
+  // selected customer & branch, then select it. null = closed.
+  const [newContactFor, setNewContactFor] = useState<"contact" | "hiringManager" | null>(null);
   const [flash, setFlash] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [customRoles, setCustomRoles] = useState<Opt[]>([]);
   // Branch id whose effective billing policy was last prefilled (drives the note).
   const [policyBranchId, setPolicyBranchId] = useState("");
+  // Whether that branch's effective policy actually defines a leave allotment.
+  const [branchHasLeavePolicy, setBranchHasLeavePolicy] = useState(false);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveState>("idle");
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [editOppLabel, setEditOppLabel] = useState("");
   const confirmCloseRef = useRef(false);
   const [, setTick] = useState(0);
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -171,33 +221,65 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   );
   const customerHasPo = !!selectedCustomer?.has_po;
 
-  // ---- initial load (restore draft, load base options). Sets isLoaded LAST. ----
+  // Backfill Customer Type when it's empty (e.g. imported/hydrated
+  // opportunities): the field is locked while the customer has no PO, so the
+  // user cannot fill it themselves — derive it exactly like customer selection
+  // does (NN without a PO; EN/EE from the customer record otherwise).
+  useEffect(() => {
+    if (!selectedCustomer) return;
+    setState((s) => {
+      const cur = String(activeDetails(s).customer_type || "");
+      if (!customerHasPo) {
+        return cur === "NN" ? s : setDetail(s, "customer_type", "NN");
+      }
+      if (cur === "EN" || cur === "EE") return s;
+      return setDetail(s, "customer_type", normalizeCustomerType(true, selectedCustomer.customer_type));
+    });
+  }, [selectedCustomer, customerHasPo]);
+
+  // ---- initial load (restore draft OR hydrate edit). Sets isLoaded LAST. ----
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const [c, s] = await Promise.all([
           crmGet<any[]>("/api/customers?limit=100"),
-          crmGet<any[]>("/api/skills?limit=200&is_active=true"),
+          // Page through — the server clamps limit to 100, which truncated the list.
+          fetchAllMaster<any>("/api/skills", { is_active: true }),
         ]);
         if (!alive) return;
         setCustomers(c.data || []);
-        setSkills(s.data || []);
+        setSkills(s);
+
+        if (opportunityId != null) {
+          const oppRes = await crmGet<Record<string, any>>(`/api/opportunities/${opportunityId}`);
+          if (!alive) return;
+          const data = oppRes.data || {};
+          setEditOppLabel(data.opp_id ? String(data.opp_id) : `#${opportunityId}`);
+          const hydrated = hydrateFromServer(data);
+          setState(recalculateOpportunityState(hydrated));
+          // Unlock every step so editors can jump freely.
+          setMaxReached(OPPORTUNITY_SCHEMA.length);
+          return;
+        }
+
+        // ALWAYS start a fresh, blank form on create (per product decision:
+        // stale previous-session values must never appear). Any old autosaved
+        // draft is discarded here so it can't leak into the new session.
+        try {
+          localStorage.removeItem(DRAFT_KEY);
+        } catch { /* ignore */ }
+        if (alive) setState(recalculateOpportunityState({ ...emptyState(), isLoaded: true }));
       } catch (e: any) {
         if (alive) setError(e?.message || "Failed to load form data");
-      } finally {
-        if (!alive) return;
-        // Restore a saved draft if present, else start empty — either way, mark loaded.
-        let restored = emptyState();
-        try {
-          const raw = localStorage.getItem(DRAFT_KEY);
-          if (raw) restored = { ...hydrateFromServer(JSON.parse(raw)), isLoaded: true };
-        } catch { /* ignore */ }
-        setState(recalculateOpportunityState({ ...restored, isLoaded: true }));
+        // Still mark loaded on create so the empty form is usable after a soft failure.
+        if (alive && opportunityId == null) {
+          setState((s) => ({ ...s, isLoaded: true }));
+        }
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [opportunityId]);
 
   // Dependent dropdowns when the customer or branch changes.
   const customerId = state.core.customer_id;
@@ -283,12 +365,45 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   // when a branch is selected, fetch its EFFECTIVE policy (branch → customer →
   // default) once and prefill the T&M billing fields. Prefill OVERWRITES on
   // branch change — like contact autofill — but every field stays editable.
+  // Skipped in edit mode so loaded opportunity details are not clobbered.
   // The five keys are T&M-only detail fields, so they are written into the
   // "T&M" bucket (identical to setDetail when T&M is active, and preserved for
   // when the user picks T&M later). Batch recalc runs once at the end, exactly
   // like the init / switchType paths.
   useEffect(() => {
-    if (!branchId) { setPolicyBranchId(""); return; }
+    if (isEdit) return;
+    if (!branchId) {
+      setPolicyBranchId("");
+      setBranchHasLeavePolicy(false);
+      setState((s) => {
+        const tm = { ...(s.detailsByType["T&M"] || {}) };
+        let changed = false;
+        // Holidays & Leave reset to 0 (policy-driven); Weekoff stays the
+        // standard 104 (weekends) since it isn't tied to any leave policy.
+        for (const key of ["holidays", "leave"] as const) {
+          if (tm[key] !== 0) {
+            tm[key] = 0;
+            changed = true;
+          }
+        }
+        if (tm.weekoff !== 104) {
+          tm.weekoff = 104;
+          changed = true;
+        }
+        for (const key of ["credit_leave_monthly", "leave_policy"] as const) {
+          if (tm[key] !== undefined && tm[key] !== "") {
+            tm[key] = "";
+            changed = true;
+          }
+        }
+        if (!changed) return s;
+        return recalculateOpportunityState({
+          ...s,
+          detailsByType: { ...s.detailsByType, "T&M": tm },
+        });
+      });
+      return;
+    }
     let alive = true;
     (async () => {
       try {
@@ -296,6 +411,12 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
         if (!alive) return;
         const p = res.data;
         if (!p) return;
+        // Prefill Holidays/Leave ONLY when a leave policy row is linked to
+        // THIS branch (has_branch_leave_policy). Customer-wide / global counts
+        // must not invent 10/104/24. Weekoff has no branch column → 0 unless
+        // a future weekoff_count is sent.
+        const linked = p.has_branch_leave_policy === true;
+        setBranchHasLeavePolicy(linked);
         setState((s) => {
           if (String(s.core.branch_id) !== String(branchId)) return s;
           let next = s;
@@ -314,33 +435,57 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
           if (p.working_hours_per_day != null && Number.isFinite(Number(p.working_hours_per_day))) {
             setTmDetail("hours_per_day", Number(p.working_hours_per_day));
           }
+          // Max Billable Hours / Month (branch Billing Properties) — caps the
+          // CTC slab's annual billing hours at cap × 12 in calculateBillingBases.
+          if (p.max_billable_hours_month != null && Number.isFinite(Number(p.max_billable_hours_month))) {
+            setTmDetail("max_billable_hours_month", Number(p.max_billable_hours_month));
+          }
           const mappedBillingType = POLICY_BILLING_TYPE_MAP[String(p.billing_type || "")];
           if (mappedBillingType) setTmDetail("billing_type", mappedBillingType);
-          // Leave & Holiday counts (null = nothing configured — keep the
-          // schema defaults untouched). holidays/leave are CTC triggers; the
-          // single recalculateOpportunityState below re-derives the bases.
-          if (p.holidays_count != null && Number.isFinite(Number(p.holidays_count))) {
-            setTmDetail("holidays", Number(p.holidays_count));
-          }
-          // weekoff: CustomerBranch has no weekoff-count column today, so the
-          // backend sends no value and the schema default (104) stays; guard
-          // kept so a future backend column flows through unchanged.
-          if (p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))) {
-            setTmDetail("weekoff", Number(p.weekoff_count));
-          }
-          if (p.leave_total != null && Number.isFinite(Number(p.leave_total))) {
-            setTmDetail("leave", Number(p.leave_total));
-          }
-          if (p.credit_leave_monthly != null && Number.isFinite(Number(p.credit_leave_monthly))) {
-            setTmDetail("credit_leave_monthly", Number(p.credit_leave_monthly));
-          }
-          // Prefill only when the branch value matches a Leave Policy mode option
-          // (not leave-type names like Casual/Sick).
-          if (p.leave_policy_name != null && String(p.leave_policy_name)) {
-            const name = String(p.leave_policy_name);
-            if (LEAVE_POLICY_OPTIONS.some((o) => o.value === name)) {
-              setTmDetail("leave_policy", name);
+          // HOLIDAYS come from THIS branch's own holiday calendar
+          // (branch_holidays_count) — independent of any leave policy. A branch
+          // with a configured calendar (e.g. HARMAN - Bangalore) shows its count
+          // even when no branch leave policy is linked. 0 when the branch has
+          // no calendar of its own.
+          const branchHolidays = p.branch_holidays_count;
+          setTmDetail(
+            "holidays",
+            branchHolidays != null && Number.isFinite(Number(branchHolidays))
+              ? Number(branchHolidays)
+              : 0,
+          );
+          // WEEKOFF is not policy-driven — always the standard 104 (52 weekends),
+          // unless a future branch weekoff_count is sent.
+          setTmDetail(
+            "weekoff",
+            p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))
+              ? Number(p.weekoff_count)
+              : 104,
+          );
+          // LEAVE prefills ONLY when a leave policy row is linked to THIS branch.
+          if (linked) {
+            const leaveTotal = p.branch_leave_total ?? p.leave_total;
+            setTmDetail(
+              "leave",
+              leaveTotal != null && Number.isFinite(Number(leaveTotal))
+                ? Number(leaveTotal)
+                : 0,
+            );
+            if (p.credit_leave_monthly != null && Number.isFinite(Number(p.credit_leave_monthly))) {
+              setTmDetail("credit_leave_monthly", Number(p.credit_leave_monthly));
+            } else {
+              setTmDetail("credit_leave_monthly", "");
             }
+            if (p.leave_policy_name != null && String(p.leave_policy_name)) {
+              const name = String(p.leave_policy_name);
+              if (LEAVE_POLICY_OPTIONS.some((o) => o.value === name)) {
+                setTmDetail("leave_policy", name);
+              }
+            }
+          } else {
+            setTmDetail("leave", 0);
+            setTmDetail("credit_leave_monthly", "");
+            setTmDetail("leave_policy", "");
           }
           return recalculateOpportunityState(next);
         });
@@ -348,7 +493,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       } catch { /* non-fatal — leave the billing fields as-is */ }
     })();
     return () => { alive = false; };
-  }, [branchId]);
+  }, [branchId, isEdit]);
 
   // Keep emails + phones in sync with the selected Contact Person / Hiring Manager.
   // Runs when the id changes or when contacts finish loading after an id was chosen.
@@ -399,8 +544,9 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   }, [contacts, state.core.contact_person_id, state.core.hiring_manager_id]);
 
   // ---- autosave draft — GATED behind isLoaded (never overwrite with empties) ----
+  // Edit mode never touches the create draft key.
   useEffect(() => {
-    if (!state.isLoaded) return;
+    if (!state.isLoaded || isEdit) return;
     setAutosaveStatus("saving");
     const t = window.setTimeout(() => {
       try {
@@ -412,7 +558,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       }
     }, 800);
     return () => window.clearTimeout(t);
-  }, [state]);
+  }, [state, isEdit]);
 
   // Keep relative "just now" label fresh while the modal is open.
   useEffect(() => {
@@ -446,7 +592,10 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     salesStages: isSales
       ? SALES_STAGE_OPTIONS
       : SALES_STAGE_OPTIONS.filter((o) => o.value !== "Sales Validation"),
-    onboardingStatus: ONBOARDING_STATUS_OPTIONS,
+    // Sales only drives the opening stages; TA/RMG move it on from there.
+    onboardingStatus: isSalesOnly
+      ? ONBOARDING_STATUS_OPTIONS.filter((o) => SALES_ONBOARDING_STATUS_VALUES.includes(o.value))
+      : ONBOARDING_STATUS_OPTIONS,
     leavePolicy: LEAVE_POLICY_OPTIONS,
     billingType: BILLING_TYPE_OPTIONS,
     positionType: [],
@@ -478,6 +627,30 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       if (f.next) setNextField(f.next);
       return;
     }
+    // Opportunity Title → auto-fill T&M Position Title. Tracks the title while
+    // Position Title is empty or still mirrors it; a manual edit breaks the
+    // link so the user's own value is never overwritten. Written straight into
+    // the T&M bucket (not the active type) so it works even before the
+    // opportunity type is selected.
+    if (f.key === "title") {
+      const newTitle = String(value ?? "");
+      setState((s) => {
+        const tm = { ...(s.detailsByType["T&M"] || {}) };
+        const currentPos = String(tm.tm_position_title ?? "");
+        const prevTitle = String(s.core.title ?? "");
+        if (!currentPos.trim() || currentPos === prevTitle) {
+          tm.tm_position_title = newTitle;
+        }
+        return {
+          ...s,
+          core: { ...s.core, title: value },
+          detailsByType: { ...s.detailsByType, "T&M": tm },
+        };
+      });
+      if (f.next) setNextField(f.next);
+      return;
+    }
+
     if (f.key === "hiring_manager_id") {
       const hm = contacts.find((c) => String(c.id) === String(value))
         || hiringManagers.find((c) => String(c.id) === String(value));
@@ -661,7 +834,11 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   };
 
   // ---- wizard section nav --------------------------------------------------
-  const visibleSections = OPPORTUNITY_SCHEMA.filter((s) => sectionVisible(s, type));
+  // Skill Evaluation Details is RMG/Admin/CEO territory — Sales & Sales Head never
+  // see it in the wizard; RMG adds it on the approval screen after submission.
+  const visibleSections = OPPORTUNITY_SCHEMA.filter(
+    (s) => sectionVisible(s, type) && !(s.key === "skillEval" && isSales),
+  );
   const totalSteps = visibleSections.length;
   const clampedStep = Math.min(Math.max(stepIndex, 0), Math.max(totalSteps - 1, 0));
   const currentSection = visibleSections[clampedStep];
@@ -798,8 +975,22 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     setBusy(true); setError("");
     try {
       const payload = buildSubmitPayload(state);
-      const res = await crmPost<{ id: number }>("/api/opportunities", payload);
-      const oppId = res.data?.id;
+      // PUT schema has no skills — send them on the dedicated replace endpoint.
+      const { skills: skillsPayload = [], ...body } = payload;
+
+      let oppId = opportunityId;
+      if (isEdit && opportunityId != null) {
+        await crmPut(`/api/opportunities/${opportunityId}`, {
+          ...body,
+          version: state.version,
+        });
+        await crmPost(`/api/opportunities/${opportunityId}/skills`, skillsPayload);
+      } else {
+        const res = await crmPost<{ id: number }>("/api/opportunities", payload);
+        oppId = res.data?.id;
+        localStorage.removeItem(DRAFT_KEY);
+      }
+
       const pending = attachments.filter((a) => a.file);
       if (oppId && pending.length) {
         for (const att of pending) {
@@ -810,12 +1001,20 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
           }
         }
       }
-      localStorage.removeItem(DRAFT_KEY);
-      notify("Opportunity created");
+      // Sales Head review: sign off in the same action as the save, so an edit
+      // can never be left sitting un-approved.
+      if (approvalMode && oppId != null) {
+        await crmPost(`/api/opportunities/${oppId}/approve`, {
+          comment: "Reviewed and approved by Sales Head",
+        });
+        notify("Opportunity approved");
+      } else {
+        notify(isEdit ? "Opportunity updated" : "Opportunity created");
+      }
       onCreated?.();
       onClose();
     } catch (e: any) {
-      const msg = e?.message || "Failed to create opportunity";
+      const msg = e?.message || (isEdit ? "Failed to update opportunity" : "Failed to create opportunity");
       setError(msg);
       notify(msg, "err");
     } finally { setBusy(false); }
@@ -912,14 +1111,20 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
   // ---- render --------------------------------------------------------------
   const header = (
     <WizardTopBar
-      title="New Opportunity"
+      title={
+        approvalMode
+          ? `Review & Approve${editOppLabel ? ` — ${editOppLabel}` : ""}`
+          : isEdit
+            ? `Edit Opportunity${editOppLabel ? ` — ${editOppLabel}` : ""}`
+            : "New Opportunity"
+      }
       stepIndex={clampedStep}
       totalSteps={totalSteps}
       stepPct={stepPct}
-      autosaveStatus={autosaveStatus}
-      savedAt={draftSavedAt}
-      onSaveDraft={saveDraft}
-      onReset={reset}
+      autosaveStatus={isEdit ? "idle" : autosaveStatus}
+      savedAt={isEdit ? null : draftSavedAt}
+      onSaveDraft={isEdit ? undefined : saveDraft}
+      onReset={isEdit ? undefined : reset}
       busy={busy}
     />
   );
@@ -935,8 +1140,8 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       onPrev={goPrev}
       onNext={goNext}
       onSubmit={() => void submit()}
-      submitLabel="Create Opportunity"
-      submitBusyLabel="Creating…"
+      submitLabel={approvalMode ? "Save & Approve" : isEdit ? "Save Opportunity" : "Create Opportunity"}
+      submitBusyLabel={isEdit ? "Saving…" : "Creating…"}
     />
   );
 
@@ -944,9 +1149,25 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     <>
       {s.key === "leaveHoliday" && type === "T&M" && !!policyBranchId
         && String(state.core.branch_id) === policyBranchId && (
-        <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
-          Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
-            || "the selected branch"}&rsquo;s billing policy — editable.
+        branchHasLeavePolicy ? (
+          <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
+            Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
+              || "the selected branch"}&rsquo;s billing policy — editable.
+          </p>
+        ) : (
+          <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
+            No leave policy linked to {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
+              || "this branch"}. Leave shows 0 until a leave policy is linked; Holidays reflect this branch&rsquo;s holiday calendar and Weekoff is the standard 104 (52 weekends). Edit any value if needed for costing.
+          </p>
+        )
+      )}
+      {s.key === "ctcSlab" && type === "T&M" && state.ctcSlab.length > 0
+        && !String(details.billing_type ?? "").trim() && (
+        <p className="-mt-2 mb-5 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+          Revenue, Engineering Budget and Approved CTC auto-calculate once you set a{" "}
+          <span className="font-semibold">Billing Type</span> in{" "}
+          <span className="font-semibold">Commercial Details</span> — a Rate alone can&rsquo;t be
+          annualised without knowing whether it&rsquo;s per hour, day, month or year.
         </p>
       )}
       {s.kind === "table" ? (
@@ -962,11 +1183,20 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
       ) : s.kind === "attachments" ? (
         <AttachmentsSection rows={attachments} onRows={setAttachments} />
       ) : s.kind === "activityLog" ? (
-        <ActivityLogSection />
+        <ActivityLogSection opportunityId={opportunityId} />
       ) : (
         <SectionFields
           section={s} type={type} values={state.core} details={details} errors={errors}
           options={options} nextFieldKey={nextField} strictSequential={STRICT_SEQUENTIAL_MODE} flashKeys={flash}
+          forceReadonlyKeys={
+            calculateRfiValue({
+              revenueAnnual: state.ctcSlab[0]?.revenue_annual,
+              periodMonths: resolveRfiPeriodMonths(type, details),
+              positionsCount: details.tm_positions_count,
+            }) !== null
+              ? ["rfi_value"]
+              : []
+          }
           disabledReason={(f) => {
             if (f.key === "customer_type" && !customerHasPo) {
               return "Locked to NN until the customer has a purchase order.";
@@ -978,6 +1208,11 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
           registerRef={(k, el) => { fieldRefs.current[k] = el; }}
           onAddNew={(kind) => {
             if (kind === "customer") { setAddCustomer(true); return; }
+            if (kind === "contact" || kind === "hiringManager") {
+              if (!customerId) { notify("Select a customer first", "err"); return; }
+              setNewContactFor(kind);
+              return;
+            }
             if (kind === "role") {
               const raw = window.prompt("Add a custom role (e.g. Lead Engineer)");
               const name = (raw || "").trim();
@@ -1054,7 +1289,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
           </aside>
 
           {/* Scrollable content card */}
-          <div ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
+          <div ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
             {error && (
               <div className="mb-4 max-w-3xl">
                 <ErrorBox error={error} />
@@ -1096,7 +1331,7 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
     {confirmClose && (
       <ConfirmModal
         title="Close wizard?"
-        message="Your draft is autosaved on this device. You can continue later from where you left off."
+        message="Unsaved changes will be lost — the form starts blank next time it opens."
         confirmLabel="Close"
         onConfirm={() => {
           confirmCloseRef.current = false;
@@ -1117,7 +1352,211 @@ export function NewOpportunityForm({ onClose, onCreated }: { onClose: () => void
         notify={notify}
       />
     )}
+    {newContactFor && (
+      <OpportunityContactModal
+        customerId={String(customerId)}
+        customerName={customers.find((c) => String(c.id) === String(customerId))?.name || ""}
+        branches={branches}
+        defaultBranchId={String(branchId || "")}
+        isHiringManager={newContactFor === "hiringManager"}
+        onClose={() => setNewContactFor(null)}
+        onCreated={(contact) => {
+          // Add to the loaded contacts and select it in the matching field.
+          setContacts((prev) => [...prev, contact]);
+          const key = newContactFor === "hiringManager" ? "hiring_manager_id" : "contact_person_id";
+          const field = OPPORTUNITY_SCHEMA
+            .flatMap((s) => (s.kind === "fields" ? s.fields : []))
+            .find((f) => f?.key === key);
+          if (field) onChange(field, String(contact.id));
+          setNewContactFor(null);
+          notify(`${newContactFor === "hiringManager" ? "Hiring manager" : "Contact"} added`);
+        }}
+      />
+    )}
     </>
+  );
+}
+
+/** "Customer Contact Persons" popup (New Opportunity → Customer Details).
+ * Mirrors the source form minus the Communication-Matrix ID. Customer comes
+ * from the wizard; branch defaults to the selected branch. Saved contact
+ * appears in this wizard's dropdown AND under the customer's branch. */
+function OpportunityContactModal({
+  customerId,
+  customerName,
+  branches,
+  defaultBranchId,
+  isHiringManager,
+  onClose,
+  onCreated,
+}: {
+  customerId: string;
+  customerName: string;
+  branches: any[];
+  defaultBranchId: string;
+  isHiringManager: boolean;
+  onClose: () => void;
+  onCreated: (contact: any) => void;
+}) {
+  const [branchId, setBranchId] = useState(defaultBranchId || "");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [role, setRole] = useState("");
+  // Contact roles come from the master (/api/contact-roles), merged with the
+  // built-in seeds so the list is never empty if the master fetch fails.
+  const [roleMaster, setRoleMaster] = useState<{ id: number; name: string }[]>([]);
+  const [addingRole, setAddingRole] = useState(false);
+  useEffect(() => {
+    crmGet<{ id: number; name: string }[]>("/api/contact-roles?limit=200&is_active=true")
+      .then((r) => setRoleMaster(r.data || []))
+      .catch(() => setRoleMaster([]));
+  }, []);
+  const roleOptions = useMemo(() => {
+    const seen = new Map<string, { value: string; label: string }>();
+    for (const name of [...CONTACT_ROLES, ...roleMaster.map((r) => r.name)]) {
+      const key = name.trim().toLowerCase();
+      if (key && !seen.has(key)) seen.set(key, { value: name, label: name });
+    }
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [roleMaster]);
+  const addRole = async (name: string) => {
+    const q = name.trim();
+    if (!q || roleOptions.some((o) => o.value.toLowerCase() === q.toLowerCase())) return;
+    setAddingRole(true);
+    try {
+      const res = await crmPost<{ id: number; name: string }>(
+        "/api/contact-roles", { name: q, is_active: true },
+      );
+      setRoleMaster((prev) => [...prev, res.data]);
+      setRole(res.data.name);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to add the role");
+    } finally {
+      setAddingRole(false);
+    }
+  };
+  const [priority, setPriority] = useState("");
+  const [notification, setNotification] = useState("");
+  const [isActive, setIsActive] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    if (!name.trim()) { setErr("Name is required"); return; }
+    setErr("");
+    setBusy(true);
+    try {
+      const res = await crmPost(`/api/customers/${customerId}/contacts`, {
+        name: name.trim(),
+        branch_id: branchId ? Number(branchId) : null,
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        designation: designation.trim() || null,
+        role: role || null,
+        contact_priority: priority || null,
+        notification: notification || null,
+        is_hiring_manager: isHiringManager,
+        is_active: isActive,
+      });
+      onCreated(res.data);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to create contact");
+      setBusy(false);
+    }
+  };
+
+  const row = "flex flex-col gap-1";
+  const lbl = "text-xs font-semibold text-secondary";
+  return (
+    <Modal title="Customer Contact Persons" onClose={onClose} medium scopeClassName="crm-wizard wiz-noise" deep>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className={row}>
+          <span className={lbl}>Customer</span>
+          <input className={inputCls} value={customerName} readOnly disabled />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Customer Branch</span>
+          <select className={inputCls} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">— Customer-wide —</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name}{b.is_primary ? " (primary)" : ""}</option>
+            ))}
+          </select>
+        </div>
+        <div className={row}>
+          <span className={lbl}>Name *</span>
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Email</span>
+          <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Phone</span>
+          <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 …" />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Department</span>
+          <input className={inputCls} value={designation} onChange={(e) => setDesignation(e.target.value)} />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Role</span>
+          {/* Master-backed with inline add, mirroring the customer form — a
+              hardcoded list meant a role like PMO could not be recorded at all. */}
+          <SearchableSelect
+            value={role}
+            options={roleOptions}
+            allowAdd
+            searchable
+            disabled={addingRole}
+            addLabel="Add new role"
+            placeholder="Search or add a role…"
+            onChange={(v) => setRole(v)}
+            onOptionsChange={(next) => {
+              const known = new Set(roleOptions.map((o) => o.value.toLowerCase()));
+              for (const o of next) {
+                if (!known.has(o.value.toLowerCase())) void addRole(o.value);
+              }
+            }}
+          />
+        </div>
+        <div className={row}>
+          <span className={lbl}>Primary / Secondary</span>
+          <select className={inputCls} value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <option value="">-Select-</option>
+            <option value="Primary">Primary</option>
+            <option value="Secondary">Secondary</option>
+          </select>
+        </div>
+        <div className={row}>
+          <span className={lbl}>Notification</span>
+          <select className={inputCls} value={notification} onChange={(e) => setNotification(e.target.value)}>
+            <option value="">-Select-</option>
+            {["Email", "SMS", "Both", "None"].map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div className={row}>
+          <span className={lbl}>Status</span>
+          <select className={inputCls} value={isActive ? "Active" : "Inactive"} onChange={(e) => setIsActive(e.target.value === "Active")}>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium text-primary sm:col-span-2">
+          <input type="checkbox" className="h-4 w-4" checked={isHiringManager} readOnly />
+          {isHiringManager ? "Saved as Hiring Manager" : "Contact person"}
+        </label>
+      </div>
+      {err && <p className="mt-3 text-sm text-danger" role="alert">{err}</p>}
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" className={btnSecondary} onClick={onClose} disabled={busy}>Reset</button>
+        <button type="button" className={`${btnSecondary} btn-gradient !text-white`} onClick={() => void save()} disabled={busy}>
+          {busy ? "Submitting…" : "Submit"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1204,7 +1643,28 @@ function AttachmentsSection({ rows, onRows }: {
 }
 
 /* ------------------------------------------------------------ activity log */
-function ActivityLogSection() {
+function ActivityLogSection({ opportunityId }: { opportunityId?: number }) {
+  const [rows, setRows] = useState<Array<{
+    comment?: string | null;
+    timestamp?: string | null;
+    action_type?: string | null;
+    username?: string | null;
+    full_name?: string | null;
+    id?: number;
+  }>>([]);
+  const [loading, setLoading] = useState(!!opportunityId);
+
+  useEffect(() => {
+    if (!opportunityId) { setRows([]); setLoading(false); return; }
+    let alive = true;
+    setLoading(true);
+    crmGet<typeof rows>(`/api/opportunities/${opportunityId}/activity-log`)
+      .then((r) => { if (alive) setRows(r.data || []); })
+      .catch(() => { if (alive) setRows([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [opportunityId]);
+
   const cols = ["Comments", "Date-Time", "Action_Type", "User", "RecordID"];
   return (
     <div className={tableWrap}>
@@ -1219,11 +1679,33 @@ function ActivityLogSection() {
           </tr>
         </thead>
         <tbody>
-          <tr className={tableRow}>
-            <td colSpan={cols.length} className={`${tdCls} py-8 text-center text-sm text-muted`}>
-              Activity history will appear after the opportunity is saved
-            </td>
-          </tr>
+          {loading ? (
+            <tr className={tableRow}>
+              <td colSpan={cols.length} className={`${tdCls} py-8 text-center text-sm text-muted`}>
+                Loading activity…
+              </td>
+            </tr>
+          ) : rows.length === 0 ? (
+            <tr className={tableRow}>
+              <td colSpan={cols.length} className={`${tdCls} py-8 text-center text-sm text-muted`}>
+                {opportunityId
+                  ? "No activity recorded yet"
+                  : "Activity history will appear after the opportunity is saved"}
+              </td>
+            </tr>
+          ) : (
+            rows.map((r) => (
+              <tr key={r.id} className={tableRow}>
+                <td className={tdCls}>{r.comment || "—"}</td>
+                <td className={tdCls}>
+                  {r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}
+                </td>
+                <td className={tdCls}>{r.action_type || "—"}</td>
+                <td className={tdCls}>{r.full_name || r.username || "—"}</td>
+                <td className={tdCls}>{r.id ?? "—"}</td>
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
@@ -1231,7 +1713,7 @@ function ActivityLogSection() {
 }
 
 /* ------------------------------------------------------------ table section */
-/** Editable skill-evaluation table driven by a schema table section. */
+/** Editable skill-evaluation table or vertical CTC slab cards. */
 function TableSection({ section, type, rows, options, rowErrors, onRows }: {
   section: any;
   type: OpportunityType | "";
@@ -1254,6 +1736,93 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
       <div className="flex flex-col items-center gap-2 py-6 text-center">
         <p className="text-sm text-muted">{section.table.emptyLabel}</p>
         <button type="button" className={btnSecondary} onClick={addRow}><Plus size={14} /> {section.table.addLabel}</button>
+      </div>
+    );
+  }
+
+  /* Candidate CTC Slab: stacked cards — no horizontal scroll */
+  if (section.key === "ctcSlab") {
+    return (
+      <div className="space-y-4 pb-6">
+        {list.map((row, i) => (
+          <div
+            key={i}
+            className="rounded-card border border-subtle bg-surface-2/40 p-4 sm:p-5"
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-primary">
+                CTC Slab {list.length > 1 ? i + 1 : ""}
+              </div>
+              <button
+                type="button"
+                aria-label={`Remove CTC slab ${i + 1}`}
+                className="inline-flex items-center gap-1 rounded-control px-2 py-1 text-xs font-semibold text-muted transition-colors duration-micro ease-smooth hover:bg-surface-1 hover:text-danger"
+                onClick={() => removeRow(i)}
+              >
+                <Trash2 size={14} /> Remove
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {cols.map((c) => {
+                const derived = !!c.computed;
+                const opts = c.options || (c.optionsSource ? options[c.optionsSource] : undefined);
+                const id = `ctc-${i}-${c.key}`;
+                return (
+                  <label key={c.key} className="flex flex-col gap-1.5" htmlFor={id}>
+                    <span className="text-xs font-semibold text-muted">
+                      {c.label}
+                      {derived ? (
+                        <span className="ml-1 font-normal opacity-70">(auto)</span>
+                      ) : null}
+                    </span>
+                    {c.type === "checkbox" ? (
+                      <input
+                        id={id}
+                        type="checkbox"
+                        className="mt-1 h-4 w-4 accent-brand-600"
+                        checked={!!row[c.key]}
+                        onChange={(e) => setCell(i, c.key, e.target.checked)}
+                      />
+                    ) : opts ? (
+                      <select
+                        id={id}
+                        className={`${inputCls} w-full`}
+                        value={String(row[c.key] ?? "")}
+                        onChange={(e) => setCell(i, c.key, e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {opts.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={id}
+                        readOnly={derived}
+                        title={derived ? "Calculated automatically" : undefined}
+                        type={["number", "currency", "percent"].includes(c.type) ? "number" : "text"}
+                        min={c.min}
+                        max={c.max}
+                        step="any"
+                        className={`${inputCls} w-full ${derived ? "cursor-default bg-surface-2/80 opacity-80" : ""}`}
+                        value={String(row[c.key] ?? "")}
+                        onChange={(e) => setCell(i, c.key, e.target.value)}
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            {rowErrors?.[`ctcSlab.${i}.experience`] && (
+              <p className="mt-3 text-xs font-semibold text-danger">
+                {rowErrors[`ctcSlab.${i}.experience`]}
+              </p>
+            )}
+          </div>
+        ))}
+        <button type="button" className={btnSecondary} onClick={addRow}>
+          <Plus size={14} /> {section.table.addLabel}
+        </button>
       </div>
     );
   }
@@ -1318,6 +1887,7 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
     </div>
   );
 }
+
 
 /** Plain-JSON draft echo that round-trips through hydrateFromServer. */
 function serializeForDraft(s: OpportunityFormState, attachments?: PendingAttachment[]) {

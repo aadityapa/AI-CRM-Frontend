@@ -11,14 +11,14 @@ import { useCanEditTab } from "../useAccess";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import {
   ErrorBox, Field, Modal, StatusBadge, btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
 import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -29,7 +29,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -150,6 +150,7 @@ function MapModal({ onClose, onSaved, notify }: {
       title={<span className="sr-only">Map employee to project</span>}
       onClose={onClose}
       wide
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -158,7 +159,7 @@ function MapModal({ onClose, onSaved, notify }: {
         icon={<Network size={20} aria-hidden />}
       >
         <form onSubmit={submit}>
-          <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
             <WizardField label="Project" required error={errors.project} icon="building">
               <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                 <option value="">Select project…</option>
@@ -417,9 +418,10 @@ export function ProjectEmployeesPage() {
             <RowActions
               entity="project employee"
               itemLabel={r.employee_name || r.project_name}
+              onView={() => crmNavigate(`project-employees/${r.id}`)}
               onEdit={() => crmNavigate(`project-employees/${r.id}`)}
               deleteUrl={`/api/projects/employees/${r.id}`}
-              onDeleted={load}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
               notify={notify}
               canEdit
               canDelete

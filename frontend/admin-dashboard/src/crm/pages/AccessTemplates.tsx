@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Save, Trash2, UserPlus, X } from "lucide-react";
 import { crmGet, crmPost, crmPut, crmDelete, qs } from "../api";
 import {
-  EmptyState, ErrorBox, Field, Spinner, StatusBadge,
+  ConfirmModal, EmptyState, ErrorBox, Field, Spinner, StatusBadge,
   btnDanger, btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
 import { crmNavigate } from "../router";
@@ -51,6 +51,7 @@ export function AccessTemplatesPage() {
   const [assignUser, setAssignUser] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const loadTemplates = useCallback(async () => {
     setTemplates((await crmGet<Template[]>("/api/access-templates")).data);
@@ -138,7 +139,9 @@ export function AccessTemplatesPage() {
     try {
       await crmDelete(`/api/access-templates/${form.id}`);
       notify("Template deleted");
+      setConfirmDelete(false);
       closeEditor();
+      setTemplates((prev) => prev.filter((t) => t.id !== form.id));
       await loadTemplates();
     } catch (e: any) { setErr(String(e?.message || e)); }
     finally { setBusy(false); }
@@ -281,7 +284,16 @@ export function AccessTemplatesPage() {
                 <button type="button" className={btnPrimary} onClick={save} disabled={busy}>
                   <Save size={14} /> {busy ? "Saving…" : "Save"}
                 </button>
-                {form.id && <button type="button" className={btnDanger} onClick={remove} disabled={busy}><Trash2 size={14} /> Delete</button>}
+                {form.id && (
+                  <button
+                    type="button"
+                    className={btnDanger}
+                    onClick={() => setConfirmDelete(true)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                )}
                 <button type="button" className={btnSecondary} onClick={closeEditor} disabled={busy}>
                   <X size={14} /> Close
                 </button>
@@ -301,6 +313,17 @@ export function AccessTemplatesPage() {
           </div>
         )}
       </div>
+      {confirmDelete && form.id && (
+        <ConfirmModal
+          title="Delete an access template?"
+          message={<>Do you want to delete this access template (<b>{form.name || `#${form.id}`}</b>)? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger
+          busy={busy}
+          onConfirm={() => { void remove(); }}
+          onClose={() => { if (!busy) setConfirmDelete(false); }}
+        />
+      )}
     </div>
   );
 }

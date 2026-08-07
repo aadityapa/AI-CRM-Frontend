@@ -12,9 +12,11 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  ArrowLeft, Bot, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileUp, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, X,
+  AlertTriangle, ArrowLeft, Bot, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileUp, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, X,
 } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
+import { SearchableSelect } from "../components/SearchableSelect";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole, useMe } from "../CrmApp";
@@ -32,7 +34,7 @@ import {
 } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -43,7 +45,7 @@ function WizFormShell({
   children: ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -74,6 +76,7 @@ type Req = {
   title: string;
   description: string | null;
   rmg_jd_text?: string | null;
+  ats_weights?: Record<string, number> | null;
   no_of_positions: number;
   experience_min: number | null;
   experience_max: number | null;
@@ -127,6 +130,13 @@ type ResumeRow = {
     experience_match?: boolean;
     jd_text_preview?: string;
     score_details?: Record<string, unknown>;
+    ai_review?: {
+      match_percent?: number;
+      summary?: string;
+      strengths?: string[];
+      gaps?: string[];
+      model?: string;
+    } | null;
   } | null;
   ats_status: string;
   screened_by: number | null;
@@ -134,9 +144,15 @@ type ResumeRow = {
   ai_interview_scheduled_at: string | null;
   ai_overall_score_percent?: number | null;
   ai_interview_result?: string | null;
+  /** Recruiter override from the interview report page; outranks the AI verdict. */
+  ai_hr_decision?: string | null;
+  ai_hr_decision_label?: string | null;
+  ai_effective_result?: string | null;
+  ai_is_overridden?: boolean;
   ai_report_link?: string | null;
   ai_interview_record_id?: string | null;
   profile_id?: number | null;
+  profile_pipeline_status?: string | null;
   ai_invite_token?: string | null;
   ai_invite_url?: string | null;
   ai_access_key?: string | null;
@@ -267,6 +283,17 @@ function PriorityPill({ p }: { p?: string | null }) {
 
 /* ------------------------------------------------- approve / reject modal */
 
+// ATS score component weights (points). Defaults match the backend scorer; RMG
+// may override any subset per requirement (e.g. an experience-heavy role).
+const ATS_WEIGHT_FIELDS: { key: string; label: string; def: number }[] = [
+  { key: "mandatory", label: "Mandatory skills", def: 50 },
+  { key: "optional", label: "Optional skills", def: 20 },
+  { key: "experience", label: "Experience", def: 15 },
+  { key: "education", label: "Education", def: 10 },
+  { key: "location", label: "Location", def: 5 },
+  { key: "jd", label: "JD keywords", def: 20 },
+];
+
 function DecisionModal({
   req, stage, kind, onClose, onDone, toast,
 }: {
@@ -286,16 +313,77 @@ function DecisionModal({
   const [busy, setBusy] = useState(false);
   const stageLabel = stage === "sales-head" ? "Sales Head" : "Engineering (RMG)";
   const needsRmgJd = stage === "engineering" && kind === "approve";
+  // Skill Evaluation Details — RMG sets/edits these at the Engineering Review
+  // stage (they are copied from the opportunity but owned by RMG here).
+  const [skillOpts, setSkillOpts] = useState<any[]>([]);
+  const [skillRows, setSkillRows] = useState<SkillRow[]>(
+    (req.skills || []).map((s) => ({
+      skill_id: String(s.skill_id),
+      is_mandatory: s.is_mandatory,
+      min_rating: s.min_rating != null ? String(s.min_rating) : "",
+    })),
+  );
+  /** Skill catalogue as SearchableSelect options (value = id, label = name). */
+  const skillSelectOptions = useMemo(
+    () => skillOpts.map((s) => ({
+      value: String(s.id),
+      label: `${s.name}${s.category ? ` (${s.category})` : ""}`,
+    })),
+    [skillOpts],
+  );
+  const updateSkillRow = (i: number, patch: Partial<SkillRow>) =>
+    setSkillRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+
+  // ATS weights (optional): blank input = use the default for that component.
+  const [atsWeights, setAtsWeights] = useState<Record<string, string>>(() => {
+    const src = (req.ats_weights || {}) as Record<string, number>;
+    const out: Record<string, string> = {};
+    for (const f of ATS_WEIGHT_FIELDS) out[f.key] = src[f.key] != null ? String(src[f.key]) : "";
+    return out;
+  });
+
+  // Create a brand-new skill inline when it isn't in the catalog, then select it
+  // on this row. Backend allows RMG to POST /api/skills.
+  const createSkillForRow = async (rowIndex: number, typed?: string) => {
+    const name = (typed ?? window.prompt("New skill name") ?? "").trim();
+    if (!name) return;
+    const dup = skillOpts.find((o) => String(o.name).toLowerCase() === name.toLowerCase());
+    if (dup) { updateSkillRow(rowIndex, { skill_id: String(dup.id) }); return; }
+    try {
+      const res = await crmPost<any>("/api/skills", { name });
+      const created = res.data;
+      if (created?.id != null) {
+        setSkillOpts((opts) => (
+          opts.some((o) => o.id === created.id)
+            ? opts
+            : [...opts, created].sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        ));
+        updateSkillRow(rowIndex, { skill_id: String(created.id) });
+        toast(`Skill "${created.name}" added`);
+      }
+    } catch (e: any) {
+      toast(e?.message || "Failed to create skill", "err");
+    }
+  };
 
   useEffect(() => {
     if (!needsRmgJd) return;
     let cancelled = false;
+    // Page through: the server clamps limit to 100, so one request truncated the list.
+    fetchAllMaster<any>("/api/skills").then((rows) => { if (!cancelled) setSkillOpts(rows); }).catch(() => {});
     crmGet<Req>(`/api/requirements/${req.id}`)
       .then((r) => {
         if (cancelled || !r.data) return;
         setCustomerJd(r.data.customer_jd_attachments || []);
         setExistingRmgJd(r.data.rmg_jd_attachments || []);
         if (r.data.rmg_jd_text) setRmgJdText(r.data.rmg_jd_text);
+        if (Array.isArray(r.data.skills)) {
+          setSkillRows(r.data.skills.map((s) => ({
+            skill_id: String(s.skill_id),
+            is_mandatory: s.is_mandatory,
+            min_rating: s.min_rating != null ? String(s.min_rating) : "",
+          })));
+        }
       })
       .catch(() => { /* keep whatever we already have */ });
     return () => { cancelled = true; };
@@ -313,19 +401,42 @@ function DecisionModal({
         setErr("Add a JD (text or file) before approving");
         return;
       }
+      if (skillRows.some((r) => !r.skill_id)) {
+        setErr("Every skill row needs a skill selected (or remove the empty row)");
+        return;
+      }
+      const ids = skillRows.map((r) => r.skill_id);
+      if (new Set(ids).size !== ids.length) {
+        setErr("Duplicate skills are not allowed");
+        return;
+      }
     }
     setBusy(true);
     try {
       if (needsRmgJd && jdFile) {
         await crmUpload(`/api/requirements/${req.id}/attachments`, jdFile, { kind: "rmg_jd" });
       }
-      let body: Record<string, string> | undefined;
+      let body: Record<string, unknown> | undefined;
       if (kind === "reject") {
         body = { reason: text.trim() };
       } else if (needsRmgJd) {
+        // Build ATS weights from any overridden (non-blank) fields; blank = default.
+        const weights: Record<string, number> = {};
+        for (const f of ATS_WEIGHT_FIELDS) {
+          const raw = (atsWeights[f.key] || "").trim();
+          if (raw !== "" && Number.isFinite(Number(raw)) && Number(raw) >= 0) {
+            weights[f.key] = Number(raw);
+          }
+        }
         body = {
           ...(text.trim() ? { comment: text.trim() } : {}),
           rmg_jd_text: rmgJdText.trim(),
+          skills: skillRows.map((r) => ({
+            skill_id: Number(r.skill_id),
+            is_mandatory: r.is_mandatory,
+            min_rating: r.min_rating ? Number(r.min_rating) : null,
+          })),
+          ats_weights: Object.keys(weights).length ? weights : null,
         };
       } else if (text.trim()) {
         body = { comment: text.trim() };
@@ -345,6 +456,7 @@ function DecisionModal({
       title={<span className="sr-only">{`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number} — ${stageLabel}`}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -398,6 +510,100 @@ function DecisionModal({
                 )}
               </WizardField>
               {err && <p className="text-sm text-danger">{err}</p>}
+            </div>
+          )}
+          {needsRmgJd && (
+            <div className="space-y-3 rounded-xl border border-subtle bg-surface-2 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-bold uppercase tracking-wide text-muted">Skill Evaluation Details</div>
+                <button
+                  type="button"
+                  className={`${btnSecondary} h-8 rounded-lg px-3 text-xs`}
+                  onClick={() => setSkillRows((rs) => [...rs, { skill_id: "", is_mandatory: false, min_rating: "" }])}
+                >
+                  <Plus size={14} /> Add skill
+                </button>
+              </div>
+              <p className="text-xs text-muted">Mandatory skills drive the ATS score (50 of 100 points). Set the required level per skill.</p>
+              {skillRows.length === 0 ? (
+                <p className="text-sm text-muted">No skills yet — add the skills TA should source against.</p>
+              ) : (
+                <div className="space-y-2">
+                  {skillRows.map((r, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2">
+                      {/* Searchable, and any skill not in the catalogue can be typed
+                          and added here — it is saved to the skills master so it is
+                          available on every future requirement. */}
+                      <div className="w-56">
+                        <SearchableSelect
+                          value={r.skill_id}
+                          options={skillSelectOptions}
+                          allowAdd
+                          searchable
+                          addLabel="Add new skill"
+                          placeholder="Search or add a skill…"
+                          onChange={(v) => updateSkillRow(i, { skill_id: v })}
+                          onOptionsChange={(next) => {
+                            const known = new Set(skillSelectOptions.map((o) => o.label.toLowerCase()));
+                            for (const o of next) {
+                              if (!known.has(o.label.toLowerCase())) void createSkillForRow(i, o.label);
+                            }
+                          }}
+                        />
+                      </div>
+                      <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary">
+                        <input
+                          type="checkbox"
+                          checked={r.is_mandatory}
+                          onChange={(e) => updateSkillRow(i, { is_mandatory: e.target.checked })}
+                          className="h-4 w-4 rounded border-strong"
+                        />
+                        Mandatory
+                      </label>
+                      <select
+                        className={`${inputCls} !w-32`}
+                        value={r.min_rating}
+                        onChange={(e) => updateSkillRow(i, { min_rating: e.target.value })}
+                      >
+                        <option value="">Required level —</option>
+                        {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} / 5</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        className="rounded-lg p-1.5 text-muted hover:bg-danger-soft hover:text-danger"
+                        onClick={() => setSkillRows((rs) => rs.filter((_, idx) => idx !== i))}
+                        aria-label="Remove skill"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {needsRmgJd && (
+            <div className="space-y-3 rounded-xl border border-subtle bg-surface-2 p-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-muted">ATS Score Weights (optional)</div>
+              <p className="text-xs text-muted">
+                Points each component contributes to the ATS score. Leave blank to use the default.
+                Only components actually configured on this requirement are counted.
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {ATS_WEIGHT_FIELDS.map((f) => (
+                  <label key={f.key} className="block">
+                    <span className="mb-1 block text-xs font-semibold text-secondary">{f.label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      className={inputCls}
+                      value={atsWeights[f.key] ?? ""}
+                      placeholder={`Default ${f.def}`}
+                      onChange={(e) => setAtsWeights((w) => ({ ...w, [f.key]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
           )}
           <WizardField
@@ -483,7 +689,7 @@ function RequirementFormModal({
   useEffect(() => {
     crmGet<any[]>("/api/opportunities?limit=100").then((r) => setOpps(r.data || [])).catch(() => {});
     crmGet<any[]>("/api/locations?limit=200").then((r) => setLocations(r.data || [])).catch(() => {});
-    crmGet<any[]>("/api/skills?limit=200").then((r) => setSkills(r.data || [])).catch(() => {});
+    fetchAllMaster<any>("/api/skills").then(setSkills).catch(() => {});
   }, []);
 
   const set = (k: keyof FormState, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -559,6 +765,7 @@ function RequirementFormModal({
       title={<span className="sr-only">{editing ? `Edit ${initial!.req_number}` : "New Requirement"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -753,13 +960,39 @@ export function RequirementsListPage() {
     setError("");
     try {
       const list = statusKey ? statusKey.split(",") : null;
+      if (list && list.length > 1) {
+        // The API takes ONE status, so a multi-status tab has to ask per status
+        // and merge. Fetching page 1 unfiltered and filtering client-side (the
+        // old approach) showed a false "No requirements found" as soon as more
+        // than 20 requirements existed and none of the first 20 matched.
+        const pages = await Promise.all(
+          list.map((s) =>
+            crmGet<Req[]>(
+              `/api/requirements${qs({ page: 1, limit: 100, search: dq || undefined, status: s })}`,
+            ).catch(() => ({ data: [] as Req[], meta: undefined })),
+          ),
+        );
+        const merged = new Map<number, Req>();
+        for (const p of pages) for (const r of p.data || []) merged.set(r.id, r);
+        const all = [...merged.values()].sort((a, b) =>
+          String(b.created_at || "").localeCompare(String(a.created_at || "")),
+        );
+        const limit = 20;
+        const start = (page - 1) * limit;
+        setRows(all.slice(start, start + limit));
+        setMeta({
+          page,
+          limit,
+          total: all.length,
+          pages: Math.max(1, Math.ceil(all.length / limit)),
+        });
+        return;
+      }
       const single = list && list.length === 1 ? list[0] : undefined;
       const res = await crmGet<Req[]>(
         `/api/requirements${qs({ page, limit: 20, search: dq || undefined, status: single })}`,
       );
-      let data = res.data || [];
-      if (list && list.length > 1) data = data.filter((r) => list.includes(r.status));
-      setRows(data);
+      setRows(res.data || []);
       setMeta(res.meta);
     } catch (e: any) {
       setError(e?.message || "Failed to load requirements");
@@ -828,7 +1061,11 @@ export function RequirementsListPage() {
           onSearch={setSearch}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`requirements/${r.id}`)}
-          emptyMessage="No requirements found"
+          emptyMessage={
+            taMode && !statusFilter && !dq
+              ? "Nothing to source yet — requirements appear here once RMG approves them for sourcing."
+              : "No requirements found"
+          }
           filters={
             taMode ? (
               <select className={`${inputCls} !w-56`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -1061,7 +1298,8 @@ function JobPostingsTab({
         <Modal
           title={<span className="sr-only">Public application link</span>}
           onClose={() => setShowLink(false)}
-          bodyClassName="!px-0 !py-0"
+          scopeClassName="crm-wizard wiz-noise"
+      bodyClassName="!px-0 !py-0"
         >
           <WizFormShell
             title="Public application link"
@@ -1104,7 +1342,8 @@ function JobPostingsTab({
           title={<span className="sr-only">Add job posting</span>}
           onClose={() => setShowAdd(false)}
           fullScreen
-          bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+          scopeClassName="crm-wizard wiz-noise"
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
         >
           <WizFormShell
             title="Add job posting"
@@ -1161,6 +1400,38 @@ function ScorePill({ row, onClick }: { row: ResumeRow; onClick: () => void }) {
   );
 }
 
+function BreakdownStat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "good" | "bad" }) {
+  return (
+    <div className="rounded-xl border border-subtle bg-surface-2 px-3 py-2.5">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-muted">{label}</div>
+      <div className={`mt-0.5 text-sm font-bold ${
+        tone === "good" ? "text-emerald-600 dark:text-emerald-400"
+          : tone === "bad" ? "text-rose-600 dark:text-rose-400" : "text-primary"
+      }`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function BreakdownBar({ label, num, den, suffix }: { label: string; num: number; den: number; suffix?: string }) {
+  const pct = den > 0 ? Math.max(0, Math.min(100, (num / den) * 100)) : 0;
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="font-semibold text-secondary">{label}</span>
+        <span className="font-bold tabular-nums text-primary">{suffix ?? `${num}/${den}`}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+        <div
+          className={`h-full rounded-full ${pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-rose-500"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void }) {
   const b = row.ats_score_breakdown || {};
   const matched = b.skills_matched || [];
@@ -1168,12 +1439,27 @@ function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void 
   const jdMatched = b.jd_keywords_matched || [];
   const jdMissing = b.jd_keywords_missing || [];
   const details = (b.score_details || {}) as Record<string, unknown>;
+  const ai = b.ai_review || null;
+  const num = (v: unknown): number | null => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const mandTotal = num(details.mandatory_total) ?? matched.length + missing.length;
+  const mandMatched = num(details.mandatory_matched) ?? matched.length;
+  const jdTotal = num(details.jd_keywords_total) ?? jdMatched.length + jdMissing.length;
+  const jdHit = num(details.jd_keywords_matched) ?? jdMatched.length;
+  const detScore = num(details.deterministic_score);
+  const aiScore = num(details.ai_semantic_score);
+  const expYears = details.detected_experience_years;
+  const eduFound = Array.isArray(details.education_keywords_found)
+    ? (details.education_keywords_found as string[]) : [];
   return (
     <Modal
       title={<span className="sr-only">{`ATS breakdown — ${row.candidate_name}`}</span>}
       onClose={onClose}
       wide
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -1181,7 +1467,80 @@ function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void 
         subtitle={`AI-computed match score ${row.ats_score ?? "—"}/100 against the requirement JD and skills.`}
         icon={<ScanLine size={20} aria-hidden />}
       >
-      <div className="space-y-4">
+      <div className="space-y-5">
+        {/* ---- Score summary ---- */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <BreakdownStat label="Final score" value={`${row.ats_score ?? "—"} / 100`} />
+          {detScore != null && aiScore != null && (
+            <>
+              <BreakdownStat label="Keyword / criteria" value={`${detScore}`} />
+              <BreakdownStat label="AI semantic fit" value={`${aiScore}`} />
+            </>
+          )}
+          <BreakdownStat
+            label="Experience"
+            value={b.experience_match ? `Match${expYears != null ? ` (${expYears} yrs)` : ""}` : expYears != null ? `${expYears} yrs — outside range` : "Not detected"}
+            tone={b.experience_match ? "good" : "bad"}
+          />
+        </div>
+        {typeof details.blend === "string" && (
+          <p className="-mt-2 text-xs text-muted">Scoring: {String(details.blend)}</p>
+        )}
+        {/* The AI half of the score can fail (no key, quota, network). When it does
+            the number is keyword-only and reads much lower than it should — say so
+            here rather than letting it pass as a full score. */}
+        {typeof details.ai_unavailable_reason === "string" && (
+          <div className="-mt-2 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+            <span>
+              <strong className="font-semibold">Partial score.</strong> The AI semantic
+              review did not run, so this is the keyword/criteria score only and will
+              under-rate candidates whose wording differs from the JD.{" "}
+              <span className="opacity-80">{String(details.ai_unavailable_reason)}</span>
+            </span>
+          </div>
+        )}
+
+        {/* ---- Component bars ---- */}
+        <div className="space-y-3 rounded-xl border border-subtle bg-surface-1 p-4">
+          <BreakdownBar label="Required skills matched" num={mandMatched} den={Math.max(1, mandTotal)} suffix={`${mandMatched}/${mandTotal}`} />
+          {jdTotal > 0 && (
+            <BreakdownBar label="JD keywords found in resume" num={jdHit} den={jdTotal} suffix={`${jdHit}/${jdTotal}`} />
+          )}
+        </div>
+
+        {/* ---- AI reviewer assessment ---- */}
+        {ai && (ai.summary || (ai.strengths || []).length > 0 || (ai.gaps || []).length > 0) && (
+          <div className="space-y-3 rounded-xl border border-indigo-200/60 bg-indigo-50/50 p-4 dark:border-indigo-800/40 dark:bg-indigo-950/20">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
+              <Bot size={14} /> AI reviewer assessment
+            </div>
+            {ai.summary && <p className="text-sm leading-relaxed text-primary">{ai.summary}</p>}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(ai.strengths || []).length > 0 && (
+                <div>
+                  <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Strengths</div>
+                  <ul className="space-y-1 text-sm text-secondary">
+                    {(ai.strengths || []).map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5"><Check size={13} className="mt-0.5 shrink-0 text-emerald-500" /> {s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(ai.gaps || []).length > 0 && (
+                <div>
+                  <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400">Gaps</div>
+                  <ul className="space-y-1 text-sm text-secondary">
+                    {(ai.gaps || []).map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5"><X size={13} className="mt-0.5 shrink-0 text-rose-500" /> {s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div>
           <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Matched skills</div>
           <div className="flex flex-wrap gap-1.5">
@@ -1229,30 +1588,31 @@ function BreakdownModal({ row, onClose }: { row: ResumeRow; onClose: () => void 
             )}
           </div>
         )}
-        <div className="text-sm text-primary">
-          <span className="font-semibold">Experience match:</span>{" "}
-          {b.experience_match ? (
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">Yes</span>
-          ) : (
-            <span className="font-semibold text-rose-600 dark:text-rose-400">No</span>
-          )}
-        </div>
         <div>
-          <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Score details</div>
-          <table className="w-full text-sm">
-            <tbody>
-              {Object.entries(details).map(([k, v]) => (
-                <tr key={k} className="border-b border-subtle">
-                  <td className="py-1.5 pr-4 font-medium capitalize text-secondary">
-                    {k.replace(/_/g, " ")}
-                  </td>
-                  <td className="py-1.5 text-primary">
-                    {v == null ? "—" : Array.isArray(v) ? (v.length ? v.join(", ") : "—") : String(v)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Other checks</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <BreakdownStat
+              label="All required skills"
+              value={details.all_required_matched ? "Yes" : "No"}
+              tone={details.all_required_matched ? "good" : "bad"}
+            />
+            <BreakdownStat
+              label="Education"
+              value={eduFound.length ? eduFound.slice(0, 3).join(", ") : "Not found"}
+              tone={eduFound.length ? "good" : "bad"}
+            />
+            {details.location_match != null && (
+              <BreakdownStat
+                label="Location"
+                value={details.location_match ? "Match" : "No match"}
+                tone={details.location_match ? "good" : "bad"}
+              />
+            )}
+            <BreakdownStat
+              label="Points"
+              value={`${details.earned_points ?? "—"} / ${details.possible_points ?? "—"}`}
+            />
+          </div>
         </div>
       </div>
       </WizFormShell>
@@ -1273,17 +1633,36 @@ function UploadResumeModal({
   const [phone, setPhone] = useState("");
   const [source, setSource] = useState("");
   const [nameErr, setNameErr] = useState("");
+  // Same applicant details as the public apply-link form (all optional here —
+  // the CV itself can fill gaps via auto-parse).
+  const [experience, setExperience] = useState("");
+  const [education, setEducation] = useState("");
+  const [domain, setDomain] = useState("");
+  const [skills, setSkills] = useState("");
+  const [noticePeriod, setNoticePeriod] = useState("");
+  const [currentCtc, setCurrentCtc] = useState("");
+  const [expectedCtc, setExpectedCtc] = useState("");
+  const [preferredLocation, setPreferredLocation] = useState("");
 
   const fields: Record<string, string> = { candidate_name: name.trim() };
   if (email.trim()) fields.email = email.trim();
   if (phone.trim()) fields.phone = phone.trim();
   if (source) fields.source_portal = source;
+  if (experience.trim()) fields.experience = experience.trim();
+  if (education.trim()) fields.education = education.trim();
+  if (domain.trim()) fields.technical_domain = domain.trim();
+  if (skills.trim()) fields.skills = skills.trim();
+  if (noticePeriod.trim()) fields.notice_period = noticePeriod.trim();
+  if (currentCtc.trim()) fields.current_ctc = currentCtc.trim();
+  if (expectedCtc.trim()) fields.expected_ctc = expectedCtc.trim();
+  if (preferredLocation.trim()) fields.preferred_location = preferredLocation.trim();
 
   return (
     <Modal
       title={<span className="sr-only">Upload resume</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -1311,6 +1690,32 @@ function UploadResumeModal({
               <option value="">—</option>
               {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
+          </WizardField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <WizardField label="Total experience (years)" filled={!!experience.trim()}>
+              <input className={inputCls} value={experience} onChange={(e) => setExperience(e.target.value)} placeholder="e.g. 4.5" />
+            </WizardField>
+            <WizardField label="Highest education" filled={!!education.trim()}>
+              <input className={inputCls} value={education} onChange={(e) => setEducation(e.target.value)} placeholder="e.g. B.Tech, Computer Science" />
+            </WizardField>
+            <WizardField label="Technical domain" filled={!!domain.trim()}>
+              <input className={inputCls} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. Backend / Data Engineering" />
+            </WizardField>
+            <WizardField label="Notice period" filled={!!noticePeriod.trim()}>
+              <input className={inputCls} value={noticePeriod} onChange={(e) => setNoticePeriod(e.target.value)} placeholder="e.g. 30 days" />
+            </WizardField>
+            <WizardField label="Current CTC" filled={!!currentCtc.trim()}>
+              <input className={inputCls} value={currentCtc} onChange={(e) => setCurrentCtc(e.target.value)} placeholder="e.g. 12 LPA" />
+            </WizardField>
+            <WizardField label="Expected CTC" filled={!!expectedCtc.trim()}>
+              <input className={inputCls} value={expectedCtc} onChange={(e) => setExpectedCtc(e.target.value)} placeholder="e.g. 18 LPA" />
+            </WizardField>
+            <WizardField label="Preferred location" filled={!!preferredLocation.trim()}>
+              <input className={inputCls} value={preferredLocation} onChange={(e) => setPreferredLocation(e.target.value)} placeholder="e.g. Bangalore" />
+            </WizardField>
+          </div>
+          <WizardField label="Key skills" filled={!!skills.trim()}>
+            <input className={inputCls} value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="e.g. Python, FastAPI, PostgreSQL, AWS" />
           </WizardField>
           <div>
             {name.trim() ? (
@@ -1341,6 +1746,122 @@ function UploadResumeModal({
   );
 }
 
+function EditResumeModal({
+  row, onClose, onSaved, toast,
+}: {
+  row: ResumeRow;
+  onClose: () => void;
+  onSaved: () => void;
+  toast: ToastFn;
+}) {
+  const d = row.application_details || {};
+  const [name, setName] = useState(row.candidate_name || "");
+  const [email, setEmail] = useState(row.email || "");
+  const [phone, setPhone] = useState(row.phone || "");
+  const [source, setSource] = useState(row.source_portal || "");
+  const [experience, setExperience] = useState(row.applicant_experience || "");
+  const [education, setEducation] = useState(d.education || "");
+  const [domain, setDomain] = useState(d.technical_domain || "");
+  const [skills, setSkills] = useState(d.skills || "");
+  const [noticePeriod, setNoticePeriod] = useState(d.notice_period || "");
+  const [currentCtc, setCurrentCtc] = useState(d.current_ctc || "");
+  const [expectedCtc, setExpectedCtc] = useState(d.expected_ctc || "");
+  const [preferredLocation, setPreferredLocation] = useState(d.preferred_location || "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!name.trim()) { toast("Candidate name is required", "err"); return; }
+    setBusy(true);
+    try {
+      const res = await crmPut(`/api/resumes/${row.id}`, {
+        candidate_name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        source_portal: source,
+        experience: experience.trim(),
+        education: education.trim(),
+        technical_domain: domain.trim(),
+        skills: skills.trim(),
+        notice_period: noticePeriod.trim(),
+        current_ctc: currentCtc.trim(),
+        expected_ctc: expectedCtc.trim(),
+        preferred_location: preferredLocation.trim(),
+      });
+      toast(res.message || "Resume updated");
+      onSaved();
+    } catch (e: any) {
+      toast(e?.message || "Update failed", "err");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={<span className="sr-only">Edit applicant details</span>}
+      onClose={onClose}
+      fullScreen
+      scopeClassName="crm-wizard wiz-noise"
+      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+    >
+      <WizFormShell
+        title="Edit applicant details"
+        subtitle={`Update the application details for ${row.candidate_name}.`}
+        icon={<Pencil size={20} aria-hidden />}
+      >
+        <div className="space-y-5">
+          <WizardField label="Candidate name" required icon="user" filled={!!name.trim()}>
+            <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+          </WizardField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <WizardField label="Email" icon="mail" filled={!!email.trim()}>
+              <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </WizardField>
+            <WizardField label="Phone" icon="phone" filled={!!phone.trim()}>
+              <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </WizardField>
+            <WizardField label="Source portal">
+              <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
+                <option value="">—</option>
+                {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="Total experience (years)" filled={!!experience.trim()}>
+              <input className={inputCls} value={experience} onChange={(e) => setExperience(e.target.value)} placeholder="e.g. 4.5" />
+            </WizardField>
+            <WizardField label="Highest education" filled={!!education.trim()}>
+              <input className={inputCls} value={education} onChange={(e) => setEducation(e.target.value)} placeholder="e.g. B.Tech, Computer Science" />
+            </WizardField>
+            <WizardField label="Technical domain" filled={!!domain.trim()}>
+              <input className={inputCls} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. Backend / Data Engineering" />
+            </WizardField>
+            <WizardField label="Notice period" filled={!!noticePeriod.trim()}>
+              <input className={inputCls} value={noticePeriod} onChange={(e) => setNoticePeriod(e.target.value)} placeholder="e.g. 30 days" />
+            </WizardField>
+            <WizardField label="Current CTC" filled={!!currentCtc.trim()}>
+              <input className={inputCls} value={currentCtc} onChange={(e) => setCurrentCtc(e.target.value)} placeholder="e.g. 12 LPA" />
+            </WizardField>
+            <WizardField label="Expected CTC" filled={!!expectedCtc.trim()}>
+              <input className={inputCls} value={expectedCtc} onChange={(e) => setExpectedCtc(e.target.value)} placeholder="e.g. 18 LPA" />
+            </WizardField>
+            <WizardField label="Preferred location" filled={!!preferredLocation.trim()}>
+              <input className={inputCls} value={preferredLocation} onChange={(e) => setPreferredLocation(e.target.value)} placeholder="e.g. Bangalore" />
+            </WizardField>
+          </div>
+          <WizardField label="Key skills" filled={!!skills.trim()}>
+            <input className={inputCls} value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="e.g. Python, FastAPI, PostgreSQL, AWS" />
+          </WizardField>
+          <div className={wizFooterRow}>
+            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={() => void save()} disabled={busy}>
+              {busy ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      </WizFormShell>
+    </Modal>
+  );
+}
+
 function ResumesTab({
   req, toast, onRequirementChanged,
 }: {
@@ -1349,6 +1870,7 @@ function ResumesTab({
   onRequirementChanged: () => void;
 }) {
   const isTA = useHasRole("TA");
+  const isRmg = useHasRole("RMG");
   const [rows, setRows] = useState<ResumeRow[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [page, setPage] = useState(1);
@@ -1362,6 +1884,8 @@ function ResumesTab({
   const [breakdownRow, setBreakdownRow] = useState<ResumeRow | null>(null);
   const [rejectRow, setRejectRow] = useState<ResumeRow | null>(null);
   const [scheduleRow, setScheduleRow] = useState<ResumeRow | null>(null);
+  const [editRow, setEditRow] = useState<ResumeRow | null>(null);
+  const [deleteRow, setDeleteRow] = useState<ResumeRow | null>(null);
   const [inviteOpenId, setInviteOpenId] = useState<number | null>(null);
   const [profileByResume, setProfileByResume] = useState<Record<number, number>>({});
   const [inviteBusyId, setInviteBusyId] = useState<number | null>(null);
@@ -1475,6 +1999,75 @@ function ResumesTab({
       load();
     } catch (e: any) {
       toast(e?.message || "Shortlist failed", "err");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // ---- RMG decision actions (same flow as the profile's "RMG review needed"
+  // banner), available right here on the requirement's resume rows. ----
+  const [f2fRow, setF2fRow] = useState<ResumeRow | null>(null);
+  const [f2fWhen, setF2fWhen] = useState("");
+  const [f2fLink, setF2fLink] = useState("");
+  const [f2fNote, setF2fNote] = useState("");
+  const [rmgBusyId, setRmgBusyId] = useState<number | null>(null);
+
+  const rmgTransition = async (r: ResumeRow, kind: "sales" | "reject") => {
+    if (!r.profile_id) return;
+    const isSales = kind === "sales";
+    const comment = window.prompt(
+      isSales
+        ? "Comment for the activity log (why is this candidate being submitted to Sales?)"
+        : "Rejection reason (mandatory)",
+      isSales ? "AI L1 passed — RMG review complete, forwarding to Sales team" : "",
+    );
+    if (comment == null) return;
+    if (comment.trim().length < 5) { toast("A comment of at least 5 characters is required", "err"); return; }
+    setRmgBusyId(r.id);
+    try {
+      const res = await crmPost(`/api/candidate-profiles/${r.profile_id}/status-transition`, {
+        new_status: isSales ? "Sales_Screening" : "RMG_Rejected",
+        comment: comment.trim(),
+      });
+      toast(res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected"));
+      load();
+    } catch (e: any) {
+      toast(e?.message || "Transition failed", "err");
+    } finally {
+      setRmgBusyId(null);
+    }
+  };
+
+  const rmgF2f = async () => {
+    if (!f2fRow?.profile_id) return;
+    setRmgBusyId(f2fRow.id);
+    try {
+      const res = await crmPost(`/api/candidate-profiles/${f2fRow.profile_id}/l2-face-to-face`, {
+        scheduled_at: f2fWhen.trim() || null,
+        meeting_link: f2fLink.trim() || null,
+        note: f2fNote.trim() || null,
+      });
+      toast(res.message || "L2 face-to-face recorded — TA notified");
+      setF2fRow(null);
+      setF2fWhen(""); setF2fLink(""); setF2fNote("");
+    } catch (e: any) {
+      toast(e?.message || "Failed to record the L2 round", "err");
+    } finally {
+      setRmgBusyId(null);
+    }
+  };
+
+  const doDelete = async () => {
+    if (!deleteRow) return;
+    setBusyId(deleteRow.id);
+    try {
+      const res = await crmDelete(`/api/resumes/${deleteRow.id}`);
+      toast(res.message || "Resume deleted");
+      setDeleteRow(null);
+      load();
+      onRequirementChanged();
+    } catch (e: any) {
+      toast(e?.message || "Delete failed", "err");
     } finally {
       setBusyId(null);
     }
@@ -1703,9 +2296,13 @@ function ResumesTab({
     {
       key: "ai_interview_status", label: "AI Interview",
       render: (r) => {
-        const status = r.ai_interview_status || "Not_Scheduled";
         const score = r.ai_overall_score_percent;
         const showReport = isTA && !!r.ai_report_link;
+        // A recruiter's decision on the report page outranks the AI's own
+        // score-threshold verdict. Show theirs, and keep the AI's beside it —
+        // this column used to show only the raw verdict, so a candidate already
+        // marked Selected still read "Failed 57.2%".
+        const status = r.ai_hr_decision_label || r.ai_interview_status || "Not_Scheduled";
         return (
           <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
             <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -1719,6 +2316,14 @@ function ResumesTab({
                 </span>
               )}
             </span>
+            {r.ai_is_overridden && (
+              <span
+                className="text-[11px] text-muted"
+                title={`A recruiter marked this ${r.ai_hr_decision_label}. The AI recorded ${r.ai_interview_result}.`}
+              >
+                AI: {r.ai_interview_result}
+              </span>
+            )}
             {showReport && (
               <a
                 href={r.ai_report_link!}
@@ -1783,6 +2388,56 @@ function ResumesTab({
             {profileId != null && (
               <button className={smallBtn} onClick={() => crmNavigate(`profiles/${profileId}`)}>
                 <ExternalLink size={13} /> View profile
+              </button>
+            )}
+            {isRmg && r.profile_pipeline_status === "RMG_Review" && (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                  <Bot size={11} /> RMG review needed
+                </span>
+                <button
+                  className={`${smallBtn} ${focusRing}`}
+                  onClick={() => setF2fRow(r)}
+                  disabled={rmgBusyId === r.id}
+                  title="Schedule a face-to-face L2 round (Teams call)"
+                >
+                  L2 — Face-to-face
+                </button>
+                <button
+                  className={smallPrimary}
+                  onClick={() => void rmgTransition(r, "sales")}
+                  disabled={rmgBusyId === r.id}
+                  title="RMG review complete — submit this candidate to the Sales team"
+                >
+                  {rmgBusyId === r.id ? "Working…" : "Submit to Sales"}
+                </button>
+                <button
+                  className={smallDanger}
+                  onClick={() => void rmgTransition(r, "reject")}
+                  disabled={rmgBusyId === r.id}
+                >
+                  Reject
+                </button>
+              </span>
+            )}
+            {isTA && (
+              <button
+                className={`${smallBtn} ${focusRing}`}
+                onClick={() => setEditRow(r)}
+                disabled={busy}
+                title="Edit applicant details"
+              >
+                <Pencil size={13} /> Edit
+              </button>
+            )}
+            {isTA && (
+              <button
+                className={smallDanger}
+                onClick={() => setDeleteRow(r)}
+                disabled={busy}
+                title="Delete this resume/application"
+              >
+                <Trash2 size={13} /> Delete
               </button>
             )}
           </div>
@@ -1859,6 +2514,51 @@ function ResumesTab({
         />
       )}
       {breakdownRow && <BreakdownModal row={breakdownRow} onClose={() => setBreakdownRow(null)} />}
+      {editRow && (
+        <EditResumeModal
+          row={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => { setEditRow(null); load(); }}
+          toast={toast}
+        />
+      )}
+      {f2fRow && (
+        <Modal title="Schedule L2 face-to-face round" onClose={() => { if (rmgBusyId !== f2fRow.id) setF2fRow(null); }}>
+          <div className="space-y-4">
+            <p className="text-sm text-secondary">
+              Candidate <span className="font-semibold">{f2fRow.candidate_name}</span> and RMG join a live
+              call (e.g. Microsoft Teams). This logs the round, notifies TA to coordinate, and emails the
+              candidate the details when an email is on file. Decide after the call.
+            </p>
+            <Field label="Date & time">
+              <input type="datetime-local" className={inputCls} value={f2fWhen} onChange={(e) => setF2fWhen(e.target.value)} />
+            </Field>
+            <Field label="Meeting link (Teams / Meet)">
+              <input className={inputCls} placeholder="https://teams.microsoft.com/…" value={f2fLink} onChange={(e) => setF2fLink(e.target.value)} />
+            </Field>
+            <Field label="Note for the candidate / TA (optional)">
+              <textarea className={inputCls} rows={2} value={f2fNote} onChange={(e) => setF2fNote(e.target.value)} />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <button className={btnSecondary} onClick={() => setF2fRow(null)} disabled={rmgBusyId === f2fRow.id}>Cancel</button>
+              <button className={btnPrimary} onClick={() => void rmgF2f()} disabled={rmgBusyId === f2fRow.id}>
+                {rmgBusyId === f2fRow.id ? "Saving…" : "Schedule & notify"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {deleteRow && (
+        <ConfirmModal
+          title="Delete resume"
+          message={<>Delete the resume/application of <span className="font-semibold">{deleteRow.candidate_name}</span>? This removes it from this requirement. The candidate record (if created) is kept.</>}
+          confirmLabel="Delete"
+          danger
+          busy={busyId === deleteRow.id}
+          onConfirm={() => { void doDelete(); }}
+          onClose={() => { if (busyId !== deleteRow.id) setDeleteRow(null); }}
+        />
+      )}
       {rejectRow && (
         <ConfirmModal
           title="Reject resume"

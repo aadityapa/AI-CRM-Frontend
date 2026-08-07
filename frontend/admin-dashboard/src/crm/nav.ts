@@ -4,6 +4,7 @@ import {
   Banknote,
   Briefcase,
   Building2,
+  CalendarClock,
   CalendarDays,
   CalendarOff,
   Clock,
@@ -34,6 +35,10 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "candidates", label: "Candidates", icon: Users, roles: ["Admin", "TA", "Sales", "Sales_Head"] },
   { path: "template-requests", label: "Template Requests", icon: FileText, roles: ["Admin", "TA", "RMG"] },
   { path: "profiles", label: "Candidate Profiles", icon: UsersRound, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
+  // Interview calendar. Deliberately NOT Sales/Sales_Head: booking and running
+  // interviews is not their workflow, which is also why the upcoming-interviews
+  // widget was removed from their dashboard.
+  { path: "calendar", label: "Interview Calendar", icon: CalendarClock, roles: ["Admin", "CEO", "TA", "RMG"] },
   { path: "projects", label: "Projects", icon: Briefcase, roles: ["Admin", "Sales", "Sales_Head"] },
   { path: "project-employees", label: "Project Employees", icon: Network, roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance"] },
   { path: "my-leave", label: "My Leave", icon: CalendarDays, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
@@ -42,7 +47,7 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "timesheets", label: "Timesheets", icon: Clock, roles: ["Admin", "HR", "Finance", "RMG", "Sales", "Sales_Head"] },
   { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
   { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
-  { path: "tds", label: "TDS", icon: Banknote, roles: ["Admin", "Finance"] },
+  { path: "finance-reports", label: "Financial Reports", icon: Banknote, roles: ["Admin", "Finance", "Sales_Head"] },
   { path: "employees", label: "Employees", icon: UserCog, roles: ["Admin", "HR"] },
   { path: "reports", label: "Reports", icon: FileSpreadsheet, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
   { path: "users", label: "Users", icon: UserCog, roles: ["Admin", "CEO"] },

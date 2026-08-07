@@ -3,14 +3,14 @@
  * sits inside glass), E2 notifications dropdown, E3 mobile nav drawer.
  * Desktop sidebar: expanded (~240px) or collapsed ICON RAIL (~64px)
  * (localStorage `crm.sidebar.collapsed`); mobile keeps the overlay drawer. */
-import React, { Suspense, createContext, useContext, useEffect, useState } from "react";
+import React, { Suspense, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Bell, Menu, PanelLeftClose, PanelLeftOpen, X,
 } from "lucide-react";
 import { crmGet, crmPost, CrmApiError } from "./api";
-import { CrmLink, CrmRouter, readCrmPath } from "./routerHooks";
+import { CrmLink, CrmRouter, crmNavigate, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
 import { CRM_NAV, type CrmNavItem } from "./nav";
 import { ErrorBox, Spinner } from "./components/ui";
@@ -27,8 +27,8 @@ const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-ring";
 
 /** Desktop sidebar collapse — persisted across reloads. Mobile uses the drawer instead. */
 const SIDEBAR_COLLAPSED_KEY = "crm.sidebar.collapsed";
-const SIDEBAR_WIDTH_PX = 240; // Tailwind w-60
-const SIDEBAR_RAIL_WIDTH_PX = 64; // Tailwind w-16 — icon rail (not hidden)
+const SIDEBAR_WIDTH_PX = 220; // compact desktop shell for normal 100% zoom
+const SIDEBAR_RAIL_WIDTH_PX = 60; // slightly tighter collapsed rail
 
 /** Fixed flyout label for the collapsed icon rail (escapes overflow:hidden ancestors). */
 function RailFlyout({
@@ -116,11 +116,17 @@ function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [unread, setUnread] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null);
 
   const load = async () => {
     try {
       const res = await crmGet<any[]>("/api/notifications?limit=15");
-      setItems(res.data || []);
+      const rows = (res.data || []).filter(
+        (n: any) => n && n.id != null && String(n.title || "").trim() !== "",
+      );
+      setItems(rows);
       setUnread((res.meta as any)?.unread_count ?? 0);
     } catch {
       /* CRM may be unconfigured */
@@ -132,6 +138,43 @@ function NotificationsBell() {
     return () => window.clearInterval(t);
   }, []);
 
+  const placePanel = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPanelPos({
+      top: Math.round(r.bottom + 8),
+      right: Math.round(Math.max(8, window.innerWidth - r.right)),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    placePanel();
+    const onResize = () => placePanel();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointer = (e: MouseEvent | TouchEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onResize, true);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+    };
+  }, [open, placePanel]);
+
   const markRead = async (id: number) => {
     try {
       await crmPost(`/api/notifications/${id}/read`);
@@ -139,12 +182,104 @@ function NotificationsBell() {
     } catch { /* ignore */ }
   };
 
+  /**
+   * Open the record a notification is about.
+   *
+   * The backend has always set a deep link ("/admin?view=crm&p=profiles/42"),
+   * but this panel only ever rendered the title and message — so a notification
+   * saying "RMG Review: Bibin P S" left the reader to go and find Bibin by hand.
+   * That is the difference between an alert and a to-do.
+   *
+   * Only same-origin CRM links are followed. `link` is server-generated today,
+   * but treating a stored string as a navigation target without checking is how
+   * an open-redirect appears later.
+   */
+  const openNotification = async (n: any) => {
+    const link = String(n?.link || "").trim();
+    if (!n?.is_read) void markRead(n.id);
+    if (!link) return;
+    setOpen(false);
+
+    const crmPath = link.match(/[?&]p=([^&]+)/);
+    if (crmPath && link.includes("view=crm")) {
+      crmNavigate(decodeURIComponent(crmPath[1]));
+      return;
+    }
+    // Other in-app links (e.g. the interview report) are relative paths on this
+    // origin. Anything absolute or protocol-relative is ignored.
+    if (link.startsWith("/") && !link.startsWith("//")) {
+      window.location.assign(link);
+    }
+  };
+
+  const panel = open && panelPos && typeof document !== "undefined"
+    ? createPortal(
+      /* Portaled to body — must NOT sit inside the glass header (backdrop-filter
+         compositing paints a white ghost rectangle over the list on Chromium). */
+      <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-label="Notifications"
+        initial={reduce ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={reduce ? { duration: MOTION_DUR.fast } : { duration: MOTION_DUR.base, ease: MOTION_EASE_OUT }}
+        style={{ top: panelPos.top, right: panelPos.right }}
+        className="elev-2 fixed z-[80] flex w-80 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-panel bg-surface-2"
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-subtle bg-surface-2 px-4 py-2.5">
+          <span className="text-sm font-bold text-primary">Notifications</span>
+          <button
+            type="button"
+            className={`rounded-control text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
+            onClick={async () => { await crmPost("/api/notifications/read-all").catch(() => {}); load(); }}
+          >
+            Mark all read
+          </button>
+        </div>
+        <div className="max-h-80 overflow-y-auto overscroll-contain bg-surface-2">
+          {items.length === 0 && (
+            <div className="px-4 py-6 text-center text-sm text-muted">No notifications</div>
+          )}
+          <ul className="divide-y divide-subtle m-0 list-none p-0">
+            {items.map((n) => (
+              <li key={n.id} className="bg-surface-2">
+                <button
+                  type="button"
+                  onClick={() => void openNotification(n)}
+                  title={n.link ? "Open this candidate" : undefined}
+                  className={`block w-full bg-surface-2 px-4 py-2.5 text-left transition-colors duration-base ease-smooth hover:bg-surface-1 focus:outline-none focus-visible:bg-surface-1 ${
+                    n.is_read ? "opacity-60" : ""
+                  } ${n.link ? "cursor-pointer" : ""}`}
+                >
+                  <div className="text-sm font-semibold text-primary">{n.title}</div>
+                  {n.message ? <div className="text-xs text-muted">{n.message}</div> : null}
+                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
+                    <span>{n.created_at ? new Date(n.created_at).toLocaleString() : ""}</span>
+                    {n.link && (
+                      <span className="font-semibold text-brand-600 dark:text-brand-300">
+                        Open →
+                      </span>
+                    )}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </motion.div>,
+      document.body,
+    )
+    : null;
+
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className={`relative rounded-control p-2 text-muted transition-all duration-base ease-smooth hover:bg-surface-1 hover:text-primary active:scale-90 ${focusRing}`}
         aria-label="Notifications"
+        aria-expanded={open}
+        aria-haspopup="dialog"
       >
         <Bell size={18} />
         {unread > 0 && (
@@ -159,41 +294,7 @@ function NotificationsBell() {
           </motion.span>
         )}
       </button>
-      {open && (
-        /* The only E2 surface while open (one dominant raised layer per view). */
-        <motion.div
-          initial={reduce ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={reduce ? { duration: MOTION_DUR.fast } : { duration: MOTION_DUR.base, ease: MOTION_EASE_OUT }}
-          className="elev-2 absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-panel"
-        >
-          <div className="flex items-center justify-between border-b border-subtle px-4 py-2.5">
-            <span className="text-sm font-bold text-primary">Notifications</span>
-            <button
-              className={`rounded-control text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
-              onClick={async () => { await crmPost("/api/notifications/read-all").catch(() => {}); load(); }}
-            >
-              Mark all read
-            </button>
-          </div>
-          <div className="max-h-80 overflow-y-auto">
-            {items.length === 0 && <div className="px-4 py-6 text-center text-sm text-muted">No notifications</div>}
-            {items.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => markRead(n.id)}
-                className={`block w-full border-b border-subtle px-4 py-2.5 text-left transition-colors duration-base ease-smooth hover:bg-surface-1 ${focusRing} ${
-                  n.is_read ? "opacity-60" : ""
-                }`}
-              >
-                <div className="text-sm font-semibold text-primary">{n.title}</div>
-                {n.message && <div className="text-xs text-muted">{n.message}</div>}
-                <div className="mt-0.5 text-[11px] text-muted">{new Date(n.created_at).toLocaleString()}</div>
-              </button>
-            ))}
-          </div>
-        </motion.div>
-      )}
+      {panel}
     </div>
   );
 }
@@ -374,7 +475,10 @@ export default function CrmApp() {
 
   return (
     <MeCtx.Provider value={me}>
-      <div className="relative flex min-h-[calc(100vh-4rem)]">
+      {/* Desktop (md+): fixed app-shell — the shell itself never scrolls; only
+          <main> does. Sidebar + platform bar + CRM header stay pinned without
+          relying on position:sticky (which ancestor overflow rules defeat). */}
+      <div className="relative flex min-h-[calc(100vh-4rem)] min-w-0 overflow-x-clip md:h-[calc(100vh-4rem)] md:overflow-hidden">
         {/* Aurora ambience + spotlight — no-ops while nested in the platform
             shell (the `.fx-aurora ~ * .fx-aurora` / `.fx-spotlight` dedup
             rules hide them), active if the CRM shell is ever mounted
@@ -382,19 +486,19 @@ export default function CrmApp() {
             NOTE: no `isolate` here — a stacking context on this root would
             trap the fixed drawer (z-50) / page modals below the platform
             header (z-30). */}
-        <div aria-hidden className="fx-aurora" />
-        <div aria-hidden className="fx-spotlight" />
+          <div aria-hidden className="fx-aurora crm-print-hide" />
+        <div aria-hidden className="fx-spotlight crm-print-hide" />
         {/* Desktop sidebar — v3 floating inset glass panel (approved .glass
             surface; the active pill is an opaque gradient, so nothing glossy
             nests inside the glass). Width animates 240 ↔ 64 (icon rail);
             mobile uses the drawer below — this aside stays md+ only. */}
         <motion.aside
-          className="hidden shrink-0 flex-col overflow-hidden md:flex md:sticky md:top-16 md:h-[calc(100vh-4rem)]"
+          className="crm-print-hide hidden shrink-0 flex-col overflow-hidden md:flex md:h-full"
           initial={false}
           animate={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH_PX : SIDEBAR_WIDTH_PX }}
           transition={reduce ? { duration: 0 } : { duration: MOTION_DUR.slow, ease: MOTION_EASE_OUT }}
         >
-          <div className={`flex h-full min-h-0 w-full min-w-0 flex-col ${sidebarCollapsed ? "p-1" : "p-2"}`}>
+          <div className={`flex h-full min-h-0 w-full min-w-0 flex-col ${sidebarCollapsed ? "p-1" : "p-1.5"}`}>
             <div className="glass flex h-full min-h-0 flex-col overflow-hidden rounded-panel">
               <div
                 className={`flex items-center border-b border-subtle ${
@@ -426,7 +530,7 @@ export default function CrmApp() {
               <nav
                 id="crm-desktop-sidebar"
                 className={`flex flex-1 flex-col gap-0.5 overflow-y-auto ${
-                  sidebarCollapsed ? "px-0.5 py-1" : "p-3"
+                  sidebarCollapsed ? "px-0.5 py-1" : "p-2.5"
                 }`}
               >
                 <CrmNavLinks
@@ -438,17 +542,17 @@ export default function CrmApp() {
                   collapsed={sidebarCollapsed}
                 />
               </nav>
-              <div className={`border-t border-subtle ${sidebarCollapsed ? "p-1" : "p-3"}`}>
+              <div className={`border-t border-subtle ${sidebarCollapsed ? "p-1" : "p-2.5"}`}>
                 <SidebarUserBlock compact={sidebarCollapsed} rail={sidebarCollapsed} />
               </div>
             </div>
           </div>
         </motion.aside>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-x-hidden md:flex md:min-h-0 md:flex-col">
           {/* Glass header bar (E1 glass; nothing glossy nested inside it) with
               the v3 gradient hairline along its bottom edge. */}
-          <div className="glass fx-hairline-b flex items-center justify-between border-x-0 border-t-0 px-4 py-2.5 sm:px-5">
-            <div className="flex items-center gap-2 text-sm font-bold text-primary">
+          <div className="crm-print-hide glass fx-hairline-b flex min-w-0 items-center justify-between gap-3 border-x-0 border-t-0 px-3 py-2 sm:px-4">
+            <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-primary">
               <button
                 type="button"
                 onClick={() => setDrawerOpen(true)}
@@ -472,8 +576,8 @@ export default function CrmApp() {
               >
                 {sidebarCollapsed ? <PanelLeftOpen size={18} strokeWidth={2.25} /> : <PanelLeftClose size={18} strokeWidth={2.25} />}
               </button>
-              Karnex CRM
-              <span className="flex flex-wrap items-center gap-1">
+              <span className="truncate">Karnex CRM</span>
+              <span className="hidden flex-wrap items-center gap-1 lg:flex">
                 {me.roles.map((r) => (
                   <span
                     key={r}
@@ -484,7 +588,7 @@ export default function CrmApp() {
                 ))}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <NotificationsBell />
               <span className="md:hidden">
                 <SidebarUserBlock compact />
@@ -523,7 +627,7 @@ export default function CrmApp() {
                       <X size={18} />
                     </button>
                   </div>
-                  <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3" onClick={() => setDrawerOpen(false)}>
+                  <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-3">
                     <CrmNavLinks items={visible} path={path} roles={me.roles} variant="drawer" reduce={!!reduce} />
                   </nav>
                   <div className="border-t border-subtle p-3">
@@ -534,7 +638,7 @@ export default function CrmApp() {
             )}
           </AnimatePresence>
 
-          <main className="p-5">
+          <main className="min-w-0 overflow-x-hidden p-3 sm:p-4 xl:p-5 md:min-h-0 md:flex-1 md:overflow-y-auto">
             <Suspense fallback={<Spinner />}>
               <motion.div
                 key={path}

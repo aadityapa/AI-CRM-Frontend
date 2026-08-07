@@ -79,7 +79,9 @@ function render() {
 
 export function setInterviewMode(isInterview) {
     if (!particles) return;
-    paused = !!isInterview;
+    // Keep the star-field alive DURING the interview (it used to freeze, which
+    // made the screen feel static). Only pause when the tab is hidden.
+    paused = document.hidden;
     if (isInterview) {
         particles.material.color.setHex(0xf8b228);
     } else {

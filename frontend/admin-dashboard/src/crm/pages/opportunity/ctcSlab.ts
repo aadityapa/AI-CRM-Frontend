@@ -27,6 +27,9 @@ export type BillingInputs = {
   holidaysBillable?: unknown;
   weekoffBillable?: unknown;
   leaveBillable?: unknown;
+  /** Contractual cap from branch Billing Properties (Max Billable Hours / Month).
+   *  Annual billing hours never exceed cap × 12. Blank/0 = no cap. */
+  maxBillableHoursMonth?: unknown;
 };
 
 export type BillingBases = {
@@ -63,8 +66,15 @@ export function calculateBillingBases(inputs: BillingInputs): BillingBases {
     (isTrue(inputs.leaveBillable) ? 0 : zeroWhenBlank(inputs.leave));
   const actualBillingDays = roundMoney(Math.max(0, 365 - deductions));
   const hoursPerDay = finiteOrNull(inputs.hoursPerDay);
-  const actualBillingHours =
+  let actualBillingHours: number | "" =
     hoursPerDay === null ? "" : roundMoney(actualBillingDays * Math.max(0, hoursPerDay));
+  // Branch Billing Properties → Max Billable Hours / Month is the CONTRACTUAL
+  // hours basis: when set, it replaces the calendar derivation entirely —
+  // Monthly Revenue = rate × cap, Annual = monthly × 12 (cap × 12 hours/year).
+  const capMonthly = finiteOrNull(inputs.maxBillableHoursMonth);
+  if (capMonthly !== null && capMonthly > 0) {
+    actualBillingHours = roundMoney(capMonthly * 12);
+  }
   return { actualBillingDays, actualBillingHours };
 }
 
@@ -157,6 +167,49 @@ export function recalculateCtcSlab(
   inputs: BillingInputs,
 ): CtcSlabRow[] {
   return (rows || []).map((row) => calculateCtcSlabRow(row, inputs));
+}
+
+/** True when a form value is present and parseable as a finite number. */
+export function hasNumericInput(value: unknown): boolean {
+  return finiteOrNull(value) !== null;
+}
+
+/**
+ * Period for RFI: prefer tm_duration_months; for Fixed_Price fall back to
+ * project_duration_months when T&M duration is absent.
+ */
+export function resolveRfiPeriodMonths(
+  opportunityType: unknown,
+  details: Record<string, unknown>,
+): unknown {
+  if (hasNumericInput(details.tm_duration_months)) return details.tm_duration_months;
+  if (String(opportunityType || "") === "Fixed_Price") {
+    return details.project_duration_months;
+  }
+  return details.tm_duration_months;
+}
+
+/**
+ * RFI Value = Annual Revenue × (Period / 12) × Position Count.
+ * Returns null when any of the three inputs is missing (caller keeps manual edit).
+ * Otherwise returns the raw product (no money rounding).
+ */
+export function calculateRfiValue(opts: {
+  revenueAnnual: unknown;
+  periodMonths: unknown;
+  positionsCount: unknown;
+}): number | null {
+  if (
+    !hasNumericInput(opts.revenueAnnual)
+    || !hasNumericInput(opts.periodMonths)
+    || !hasNumericInput(opts.positionsCount)
+  ) {
+    return null;
+  }
+  const annual = zeroWhenBlank(opts.revenueAnnual);
+  const period = zeroWhenBlank(opts.periodMonths);
+  const positions = zeroWhenBlank(opts.positionsCount);
+  return annual * (period / 12) * positions;
 }
 
 export function validateCtcExperience(row: CtcSlabRow): string {

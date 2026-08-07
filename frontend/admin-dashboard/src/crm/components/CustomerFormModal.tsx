@@ -228,7 +228,10 @@ function customerLeavePayload(row: LeaveRow, customerId: number) {
     is_max_limit: row.is_max_limit,
     maximum_carry_forward: leaveNumOrNull(row.maximum_carry_forward) ?? 0,
     effective_date: row.effective_date || null,
-    leave_credit_timing: "Start_Of_Period",
+    leave_credit_timing: row.leave_credit_timing || "Start_Of_Period",
+    leave_expire_timing: row.leave_expire
+      ? (row.leave_expire_timing || "End_Of_Period")
+      : null,
     is_billable: true,
   };
 }
@@ -240,9 +243,11 @@ function apiToLeaveRow(r: Record<string, unknown>): LeaveRow {
     leave_type_id: r.leave_type_id != null ? String(r.leave_type_id) : "",
     name: String(r.leave_type_name || r.name || ""),
     leave_credit_type: String(r.leave_credit_type || ""),
+    leave_credit_timing: String(r.leave_credit_timing || "Start_Of_Period"),
     leave_credit_balance: r.leave_credit_balance != null ? String(r.leave_credit_balance) : "",
     initial_credit_balance: r.initial_credit_balance != null ? String(r.initial_credit_balance) : "",
     leave_expire: String(r.leave_expire || ""),
+    leave_expire_timing: String(r.leave_expire_timing || "End_Of_Period"),
     is_max_limit: !!r.is_max_limit,
     maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "0",
     effective_date: r.effective_date ? String(r.effective_date).slice(0, 10) : "",
@@ -523,19 +528,15 @@ export function CustomerFormModal({
     }
     if (key === "branches") {
       clear("branches");
+      validBranches.forEach((_, i) => clear(`branch_gstin_${i}`, `branch_pan_${i}`));
       if (!validBranches.length) errs.branches = "At least one branch is required";
-      validBranches.forEach((b, i) => {
-        clear(`branch_gstin_${i}`, `branch_pan_${i}`);
-        if (b.gstin && b.gstin.length > 15) errs[`branch_gstin_${i}`] = "GSTIN max 15 chars";
-        if (b.pan && b.pan.length > 10) errs[`branch_pan_${i}`] = "PAN max 10 chars";
-      });
     }
 
     setErrors(errs);
     const blocking = Object.keys(errs).filter((k) => {
       if (key === "customerDetails") return k === "name" || k === "legal";
       if (key === "address") return k === "address_line_1";
-      if (key === "branches") return k === "branches" || k.startsWith("branch_");
+      if (key === "branches") return k === "branches";
       return false;
     });
     if (blocking.length) {
@@ -551,10 +552,6 @@ export function CustomerFormModal({
     if (!f.legal.trim()) errs.legal = "Legal business name is required";
     if (!f.address_line_1.trim()) errs.address_line_1 = "Address line 1 is required";
     if (!validBranches.length) errs.branches = "At least one branch is required";
-    validBranches.forEach((b, i) => {
-      if (b.gstin && b.gstin.length > 15) errs[`branch_gstin_${i}`] = "GSTIN max 15 chars";
-      if (b.pan && b.pan.length > 10) errs[`branch_pan_${i}`] = "PAN max 10 chars";
-    });
     setErrors(errs);
     if (Object.keys(errs).length) {
       notify("Please fix the highlighted fields", "err");
@@ -1014,12 +1011,14 @@ export function CustomerFormModal({
                       <input className={inputCls} value={b.branch_legal_name}
                         onChange={(e) => updateBranch(b.key, { branch_legal_name: e.target.value })} />
                     </Field>
-                    <Field label="GSTIN">
+                    <Field label="GSTIN" error={errors[`branch_gstin_${validBranches.findIndex((v) => v.key === b.key)}`]}>
                       <input className={inputCls} value={b.gstin} maxLength={15}
+                        placeholder="e.g. 27AAHCK4749A1ZL"
                         onChange={(e) => updateBranch(b.key, { gstin: e.target.value.toUpperCase() })} />
                     </Field>
-                    <Field label="PAN">
+                    <Field label="PAN" error={errors[`branch_pan_${validBranches.findIndex((v) => v.key === b.key)}`]}>
                       <input className={inputCls} value={b.pan} maxLength={10}
+                        placeholder="e.g. AAHCK4749A"
                         onChange={(e) => updateBranch(b.key, { pan: e.target.value.toUpperCase() })} />
                     </Field>
                   </div>
@@ -1271,7 +1270,8 @@ export function CustomerFormModal({
               <div>
                 <p className="text-sm font-bold text-primary">Leave & Holiday Billing</p>
                 <p className="mt-0.5 text-xs text-muted">
-                  Week-off / leave / holiday billability and per-leave-type credit rules.
+                  Week Off / Holidays Billable: bill worked weekend or holiday hours as normal (no Comp-Off credit).
+                  Comp Off Billable: bill as Comp-Off when the direct flag is off. If both off: credit Comp-Off leave on submit.
                 </p>
               </div>
               <div className="flex flex-wrap gap-5 rounded-xl border border-subtle bg-surface-2/30 px-4 py-3">
@@ -1280,7 +1280,15 @@ export function CustomerFormModal({
                   ["leave_billable", "Leave billable"],
                   ["holidays_billable", "Holidays billable"],
                 ] as const).map(([k, label]) => (
-                  <label key={k} className="flex items-center gap-2 text-sm font-medium text-primary">
+                  <label key={k} className="flex items-center gap-2 text-sm font-medium text-primary"
+                    title={
+                      k === "week_off_billable"
+                        ? "Bill weekend hours worked as normal worked time (precedence over Comp Off Billable)"
+                        : k === "holidays_billable"
+                          ? "Bill holiday hours worked as normal; also bills pure holiday-off days"
+                          : undefined
+                    }
+                  >
                     <input type="checkbox" className={chk} checked={!!pol[k]}
                       onChange={(e) => setPolicy(k, e.target.checked)} />
                     {label}
@@ -1290,9 +1298,16 @@ export function CustomerFormModal({
 
               <div className="rounded-control border border-subtle bg-surface-2/20 p-4">
                 <div className="mb-3">
-                  <p className="text-sm font-bold text-primary">Leave Billing Policy</p>
+                  <p className="text-sm font-bold text-primary">
+                    Leave Billing Policy
+                    <span className="ml-2 inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">
+                      Customer defaults
+                    </span>
+                  </p>
                   <p className="mt-0.5 text-xs text-muted">
-                    Per-leave-type credit and expiry rules for this customer (same as Project).
+                    FALLBACK rules — they apply only to branches that have no leave policy of
+                    their own. Each branch's own Leave Billing Policy (Branch wizard) overrides
+                    these per leave type, and a project can override the branch again.
                   </p>
                 </div>
                 <LeaveBillingPolicySection
@@ -1312,7 +1327,8 @@ export function CustomerFormModal({
               <div>
                 <p className="text-sm font-bold text-primary">Comp Off</p>
                 <p className="mt-0.5 text-xs text-muted">
-                  Compensatory-off balance and carry-forward limits.
+                  When Week Off / Holidays Billable is off: Comp Off Billable ON bills weekend/holiday
+                  work as Comp-Off (no leave credit). OFF credits Comp-Off leave on submit instead.
                 </p>
               </div>
               <label className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -1459,7 +1475,13 @@ export function CustomerFormModal({
                       ? { duration: 0 }
                       : { duration: motionTok.panel, ease: motionTok.easeOut }
                   }
-                  className="wiz-moonlit-form-card mx-auto max-w-5xl rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8"
+                  className={`wiz-moonlit-form-card mx-auto rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8 ${
+                    // Match the New Opportunity form's tidy narrow card; give the
+                    // table-heavy steps (branches / billing) extra room.
+                    currentSection.key === "branches" || currentSection.key === "billingPolicy"
+                      ? "max-w-5xl"
+                      : "max-w-3xl"
+                  }`}
                 >
                   <WizardStepHeader
                     title={currentSection.title}

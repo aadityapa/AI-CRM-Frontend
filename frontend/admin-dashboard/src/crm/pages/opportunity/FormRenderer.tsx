@@ -47,11 +47,14 @@ export interface FieldRenderProps {
   nextFieldKey?: string;
   strictSequential?: boolean;
   flashKeys?: string[];
+  /** Keys forced into readonly/auto style (e.g. RFI Value when formula inputs exist). */
+  forceReadonlyKeys?: string[];
   onChange: (f: FieldDef, value: unknown) => void;
   onBlur: (f: FieldDef) => void;
   registerRef?: (key: string, el: HTMLElement | null) => void;
   onAddNew?: (kind: NonNullable<FieldDef["addNew"]>, f: FieldDef) => void;
 }
+
 
 /* Error state composes the token .input-error recipe on the flat input
  * (danger border at rest/hover, danger focus ring) — see styles/tokens.css. */
@@ -91,6 +94,7 @@ function FieldControl({
   nextFieldKey,
   strictSequential,
   flashKeys,
+  forceReadonlyKeys,
   onChange,
   onBlur,
   registerRef,
@@ -104,10 +108,20 @@ function FieldControl({
   const reason = disabledReason(f);
   const disabled = !!reason;
   const err = errors[f.key];
+  const forceReadonly = !!forceReadonlyKeys?.includes(f.key) || f.type === "readonly";
   const strValue = f.type === "checkbox" ? "" : String(value ?? "").trim();
-  const showAutoBadge = !!f.autoFilledFrom && strValue !== "";
+  const showAutoBadge = (!!f.autoFilledFrom || (forceReadonlyKeys?.includes(f.key) && f.computed?.formula === "rfiValue"))
+    && strValue !== "";
   const describedBy = err ? `${f.key}-err` : reason ? `${f.key}-hint` : f.helperText ? `${f.key}-help` : undefined;
   const isNext = nextFieldKey === f.key;
+  const displayValue = (() => {
+    if (!forceReadonlyKeys?.includes(f.key)) return value;
+    if (f.type === "currency" || f.computed?.formula === "rfiValue") {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : String(value ?? "");
+    }
+    return value;
+  })();
 
   const common = {
     id: f.key,
@@ -127,7 +141,17 @@ function FieldControl({
     disabled ? "opacity-50 cursor-not-allowed" : ""
   }`;
 
-  switch (f.type) {
+  if (forceReadonlyKeys?.includes(f.key) && f.type !== "checkbox") {
+    control = (
+      <input
+        {...common}
+        readOnly
+        value={String(displayValue ?? "")}
+        placeholder={f.helperText || "Auto-calculated"}
+        className={`${lockedInputCls} pl-9`}
+      />
+    );
+  } else switch (f.type) {
     case "select":
       /* Auto-filled selects (e.g. Customer Type) are display-only — change via source dropdown. */
       if (f.autoFilledFrom) {
@@ -278,7 +302,7 @@ function FieldControl({
         </div>
       ) : control}
       {showAutoBadge && <AutoFilledBadge />}
-      {f.helperText && f.type !== "readonly" && (
+      {f.helperText && (f.type !== "readonly" || forceReadonlyKeys?.includes(f.key)) && (
         <p id={`${f.key}-help`} className="mt-1 text-[11px] text-muted">{f.helperText}</p>
       )}
       {reason && (
@@ -304,10 +328,10 @@ function FieldControl({
       ? "ring-1 ring-strong"
       : "";
 
-  const iconKind = f.type === "readonly" ? undefined : guessFieldIcon(f.key, f.type);
+  const iconKind = forceReadonly ? undefined : guessFieldIcon(f.key, f.type);
   // Opportunity ID (readonly): lock on the right only — no leading icon.
   // Auto-filled emails/phones: green check (not lock), matching the target mockup.
-  const showLock = f.type === "readonly";
+  const showLock = forceReadonly;
   const isFilled = !showLock && !err && strValue !== "";
   const Lead = iconKind ? FIELD_ICONS[iconKind] : null;
   const needsPad = !!Lead;
@@ -317,7 +341,7 @@ function FieldControl({
       <Field label={f.label} required={f.required} error={undefined}>
         <div className="relative">
           {Lead && needsPad && (
-            <span className="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-[color:var(--wiz-muted,#9CA3AF)]">
+            <span className="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-[color:var(--wiz-muted)]">
               <Lead size={15} aria-hidden />
             </span>
           )}
@@ -333,7 +357,7 @@ function FieldControl({
           {(showLock || isFilled) && !f.addNew && (
             <span className="pointer-events-none absolute right-3.5 top-1/2 z-[1] -translate-y-1/2">
               {showLock ? (
-                <Lock size={14} className="text-[color:var(--wiz-muted,#9CA3AF)]" aria-hidden />
+                <Lock size={14} className="text-[color:var(--wiz-muted)]" aria-hidden />
               ) : (
                 <Check size={15} className="text-[color:var(--wiz-success,#22C55E)]" strokeWidth={2.5} aria-hidden />
               )}

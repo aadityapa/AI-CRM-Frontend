@@ -9,7 +9,7 @@ import { crmGet } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { CrmLink } from "../routerHooks";
 import { FadeInUp, Stagger } from "../components/motion3d";
-import { EmptyState, ErrorBox, KpiCard, SkeletonText, StatusBadge, statusColor } from "../components/ui";
+import { EmptyState, ErrorBox, KpiCard, Modal, SkeletonText, Spinner, StatusBadge, btnSecondary, statusColor } from "../components/ui";
 
 /* ---------- Backend response shapes (services/dashboards.py) ---------- */
 
@@ -212,6 +212,158 @@ function FunnelList({ data }: { data: { status: string; count: number }[] }) {
   );
 }
 
+/* ---------- PO expiry warnings (Finance / Admin) ----------
+ * Active POs whose End Date falls within the next 45 days (or already passed)
+ * surface as a dashboard warning so renewals start before billing breaks. */
+
+type PoExpiryRow = {
+  id: number; po_number: string; customer_name: string; end_date: string;
+  balance_value?: number | null; days_left?: number; days_overdue?: number;
+};
+
+function PoExpiryWarnings() {
+  const { data } = useDashData<{ expired: PoExpiryRow[]; expiring_soon: PoExpiryRow[] }>(
+    "/api/purchase-orders/reports/expiry?days=45",
+  );
+  const expired = data?.expired || [];
+  const soon = data?.expiring_soon || [];
+  if (expired.length === 0 && soon.length === 0) return null;
+
+  const rowCls = "flex flex-wrap items-center justify-between gap-2 py-1.5 text-sm";
+  return (
+    <FadeInUp>
+      <div
+        className="rounded-card border border-warning/40 bg-warning-soft/60 p-4 shadow-raised"
+        role="alert"
+      >
+        <p className="text-sm font-bold text-primary">
+          ⚠️ Purchase Orders expiring {soon.length > 0 ? `within 45 days (${soon.length})` : ""}
+          {expired.length > 0 ? `${soon.length > 0 ? " · " : ""}already expired (${expired.length})` : ""}
+        </p>
+        <ul className="mt-2 divide-y divide-subtle/60">
+          {expired.map((po) => (
+            <li key={`e${po.id}`} className={rowCls}>
+              <CrmLink to={`pos/${po.id}`} className="font-semibold text-danger hover:underline">
+                {po.po_number}
+              </CrmLink>
+              <span className="text-muted">{po.customer_name}</span>
+              <span className="font-semibold text-danger">
+                EXPIRED {po.days_overdue} day{po.days_overdue === 1 ? "" : "s"} ago ({po.end_date})
+              </span>
+            </li>
+          ))}
+          {soon.map((po) => (
+            <li key={`s${po.id}`} className={rowCls}>
+              <CrmLink to={`pos/${po.id}`} className="font-semibold text-primary hover:underline">
+                {po.po_number}
+              </CrmLink>
+              <span className="text-muted">{po.customer_name}</span>
+              <span className="font-semibold text-primary">
+                expires in {po.days_left} day{po.days_left === 1 ? "" : "s"} ({po.end_date})
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </FadeInUp>
+  );
+}
+
+/* ---------- Bench / redeployment radar (RMG / Sales_Head) ---------- */
+
+type BenchRow = {
+  project_employee_id: number; employee_id: number; employee_name: string;
+  role_title: string | null; project_id: number; project_name: string;
+  customer_name: string | null; po_end_date: string | null; days_left: number | null;
+};
+
+type BenchMatch = {
+  requirement_id: number; req_number: string; title: string; status: string;
+  match_score: number | null; skills_matched: string[]; mandatory_total: number;
+};
+
+function BenchCard() {
+  const { data } = useDashData<BenchRow[]>("/api/dashboard/bench?days=60");
+  const [matchFor, setMatchFor] = useState<BenchRow | null>(null);
+  const [matches, setMatches] = useState<BenchMatch[] | null>(null);
+  const [matchErr, setMatchErr] = useState("");
+  const rows = data || [];
+  if (rows.length === 0) return null;
+
+  const openMatches = (r: BenchRow) => {
+    setMatchFor(r);
+    setMatches(null);
+    setMatchErr("");
+    crmGet<BenchMatch[]>(`/api/dashboard/bench/${r.employee_id}/matches`)
+      .then((res) => setMatches(res.data || []))
+      .catch((e: any) => setMatchErr(e?.message || "Failed to compute matches"));
+  };
+
+  const tone = (d: number | null) =>
+    d == null ? "text-muted" : d <= 0 ? "text-danger" : d <= 30 ? "text-warning" : "text-secondary";
+  return (
+    <FadeInUp>
+      <div className="rounded-card border border-subtle bg-surface-1 p-4 shadow-raised">
+        <p className="text-sm font-bold text-primary">
+          🪑 Bench radar — rolling off within 60 days ({rows.length})
+        </p>
+        <ul className="mt-2 divide-y divide-subtle/60">
+          {rows.map((r) => (
+            <li key={r.project_employee_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+              <span className="min-w-0">
+                <span className="font-semibold text-primary">{r.employee_name}</span>
+                {r.role_title && <span className="text-muted"> · {r.role_title}</span>}
+                <span className="text-muted"> · {r.project_name}{r.customer_name ? ` (${r.customer_name})` : ""}</span>
+              </span>
+              <span className="inline-flex items-center gap-3">
+                <span className={`font-semibold ${tone(r.days_left)}`}>
+                  {r.days_left == null ? "—"
+                    : r.days_left <= 0 ? `PO ended ${-r.days_left}d ago`
+                    : `${r.days_left}d left`} {r.po_end_date ? `(${r.po_end_date})` : ""}
+                </span>
+                <button className={`${btnSecondary} !h-8 !px-2.5 !text-xs`} onClick={() => openMatches(r)}>
+                  Find matches
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      {matchFor && (
+        <Modal title={`Redeployment matches — ${matchFor.employee_name}`} onClose={() => setMatchFor(null)}>
+          {matchErr ? (
+            <p className="text-sm text-danger">{matchErr}</p>
+          ) : matches === null ? (
+            <Spinner label="Scoring against open requirements…" />
+          ) : matches.length === 0 ? (
+            <p className="text-sm text-muted">No open requirements to match against right now.</p>
+          ) : (
+            <ul className="divide-y divide-subtle">
+              {matches.map((m) => (
+                <li key={m.requirement_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="min-w-0">
+                    <CrmLink to={`requirements/${m.requirement_id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                      {m.req_number} — {m.title}
+                    </CrmLink>
+                    {m.skills_matched.length > 0 && (
+                      <span className="block text-xs text-muted">Matched: {m.skills_matched.join(", ")}</span>
+                    )}
+                  </span>
+                  <span className={`text-sm font-bold tabular-nums ${
+                    (m.match_score ?? 0) >= 60 ? "text-success" : (m.match_score ?? 0) >= 35 ? "text-warning" : "text-muted"
+                  }`}>
+                    {m.match_score ?? "—"}%
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      )}
+    </FadeInUp>
+  );
+}
+
 /* ---------- Executive (Sales_Head / Admin) ---------- */
 
 function ExecutiveSection() {
@@ -221,7 +373,7 @@ function ExecutiveSection() {
     return <Section title="Executive Overview"><ErrorBox error={error || "No data"} onRetry={retry} /></Section>;
   return (
     <Section title="Executive Overview">
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <KpiCard label="Headcount" value={data.headcount} sub="Active employees" />
         <KpiCard label="Customers" value={data.customer_count} sub="Active customers" />
         <KpiCard label="Projects" value={data.project_count} sub="Active projects" />
@@ -302,7 +454,7 @@ function RmgSection() {
     return <Section title="RMG Pipeline"><ErrorBox error={error || "No data"} onRetry={retry} /></Section>;
   return (
     <Section title="RMG Pipeline">
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <KpiCard
           label="Pending Engineering Reviews"
           value={data.totals.pending_engineering_reviews}
@@ -462,7 +614,7 @@ function FinanceSection() {
     return <Section title="Finance"><ErrorBox error={error || "No data"} onRetry={retry} /></Section>;
   return (
     <Section title="Finance">
-      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <KpiCard
           label="Outstanding Invoices"
           value={data.outstanding_invoices.count}
@@ -544,18 +696,28 @@ export function CrmDashboardPage() {
   const showRmg = useHasRole("RMG");
   const showTa = useHasRole("TA");
   const showFinance = useHasRole("Finance");
+  // PO expiry warnings: Finance/Admin plus Sales & Sales Head (they own the
+  // customer relationship and drive PO renewals before billing breaks).
+  const showPoExpiry = useHasRole("Finance", "Sales", "Sales_Head");
+  // Upcoming interviews moved to the Interview Calendar tab (TA / RMG / Admin /
+  // CEO), which shows AI sessions and panel rounds together on a week grid
+  // rather than a flat 30-day list. Sales and Sales_Head lost it entirely —
+  // scheduling and running interviews is not their workflow.
+  const showBench = useHasRole("RMG", "Sales_Head");
   const nothing = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 xl:space-y-8">
       <FadeInUp>
         <h1 className="text-display w-fit text-xl font-bold text-primary">
           Dashboard
         </h1>
-        <p className="mt-1 text-sm text-muted">
+        <p className="mt-0.5 text-sm text-muted">
           Welcome back, {me.full_name || me.username}
         </p>
       </FadeInUp>
+      {showPoExpiry && <PoExpiryWarnings />}
+      {showBench && <BenchCard />}
       {showExecutive && <ExecutiveSection />}
       {showRequirements && <RequirementsSection />}
       {showRmg && <RmgSection />}

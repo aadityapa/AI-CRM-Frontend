@@ -13,6 +13,7 @@ const CandidatesListPage = lazy(() => import("./pages/CrmCandidates").then((m) =
 const CandidateDetailPage = lazy(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidateDetailPage })));
 const ProfilesListPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfilesListPage })));
 const ProfileDetailPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfileDetailPage })));
+const CalendarPage = lazy(() => import("./pages/Calendar"));
 const ProjectsListPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsListPage })));
 const ProjectDetailPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetailPage })));
 const ProjectEmployeesPage = lazy(() => import("./pages/ProjectEmployees").then((m) => ({ default: m.ProjectEmployeesPage })));
@@ -27,7 +28,16 @@ const PurchaseOrdersPage = lazy(() => import("./pages/Finance").then((m) => ({ d
 const PODetailPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.PODetailPage })));
 const InvoicesPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.InvoicesPage })));
 const InvoiceDetailPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.InvoiceDetailPage })));
+const TaxInvoiceGeneratorPage = lazy(() =>
+  import("./pages/TaxInvoiceGenerator").then((m) => ({ default: m.TaxInvoiceGeneratorPage })),
+);
+const InvoiceTaxInvoicePage = lazy(() =>
+  import("./components/invoice/InvoicePage").then((m) => ({ default: m.InvoicePage })),
+);
 const TdsPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.TdsPage })));
+const FinanceReportsPage = lazy(() =>
+  import("./pages/FinanceReports").then((m) => ({ default: m.FinanceReportsPage })),
+);
 const EmployeesListPage = lazy(() => import("./pages/Employees").then((m) => ({ default: m.EmployeesListPage })));
 const EmployeeDetailPage = lazy(() => import("./pages/Employees").then((m) => ({ default: m.EmployeeDetailPage })));
 const UsersAdminPage = lazy(() => import("./pages/UsersAdmin").then((m) => ({ default: m.UsersAdminPage })));
@@ -49,6 +59,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "candidates/:id", element: CandidateDetailPage },
   { pattern: "profiles", element: ProfilesListPage },
   { pattern: "profiles/:id", element: ProfileDetailPage },
+  { pattern: "calendar", element: CalendarPage },
   { pattern: "projects", element: ProjectsListPage },
   { pattern: "projects/:id", element: ProjectDetailPage },
   { pattern: "project-employees", element: ProjectEmployeesPage },
@@ -62,8 +73,11 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "pos", element: PurchaseOrdersPage },
   { pattern: "pos/:id", element: PODetailPage },
   { pattern: "invoices", element: InvoicesPage },
+  { pattern: "invoices/tax-generator", element: TaxInvoiceGeneratorPage },
+  { pattern: "invoices/:id/tax-invoice", element: InvoiceTaxInvoicePage },
   { pattern: "invoices/:id", element: InvoiceDetailPage },
   { pattern: "tds", element: TdsPage },
+  { pattern: "finance-reports", element: FinanceReportsPage },
   { pattern: "employees", element: EmployeesListPage },
   { pattern: "employees/:id", element: EmployeeDetailPage },
   { pattern: "users", element: UsersAdminPage },

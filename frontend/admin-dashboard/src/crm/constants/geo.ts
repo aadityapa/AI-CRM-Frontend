@@ -108,6 +108,7 @@ export const CONTACT_ROLES = [
   "Operational",
   "Procurement",
   "HR",
+  "PMO",
 ] as const;
 
 export type ContactRole = (typeof CONTACT_ROLES)[number];

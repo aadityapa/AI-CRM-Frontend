@@ -74,8 +74,9 @@ export const BILLING_TYPE_OPTIONS = [
 ];
 
 export const LEAVE_POLICY_OPTIONS = [
-  { value: "Credit Balance Every Month", label: "Credit Balance Every Month" },
-  { value: "Carry Forward Every Month", label: "Carry Forward Every Month" },
+  { value: "Monthly", label: "Monthly" },
+  { value: "Quarterly", label: "Quarterly" },
+  { value: "Yearly", label: "Yearly" },
 ];
 
 export const APPRAISAL_CYCLE_OPTIONS = [
@@ -127,7 +128,7 @@ export interface FieldDef {
   /** Show a "+" affordance next to this select to create a new master inline. */
   addNew?: "customer" | "branch" | "contact" | "hiringManager" | "role";
   /** Derived/computed read-only cell. */
-  computed?: { from: string[]; formula: "monthlyTimes12" | "ctcDerive" };
+  computed?: { from: string[]; formula: "monthlyTimes12" | "ctcDerive" | "rfiValue" };
   /** For type=file: allow multiple files. */
   multiple?: boolean;
   /** Accept attribute for file inputs. */
@@ -177,6 +178,10 @@ export const SALES_STAGE_OPTIONS = [
   { value: "Sales Verify", label: "Sales Verify" },
 ];
 
+/** Statuses a Sales person may set. The later stages are driven by TA/RMG as the
+ * pipeline actually progresses, so Sales only opens the first two. */
+export const SALES_ONBOARDING_STATUS_VALUES = ["Sales Validation", "Sourcing"];
+
 export const ONBOARDING_STATUS_OPTIONS = [
   { value: "Sales Validation", label: "Sales Validation" },
   { value: "Sourcing", label: "Sourcing" },
@@ -201,12 +206,14 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "branch_id", label: "Branch", type: "select", required: true, optionsSource: "branches",
         dependsOn: { field: "customer_id", hint: "Select a customer first." }, next: "contact_person_id" },
       { key: "contact_person_id", label: "Contact Person", type: "select", required: true, optionsSource: "contacts",
+        addNew: "contact",
         dependsOn: { field: "branch_id", hint: "Select a branch first." }, next: "contact_email" },
       { key: "contact_email", label: "Contact Email", type: "email", required: true, autoFilledFrom: "contact", next: "contact_phone" },
       { key: "contact_phone", label: "Contact Phone", type: "tel", autoFilledFrom: "contact", next: "customer_type" },
       { key: "customer_type", label: "Customer Type", type: "select", required: true, optionsSource: "customerTypes",
         autoFilledFrom: "customer", next: "hiring_manager_id" },
       { key: "hiring_manager_id", label: "Hiring Manager", type: "select", optionsSource: "hiringManagers",
+        addNew: "hiringManager",
         dependsOn: { field: "branch_id", hint: "Select a branch first." }, next: "hiring_manager_email" },
       { key: "hiring_manager_email", label: "Hiring Manager Email", type: "email", autoFilledFrom: "hiringManager", next: "hiring_manager_contact" },
       { key: "hiring_manager_contact", label: "Hiring Manager Contact", type: "tel", autoFilledFrom: "hiringManager" },
@@ -276,14 +283,18 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "leave_billable", label: "Leave Billable", type: "checkbox", visibleFor: ["T&M"] },
       { key: "credit_leave_monthly", label: "Credit Leave Monthly", type: "number", visibleFor: ["T&M"] },
       { key: "leave_policy", label: "Leave Policy", type: "select", optionsSource: "leavePolicy", visibleFor: ["T&M"] },
-      { key: "holidays", label: "Holidays", type: "number", default: 10.0, visibleFor: ["T&M"] },
+      { key: "holidays", label: "Holidays", type: "number", visibleFor: ["T&M"] },
       { key: "weekoff", label: "Weekoff", type: "number", default: 104.0, visibleFor: ["T&M"] },
-      { key: "leave", label: "Leave", type: "number", default: 24.0, visibleFor: ["T&M"] },
+      { key: "leave", label: "Leave", type: "number", visibleFor: ["T&M"] },
     ],
   },
 
   // ---- Commercial Details ---------------------------------------------------
+  // BEFORE Candidate CTC Slab so the Billing Type is chosen first — the CTC Slab
+  // revenue chain needs it to annualise the Rate.
   // Full for T&M; RFI Value only for Work Package / Fixed Price / Retainer.
+  // RFI Value auto = Annual Revenue × (Period ÷ 12) × Positions when inputs exist
+  // (recomputes reactively once the CTC Slab below supplies Annual Revenue).
   {
     key: "commercial",
     title: "Commercial Details",
@@ -292,15 +303,22 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "billing_type", label: "Billing Type", type: "select",
         options: BILLING_TYPE_OPTIONS, optionsSource: "billingType", visibleFor: ["T&M"] },
       { key: "hours_per_day", label: "Hours Per Day", type: "number", default: 8, visibleFor: ["T&M"] },
-      { key: "actual_billing_days", label: "Actual Billing Days", type: "readonly", default: 227.0, visibleFor: ["T&M"],
+      { key: "actual_billing_days", label: "Actual Billing Days", type: "readonly", visibleFor: ["T&M"],
         helperText: "Auto = 365 − non-billable weekoffs, holidays and leave." },
-      { key: "actual_billing_hours", label: "Actual Billing Hours", type: "readonly", default: 1816.0, visibleFor: ["T&M"],
+      { key: "actual_billing_hours", label: "Actual Billing Hours", type: "readonly", visibleFor: ["T&M"],
         helperText: "Auto = Actual Billing Days × Hours Per Day." },
-      { key: "rfi_value", label: "RFI Value", type: "currency", placeholder: "#######.##", min: 0 }, // all types
+      { key: "rfi_value", label: "RFI Value", type: "currency", placeholder: "#######.##", min: 0,
+        helperText: "Auto = Annual Revenue × (Period ÷ 12) × Positions",
+        computed: {
+          from: ["revenue_annual", "tm_duration_months", "tm_positions_count", "project_duration_months"],
+          formula: "rfiValue",
+        } },
     ],
   },
 
   // ---- Candidate CTC Slab (all opportunity types) ---------------------------
+  // After Commercial Details: the revenue chain uses the Billing Type chosen
+  // above to annualise the Rate.
   {
     key: "ctcSlab",
     title: "Candidate CTC Slab",
@@ -327,22 +345,6 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
           computed: { from: ["engineering_budget", "hike_pct"], formula: "ctcDerive" } },
       ],
     },
-  },
-
-  // ---- Work Page Details ----------------------------------------------------
-  // Non-T&M contract inputs; T&M keeps these hidden.
-  {
-    key: "workPage",
-    title: "Work Page Details",
-    kind: "fields",
-    fields: [
-      { key: "sales_stage", label: "Stage", type: "select", optionsSource: "salesStages", default: "Sales Verify" },
-      { key: "onboarded_count", label: "Onboarded Count", type: "number", default: 0, min: 0 },
-      { key: "project_duration_months", label: "Contract Duration (Months)", type: "number", min: 0,
-        visibleFor: ["Fixed_Price"], helperText: "Used to annualize the fixed total Rate; leave blank when already annual." },
-      { key: "project_scope", label: "Project Scope", type: "richtext", colSpan: 2,
-        visibleFor: ["Work_Package", "Fixed_Price", "Retainer"] },
-    ],
   },
 
   // ---- Attachments (always) -------------------------------------------------

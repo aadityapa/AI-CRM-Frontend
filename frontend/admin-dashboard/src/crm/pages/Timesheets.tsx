@@ -11,7 +11,7 @@ import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge,
@@ -21,7 +21,7 @@ import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -32,7 +32,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -95,6 +95,9 @@ type TimesheetDetail = Timesheet & {
   customer_name?: string | null;
   branch_id?: number | null;
   branch_name?: string | null;
+  /** True when opportunity.branch_id points at another customer and was suppressed. */
+  branch_unlinked?: boolean;
+  branch_link_message?: string | null;
   project_type?: string | null;
   timesheet_period?: string | null;
   period_start_date?: string | null;
@@ -135,6 +138,9 @@ type Summary = {
   actual_billable_day?: number | null;
   total_leave_days?: number | null;
   total_leave_billable_days?: number | null;
+  loss_of_pay_from_leave?: number | null;
+  loss_of_pay_from_absent?: number | null;
+  loss_of_pay_from_half_day?: number | null;
   total_loss_of_pay_days?: number | null;
   comp_off_earned?: number | null;
   comp_off_billed?: number | null;
@@ -153,6 +159,8 @@ type InvoiceLineItem = {
   rate_per_unit: number;
   leave_billable_days: number;
   comp_off_billable_qty?: number | null;
+  /** Reporting only — leave excess + Absent + Half_Day; does not change billed qty. */
+  loss_of_pay_days?: number | null;
   amount: number;
 };
 
@@ -185,7 +193,6 @@ type EntryRow = {
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
 const TS_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"];
-const ATTENDANCE = ["Present", "Week_Off", "Holiday", "Leave", "Absent", "Half_Day"];
 const LOCATIONS: { value: string; label: string }[] = [
   { value: "Onsite", label: "On Site" },
   { value: "Remote", label: "Offshore/Remote" },
@@ -210,9 +217,11 @@ function computeBillables(
 
   if (!working && row.day_type !== "Working") {
     if (att === "Holiday") {
-      // Worked holiday → Comp Off Billable; pure holiday-off → holidays_billable.
+      // DECISION: holidays_billable > comp_off_billable > credit (mirror server).
       if (hours > 0) {
-        if (!policy.comp_off_billable) return { billable_hours: 0, billable_day: 0 };
+        if (!(policy.holidays_billable || policy.comp_off_billable)) {
+          return { billable_hours: 0, billable_day: 0 };
+        }
         return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
       }
       return policy.holidays_billable
@@ -222,8 +231,8 @@ function computeBillables(
           }
         : { billable_hours: 0, billable_day: 0 };
     }
-    // Week Off worked hours → Comp Off Billable (not week_off_billable).
-    if (hours > 0 && policy.comp_off_billable) {
+    // Week Off: week_off_billable > comp_off_billable > credit.
+    if (hours > 0 && (policy.week_off_billable || policy.comp_off_billable)) {
       return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
     }
     return { billable_hours: 0, billable_day: 0 };
@@ -259,7 +268,9 @@ function computeBillables(
   }
   if (att === "Holiday") {
     if (hours > 0) {
-      if (!policy.comp_off_billable) return { billable_hours: 0, billable_day: 0 };
+      if (!(policy.holidays_billable || policy.comp_off_billable)) {
+        return { billable_hours: 0, billable_day: 0 };
+      }
       return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
     }
     return policy.holidays_billable
@@ -278,14 +289,16 @@ function liveCompOffDayFraction(
   policy: BillingPolicy,
   mode: "earned" | "billed",
 ): number {
-  const wantBill = mode === "billed";
-  if (wantBill !== !!policy.comp_off_billable) return 0;
   return round2(entries.reduce((s, e) => {
     const hours = Number(e.hours_worked || 0);
     if (hours <= 0) return s;
-    const isOff = e.day_type === "Week_Off" || e.day_type === "Holiday"
-      || e.attendance_status === "Week_Off" || e.attendance_status === "Holiday";
-    if (!isOff) return s;
+    const isHoliday = e.day_type === "Holiday" || e.attendance_status === "Holiday";
+    const isWeekOff = e.day_type === "Week_Off" || e.attendance_status === "Week_Off";
+    if (!isHoliday && !isWeekOff) return s;
+    const billed = isHoliday
+      ? !!(policy.holidays_billable || policy.comp_off_billable)
+      : !!(policy.week_off_billable || policy.comp_off_billable);
+    if (mode === "billed" ? !billed : billed) return s;
     if (hours >= policy.min_hours_full_day) return s + 1;
     if (hours >= policy.min_hours_half_day) return s + 0.5;
     return s;
@@ -313,27 +326,25 @@ function classifyLeavePaidVsLop(
     const half = e.leave_period === "Half_AM" || e.leave_period === "Half_PM";
     const req = half ? 0.5 : 1;
     const name = e.leave_type;
-    if (isCompOffName(name)) {
-      paidDays.push(req);
-      lopDays.push(0);
-      runningUsed[name] = (runningUsed[name] || 0) + req;
-      return;
-    }
     if (isLopName(name)) {
       paidDays.push(0);
       lopDays.push(req);
       totalLop += req;
       return;
     }
-    const avail = Math.max(Number(leaveBalances[name] ?? 0), 0);
-    const used = runningUsed[name] || 0;
+    // Comp-Off capped like other paid types (no overdraft → excess is LOP).
+    // Match balances case-insensitively (server LeavePolicyType names).
+    const balKey = Object.keys(leaveBalances).find((k) => k.toLowerCase() === name.toLowerCase()) || name;
+    const avail = Math.max(Number(leaveBalances[balKey] ?? 0), 0);
+    const usedKey = balKey;
+    const used = runningUsed[usedKey] || 0;
     const remaining = Math.max(avail - used, 0);
     const paid = Math.min(req, remaining);
     const lop = round2(req - paid);
     paidDays.push(paid);
     lopDays.push(lop);
     totalLop += lop;
-    runningUsed[name] = used + paid;
+    runningUsed[usedKey] = used + paid;
   });
   return { paidDays, lopDays, totalLop: round2(totalLop) };
 }
@@ -440,6 +451,8 @@ type ReportTab = typeof REPORT_TABS[number]["key"];
 export function TimesheetsListPage() {
   const isStaff = useHasRole("HR", "Finance", "RMG");
   const canManage = useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head");
+  // Force delete (also removes the linked invoice) — Sales/Sales_Head/RMG + Admin/CEO.
+  const canForceDelete = useHasRole("Sales", "Sales_Head", "RMG", "Admin", "CEO");
   const [tab, setTab] = useState<ReportTab>(() => (isStaff ? "due" : "all"));
   const [rows, setRows] = useState<Timesheet[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -598,12 +611,22 @@ export function TimesheetsListPage() {
                 <RowActions
                   entity="timesheet"
                   itemLabel={`${projectName(r.project_id)} · ${MONTHS[(r.month || 1) - 1]} ${r.year}`}
+                  onView={() => crmNavigate(`timesheets/${r.id}`)}
                   onEdit={() => crmNavigate(`timesheets/${r.id}`)}
                   deleteUrl={`/api/timesheets/${r.id}`}
-                  onDeleted={load}
+                  onDeleted={() => afterListDelete(r.id, setRows, load)}
                   notify={showToast}
                   canEdit
                   canDelete
+                  {...(canForceDelete ? {
+                    // Force delete: also removes the linked invoice (reverses its
+                    // PO consumption) in one server transaction.
+                    deactivateLabel: "Force delete (also delete invoice)",
+                    deactivateSuccessMessage: "Timesheet and linked invoice deleted",
+                    onDeactivate: async () => {
+                      await crmDelete(`/api/timesheets/${r.id}?force=true`);
+                    },
+                  } : {})}
                 />
               ) : undefined}
             />
@@ -627,10 +650,11 @@ export function TimesheetsListPage() {
 }
 
 function NewTimesheetModal({
-  projects, fallbackEmployees, initial, onClose, onDone, onError,
+  projects, initial, onClose, onDone, onError,
 }: {
   projects: any[];
-  fallbackEmployees: any[];
+  /** @deprecated unused — employees come from the selected project's team only */
+  fallbackEmployees?: any[];
   initial?: {
     project_id?: number; employee_id?: number; project_employee_id?: number;
     month?: number; year?: number;
@@ -654,10 +678,8 @@ function NewTimesheetModal({
   useEffect(() => {
     if (locked) return;
     setTeam(null);
-    if (!projectId) {
-      setEmployeeId("");
-      return;
-    }
+    setEmployeeId("");
+    if (!projectId) return;
     let cancelled = false;
     crmGet<any>(`/api/projects/${projectId}`)
       .then((r) => {
@@ -677,14 +699,24 @@ function NewTimesheetModal({
     }
   }, [locked, projectId, team]);
 
-  const employeeOptions = team && team.length > 0
-    ? team.map((t: any) => ({ id: t.employee_id, name: t.employee_name || `#${t.employee_id}` }))
-    : fallbackEmployees.map((e: any) => ({ id: e.id, name: e.full_name || `#${e.id}` }));
+  const teamLoading = !!projectId && team === null && !locked;
+  const employeeOptions = (team || []).map((t: any) => ({
+    id: t.employee_id,
+    name: t.employee_name || `#${t.employee_id}`,
+    peId: t.id as number | undefined,
+  }));
+  const selectedPeId = employeeOptions.find((o) => String(o.id) === employeeId)?.peId
+    ?? initial?.project_employee_id;
 
   const submit = async () => {
     const errs: Record<string, string> = {};
     if (!projectId) errs.project = "Project is required";
     if (!employeeId) errs.employee = "Employee is required";
+    else if (team && team.length > 0 && !employeeOptions.some((o) => String(o.id) === employeeId)) {
+      errs.employee = "Employee is not assigned to this project";
+    } else if (team && team.length === 0) {
+      errs.employee = "No active employees on this project — map an employee first";
+    }
     const y = Number(year);
     if (!(y >= 2000 && y <= 2100)) errs.year = "Enter a valid year";
     setErrors(errs);
@@ -694,7 +726,7 @@ function NewTimesheetModal({
       const res = await crmPost<Timesheet & { id: number }>("/api/timesheets", {
         project_id: Number(projectId),
         employee_id: Number(employeeId),
-        project_employee_id: initial?.project_employee_id ?? undefined,
+        project_employee_id: selectedPeId ?? undefined,
         month: Number(month),
         year: y,
         generate_days: generateDays,
@@ -728,6 +760,7 @@ function NewTimesheetModal({
       title={<span className="sr-only">{locked ? "Add Timesheet" : "New Timesheet"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -743,8 +776,21 @@ function NewTimesheetModal({
             </select>
           </WizardField>
           <WizardField label="Employee" required error={errors.employee} icon="user">
-            <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={locked || !projectId}>
-              <option value="">{projectId ? "Select employee…" : "Select a project first"}</option>
+            <select
+              className={inputCls}
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              disabled={locked || !projectId || teamLoading || (team !== null && team.length === 0)}
+            >
+              <option value="">
+                {!projectId
+                  ? "Select a project first"
+                  : teamLoading
+                    ? "Loading project team…"
+                    : team && team.length === 0
+                      ? "No employees mapped to this project"
+                      : "Select employee…"}
+              </option>
               {employeeOptions.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
           </WizardField>
@@ -929,7 +975,7 @@ function TimesheetApplyLeaveDialog({
                     "min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-200",
                     selected
                       ? "btn-gradient text-white shadow-[0_6px_16px_rgba(109,93,251,0.35)]"
-                      : "bg-transparent text-[color:var(--wiz-muted)] hover:bg-white/5 hover:text-[color:var(--wiz-text)]",
+                      : "bg-transparent text-[color:var(--wiz-muted)] hover:bg-black/[0.04] hover:text-[color:var(--wiz-text)] dark:hover:bg-white/5",
                     available.length === 0 ? "cursor-not-allowed opacity-50" : "",
                   ].filter(Boolean).join(" ")}
                 >
@@ -984,7 +1030,7 @@ function TimesheetApplyLeaveDialog({
         <div className="flex items-center justify-end gap-2 border-t border-[color:var(--wiz-border)] pt-4">
           <button
             type="button"
-            className={`${btnSecondary} !bg-transparent !border-[color:var(--wiz-border-strong)] hover:!bg-white/5`}
+            className={`${btnSecondary} !bg-transparent !border-[color:var(--wiz-border-strong)] hover:!bg-black/[0.04] dark:hover:!bg-white/5`}
             onClick={onClose}
           >
             Cancel
@@ -1264,17 +1310,38 @@ export function TimesheetDetailPage() {
       return s + (live.billable_hours || 0);
     }, 0);
     const actualBillableDay = billableDayFromHours(billableHours);
+    // Same paid/LOP split the grid uses (mirrors server classify).
     const totalLeaveDays = round2(entries.reduce((s, e) => {
       if (e.attendance_status !== "Leave") return s;
       const half = e.leave_period === "Half_AM" || e.leave_period === "Half_PM";
       return s + (half ? 0.5 : 1);
     }, 0));
+    const totalLeaveBillableDays = round2(entries.reduce((s, e, i) => {
+      if (e.attendance_status !== "Leave") return s;
+      const paid = leaveSplit.paidDays[i] || 0;
+      if (paid <= 0) return s;
+      const typeName = (e.leave_type || "").trim();
+      if (isLopName(typeName)) return s;
+      const perType = ts?.leave_billable_by_type && typeName
+        ? ts.leave_billable_by_type[typeName]
+        : undefined;
+      const isLeaveBillable = perType !== undefined ? perType : policy.leave_billable;
+      return isLeaveBillable ? s + paid : s;
+    }, 0));
+    // Mirror server: leave excess + Working Absent (1.0) + Working Half_Day (0.5).
+    const lopFromAbsent = entries.reduce((s, e) => (
+      e.day_type === "Working" && e.attendance_status === "Absent" ? s + 1 : s
+    ), 0);
+    const lopFromHalf = entries.reduce((s, e) => (
+      e.day_type === "Working" && e.attendance_status === "Half_Day" ? s + 0.5 : s
+    ), 0);
     return {
       hours,
       billableHours,
       actualBillableDay,
       totalLeaveDays,
-      totalLopDays: leaveSplit.totalLop,
+      totalLopDays: round2(leaveSplit.totalLop + lopFromAbsent + lopFromHalf),
+      totalLeaveBillableDays,
       compOffEarned: liveCompOffDayFraction(entries, policy, "earned"),
       compOffBilled: liveCompOffDayFraction(entries, policy, "billed"),
     };
@@ -1418,7 +1485,7 @@ export function TimesheetDetailPage() {
   const GRID_COLS = 11;
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       {/* ------------------------------------------------ header */}
       <div className="flex flex-wrap items-center gap-3">
         <CrmLink to="timesheets" className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300">
@@ -1433,7 +1500,7 @@ export function TimesheetDetailPage() {
 
       {/* ------------------------------------------------ header info card (Tab 9) */}
       <div className="glass rounded-panel p-4 sm:p-5">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           <LabeledValue label="Date" value={fmtDate(ts.created_at)} />
           <LabeledValue
             label="Project Title"
@@ -1446,7 +1513,14 @@ export function TimesheetDetailPage() {
               </CrmLink>
             }
           />
-          <LabeledValue label="Branch" value={ts.branch_name || "—"} />
+          <LabeledValue
+            label="Branch"
+            value={
+              ts.branch_name
+                || (ts.branch_unlinked ? (ts.branch_link_message || "Branch not linked to this customer") : null)
+                || "—"
+            }
+          />
           <LabeledValue label="Timesheet Period" value={ts.timesheet_period || fmtPeriod(ts.period_start_date, ts.period_end_date)} />
           <LabeledValue label="Project Employee" value={ts.employee_name || employeeName || `#${ts.employee_id}`} />
           <LabeledValue label="Project Type" value={pretty(ts.project_type)} />
@@ -1527,20 +1601,20 @@ export function TimesheetDetailPage() {
             )}
             {entries.map((e, i) => {
               const isLeave = e.attendance_status === "Leave";
-              const isCalendarHoliday = holidaySet.has(e.entry_date) || e.day_type === "Holiday";
+              // Trust the FRESH holiday overlay from the server (holidaySet is
+              // rebuilt each load from the current calendar). Falling back to the
+              // stored day_type would keep a moved/removed holiday showing.
+              const isCalendarHoliday = holidaySet.has(e.entry_date);
               const isWeekOff = e.day_type === "Week_Off";
               const hoursNum = Number(e.hours_worked || 0);
               const weekendWorked = (isWeekOff || isCalendarHoliday) && hoursNum > 0;
               const hoursEditable = editable && !isCalendarHoliday
                 && (e.day_type === "Working" || isWeekOff);
-              const attendanceOptions = isCalendarHoliday
-                ? ["Holiday"]
-                : e.day_type === "Week_Off"
-                  ? ATTENDANCE.filter((a) => ["Week_Off", "Leave", "Absent", "Half_Day"].includes(a))
-                  : ATTENDANCE.filter((a) => a !== "Holiday");
-              const zebra = i % 2 === 1 ? "bg-white/[0.02]" : "";
+              const zebra = i % 2 === 1 ? "bg-black/[0.02] dark:bg-white/[0.02]" : "";
               const weekendHl = weekendWorked
-                ? (policy.comp_off_billable
+                ? ((isCalendarHoliday
+                    ? (policy.holidays_billable || policy.comp_off_billable)
+                    : (policy.week_off_billable || policy.comp_off_billable))
                   ? "bg-violet-500/[0.08] ring-1 ring-inset ring-violet-500/20"
                   : "bg-teal-500/[0.08] ring-1 ring-inset ring-teal-500/20")
                 : "";
@@ -1590,62 +1664,75 @@ export function TimesheetDetailPage() {
                           }
                         }}
                       />
-                      {weekendWorked && (
+                      {weekendWorked && (() => {
+                        const billed = isCalendarHoliday
+                          ? !!(policy.holidays_billable || policy.comp_off_billable)
+                          : !!(policy.week_off_billable || policy.comp_off_billable);
+                        return (
                         <span
                           className={
-                            policy.comp_off_billable
+                            billed
                               ? "inline-flex items-center rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200 ring-1 ring-inset ring-violet-500/35"
                               : "inline-flex items-center rounded-full bg-teal-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-200 ring-1 ring-inset ring-teal-500/35"
                           }
                           title={
-                            policy.comp_off_billable
-                              ? "Comp Off Billable ON — billed to client, no leave credit"
-                              : "Comp Off Billable OFF — leave credit on approval, not billed"
+                            billed
+                              ? "Billed to client (Week Off / Holidays Billable or Comp Off Billable) — no leave credit"
+                              : "Not billed — Comp-Off leave credited on submit"
                           }
                         >
-                          {policy.comp_off_billable ? "Billable (comp-off)" : "Comp-off credit"}
+                          {billed ? "Billable" : "Comp-off credit"}
                         </span>
-                      )}
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className={cellCls}>
-                    {!editable || isCalendarHoliday ? (
+                    <span
+                      title={
+                        isCalendarHoliday || e.attendance_status === "Leave" || e.day_type === "Week_Off"
+                          ? undefined
+                          : "Derived from Hours Worked (≥8 Present, ≥4 Half Day, else Absent)"
+                      }
+                    >
                       <AttendanceStatusPill status={isCalendarHoliday ? "Holiday" : e.attendance_status} />
-                    ) : (
-                      <select
-                        className={`${miniInput} !w-28`}
-                        value={e.attendance_status}
-                        aria-label={`Attendance ${entryDate(e.entry_date)}`}
-                        onChange={(ev) => updateEntry(i, {
-                          attendance_status: ev.target.value,
-                          ...(ev.target.value !== "Leave"
-                            ? { leave_type: "", leave_period: "", leave_reason: "" }
-                            : {}),
-                        })}
-                      >
-                        {attendanceOptions.map((a) => (
-                          <option key={a} value={a}>{pretty(a)}</option>
-                        ))}
-                      </select>
-                    )}
+                    </span>
                   </td>
                   <td className={cellCls}>
-                    {editable && e.attendance_status === "Absent" && e.day_type === "Working" ? (
-                      <button
-                        type="button"
-                        className={`${btnPrimary} !bg-brand-600/90 !px-2.5 !py-1 text-xs`}
-                        onClick={() => setApplyLeaveRow(i)}
-                      >
-                        Apply leave
-                      </button>
-                    ) : isLeave && e.leave_type ? (
-                      <LeaveAppliedChip
-                        leaveType={e.leave_type}
-                        leavePeriod={e.leave_period}
-                        leaveReason={e.leave_reason}
-                        onChange={editable ? () => setApplyLeaveRow(i) : undefined}
-                      />
-                    ) : null}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {editable && e.attendance_status === "Absent" && e.day_type === "Working" ? (
+                        <button
+                          type="button"
+                          className={`${btnPrimary} !bg-brand-600/90 !px-2.5 !py-1 text-xs`}
+                          onClick={() => setApplyLeaveRow(i)}
+                        >
+                          Apply leave
+                        </button>
+                      ) : isLeave && e.leave_type ? (
+                        <LeaveAppliedChip
+                          leaveType={e.leave_type}
+                          leavePeriod={e.leave_period}
+                          leaveReason={e.leave_reason}
+                          onChange={editable ? () => setApplyLeaveRow(i) : undefined}
+                        />
+                      ) : null}
+                      {e.day_type === "Working" && e.attendance_status === "Absent" && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--wiz-muted)] ring-1 ring-inset ring-[color:var(--wiz-border-strong)]"
+                          title="Unpaid absence — counts toward Total Loss of Pay Days"
+                        >
+                          LOP 1.0
+                        </span>
+                      )}
+                      {e.day_type === "Working" && e.attendance_status === "Half_Day" && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--wiz-muted)] ring-1 ring-inset ring-[color:var(--wiz-border-strong)]"
+                          title="Unworked half — counts toward Total Loss of Pay Days"
+                        >
+                          LOP 0.5
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className={`${cellCls} text-right font-semibold tabular-nums text-secondary`}>
                     {e.billable_hours ?? "—"}
@@ -1692,12 +1779,12 @@ export function TimesheetDetailPage() {
             <span className="h-2 w-2 rounded-full bg-amber-400/80" aria-hidden /> Absent
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-slate-400/70" aria-hidden /> Week Off
+            <span className="h-2 w-2 rounded-full bg-[color:var(--text-muted)]/70" aria-hidden /> Week Off
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-sky-400/80" aria-hidden /> Holiday
           </span>
-          <span className="mx-1 h-3 w-px bg-white/10" aria-hidden />
+          <span className="mx-1 h-3 w-px bg-[color:var(--border-subtle)]" aria-hidden />
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-flex rounded-full bg-violet-500/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-violet-200">Billable</span>
             Comp Off Billable ON
@@ -1721,7 +1808,7 @@ export function TimesheetDetailPage() {
       <div className="glass rounded-panel p-4 sm:p-5">
         <h2 className="mb-1 text-sm font-bold tracking-wide text-primary">Summary</h2>
         <p className="mb-3 text-xs text-muted">Rollup of days, hours, leave, and billables for this period.</p>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           <Stat label="Total Days" value={num(summary?.total_days)} />
           <Stat label="Total Working Days" value={num(summary?.working_days)} />
           <Stat label="Total Comp-Off Days" value={num(summary?.comp_off_days)} />
@@ -1729,18 +1816,31 @@ export function TimesheetDetailPage() {
           <Stat label="Actual Billable Hours" value={num(dirty ? liveSummary.billableHours : summary?.actual_billable_hours)} />
           <Stat label="Total Week off" value={num(summary?.total_week_off)} />
           <Stat label="Total Billable Days" value={num(summary?.total_billable_days)} />
-          <Stat label="Total Leave Days" value={num(dirty ? liveSummary.totalLeaveDays : summary?.total_leave_days ?? summary?.leave_days)} />
-          <Stat label="Total Loss of Pay Days" value={num(dirty ? liveSummary.totalLopDays : summary?.total_loss_of_pay_days)} />
+          <Stat
+            label="Total Leave Days"
+            value={num(dirty ? liveSummary.totalLeaveDays : summary?.total_leave_days ?? liveSummary.totalLeaveDays)}
+          />
+          <Stat
+            label="Total Loss of Pay Days"
+            value={num(dirty ? liveSummary.totalLopDays : summary?.total_loss_of_pay_days ?? liveSummary.totalLopDays)}
+          />
+          <Stat
+            label="Total Leave Billable Days"
+            value={num(
+              dirty
+                ? liveSummary.totalLeaveBillableDays
+                : summary?.total_leave_billable_days ?? liveSummary.totalLeaveBillableDays,
+            )}
+          />
           <Stat label="Actual Working Days" value={num(summary?.total_no_of_days_worked)} />
           <Stat label="Actual Billable Day" value={num(dirty ? liveSummary.actualBillableDay : summary?.actual_billable_day ?? summary?.actual_billable_days)} />
           <Stat label="Total Holiday" value={num(summary?.holidays)} />
           <Stat label="Total Billable Hours" value={num(summary?.total_billable_hours)} />
-          <Stat label="Total Leave Billable Days" value={num(summary?.total_leave_billable_days)} />
           <Stat label="Comp-Off Earned" value={num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)} />
           <Stat label="Comp-Off Billed" value={num(dirty ? liveSummary.compOffBilled : summary?.comp_off_billed)} />
           <Stat label="Comp-Off Credited" value={num(summary?.comp_off_credited)} />
         </div>
-        <div className="mt-4 grid gap-x-6 gap-y-4 border-t border-subtle pt-4 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 border-t border-subtle pt-4 sm:grid-cols-3">
           <LabeledValue
             label="Reason for Rejection"
             value={
@@ -1921,6 +2021,12 @@ function InvoiceDetailsSection({
       >
         {preview.linked_invoice.invoice_number}
       </CrmLink>
+      <CrmLink
+        to={`invoices/${preview.linked_invoice.id}/tax-invoice`}
+        className={`rounded-control text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300 ${focusRing}`}
+      >
+        Tax Invoice
+      </CrmLink>
       <StatusBadge status={preview.linked_invoice.payment_status} />
     </span>
   ) : (
@@ -1972,6 +2078,7 @@ function InvoiceDetailsSection({
                           <th className={`${cell} text-right`}>Rate Per Hour / Day</th>
                           <th className={`${cell} text-right`}>Leave</th>
                           <th className={`${cell} text-right`}>Comp-off</th>
+                          <th className={`${cell} text-right`}>LOP</th>
                           <th className={`${cell} text-right`}>Amount</th>
                           <th className={cell}>Invoice</th>
                         </tr>
@@ -1979,7 +2086,7 @@ function InvoiceDetailsSection({
                       <tbody>
                         {preview.line_items.length === 0 && (
                           <tr>
-                            <td colSpan={9} className="px-4 py-6 text-center text-muted">No invoice line items</td>
+                            <td colSpan={10} className="px-4 py-6 text-center text-muted">No invoice line items</td>
                           </tr>
                         )}
                         {preview.line_items.map((li) => (
@@ -1991,6 +2098,7 @@ function InvoiceDetailsSection({
                             <td className={`${cell} text-right text-secondary`}>{inr(li.rate_per_unit)}</td>
                             <td className={`${cell} text-right text-secondary`}>{li.leave_billable_days}</td>
                             <td className={`${cell} text-right text-secondary`}>{li.comp_off_billable_qty ?? 0}</td>
+                            <td className={`${cell} text-right text-secondary`}>{li.loss_of_pay_days ?? 0}</td>
                             <td className={`${cell} text-right font-semibold text-primary`}>{inr(li.amount)}</td>
                             <td className={cell}>{invoiceCell}</td>
                           </tr>
@@ -1998,7 +2106,7 @@ function InvoiceDetailsSection({
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-strong">
-                          <td colSpan={7} className={`${cell} text-right text-xs font-bold uppercase tracking-wide text-muted`}>
+                          <td colSpan={8} className={`${cell} text-right text-xs font-bold uppercase tracking-wide text-muted`}>
                             Sub-total
                           </td>
                           <td className={`${cell} text-right text-base font-bold text-primary`}>
@@ -2168,6 +2276,71 @@ function groupByProjectTitle<T extends { project_title?: string | null }>(rows: 
   return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
 }
 
+function filterReportRows(
+  rows: ReportRow[],
+  opts: { search: string; month: string; year: string; status?: string },
+): ReportRow[] {
+  const q = opts.search.trim().toLowerCase();
+  return rows.filter((r) => {
+    if (opts.month && String(r.month) !== opts.month) return false;
+    if (opts.year && String(r.year) !== opts.year) return false;
+    if (opts.status && (r.status || "") !== opts.status) return false;
+    if (!q) return true;
+    const hay = [
+      r.project_title, r.project_employee_name, r.customer_name, r.project_type,
+      r.status, r.status_label, r.timesheet_period,
+    ].map((x) => String(x || "").toLowerCase()).join(" ");
+    return hay.includes(q);
+  });
+}
+
+function ReportListFilters({
+  search, setSearch, month, setMonth, year, setYear,
+  status, setStatus, statusOptions,
+  searchPlaceholder = "Search project, employee, customer…",
+}: {
+  search: string;
+  setSearch: (v: string) => void;
+  month: string;
+  setMonth: (v: string) => void;
+  year: string;
+  setYear: (v: string) => void;
+  status?: string;
+  setStatus?: (v: string) => void;
+  statusOptions?: string[];
+  searchPlaceholder?: string;
+}) {
+  const now = new Date();
+  const years: number[] = [];
+  for (let y = now.getFullYear() + 1; y >= now.getFullYear() - 4; y--) years.push(y);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="search"
+        className={`${inputCls} !w-64`}
+        placeholder={searchPlaceholder}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        aria-label="Search timesheets"
+      />
+      <select className={`${inputCls} !w-36`} value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Filter month">
+        <option value="">All months</option>
+        {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+      </select>
+      <select className={`${inputCls} !w-28`} value={year} onChange={(e) => setYear(e.target.value)} aria-label="Filter year">
+        <option value="">All years</option>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      {setStatus && statusOptions && (
+        <select className={`${inputCls} !w-40`} value={status || ""} onChange={(e) => setStatus(e.target.value)} aria-label="Filter status">
+          <option value="">All statuses</option>
+          {statusOptions.map((s) => <option key={s} value={s}>{tsStatusLabel(s)}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function TimesheetDueReport({
   showToast, onAdd,
 }: {
@@ -2177,6 +2350,9 @@ function TimesheetDueReport({
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [month, setMonth] = useState("");
+  const [year, setYear] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2193,16 +2369,28 @@ function TimesheetDueReport({
   useEffect(() => { load(); }, [load]);
 
   const cell = "px-3 py-2";
-  const groups = groupByProjectTitle(rows);
+  const filtered = useMemo(
+    () => filterReportRows(rows, { search, month, year }),
+    [rows, search, month, year],
+  );
+  const groups = groupByProjectTitle(filtered);
+  const hasFilters = !!(search.trim() || month || year);
 
   if (loading) return <Spinner label="Loading timesheet due report…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
   return (
     <div className="space-y-4">
+      <ReportListFilters
+        search={search} setSearch={setSearch}
+        month={month} setMonth={setMonth}
+        year={year} setYear={setYear}
+      />
       {groups.length === 0 ? (
         <div className="rounded-panel border border-subtle px-4 py-8 text-center text-sm text-muted">
-          No due timesheets — all assignments are submitted or approved.
+          {hasFilters
+            ? "No due timesheets match your filters."
+            : "No due timesheets — all assignments are submitted or approved."}
         </div>
       ) : groups.map(([title, items]) => (
         <div key={title} className="elev-1 overflow-hidden rounded-panel">
@@ -2256,6 +2444,10 @@ function SubmitForApprovalReport({ showToast }: { showToast: (msg: string, kind?
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [month, setMonth] = useState("");
+  const [year, setYear] = useState("");
+  const [status, setStatus] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2287,62 +2479,99 @@ function SubmitForApprovalReport({ showToast }: { showToast: (msg: string, kind?
   };
 
   const cell = "px-3 py-2";
+  const filtered = useMemo(
+    () => filterReportRows(rows, { search, month, year, status }),
+    [rows, search, month, year, status],
+  );
+  const hasFilters = !!(search.trim() || month || year || status);
+
   if (loading) return <Spinner label="Loading submission report…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
   return (
-    <div className="elev-1 overflow-hidden rounded-panel">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-max text-sm">
-          <thead>
-            <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-              <th className={cell}>Action</th>
-              <th className={cell}>Status</th>
-              <th className={cell}>Timesheet Period</th>
-              <th className={cell}>Actual Billable Hours</th>
-              <th className={cell}>Actual Billable Day</th>
-              <th className={cell}>Date</th>
-              <th className={cell}>Project Title</th>
-              <th className={cell}>Project Type</th>
-              <th className={cell}>Total Hours Worked</th>
-              <th className={cell}>Total Leave Billable Days</th>
-              <th className={cell}>Reason for Rejection</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={11} className="px-4 py-8 text-center text-muted">No timesheets pending submission</td></tr>
-            )}
-            {rows.map((r) => {
-              const id = r.id ?? r.timesheet_id!;
-              const isRejected = r.status === "Rejected";
-              return (
-                <tr key={id} className="border-b border-subtle">
-                  <td className={cell}>
-                    <button
-                      type="button"
-                      className={`${btnPrimary} !px-2 !py-1 text-xs`}
-                      disabled={busyId === id}
-                      onClick={() => submit(r)}
-                    >
-                      {busyId === id ? "…" : isRejected ? "Resubmit" : "Submit for Approval"}
-                    </button>
+    <div className="space-y-4">
+      <ReportListFilters
+        search={search} setSearch={setSearch}
+        month={month} setMonth={setMonth}
+        year={year} setYear={setYear}
+        status={status} setStatus={setStatus}
+        statusOptions={["Draft", "Rejected"]}
+      />
+      <div className="elev-1 overflow-hidden rounded-panel">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-sm">
+            <thead>
+              <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
+                <th className={cell}>Action</th>
+                <th className={cell}>Status</th>
+                <th className={cell}>Timesheet Period</th>
+                <th className={cell}>Actual Billable Hours</th>
+                <th className={cell}>Actual Billable Day</th>
+                <th className={cell}>Date</th>
+                <th className={cell}>Project Title</th>
+                <th className={cell}>Project Type</th>
+                <th className={cell}>Total Hours Worked</th>
+                <th className={cell}>Total Leave Billable Days</th>
+                <th className={cell}>Reason for Rejection</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="px-4 py-8 text-center text-muted">
+                    {hasFilters ? "No timesheets match your filters" : "No timesheets pending submission"}
                   </td>
-                  <td className={cell}><StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} /></td>
-                  <td className={cell}>{r.timesheet_period || fmtPeriod(r.period_start, r.period_end)}</td>
-                  <td className={cell}>{num(r.actual_billable_hours)}</td>
-                  <td className={cell}>{num(r.actual_billable_day)}</td>
-                  <td className={cell}>{fmtDate(r.date || r.created_at)}</td>
-                  <td className={cell}>{r.project_title || "—"}</td>
-                  <td className={cell}>{pretty(r.project_type)}</td>
-                  <td className={cell}>{num(r.total_hours_worked)}</td>
-                  <td className={cell}>{num(r.total_leave_billable_days)}</td>
-                  <td className={cell}>{r.reason_for_rejection || r.rejection_reason || "—"}</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              )}
+              {filtered.map((r) => {
+                const id = r.id ?? r.timesheet_id!;
+                const isRejected = r.status === "Rejected";
+                return (
+                  <tr key={id} className="border-b border-subtle">
+                    <td className={cell}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          className={`${btnSecondary} !px-2 !py-1 text-xs`}
+                          onClick={() => crmNavigate(`timesheets/${id}`)}
+                          title="Open the timesheet to edit before submitting"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className={`${btnPrimary} !px-2 !py-1 text-xs`}
+                          disabled={busyId === id}
+                          onClick={() => submit(r)}
+                        >
+                          {busyId === id ? "…" : isRejected ? "Resubmit" : "Submit for Approval"}
+                        </button>
+                      </div>
+                    </td>
+                    <td className={cell}><StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} /></td>
+                    <td className={cell}>
+                      <button
+                        type="button"
+                        className="text-left font-semibold text-sky-600 hover:underline dark:text-sky-400"
+                        onClick={() => crmNavigate(`timesheets/${id}`)}
+                      >
+                        {r.timesheet_period || fmtPeriod(r.period_start, r.period_end)}
+                      </button>
+                    </td>
+                    <td className={cell}>{num(r.actual_billable_hours)}</td>
+                    <td className={cell}>{num(r.actual_billable_day)}</td>
+                    <td className={cell}>{fmtDate(r.date || r.created_at)}</td>
+                    <td className={cell}>{r.project_title || "—"}</td>
+                    <td className={cell}>{pretty(r.project_type)}</td>
+                    <td className={cell}>{num(r.total_hours_worked)}</td>
+                    <td className={cell}>{num(r.total_leave_billable_days)}</td>
+                    <td className={cell}>{r.reason_for_rejection || r.rejection_reason || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -2356,6 +2585,10 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rejectId, setRejectId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [month, setMonth] = useState("");
+  const [year, setYear] = useState("");
+  const [status, setStatus] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2385,11 +2618,26 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
   };
 
   const cell = "px-3 py-2";
+  const filtered = useMemo(
+    () => filterReportRows(rows, { search, month, year, status }),
+    [rows, search, month, year, status],
+  );
+  const hasFilters = !!(search.trim() || month || year || status);
+
   if (loading) return <Spinner label="Loading approvals report…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
   return (
     <>
+      <div className="mb-4">
+        <ReportListFilters
+          search={search} setSearch={setSearch}
+          month={month} setMonth={setMonth}
+          year={year} setYear={setYear}
+          status={status} setStatus={setStatus}
+          statusOptions={["Submitted", "Approved"]}
+        />
+      </div>
       <div className="elev-1 overflow-hidden rounded-panel">
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm">
@@ -2409,10 +2657,14 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-8 text-center text-muted">No timesheets awaiting approval</td></tr>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="px-4 py-8 text-center text-muted">
+                    {hasFilters ? "No timesheets match your filters" : "No timesheets awaiting approval"}
+                  </td>
+                </tr>
               )}
-              {rows.map((r) => {
+              {filtered.map((r) => {
                 const id = r.id ?? r.timesheet_id!;
                 const submitted = r.status === "Submitted";
                 const approved = r.status === "Approved";
@@ -2721,6 +2973,7 @@ function RejectModal({
     <Modal
       title={<span className="sr-only">Reject Timesheet</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell
