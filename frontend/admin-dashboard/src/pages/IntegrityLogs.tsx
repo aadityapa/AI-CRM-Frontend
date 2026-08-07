@@ -59,7 +59,7 @@ const SUMMARY_CARDS = [
 
 function SummarySkeleton() {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {[0, 1, 2, 3].map((i) => (
         <div key={i} className="rounded-card border border-subtle p-4 animate-pulse">
           <div className="h-8 w-16 bg-surface-2 rounded-control" />
@@ -123,7 +123,7 @@ const ViolationDetail = memo(function ViolationDetail({ log }: { log: IntegrityL
 
   return (
     <div className="bg-surface-2 border border-subtle rounded-card p-4 space-y-3">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+      <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
         <div>
           <span className="text-muted text-xs block">Tab Switches</span>
           <span className="font-semibold text-secondary">{log.tab_switch_count ?? log.violation_count}</span>
@@ -229,7 +229,7 @@ export function IntegrityLogsPage() {
       {loading ? (
         <SummarySkeleton />
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {SUMMARY_CARDS.map((card) => (
             <div key={card.label} className={`rounded-card border p-4 ${card.card}`}>
               <div className={`text-display text-2xl font-bold tabular-nums ${card.valueClass}`}>{summaryValues[card.label]}</div>

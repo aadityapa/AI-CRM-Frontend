@@ -130,64 +130,71 @@
   --space-16: 64px;
 
   /* -------------------------------------------------------------- ELEVATION
-     Exactly FOUR levels — flat, raised, overlay, modal. Stripe-like: a small
-     contact shadow plus a soft, low-opacity ambient. Anything else in the
-     legacy layer (--e0..--e3, shadow-glass) is an alias of one of these. */
+     Exactly FOUR levels — flat, raised, overlay, modal. Day = Dune Glow:
+     warm sand contact + ambient (rgba(146,104,21,…)) plus a 1px amber
+     top-edge highlight for shared .elev-* / KPI cards. Night (`.dark`)
+     deepens overlay/modal with violet ring + halo for cinematic form chrome. */
   --elev-flat: none;
-  --elev-raised:  0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
-  --elev-overlay: 0 2px 6px rgba(15, 23, 42, 0.06), 0 12px 28px rgba(15, 23, 42, 0.10);
-  --elev-modal:   0 8px 20px rgba(15, 23, 42, 0.10), 0 24px 56px rgba(15, 23, 42, 0.16);
+  --elev-raised:
+    inset 0 1px 0 rgba(251, 191, 36, 0.22),
+    0 1px 2px rgba(146, 104, 21, 0.08),
+    0 1px 3px rgba(146, 104, 21, 0.10);
+  --elev-overlay:
+    inset 0 1px 0 rgba(251, 191, 36, 0.18),
+    0 2px 6px rgba(146, 104, 21, 0.08),
+    0 12px 28px rgba(146, 104, 21, 0.10);
+  --elev-modal:
+    inset 0 1px 0 rgba(251, 191, 36, 0.14),
+    0 8px 20px rgba(146, 104, 21, 0.10),
+    0 24px 56px rgba(146, 104, 21, 0.14);
 
   /* Modal / overlay backdrop — neutral-900 ink at 60%, blurred by --glass-blur.
      Tailwind `bg-backdrop`. */
   --backdrop: rgba(15, 23, 42, 0.60);
 
   /* -------------------------------------------------------- AURORA AMBIENCE
-     v3 evolution of the moonlight layer (`.fx-aurora` in src/styles/tokens.css;
-     `.moonlight` is a kept alias). Layered indigo/violet/cyan radial mesh,
-     mounted once per shell. Pure pre-composited gradients — NO backdrop-filter,
-     NO blur(). Pigments are the system's own: brand-500 (99,102,241), violet-500
-     (139,92,246), accent-400 (34,211,238), neutral-900 ink for the vignette.
-     Per-glow alpha stays capped at 0.15 so it never shifts a verified surface
-     color by a perceptible step (contrast gate tests flat tokens). The
-     -hero variants (login-like hero surfaces ONLY) may go to 0.22.
-     Light theme: white beam + whisper mesh. Dark theme: indigo-led mesh. */
+     Day = Dune Glow warm sand mesh (amber/gold + faint rose-sand). Night
+     (`.dark`) keeps the indigo/violet/cyan moonlight mesh byte-identical.
+     `.fx-aurora` / `.moonlight` in src/styles/tokens.css consume these.
+     Pure pre-composited gradients — NO backdrop-filter, NO blur().
+     Per-glow alpha stays capped so verified surface contrast is preserved.
+     -hero variants (login-like hero surfaces ONLY) may go slightly stronger. */
   --aurora-a: radial-gradient(
     110% 64% at 50% -12%,
-    rgba(255, 255, 255, 0.50) 0%,
-    rgba(199, 210, 254, 0.15) 38%,
-    rgba(99, 102, 241, 0) 68%
+    rgba(255, 252, 244, 0.55) 0%,
+    rgba(253, 230, 138, 0.16) 38%,
+    rgba(245, 158, 11, 0) 68%
   );
   --aurora-b: radial-gradient(
-    64% 48% at 88% 102%,
-    rgba(139, 92, 246, 0.05) 0%,
-    rgba(139, 92, 246, 0) 62%
+    80% 55% at 12% 0%,
+    rgba(245, 158, 11, 0.12) 0%,
+    rgba(245, 158, 11, 0) 60%
   );
   --aurora-c: radial-gradient(
-    46% 38% at 8% 92%,
-    rgba(34, 211, 238, 0.04) 0%,
-    rgba(34, 211, 238, 0) 60%
+    70% 50% at 88% 8%,
+    rgba(217, 119, 6, 0.08) 0%,
+    rgba(217, 119, 6, 0) 60%
   );
   --aurora-vignette: radial-gradient(
     135% 120% at 50% 38%,
-    rgba(15, 23, 42, 0) 60%,
-    rgba(15, 23, 42, 0.05) 100%
+    rgba(87, 70, 38, 0) 60%,
+    rgba(87, 70, 38, 0.04) 100%
   );
-  /* Hero variant — stronger mesh for login-like hero surfaces only. */
+  /* Hero variant — stronger dune mesh for login-like hero surfaces only. */
   --aurora-hero-a: radial-gradient(
     90% 70% at 30% -10%,
-    rgba(99, 102, 241, 0.16) 0%,
-    rgba(99, 102, 241, 0) 62%
+    rgba(245, 158, 11, 0.16) 0%,
+    rgba(245, 158, 11, 0) 62%
   );
   --aurora-hero-b: radial-gradient(
     70% 56% at 92% 8%,
-    rgba(139, 92, 246, 0.12) 0%,
-    rgba(139, 92, 246, 0) 60%
+    rgba(251, 191, 36, 0.12) 0%,
+    rgba(251, 191, 36, 0) 60%
   );
   --aurora-hero-c: radial-gradient(
     60% 48% at 70% 104%,
-    rgba(34, 211, 238, 0.09) 0%,
-    rgba(34, 211, 238, 0) 58%
+    rgba(217, 119, 6, 0.09) 0%,
+    rgba(217, 119, 6, 0) 58%
   );
   /* Legacy names — every existing var keeps working (aliases of aurora). */
   --moonlight-a: var(--aurora-a);
@@ -226,9 +233,20 @@
   --danger-solid-hover:  #c81e2c;
   --danger-solid-active: #ad1a26;
 
+  /* Night elevation — cinematic float for overlays/modals (violet ring +
+     halo + top-edge highlight). Day :root elev values stay untouched. */
   --elev-raised:  0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.30);
-  --elev-overlay: 0 2px 6px rgba(0, 0, 0, 0.50), 0 12px 28px rgba(0, 0, 0, 0.40);
-  --elev-modal:   0 8px 20px rgba(0, 0, 0, 0.55), 0 24px 56px rgba(0, 0, 0, 0.50);
+  --elev-overlay:
+    0 4px 14px rgba(0, 0, 0, 0.50),
+    0 16px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(109, 93, 251, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --elev-modal:
+    0 32px 96px rgba(0, 0, 0, 0.60),
+    0 8px 28px rgba(0, 0, 0, 0.40),
+    0 0 44px rgba(109, 93, 251, 0.10),
+    0 0 0 1px rgba(109, 93, 251, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* Deeper ink so the dark page (near-black already) still separates. */
   --backdrop: rgba(2, 6, 23, 0.65);

@@ -1,0 +1,153 @@
+/* Accent color themes — override brand/violet tokens via data-accent on <html>.
+   Default (indigo) lives in design-system tokens; no data-accent needed. */
+
+html[data-accent="blue"] {
+  --brand-50: #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-300: #93c5fd;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --brand-800: #1e40af;
+  --brand-900: #1e3a8a;
+  --violet-500: #6366f1;
+  --violet-600: #4f46e5;
+  --violet-700: #4338ca;
+  --violet-800: #3730a3;
+  --glow-brand: 0 0 16px rgba(59, 130, 246, 0.28), 0 0 40px rgba(99, 102, 241, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(59, 130, 246, 0.38), 0 0 56px rgba(99, 102, 241, 0.18);
+  --row-hover: rgba(59, 130, 246, 0.06);
+  --ai-glow: 0 0 20px rgba(59, 130, 246, 0.2);
+}
+
+html[data-accent="teal"] {
+  --brand-50: #f0fdfa;
+  --brand-100: #ccfbf1;
+  --brand-200: #99f6e4;
+  --brand-300: #5eead4;
+  --brand-400: #2dd4bf;
+  --brand-500: #14b8a6;
+  --brand-600: #0d9488;
+  --brand-700: #0f766e;
+  --brand-800: #115e59;
+  --brand-900: #134e4a;
+  --violet-500: #06b6d4;
+  --violet-600: #0891b2;
+  --violet-700: #0e7490;
+  --violet-800: #155e75;
+  --glow-brand: 0 0 16px rgba(20, 184, 166, 0.28), 0 0 40px rgba(6, 182, 212, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(20, 184, 166, 0.38), 0 0 56px rgba(6, 182, 212, 0.18);
+  --row-hover: rgba(20, 184, 166, 0.06);
+  --ai-glow: 0 0 20px rgba(20, 184, 166, 0.2);
+}
+
+html[data-accent="emerald"] {
+  --brand-50: #ecfdf5;
+  --brand-100: #d1fae5;
+  --brand-200: #a7f3d0;
+  --brand-300: #6ee7b7;
+  --brand-400: #34d399;
+  --brand-500: #10b981;
+  --brand-600: #059669;
+  --brand-700: #047857;
+  --brand-800: #065f46;
+  --brand-900: #064e3b;
+  --violet-500: #14b8a6;
+  --violet-600: #0d9488;
+  --violet-700: #0f766e;
+  --violet-800: #115e59;
+  --glow-brand: 0 0 16px rgba(16, 185, 129, 0.28), 0 0 40px rgba(20, 184, 166, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(16, 185, 129, 0.38), 0 0 56px rgba(20, 184, 166, 0.18);
+  --row-hover: rgba(16, 185, 129, 0.06);
+  --ai-glow: 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+html[data-accent="amber"] {
+  --brand-50: #fffbeb;
+  --brand-100: #fef3c7;
+  --brand-200: #fde68a;
+  --brand-300: #fcd34d;
+  --brand-400: #fbbf24;
+  --brand-500: #f59e0b;
+  --brand-600: #d97706;
+  --brand-700: #b45309;
+  --brand-800: #92400e;
+  --brand-900: #78350f;
+  --violet-500: #f97316;
+  --violet-600: #ea580c;
+  --violet-700: #c2410c;
+  --violet-800: #9a3412;
+  --glow-brand: 0 0 16px rgba(245, 158, 11, 0.3), 0 0 40px rgba(249, 115, 22, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(245, 158, 11, 0.4), 0 0 56px rgba(249, 115, 22, 0.18);
+  --row-hover: rgba(245, 158, 11, 0.07);
+  --ai-glow: 0 0 20px rgba(245, 158, 11, 0.22);
+}
+
+html[data-accent="rose"] {
+  --brand-50: #fff1f2;
+  --brand-100: #ffe4e6;
+  --brand-200: #fecdd3;
+  --brand-300: #fda4af;
+  --brand-400: #fb7185;
+  --brand-500: #f43f5e;
+  --brand-600: #e11d48;
+  --brand-700: #be123c;
+  --brand-800: #9f1239;
+  --brand-900: #881337;
+  --violet-500: #ec4899;
+  --violet-600: #db2777;
+  --violet-700: #be185d;
+  --violet-800: #9d174d;
+  --glow-brand: 0 0 16px rgba(244, 63, 94, 0.28), 0 0 40px rgba(236, 72, 153, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(244, 63, 94, 0.38), 0 0 56px rgba(236, 72, 153, 0.18);
+  --row-hover: rgba(244, 63, 94, 0.06);
+  --ai-glow: 0 0 20px rgba(244, 63, 94, 0.2);
+}
+
+html[data-accent="fuchsia"] {
+  --brand-50: #fdf4ff;
+  --brand-100: #fae8ff;
+  --brand-200: #f5d0fe;
+  --brand-300: #f0abfc;
+  --brand-400: #e879f9;
+  --brand-500: #d946ef;
+  --brand-600: #c026d3;
+  --brand-700: #a21caf;
+  --brand-800: #86198f;
+  --brand-900: #701a75;
+  --violet-500: #a855f7;
+  --violet-600: #9333ea;
+  --violet-700: #7e22ce;
+  --violet-800: #6b21a8;
+  --glow-brand: 0 0 16px rgba(217, 70, 239, 0.28), 0 0 40px rgba(168, 85, 247, 0.12);
+  --glow-brand-strong: 0 0 24px rgba(217, 70, 239, 0.38), 0 0 56px rgba(168, 85, 247, 0.18);
+  --row-hover: rgba(217, 70, 239, 0.06);
+  --ai-glow: 0 0 20px rgba(217, 70, 239, 0.2);
+}
+
+html[data-accent="multi"] {
+  --brand-50: #f5f3ff;
+  --brand-100: #ede9fe;
+  --brand-200: #ddd6fe;
+  --brand-300: #c4b5fd;
+  --brand-400: #a78bfa;
+  --brand-500: #8b5cf6;
+  --brand-600: #7c3aed;
+  --brand-700: #6d28d9;
+  --brand-800: #5b21b6;
+  --brand-900: #4c1d95;
+  --violet-500: #ec4899;
+  --violet-600: #db2777;
+  --violet-700: #be185d;
+  --violet-800: #9d174d;
+  --btn-gradient: linear-gradient(135deg, #f59e0b 0%, #ef4444 28%, #ec4899 52%, #8b5cf6 76%, #06b6d4 100%);
+  --btn-gradient-hover: linear-gradient(135deg, #d97706 0%, #dc2626 28%, #db2777 52%, #7c3aed 76%, #0891b2 100%);
+  --btn-gradient-active: linear-gradient(135deg, #b45309 0%, #b91c1c 28%, #be185d 52%, #6d28d9 76%, #0e7490 100%);
+  --ai-gradient: linear-gradient(135deg, #f59e0b 0%, #ec4899 40%, #8b5cf6 70%, #06b6d4 100%);
+  --glow-brand: 0 0 16px rgba(236, 72, 153, 0.28), 0 0 40px rgba(139, 92, 246, 0.14);
+  --glow-brand-strong: 0 0 24px rgba(236, 72, 153, 0.38), 0 0 56px rgba(139, 92, 246, 0.2);
+  --row-hover: rgba(139, 92, 246, 0.07);
+  --ai-glow: 0 0 20px rgba(236, 72, 153, 0.22);
+}

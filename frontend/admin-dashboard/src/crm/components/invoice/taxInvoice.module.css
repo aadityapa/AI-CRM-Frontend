@@ -1,0 +1,589 @@
+/* Tax Invoice — white print document isolated from app dark theme.
+   Colors: Primary #173B7A · Secondary #F59E0B · Border #D9E2EC · Text #1F2937 · Light #F8FAFC */
+
+.shell {
+  --inv-primary: #173b7a;
+  --inv-secondary: #f59e0b;
+  --inv-bg: #ffffff;
+  --inv-border: #d9e2ec;
+  --inv-text: #1f2937;
+  --inv-muted: #64748b;
+  --inv-light: #f8fafc;
+  --inv-radius: 12px;
+  color: var(--inv-text);
+  background: transparent;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.pageWrap {
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+  padding: 0.5rem 0 1.5rem;
+}
+
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 8mm;
+  background: var(--inv-bg);
+  color: var(--inv-text);
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  box-shadow: 0 8px 28px rgba(23, 59, 122, 0.12);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.page :global(*) {
+  box-sizing: border-box;
+}
+
+.heading {
+  font-family: "Playfair Display", Georgia, "Times New Roman", serif;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--inv-primary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  margin: 0 0 8px;
+}
+
+.subheading {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--inv-primary);
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--inv-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--inv-text);
+}
+
+.bodyText {
+  font-size: 11px;
+  color: var(--inv-text);
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 0;
+  align-items: stretch;
+  border: 1px solid var(--inv-border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--inv-bg);
+}
+
+.sellerBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.logoBanner {
+  display: block;
+  height: 40px;
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  object-position: left center;
+  margin: 0 0 2px;
+}
+
+.sellerMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.sellerName {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--inv-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.tagline {
+  font-size: 10px;
+  color: var(--inv-primary);
+  font-weight: 600;
+  font-style: italic;
+}
+
+.iconLine {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--inv-muted);
+  line-height: 1.4;
+}
+
+.iconLine svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--inv-primary);
+}
+
+.invoiceMeta {
+  text-align: left;
+  padding: 10px 12px;
+  border-left: 1px solid var(--inv-border);
+  min-width: 0;
+}
+
+.invoiceMetaBody {
+  display: block;
+}
+
+.invoiceMetaGrid {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 3px 6px;
+  text-align: left;
+  min-width: 0;
+}
+
+.metaLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--inv-muted);
+  white-space: nowrap;
+}
+
+.metaSep {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--inv-muted);
+}
+
+.cardsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.card {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.06);
+  background: var(--inv-bg);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--inv-primary);
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cardBody {
+  padding: 8px 10px;
+  background: var(--inv-light);
+  min-height: 72px;
+}
+
+.tableWrap {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.06);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table thead th {
+  background: var(--inv-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 6px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table thead th.num,
+.table td.num {
+  text-align: right;
+}
+
+.table tbody td {
+  font-size: 11px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--inv-border);
+  vertical-align: top;
+  color: var(--inv-text);
+  background: #fff;
+  height: 22px;
+}
+
+.table tbody tr:nth-child(even) td {
+  background: var(--inv-light);
+}
+
+.table tbody tr:hover td {
+  background: #eef4fb;
+}
+
+.totalsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.gstSummary {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  padding: 8px 10px;
+  background: var(--inv-light);
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.05);
+}
+
+.gstSummaryTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--inv-primary);
+  margin-bottom: 4px;
+}
+
+.gstLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.totalsBox {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.06);
+}
+
+.totalsInner {
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.totalLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.grandBar {
+  background: var(--inv-primary);
+  color: #fff;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.grandLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.grandValue {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
+
+.wordsBox {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  padding: 8px 12px;
+  background: var(--inv-light);
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.05);
+}
+
+.rupeeIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--inv-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.wordsLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--inv-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wordsValue {
+  font-size: 12px;
+  font-weight: 700;
+  font-style: italic;
+  color: var(--inv-text);
+}
+
+.bottomRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  flex: 1;
+}
+
+.bankBox,
+.declBox {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  padding: 8px 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(23, 59, 122, 0.05);
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--inv-primary);
+  margin-bottom: 4px;
+}
+
+.sealRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+  align-items: flex-end;
+}
+
+.signBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 140px;
+  max-width: 200px;
+}
+
+.sealImage {
+  display: block;
+  width: 150px;
+  height: auto;
+  max-height: 110px;
+  object-fit: contain;
+  object-position: center bottom;
+}
+
+.signLine {
+  border-top: 1px solid var(--inv-border);
+  margin-top: 2px;
+  padding-top: 4px;
+  font-size: 10px;
+  text-align: center;
+  color: var(--inv-muted);
+  width: 100%;
+}
+
+.footer {
+  margin-top: auto;
+  background: var(--inv-primary);
+  color: #fff;
+  border-radius: var(--inv-radius);
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.footerItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #fff;
+}
+
+.footerItem svg {
+  color: #fff;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btnPrimary {
+  background: #173b7a;
+  color: #fff;
+}
+
+.btnSecondary {
+  background: #fff;
+  color: #173b7a;
+  border-color: #d9e2ec;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media screen and (max-width: 900px) {
+  .page {
+    width: 100%;
+    min-height: auto;
+    border-radius: 10px;
+  }
+
+  .headerRow,
+  .cardsRow,
+  .totalsRow,
+  .bottomRow {
+    grid-template-columns: 1fr;
+  }
+
+  .invoiceMeta {
+    text-align: left;
+    border-left: 0;
+    border-top: 1px solid var(--inv-border);
+  }
+
+  .invoiceMetaGrid {
+    justify-content: start;
+  }
+}
+
+@media print {
+  :global(html),
+  :global(body) {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  :global(.crm-print-hide) {
+    display: none !important;
+  }
+
+  .shell {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .toolbar {
+    display: none !important;
+  }
+
+  .pageWrap {
+    padding: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  .page {
+    width: 210mm !important;
+    min-height: 297mm !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .card,
+  .tableWrap,
+  .gstSummary,
+  .totalsBox,
+  .wordsBox,
+  .bankBox,
+  .declBox {
+    box-shadow: none !important;
+  }
+
+  .table thead th {
+    position: static !important;
+  }
+
+  .table tbody tr:hover td {
+    background: inherit;
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}

@@ -121,6 +121,9 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "crm:candidates", label: "Candidates", group: "CRM", roles: ["TA", "Sales", "Sales_Head"] },
   { key: "crm:template-requests", label: "Template Requests", group: "CRM", roles: ["TA", "RMG"] },
   { key: "crm:profiles", label: "Candidate Profiles", group: "CRM", roles: ["Sales", "Sales_Head", "RMG", "TA"] },
+  // Interview calendar — TA and RMG only (plus Admin/CEO via isSuperAdmin).
+  // Sales roles are excluded on purpose; see nav.ts.
+  { key: "crm:calendar", label: "Interview Calendar", group: "CRM", roles: ["RMG", "TA"] },
   { key: "crm:projects", label: "Projects", group: "CRM", roles: ["Sales", "Sales_Head"] },
   { key: "crm:project-employees", label: "Project Employees", group: "CRM", roles: ["Sales", "Sales_Head", "HR", "Finance"] },
   { key: "crm:leave-applications", label: "Leave Applications", group: "CRM", roles: ["HR"] },

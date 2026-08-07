@@ -55,8 +55,9 @@ const QUICK_TIMES = ["10:00", "11:30", "14:00", "16:00"];
  * single --ease-out decel curve — springs are retired). */
 const EASE_OUT: [number, number, number, number] = [0.2, 0, 0, 1];
 
-/* Shared section-card recipe (rounded-card + raised elevation). */
-const sectionCls = "rounded-card border border-subtle bg-surface-1 p-6 shadow-raised";
+/* Shared section-card recipe (rounded-card + raised elevation).
+ * `platform-form-card` deepens night float only (see styles/tokens.css). */
+const sectionCls = "platform-form-card rounded-card border border-subtle bg-surface-1 p-6 shadow-raised";
 const labelCls = "block text-xs font-medium uppercase tracking-wide text-muted";
 
 /* THE one primary action on this page. Local recipe (solid brand trio,
@@ -243,7 +244,7 @@ export function HrSetupPage() {
     : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 } };
 
   return (
-    <div className="mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="platform-form-shell mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-8">
       <motion.div {...enter} transition={{ duration: reduce ? 0.15 : 0.25, ease: EASE_OUT }}>
         <h1 className="text-display text-2xl font-bold tracking-tight text-primary">HR Setup</h1>
         <p className="mt-1 text-sm text-muted">Empowering modern hiring with Artificial Intelligence.</p>
@@ -396,7 +397,8 @@ export function HrSetupPage() {
                 <IconBtn onClick={() => shiftWeek(1)} label="Next week"><ChevronRight className="h-4 w-4" /></IconBtn>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+            <div className="overflow-x-auto">
+            <div className="grid min-w-[28rem] grid-cols-7 gap-1.5 sm:min-w-0 sm:gap-2">
               {weekDays.map((d) => {
                 const count = slotsByDay.get(ymd(d)) || 0;
                 const active = ymd(d) === ymd(selectedDate);
@@ -418,6 +420,7 @@ export function HrSetupPage() {
                   </motion.button>
                 );
               })}
+            </div>
             </div>
           </div>
 
@@ -572,7 +575,7 @@ function CandidateInput({ value, onChange, onBlur, onPick, placeholder, valid, e
       <AnimatePresence>
         {open && (loading || rows.length > 0) && (
           <motion.ul initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15, ease: EASE_OUT }}
-            className="elev-2 absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-card py-1" role="listbox">
+            className="platform-form-popover elev-2 absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-card py-1" role="listbox">
             {loading && <li className="px-3 py-2 text-xs text-muted">Searching…</li>}
             {!loading && rows.length === 0 && <li className="px-3 py-2 text-xs text-muted">No matches</li>}
             {rows.map((c, i) => (
@@ -620,7 +623,7 @@ function TemplateCombobox({ templates, value, onChange, spring, reduce }: { temp
       <AnimatePresence>
         {open && (
           <motion.ul initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={spring}
-            className="elev-2 absolute z-40 mt-1 max-h-64 w-full overflow-auto rounded-card py-1" role="listbox">
+            className="platform-form-popover elev-2 absolute z-40 mt-1 max-h-64 w-full overflow-auto rounded-card py-1" role="listbox">
             {templates.length === 0 && <li className="px-3 py-2 text-xs text-muted">No templates yet</li>}
             {templates.map((t, i) => (
               <li key={t.jobId} role="option" aria-selected={t.jobId === value}>
@@ -677,7 +680,7 @@ function MiniCalendar({ cursor, setCursor, selected, onPick, slotsByDay, spring,
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(cursor.getFullYear(), cursor.getMonth(), d));
 
   return (
-    <div className="rounded-card border border-subtle bg-surface-1 p-3">
+    <div className="platform-form-popover rounded-card border border-subtle bg-surface-1 p-3">
       <div className="mb-2 flex items-center justify-between">
         <IconBtn onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} label="Previous month"><ChevronLeft className="h-4 w-4" /></IconBtn>
         <AnimatePresence mode="wait">
@@ -686,7 +689,8 @@ function MiniCalendar({ cursor, setCursor, selected, onPick, slotsByDay, spring,
         </AnimatePresence>
         <IconBtn onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} label="Next month"><ChevronRight className="h-4 w-4" /></IconBtn>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center">
+      <div className="overflow-x-auto">
+      <div className="grid min-w-[16rem] grid-cols-7 gap-1 text-center sm:min-w-0">
         {DOW.map((d) => <div key={d} className="py-1 text-xs font-semibold text-muted">{d}</div>)}
         {cells.map((d, i) => {
           if (!d) return <div key={`p${i}`} />;
@@ -707,6 +711,7 @@ function MiniCalendar({ cursor, setCursor, selected, onPick, slotsByDay, spring,
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );
@@ -838,7 +843,7 @@ function ZoneModal({ value, onClose, onPick, reduce }: { value: string; onClose:
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15, ease: EASE_OUT }} className="absolute inset-0 bg-backdrop" onClick={onClose} />
       <motion.div initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97 }}
         transition={{ duration: reduce ? 0.15 : 0.25, ease: EASE_OUT }}
-        className="relative w-full max-w-sm rounded-modal border border-subtle bg-surface-3 p-4 shadow-modal">
+        className="platform-form-card relative w-full max-w-sm rounded-modal border border-subtle bg-surface-3 p-4 shadow-modal">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <SectionBanner icon={<Globe className="h-5 w-5" />} title="Select time zone" description="Interview times are shown and scheduled in this zone." />

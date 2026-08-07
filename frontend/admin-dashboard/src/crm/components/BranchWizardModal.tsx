@@ -31,6 +31,7 @@ import {
   type StepStatus,
   type WizardStep,
 } from "./wizard";
+import { PeriodTimingPicker } from "./PeriodTimingPicker";
 
 type Notify = (msg: string, kind?: "ok" | "err") => void;
 
@@ -82,15 +83,12 @@ const NO_BILLING_PERIOD_CHOICES = ["Days", "Months"];
  * Prorate Balance Credit / Is Max Limit option lists from the source CRM.
  */
 const LEAVE_CREDIT_TYPE_CHOICES = [
-  "Credit Balance Every Month",
-  "Carry Forward Every Month",
   "Monthly",
   "Quarterly",
   "Yearly",
-  "One_Time",
 ];
-/** Leave expire units — TODO(source-system): extend when source list is provided. */
-const LEAVE_EXPIRE_CHOICES = ["Days"];
+/** Leave expire period — Monthly / Quarterly / Yearly (Days removed). */
+const LEAVE_EXPIRE_CHOICES = ["Monthly", "Quarterly", "Yearly"];
 
 type LeaveType = { id: number; name: string };
 
@@ -101,9 +99,13 @@ type LeaveRow = {
   /** Optional display name (UI); not a CustomerLeavePolicy column. */
   name: string;
   leave_credit_type: string;
+  /** Start_Of_Period | End_Of_Period — when the cycle credit is granted. */
+  leave_credit_timing: string;
   leave_credit_balance: string;
   initial_credit_balance: string;
   leave_expire: string;
+  /** Start_Of_Period | End_Of_Period — when the cycle remainder lapses. */
+  leave_expire_timing: string;
   is_max_limit: boolean;
   max_limit: string;
   maximum_carry_forward: string;
@@ -117,9 +119,11 @@ const emptyLeaveRow = (): LeaveRow => ({
   leave_type_id: "",
   name: "",
   leave_credit_type: "",
+  leave_credit_timing: "Start_Of_Period",
   leave_credit_balance: "",
   initial_credit_balance: "",
   leave_expire: "",
+  leave_expire_timing: "End_Of_Period",
   is_max_limit: false,
   max_limit: "",
   maximum_carry_forward: "0",
@@ -144,9 +148,11 @@ function leaveRowFromApi(r: Record<string, unknown>): LeaveRow {
     leave_type_id: r.leave_type_id != null ? String(r.leave_type_id) : "",
     name: (r.leave_name as string) || (r.name as string) || "",
     leave_credit_type: (r.leave_credit_type as string) || "",
+    leave_credit_timing: (r.leave_credit_timing as string) || "Start_Of_Period",
     leave_credit_balance: r.leave_credit_balance != null ? String(r.leave_credit_balance) : "",
     initial_credit_balance: r.initial_credit_balance != null ? String(r.initial_credit_balance) : "",
     leave_expire: (r.leave_expire as string) || "",
+    leave_expire_timing: (r.leave_expire_timing as string) || "End_Of_Period",
     is_max_limit: !!r.is_max_limit,
     max_limit: r.max_limit != null ? String(r.max_limit) : "",
     maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "0",
@@ -222,9 +228,6 @@ function BranchLeaveBillingDialog({
     if (form.leave_credit_balance !== "" && Number.isNaN(Number(form.leave_credit_balance))) {
       errs.leave_credit_balance = "Must be a number";
     }
-    if (form.initial_credit_balance !== "" && Number.isNaN(Number(form.initial_credit_balance))) {
-      errs.initial_credit_balance = "Must be a number";
-    }
     if (form.is_max_limit && form.max_limit !== "" && Number.isNaN(Number(form.max_limit))) {
       errs.max_limit = "Must be a number";
     }
@@ -240,6 +243,10 @@ function BranchLeaveBillingDialog({
     if (!validate()) return;
     onSave({
       ...form,
+      leave_credit_timing: form.leave_credit_timing || "Start_Of_Period",
+      leave_expire_timing: form.leave_expire
+        ? (form.leave_expire_timing || "End_Of_Period")
+        : "",
       maximum_carry_forward: form.maximum_carry_forward === "" ? "0" : String(form.maximum_carry_forward),
     });
   };
@@ -322,7 +329,13 @@ function BranchLeaveBillingDialog({
           <select
             className={inputCls}
             value={form.leave_credit_type}
-            onChange={(e) => set({ leave_credit_type: e.target.value })}
+            onChange={(e) => {
+              const leave_credit_type = e.target.value;
+              set({
+                leave_credit_type,
+                leave_credit_timing: form.leave_credit_timing || "Start_Of_Period",
+              });
+            }}
           >
             <option value="">-Select-</option>
             {LEAVE_CREDIT_TYPE_CHOICES.map((o) => (
@@ -332,6 +345,12 @@ function BranchLeaveBillingDialog({
           {dialogErrors.leave_credit_type && (
             <p className="mt-1 text-xs text-danger" role="alert">{dialogErrors.leave_credit_type}</p>
           )}
+          <PeriodTimingPicker
+            cycle={form.leave_credit_type}
+            value={form.leave_credit_timing}
+            verb="Credit"
+            onChange={(v) => set({ leave_credit_timing: v })}
+          />
         </div>
 
         <div>
@@ -350,28 +369,21 @@ function BranchLeaveBillingDialog({
           )}
         </div>
 
-        <div>
-          <FieldLabel label="Initial Credit Balance" />
-          <input
-            type="number"
-            step="0.01"
-            min={0}
-            className={inputCls}
-            placeholder="######.##"
-            value={form.initial_credit_balance}
-            onChange={(e) => set({ initial_credit_balance: e.target.value })}
-          />
-          {dialogErrors.initial_credit_balance && (
-            <p className="mt-1 text-xs text-danger" role="alert">{dialogErrors.initial_credit_balance}</p>
-          )}
-        </div>
 
         <div>
           <FieldLabel label="Leave_Expire" required />
           <select
             className={inputCls}
             value={form.leave_expire}
-            onChange={(e) => set({ leave_expire: e.target.value })}
+            onChange={(e) => {
+              const leave_expire = e.target.value;
+              set({
+                leave_expire,
+                leave_expire_timing: leave_expire
+                  ? (form.leave_expire_timing || "End_Of_Period")
+                  : "",
+              });
+            }}
           >
             <option value="">-Select-</option>
             {LEAVE_EXPIRE_CHOICES.map((o) => (
@@ -381,6 +393,12 @@ function BranchLeaveBillingDialog({
           {dialogErrors.leave_expire && (
             <p className="mt-1 text-xs text-danger" role="alert">{dialogErrors.leave_expire}</p>
           )}
+          <PeriodTimingPicker
+            cycle={form.leave_expire}
+            value={form.leave_expire_timing}
+            verb="Expire"
+            onChange={(v) => set({ leave_expire_timing: v })}
+          />
         </div>
 
         <label className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -424,20 +442,6 @@ function BranchLeaveBillingDialog({
           )}
         </div>
 
-        <div>
-          <FieldLabel label="Effective Date" />
-          <input
-            type="date"
-            className={inputCls}
-            value={form.effective_date}
-            onChange={(e) => set({ effective_date: e.target.value })}
-          />
-          {form.effective_date ? (
-            <p className="mt-1 text-[11px] text-muted">{formatLeaveDisplayDate(form.effective_date)}</p>
-          ) : (
-            <p className="mt-1 text-[11px] text-muted">Format: dd-MMM-yyyy</p>
-          )}
-        </div>
 
         <label className="flex items-center gap-2 text-sm font-medium text-primary">
           <input
@@ -576,6 +580,8 @@ export function EditBranchWizard({
   // S3 — leave policy rows (shown under Leave & Holiday Billing Policy)
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [leaveRows, setLeaveRows] = useState<LeaveRow[]>([]);
+  /** Customer-default rows (branch_id NULL) — read-only inherited fallback. */
+  const [customerDefaultLeaveRows, setCustomerDefaultLeaveRows] = useState<LeaveRow[]>([]);
   const [removedLeaveIds, setRemovedLeaveIds] = useState<number[]>([]);
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [editingLeave, setEditingLeave] = useState<LeaveRow | null>(null);
@@ -618,8 +624,16 @@ export function EditBranchWizard({
       crmGet<Record<string, unknown>>(`/api/customers/branches/${branchId}/policy`),
       crmGet<Record<string, unknown> | null>(`/api/customers/${customerId}/billing-policy`),
       crmGet<Record<string, unknown>[]>(`/api/customers/branches/${branchId}/leave-policies`),
+      // Customer-default leave rows (branch_id NULL) — shown read-only as the
+      // inherited fallback beneath this branch's own rows.
+      crmGet<Record<string, unknown>[]>(
+        `/api/customer-leave-policies?customer_id=${customerId}&is_active=true&limit=100`,
+      ).catch(() => ({ data: [] as Record<string, unknown>[] })),
     ])
-      .then(([polRes, defRes, leaveRes]) => {
+      .then(([polRes, defRes, leaveRes, custLeaveRes]) => {
+        const custRows = ((custLeaveRes?.data || []) as Record<string, unknown>[])
+          .filter((r) => r.branch_id == null);
+        setCustomerDefaultLeaveRows(custRows.map(leaveRowFromApi));
         const p = polRes.data || {};
         const s = (v: unknown) => (v != null ? String(v) : "");
         const freqRaw = s(p.billing_frequency).replace(/-/g, "_");
@@ -691,7 +705,7 @@ export function EditBranchWizard({
   const sectionStatus = (key: SectionKey): StepStatus => {
     switch (key) {
       case "branchInfo":
-        if (errors.branch_name || errors.gstin || errors.pan) return "error";
+        if (errors.branch_name) return "error";
         return ident.branch_name.trim() ? "complete" : "empty";
       case "holidayPolicy":
         return "complete";
@@ -753,8 +767,6 @@ export function EditBranchWizard({
     if (key === "branchInfo") {
       clear("branch_name", "gstin", "pan");
       if (!ident.branch_name.trim()) errs.branch_name = "Branch name is required";
-      if (ident.gstin && ident.gstin.trim().length > 15) errs.gstin = "GSTIN must be at most 15 characters";
-      if (ident.pan && ident.pan.trim().length > 10) errs.pan = "PAN must be at most 10 characters";
     }
     if (key === "leaveHolidayBilling") {
       clear("full", "half", "whpd");
@@ -783,7 +795,7 @@ export function EditBranchWizard({
 
     setErrors(errs);
     const blocking = Object.keys(errs).filter((k) => {
-      if (key === "branchInfo") return k === "branch_name" || k === "gstin" || k === "pan";
+      if (key === "branchInfo") return k === "branch_name";
       if (key === "leaveHolidayBilling") {
         return k === "full" || k === "half" || k === "whpd" || k.startsWith("leave_");
       }
@@ -866,12 +878,16 @@ export function EditBranchWizard({
       const body = {
         leave_type_id: Number(row.leave_type_id),
         leave_credit_type: row.leave_credit_type,
+        leave_credit_timing: row.leave_credit_timing || "Start_Of_Period",
         leave_expire: row.leave_expire || null,
+        leave_expire_timing: row.leave_expire ? (row.leave_expire_timing || "End_Of_Period") : null,
         is_max_limit: row.is_max_limit,
         max_limit: row.is_max_limit ? numOrNull(row.max_limit) : null,
         prorate_balance_credit: row.prorate_balance_credit,
         is_billable: row.is_billable,
         leave_credit_balance: numOrNull(row.leave_credit_balance) ?? 0,
+        // Not editable in the form any more, but still sent so editing a policy
+        // never silently zeroes a value an older record already carries.
         initial_credit_balance: numOrNull(row.initial_credit_balance) ?? 0,
         maximum_carry_forward: numOrNull(row.maximum_carry_forward === "" ? "0" : row.maximum_carry_forward),
         effective_date: row.effective_date || null,
@@ -1073,6 +1089,16 @@ export function EditBranchWizard({
             <Field label="Legal entity name">
               <input className={inputCls} value={ident.branch_legal_name} onChange={(e) => setI("branch_legal_name", e.target.value)} />
             </Field>
+            <Field label="GSTIN" error={errors.gstin}>
+              <input className={inputCls} value={ident.gstin} maxLength={15}
+                placeholder="e.g. 27AAHCK4749A1ZL"
+                onChange={(e) => setI("gstin", e.target.value.toUpperCase())} />
+            </Field>
+            <Field label="PAN" error={errors.pan}>
+              <input className={inputCls} value={ident.pan} maxLength={10}
+                placeholder="e.g. AAHCK4749A"
+                onChange={(e) => setI("pan", e.target.value.toUpperCase())} />
+            </Field>
             <Field label="Billing address">
               <textarea className={inputCls} rows={2} value={ident.billing_address} onChange={(e) => setI("billing_address", e.target.value)} />
             </Field>
@@ -1164,7 +1190,11 @@ export function EditBranchWizard({
               {triSelect("leave_billable", "Leave Billable", defaults.leave)}
               {triSelect("comp_off_billable", "Comp-Off Billable", null)}
             </div>
-            <InfoChip>Blank hour fields inherit the customer default. Holidays/Weekoff checkboxes write an explicit branch override.</InfoChip>
+            <InfoChip>
+              Blank hour fields inherit the customer default. Holidays/Weekoff Billable bill worked
+              holiday/weekend hours as normal (precedence over Comp-Off Billable). If both direct and
+              Comp-Off flags are off, Comp-Off leave is credited on submit.
+            </InfoChip>
 
             <div className="rounded-control border border-subtle bg-surface-2/20 p-4">
               <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
@@ -1222,6 +1252,41 @@ export function EditBranchWizard({
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* Inherited customer defaults — read-only fallback view. A branch
+                  row for the same leave type overrides the default. */}
+              {customerDefaultLeaveRows.length > 0 && (
+                <div className="mt-4 rounded-control border border-dashed border-subtle bg-surface-2/30 p-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted">
+                    Inherited customer defaults
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-muted">
+                    Apply only for leave types this branch has NOT defined above. Edit them in
+                    the Customer form's Billing Policy step.
+                  </p>
+                  <ul className="mt-2 space-y-1.5">
+                    {customerDefaultLeaveRows.map((r) => {
+                      const overridden = leaveRows.some(
+                        (b) => b.leave_type_id === r.leave_type_id,
+                      );
+                      return (
+                        <li
+                          key={r.key}
+                          className={`flex flex-wrap items-center justify-between gap-2 rounded-control px-3 py-2 text-xs ${
+                            overridden ? "opacity-50" : ""
+                          }`}
+                        >
+                          <span className="font-semibold text-secondary">{leaveNameOf(r)}</span>
+                          <span className="text-muted">
+                            {r.leave_credit_type || "—"} · Balance {r.leave_credit_balance || "—"} · Expire {r.leave_expire || "—"}
+                            {overridden ? " · overridden by this branch" : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
           </div>

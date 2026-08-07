@@ -35,8 +35,9 @@ describe("opportunity schema form options", () => {
 
   it("exposes Leave Policy and Billing Type option values", () => {
     expect(LEAVE_POLICY_OPTIONS.map((o) => o.value)).toEqual([
-      "Credit Balance Every Month",
-      "Carry Forward Every Month",
+      "Monthly",
+      "Quarterly",
+      "Yearly",
     ]);
     expect(BILLING_TYPE_OPTIONS.map((o) => o.value)).toEqual([
       "Per Hour",
@@ -58,13 +59,13 @@ describe("opportunity schema form options", () => {
     expect(OPPORTUNITY_SCHEMA.some((s) => s.key === "skillEval")).toBe(true);
   });
 
-  it("shows Project Scope for all non-T&M types and fixed duration only for Fixed Price", () => {
-    const workPage = OPPORTUNITY_SCHEMA.find((s) => s.key === "workPage");
-    expect(workPage?.fields?.find((f) => f.key === "project_scope")?.visibleFor).toEqual([
-      "Work_Package", "Fixed_Price", "Retainer",
-    ]);
-    expect(workPage?.fields?.find((f) => f.key === "project_duration_months")?.visibleFor)
-      .toEqual(["Fixed_Price"]);
+  it("orders Candidate CTC Slab before Commercial Details", () => {
+    const keys = OPPORTUNITY_SCHEMA.map((s) => s.key);
+    expect(keys.indexOf("ctcSlab")).toBeLessThan(keys.indexOf("commercial"));
+    const rfi = OPPORTUNITY_SCHEMA
+      .find((s) => s.key === "commercial")
+      ?.fields?.find((f) => f.key === "rfi_value");
+    expect(rfi?.computed?.formula).toBe("rfiValue");
   });
 
   it("gates Sales Validation stage for Sales vs non-Sales roles", () => {

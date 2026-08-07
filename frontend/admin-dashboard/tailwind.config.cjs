@@ -78,6 +78,16 @@ module.exports = {
           500: "var(--danger-500)",
         },
         info: { DEFAULT: "var(--info)", soft: "var(--info-soft)" },
+        // Assessment scores get their own scale — reusing success/warning/danger
+        // would conflate "scored well" with "operation succeeded". See the
+        // SCORE SCALE block in styles/tokens.css for the contrast + CVD working.
+        score: {
+          strong:   { bg: "var(--score-strong-bg)",   bd: "var(--score-strong-bd)",   fg: "var(--score-strong-fg)",   ring: "var(--score-strong-ring)" },
+          good:     { bg: "var(--score-good-bg)",     bd: "var(--score-good-bd)",     fg: "var(--score-good-fg)",     ring: "var(--score-good-ring)" },
+          moderate: { bg: "var(--score-moderate-bg)", bd: "var(--score-moderate-bd)", fg: "var(--score-moderate-fg)", ring: "var(--score-moderate-ring)" },
+          weak:     { bg: "var(--score-weak-bg)",     bd: "var(--score-weak-bd)",     fg: "var(--score-weak-fg)",     ring: "var(--score-weak-ring)" },
+          none:     { bg: "var(--score-none-bg)",     bd: "var(--score-none-bd)",     fg: "var(--score-none-fg)",     ring: "var(--score-none-ring)" },
+        },
         backdrop: "var(--backdrop)", // modal/overlay scrim (60% ink, theme-tuned)
       },
       ringColor: {

@@ -10,7 +10,7 @@ import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import {
   ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
@@ -18,7 +18,7 @@ import {
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -29,7 +29,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -269,7 +269,7 @@ export function LeaveApplicationsPage() {
               entity="leave application"
               itemLabel={r.employee_name || `#${r.id}`}
               deleteUrl={`/api/leave-applications/${r.id}`}
-              onDeleted={load}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
               notify={showToast}
               canEdit={false}
               canDelete
@@ -428,6 +428,7 @@ function ApplyLeaveModal({
       title={<span className="sr-only">Apply Leave</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -449,7 +450,7 @@ function ApplyLeaveModal({
               </select>
             </WizardField>
           )}
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField
               label="Leave type"
               required
@@ -458,7 +459,7 @@ function ApplyLeaveModal({
                 leaveTypeId ? (
                   <span className="mt-1.5 inline-flex items-center rounded-lg border border-[#6D5DFB]/35 bg-[#6D5DFB]/12 px-2.5 py-1 text-[11px] font-semibold tabular-nums text-[color:var(--wiz-muted)]">
                     Leave balance:{" "}
-                    <span className="ml-1 text-white">
+                    <span className="ml-1 text-[color:var(--wiz-text)]">
                       {selectedBalance != null
                         ? `${Number(selectedBalance).toLocaleString("en-IN", { maximumFractionDigits: 2 })} day(s)`
                         : "—"}
@@ -486,7 +487,7 @@ function ApplyLeaveModal({
               </select>
             </WizardField>
           </div>
-          <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="From date" required error={errors.from_date} icon="calendar" filled={!!fromDate}>
               <input type="date" className={inputCls} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
             </WizardField>
@@ -569,6 +570,7 @@ function RejectLeaveModal({
     <Modal
       title={<span className="sr-only">Reject Leave Application</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell

@@ -283,7 +283,7 @@ export function QuestionBankPage() {
   };
 
   return (
-    <div className="mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8 platform-form-shell">
       <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
         <div>
           <h1 className="text-display text-2xl font-bold tracking-tight text-primary">Question Bank</h1>
@@ -338,7 +338,7 @@ export function QuestionBankPage() {
       ) : null}
 
       {dashboard ? (
-        <div className="mt-6 grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {[
             ["Total", dashboard.totalQuestions],
             ["Active", dashboard.activeQuestions],
@@ -388,7 +388,7 @@ export function QuestionBankPage() {
       ) : null}
 
       <div className="mt-6 glass rounded-card p-4 shadow-raised">
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <input
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
@@ -603,7 +603,7 @@ export function QuestionBankPage() {
 
       {editorOpen ? (
         <div className="fixed inset-0 z-50 bg-backdrop flex items-center justify-center p-4">
-          <div className="bg-surface-1 rounded-modal border border-subtle shadow-modal w-full max-w-2xl max-h-full overflow-y-auto p-6">
+          <div className="platform-form-card max-h-[min(90vh,56rem)] w-full max-w-2xl overflow-y-auto rounded-modal border border-subtle bg-surface-1 p-6 shadow-modal">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <SectionBanner

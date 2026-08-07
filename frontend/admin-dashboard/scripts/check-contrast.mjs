@@ -43,15 +43,16 @@ const WHITE = [255, 255, 255];
 const LIGHT = {
   name: "LIGHT",
   sheenAlpha: 0.05, // --sheen worst-case top stop: rgba(255,255,255,0.05)
-  s0: hex("#f1f5f9"), // --surface-0 = neutral-100 (page)
-  s1: hex("#ffffff"), // --surface-1 = neutral-0 (card / modal)
-  s2: hex("#f8fafc"), // --surface-2 = neutral-50 (hover tint / popover)
-  // v3 glass: rgba(255,255,255,0.80) over the page (worst case).
-  glass: over(hex("#f1f5f9"), WHITE, 0.8),
-  textPrimary: hex("#0f172a"), // neutral-900
-  textSecondary: hex("#475569"), // neutral-600
-  textMuted: hex("#5d6b7e"),
-  // v3 indigo ramp (anchored #6366f1)
+  s0: hex("#faf6ef"), // --surface-0 Dune Glow page (warm ivory sand)
+  s1: hex("#fffdf8"), // --surface-1 warm-white card
+  s2: hex("#f3ede2"), // --surface-2 light dune
+  s3: hex("#ede5d6"), // --surface-3 deep chrome
+  // Day glass: rgba(255,252,245,0.80) over the page (worst case ≈ warm white).
+  glass: over(hex("#faf6ef"), hex("#fffcf5"), 0.8),
+  textPrimary: hex("#2b2416"),
+  textSecondary: hex("#57503e"),
+  textMuted: hex("#6e6650"), // AA-tuned (spec #857c66 fails on s3 sand)
+  // v3 indigo ramp (anchored #6366f1) — brand interactive unchanged
   brand300: hex("#a5b4fc"),
   brand500: hex("#6366f1"),
   brand600: hex("#4f46e5"),
@@ -116,7 +117,7 @@ const DARK = {
 
 function pairsFor(t) {
   const p = [];
-  const surfaces = t.name === "DARK" ? ["s0", "s1", "s2", "s3"] : ["s0", "s1", "s2"];
+  const surfaces = ["s0", "s1", "s2", "s3"];
   for (const surf of surfaces) {
     p.push([`text-primary on ${surf}`, t.textPrimary, t[surf], "body"]);
     p.push([`text-secondary on ${surf}`, t.textSecondary, t[surf], "body"]);

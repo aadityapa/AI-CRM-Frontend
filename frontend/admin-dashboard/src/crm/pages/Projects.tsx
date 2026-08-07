@@ -9,7 +9,7 @@ import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import {
   ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
@@ -179,9 +179,10 @@ export function ProjectsListPage() {
             <RowActions
               entity="project"
               itemLabel={r.name}
+              onView={() => crmNavigate(`projects/${r.id}`)}
               onEdit={() => crmNavigate(`projects/${r.id}`)}
               deleteUrl={`/api/projects/${r.id}`}
-              onDeleted={load}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
               notify={showToast}
               canEdit
               canDelete
@@ -309,7 +310,7 @@ function OverviewTab({
           <CrmLink to={`pos/${createdPo.id}`} className="font-semibold underline">View PO</CrmLink>
         </div>
       )}
-      <div className="glass fx-gradient-border grid grid-cols-2 gap-4 rounded-card p-5 md:grid-cols-3">
+      <div className="glass fx-gradient-border grid grid-cols-1 gap-4 rounded-card p-5 sm:grid-cols-2 xl:grid-cols-3">
         <Info label="Customer" value={project.customer_name || `#${project.customer_id}`} />
         <Info label="Opportunity" value={project.opportunity_title || `#${project.opportunity_id}`} />
         <Info label="Status" value={<StatusBadge status={project.status} />} />
@@ -355,7 +356,7 @@ function CreatePoModal({
   const [totalValue, setTotalValue] = useState("");
   const [taxSlab, setTaxSlab] = useState("");
   const [interState, setInterState] = useState(false);
-  const [poType, setPoType] = useState("Standard");
+  const [poType, setPoType] = useState("Open PO");
   const [receivedDate, setReceivedDate] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -396,8 +397,8 @@ function CreatePoModal({
           </Field>
           <Field label="PO type">
             <select className={inputCls} value={poType} onChange={(e) => setPoType(e.target.value)}>
-              <option value="Standard">Standard</option>
-              <option value="Blanket">Blanket</option>
+              <option value="Open PO">Open PO</option>
+              <option value="Regular PO">Regular PO</option>
             </select>
           </Field>
         </div>
@@ -429,6 +430,25 @@ function TeamTab({
   const canManage = useHasRole("Sales_Head", "HR");
   const [showAssign, setShowAssign] = useState(false);
   const [editRow, setEditRow] = useState<TeamMember | null>(null);
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    const rows = project.team || [];
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      [
+        r.employee_name,
+        r.employee_email,
+        r.employee_id,
+        r.work_mode,
+        r.billing_rate,
+        r.billing_unit,
+        r.onboarding_date,
+        r.is_active ? "active" : "inactive",
+      ].some((v) => String(v ?? "").toLowerCase().includes(q)),
+    );
+  }, [project.team, search]);
 
   const columns: Column<TeamMember>[] = [
     {
@@ -473,8 +493,11 @@ function TeamTab({
       )}
       <DataTable<TeamMember>
         columns={columns}
-        rows={project.team || []}
-        emptyMessage="No employees assigned"
+        rows={filtered}
+        search={search}
+        onSearch={setSearch}
+        emptyMessage={search.trim() ? "No employees match your search" : "No employees assigned"}
+        searchPlaceholder="Search team…"
         onRowClick={(r) => crmNavigate(`project-employees/${r.pe_id ?? r.id}`)}
       />
       {showAssign && (
@@ -831,6 +854,7 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
 
   const employeeName = useMemo(() => {
     const m = new Map<number, string>();
@@ -855,6 +879,19 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
   }, [project.id, month, year, status, page]);
   useEffect(() => { load(); }, [load]);
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) =>
+      [
+        employeeName(r.employee_id),
+        MONTHS[(r.month || 1) - 1],
+        r.year,
+        r.status,
+      ].some((v) => String(v ?? "").toLowerCase().includes(q)),
+    );
+  }, [rows, search, employeeName]);
+
   const columns: Column<any>[] = [
     { key: "employee", label: "Employee", render: (r) => employeeName(r.employee_id) },
     { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year}` },
@@ -867,12 +904,15 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
   return (
     <DataTable<any>
       columns={columns}
-      rows={rows}
+      rows={filtered}
       meta={meta}
       loading={loading}
       onPage={setPage}
+      search={search}
+      onSearch={setSearch}
       onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)}
-      emptyMessage="No timesheets for this project"
+      emptyMessage={search.trim() ? "No timesheets match your search" : "No timesheets for this project"}
+      searchPlaceholder="Search timesheets…"
       filters={
         <>
           <select className={`${inputCls} !w-36`} value={month} onChange={(e) => { setMonth(e.target.value); setPage(1); }}>

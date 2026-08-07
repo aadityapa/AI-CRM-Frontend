@@ -3,7 +3,7 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Eye, Pencil, Plus, SlidersHorizontal, Trash2, Upload, User } from "lucide-react";
+import { Building2, Eye, Lock, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
@@ -12,23 +12,23 @@ import { useCanEditTab, useCrmAccess } from "../useAccess";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import { CustomerFormModal } from "../components/CustomerFormModal";
+import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
 import { EditBranchWizard } from "../components/BranchWizardModal";
 import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
 import {
   COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
 } from "../constants/geo";
-import { normalizePhoneForSave } from "../lib/phone";
 import {
-  ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
+  ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -39,7 +39,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -95,6 +95,9 @@ type Contact = {
   email?: string | null;
   phone?: string | null;
   designation?: string | null;
+  role?: string | null;
+  contact_priority?: string | null;
+  notification?: string | null;
   is_hiring_manager: boolean;
   is_active: boolean;
 };
@@ -146,9 +149,12 @@ export function CustomersListPage() {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  // Default to Active customers (inactive/archived ones stay one click away).
+  const [status, setStatus] = useState("Active");
   const [sort, setSort] = useState<{ by: string; dir: "asc" | "desc" }>({ by: "created_at", dir: "desc" });
   const [showNew, setShowNew] = useState(false);
+  // "All entities" filter — narrows the loaded rows by legal-entity presence.
+  const [entityFilter, setEntityFilter] = useState<"" | "with" | "without">("");
   const dSearch = useDebounced(search);
 
   const load = useCallback(async () => {
@@ -170,9 +176,29 @@ export function CustomersListPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [dSearch, status]);
 
+  // Client-side entity filter over the loaded page (list is small; usually 1 page).
+  const displayRows = useMemo(() => {
+    if (!entityFilter) return rows;
+    return rows.filter((r) =>
+      entityFilter === "with" ? !!(r.legal_entity_name || "").trim() : !(r.legal_entity_name || "").trim(),
+    );
+  }, [rows, entityFilter]);
+
   const columns: Column<Customer>[] = [
     { key: "name", label: "Name", sortable: true, render: (r) => <span className="font-semibold text-primary">{r.name}</span> },
-    { key: "legal_entity_name", label: "Legal Entity", render: (r) => r.legal_entity_name || "—" },
+    {
+      key: "legal_entity_name",
+      label: "Legal Entity",
+      render: (r) =>
+        r.legal_entity_name ? (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-subtle bg-surface-2/60 px-2 py-0.5 text-sm text-primary">
+            <Lock size={12} className="text-muted" aria-hidden />
+            {r.legal_entity_name}
+          </span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+    },
     { key: "status", label: "Status", sortable: true, render: (r) => <StatusBadge status={r.status} /> },
     { key: "created_at", label: "Created", sortable: true, render: (r) => fmtDate(r.created_at) },
   ];
@@ -185,8 +211,11 @@ export function CustomersListPage() {
           View-only access — you can browse customers but cannot create or edit.
         </p>
       )}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Customers</h1>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-display text-xl font-bold text-primary">Customers</h1>
+          <p className="mt-1 text-sm text-muted">Manage and view all your customer organizations.</p>
+        </div>
         {canWrite && (
           <button className={btnPrimary} onClick={() => setShowNew(true)}>
             <Plus size={15} /> New Customer
@@ -196,36 +225,50 @@ export function CustomersListPage() {
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
         columns={columns}
-        rows={rows}
+        rows={displayRows}
         meta={meta}
         loading={loading}
         search={search}
         onSearch={setSearch}
+        searchPlaceholder="Search customers or entities…"
         sort={sort}
         onSort={(by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "asc" ? "desc" : "asc" }))}
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`customers/${r.id}`)}
         emptyMessage="No customers found"
         filters={
-          <select className={`${inputCls} !w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
-            <option value="">All statuses</option>
-            {CUSTOMER_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <>
+            <select className={`${inputCls} !w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="">All statuses</option>
+              {CUSTOMER_STATUSES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            <select
+              className={`${inputCls} !w-40`}
+              value={entityFilter}
+              onChange={(e) => setEntityFilter(e.target.value as "" | "with" | "without")}
+              aria-label="Filter by legal entity"
+            >
+              <option value="">All entities</option>
+              <option value="with">With legal entity</option>
+              <option value="without">Without legal entity</option>
+            </select>
+          </>
         }
-        rowActions={canWrite ? (r) => (
+        rowActions={(r) => (
           <RowActions
             entity="customer"
             itemLabel={r.name}
+            onView={() => crmNavigate(`customers/${r.id}`)}
             onEdit={() => crmNavigate(`customers/${r.id}`)}
             deleteUrl={`/api/customers/${r.id}`}
-            onDeleted={load}
+            onDeleted={() => afterListDelete(r.id, setRows, load)}
             notify={notify}
-            canEdit
-            canDelete
+            canEdit={canWrite}
+            canDelete={canWrite}
           />
-        ) : undefined}
+        )}
       />
       {showNew && (
         <CustomerFormModal
@@ -275,8 +318,6 @@ function BranchFormModal({
     e.preventDefault();
     const errs: Record<string, string> = {};
     if (!form.branch_name.trim()) errs.branch_name = "Branch name is required";
-    if (form.gstin && form.gstin.trim().length > 15) errs.gstin = "GSTIN must be at most 15 characters";
-    if (form.pan && form.pan.trim().length > 10) errs.pan = "PAN must be at most 10 characters";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setSaving(true);
@@ -313,6 +354,7 @@ function BranchFormModal({
       title={<span className="sr-only">{initial ? "Edit Branch" : "Add Branch"}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -580,12 +622,12 @@ function BranchBillingPolicyModal({
           <p className="text-sm text-muted">
             Fields left as <b>Inherit</b> / blank fall back to the customer&apos;s default billing policy.
           </p>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {triSelect("weekoff_billable", "Week-offs billable", defaults.week_off_billable)}
             {triSelect("leave_billable", "Leaves billable", defaults.leave_billable)}
             {triSelect("holidays_billable", "Holidays billable", defaults.holidays_billable)}
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Min hours — full day" error={errors.full}>
               <input
                 type="number" step="0.5" min={0} max={24}
@@ -624,7 +666,7 @@ function BranchBillingPolicyModal({
               {clearBtn("working_hours_per_day")}
             </Field>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Billing Type">
               <select
                 className={inputCls}
@@ -697,6 +739,8 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
   const [wizardRow, setWizardRow] = useState<Branch | null>(null);
   const [policyRow, setPolicyRow] = useState<Branch | null>(null);
   const [deleting, setDeleting] = useState<Branch | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const isAdmin = useHasRole("Admin", "CEO");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -724,104 +768,130 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
     );
   }, [rows, search]);
 
-  const remove = async () => {
+  const remove = async (force = false) => {
     if (!deleting) return;
     setBusy(true);
+    if (!force) setDeleteError(null);
     try {
-      const res = await crmDelete(`/api/customers/${customerId}/branches/${deleting.id}`);
+      const res = await crmDelete(
+        `/api/customers/${customerId}/branches/${deleting.id}${force ? "?force=true" : ""}`,
+      );
       notify(res.message || "Branch deleted");
       setDeleting(null);
+      setDeleteError(null);
       load();
     } catch (e: any) {
-      notify(e?.message || "Failed to delete branch", "err");
+      const msg = e?.message || "Failed to delete branch";
+      // Referenced by other records: Admin/CEO get a "Delete anyway" action that
+      // detaches those records (they keep their data, just lose the branch link).
+      if (isAdmin && /referenced/i.test(msg) && !force) setDeleteError(msg);
+      else notify(msg, "err");
     } finally {
       setBusy(false);
     }
   };
 
-  const columns: Column<Branch>[] = [
-    {
-      key: "branch_name",
-      label: "Branch",
-      render: (r) => (
-        <span className="font-semibold text-brand-600 dark:text-brand-300">
-          {r.branch_name}
+  /** One branch box: click opens full branch details; corner actions for
+   *  view / edit / delete; key fields grouped into labelled cells. */
+  const cell = "min-w-0";
+  const cellLabel = "text-[10px] font-bold uppercase tracking-wide text-muted";
+  const BranchCard = ({ r }: { r: Branch }) => (
+    <div
+      className="group flex cursor-pointer flex-col rounded-card border border-subtle bg-surface-1 p-4 shadow-raised transition-shadow hover:shadow-overlay"
+      role="button"
+      tabIndex={0}
+      onClick={() => crmNavigate(`branch-policy/${r.id}`)}
+      onKeyDown={(e) => { if (e.key === "Enter") crmNavigate(`branch-policy/${r.id}`); }}
+    >
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-base font-bold text-brand-600 dark:text-brand-300">{r.branch_name}</span>
           {r.is_primary && (
-            <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
               Primary
             </span>
           )}
-        </span>
-      ),
-    },
-    { key: "branch_legal_name", label: "Legal Name", render: (r) => r.branch_legal_name || "—" },
-    { key: "city", label: "City", render: (r) => r.city || "—" },
-    { key: "state", label: "State", render: (r) => r.state || "—" },
-    { key: "pincode", label: "Pincode", render: (r) => r.pincode || "—" },
-    { key: "gstin", label: "GSTIN", render: (r) => r.gstin || "—" },
-    { key: "pan", label: "PAN", render: (r) => r.pan || "—" },
-    {
-      key: "_billing_policy",
-      label: "Billing Policy",
-      render: (r) => (
-        <button
-          className="inline-flex items-center gap-1.5 rounded-lg border border-subtle px-2 py-1 text-xs font-semibold text-sky-600 hover:bg-surface-2 dark:text-sky-400"
-          title="View / edit this branch's billing policy"
-          onClick={(e) => { e.stopPropagation(); setPolicyRow(r); }}
-        >
-          <SlidersHorizontal size={13} />
-          {hasOwnPolicy(r) ? "Custom" : "Inherits default"}
-        </button>
-      ),
-    },
-    {
-      key: "_actions",
-      label: "",
-      className: "text-right",
-      render: (r) => (
-        <span className="inline-flex gap-1">
-          <button
-            className={iconBtn}
-            title="Open branch"
-            aria-label="Open branch"
-            onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}`); }}
-          >
+        </div>
+        <span className="inline-flex shrink-0 gap-1 opacity-70 transition-opacity group-hover:opacity-100">
+          <button className={iconBtn} title="Open branch" aria-label="Open branch"
+            onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}`); }}>
             <Eye size={15} />
           </button>
           {canWrite && (
             <>
-              <button className={iconBtn} title="Edit branch" aria-label="Edit branch" onClick={(e) => { e.stopPropagation(); setWizardRow(r); }}>
+              <button className={iconBtn} title="Edit branch" aria-label="Edit branch"
+                onClick={(e) => { e.stopPropagation(); setWizardRow(r); }}>
                 <Pencil size={15} />
               </button>
-              <button className={`${iconBtn} hover:!text-rose-600`} title="Delete branch" aria-label="Delete branch" onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
+              <button className={`${iconBtn} hover:!text-rose-600`} title="Delete branch" aria-label="Delete branch"
+                onClick={(e) => { e.stopPropagation(); setDeleting(r); }}>
                 <Trash2 size={15} />
               </button>
             </>
           )}
         </span>
-      ),
-    },
-  ];
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className={cell}>
+          <p className={cellLabel}>Legal name</p>
+          <p className="mt-0.5 text-sm font-semibold text-primary">{r.branch_legal_name || "—"}</p>
+        </div>
+        <div className={cell}>
+          <p className={cellLabel}>Location</p>
+          <p className="mt-0.5 text-sm text-primary">
+            <span className="font-semibold">{r.city || "—"}</span>
+            {r.state ? `, ${r.state}` : ""}
+          </p>
+          {r.pincode && <p className="text-xs text-muted">PIN: {r.pincode}</p>}
+        </div>
+        <div className={cell}>
+          <p className={cellLabel}>Tax identifiers</p>
+          <p className="mt-0.5 text-sm text-primary"><span className="text-xs text-muted">GSTIN </span>{r.gstin || "—"}</p>
+          <p className="text-sm text-primary"><span className="text-xs text-muted">PAN </span>{r.pan || "—"}</p>
+        </div>
+        <div className={cell}>
+          <p className={cellLabel}>Billing policy</p>
+          <button
+            className="mt-0.5 inline-flex items-center gap-1.5 rounded-lg border border-subtle px-2 py-1 text-xs font-semibold text-sky-600 hover:bg-surface-2 dark:text-sky-400"
+            title="View / edit this branch's billing policy"
+            onClick={(e) => { e.stopPropagation(); setPolicyRow(r); }}
+          >
+            <SlidersHorizontal size={13} />
+            {hasOwnPolicy(r) ? "Custom" : "Inherits default"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div>
-      {canWrite && (
-        <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[14rem] flex-1">
+          <input
+            className={`${inputCls} !pl-9`}
+            placeholder="Search branches…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
+        </div>
+        {canWrite && (
           <button className={btnPrimary} onClick={() => setModal({})}>
             <Plus size={15} /> Add Branch
           </button>
+        )}
+      </div>
+      {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
+      {loading ? (
+        <Spinner label="Loading branches…" />
+      ) : filtered.length === 0 ? (
+        <EmptyState message={search ? "No branches match your search" : "No branches yet"} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {filtered.map((r) => <BranchCard key={r.id} r={r} />)}
         </div>
       )}
-      {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
-      <DataTable
-        columns={columns}
-        rows={filtered}
-        loading={loading}
-        search={search}
-        onSearch={setSearch}
-        emptyMessage={search ? "No branches match your search" : "No branches yet"}
-        onRowClick={(r) => crmNavigate(`branch-policy/${r.id}`)}
-      />
       {modal && (
         <BranchFormModal customerId={customerId} initial={modal.initial} onClose={() => setModal(null)} onSaved={load} notify={notify} />
       )}
@@ -848,12 +918,23 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
       {deleting && (
         <ConfirmModal
           title="Delete branch"
-          message={<>Delete branch <b>{deleting.branch_name}</b>? This cannot be undone.</>}
-          confirmLabel="Delete"
+          message={
+            deleteError ? (
+              <>
+                Delete branch <b>{deleting.branch_name}</b> anyway? Linked contacts,
+                opportunities, projects, POs and holidays are kept — they simply lose
+                their branch link and can be reassigned later.
+              </>
+            ) : (
+              <>Delete branch <b>{deleting.branch_name}</b>? This cannot be undone.</>
+            )
+          }
+          confirmLabel={deleteError ? "Delete anyway" : "Delete"}
           danger
           busy={busy}
-          onConfirm={remove}
-          onClose={() => setDeleting(null)}
+          error={deleteError}
+          onConfirm={() => remove(!!deleteError)}
+          onClose={() => { setDeleting(null); setDeleteError(null); }}
         />
       )}
     </div>
@@ -863,16 +944,14 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
 /* -------------------------------------------- default billing policy tab */
 
 /** Customer-level DEFAULT billing policy — branches without their own policy
- * (Branches tab → Billing Policy) inherit these values field-by-field. */
+ * (Branches tab → Billing Policy) inherit these values field-by-field.
+ * Week/leave/holiday billability is edited at branch/project level only. */
 function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number; canWrite: boolean; notify: Notify }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [exists, setExists] = useState(false);
   const [form, setForm] = useState({
-    week_off_billable: false,
-    leave_billable: false,
-    holidays_billable: false,
     min_hours_full_day: "8",
     min_hours_half_day: "4",
   });
@@ -886,9 +965,6 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
       if (res.data) {
         setExists(true);
         setForm({
-          week_off_billable: !!res.data.week_off_billable,
-          leave_billable: !!res.data.leave_billable,
-          holidays_billable: !!res.data.holidays_billable,
           min_hours_full_day: String(res.data.min_hours_full_day ?? 8),
           min_hours_half_day: String(res.data.min_hours_half_day ?? 4),
         });
@@ -914,10 +990,8 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
     if (Object.keys(errs).length) return;
     setSaving(true);
     try {
+      // Omit week/leave/holiday billable flags so existing DB values are preserved.
       const res = await crmPut(`/api/customers/${customerId}/billing-policy`, {
-        week_off_billable: form.week_off_billable,
-        leave_billable: form.leave_billable,
-        holidays_billable: form.holidays_billable,
         min_hours_full_day: full,
         min_hours_half_day: half,
       });
@@ -933,19 +1007,6 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
   if (loading) return <Spinner label="Loading billing policy…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
-  const check = (key: "week_off_billable" | "leave_billable" | "holidays_billable", label: string) => (
-    <label className="flex items-center gap-2 text-sm font-semibold text-primary">
-      <input
-        type="checkbox"
-        className="h-4 w-4 accent-sky-600"
-        checked={form[key]}
-        disabled={!canWrite}
-        onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
-      />
-      {label}
-    </label>
-  );
-
   return (
     <form onSubmit={save} className="max-w-xl rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
       <p className="mb-4 text-sm text-muted">
@@ -956,11 +1017,6 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
           No billing policy is set for this customer yet — saving will create one.
         </p>
       )}
-      <div className="space-y-3">
-        {check("week_off_billable", "Week-offs are billable")}
-        {check("leave_billable", "Leaves are billable")}
-        {check("holidays_billable", "Holidays are billable")}
-      </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Min hours — full day" required error={errors.min_hours_full_day}>
           <input
@@ -991,122 +1047,6 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
 }
 
 /* ---------------------------------------------------------- contacts tab */
-
-function ContactFormModal({
-  customerId,
-  branches,
-  initial,
-  onClose,
-  onSaved,
-  notify,
-}: {
-  customerId: number;
-  branches: Branch[];
-  initial?: Contact;
-  onClose: () => void;
-  onSaved: () => void;
-  notify: Notify;
-}) {
-  const [form, setForm] = useState({
-    name: initial?.name || "",
-    branch_id: initial?.branch_id ? String(initial.branch_id) : "",
-    email: initial?.email || "",
-    phone: initial?.phone || "",
-    designation: initial?.designation || "",
-    is_hiring_manager: initial?.is_hiring_manager || false,
-    is_active: initial?.is_active ?? true,
-  });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const errs: Record<string, string> = {};
-    if (!form.name.trim()) errs.name = "Contact name is required";
-    if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) errs.email = "Enter a valid email address";
-    setErrors(errs);
-    if (Object.keys(errs).length) return;
-    setSaving(true);
-    try {
-      const payload = {
-        name: form.name.trim(),
-        branch_id: form.branch_id ? Number(form.branch_id) : null,
-        email: form.email.trim() || null,
-        // Store E.164 (+919876543210); unparseable input is kept as typed so
-        // nothing is lost (the read-side parser copes with legacy formats).
-        phone: normalizePhoneForSave(form.phone) || null,
-        designation: form.designation.trim() || null,
-        is_hiring_manager: form.is_hiring_manager,
-        is_active: form.is_active,
-      };
-      const res = initial
-        ? await crmPut(`/api/customers/${customerId}/contacts/${initial.id}`, payload)
-        : await crmPost(`/api/customers/${customerId}/contacts`, payload);
-      notify(res.message || "Contact saved");
-      onSaved();
-      onClose();
-    } catch (err: any) {
-      notify(err?.message || "Failed to save contact", "err");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={<span className="sr-only">{initial ? "Edit Contact" : "Add Contact"}</span>}
-      onClose={onClose}
-      fullScreen
-      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
-    >
-      <WizFormShell
-        title={initial ? "Edit Contact" : "Add Contact"}
-        subtitle="Key contact person, branch, and their coordinates."
-        icon={<User size={20} aria-hidden />}
-      >
-        <form onSubmit={submit} className="space-y-5">
-          <WizardField label="Name" required error={errors.name} icon="user" filled={!!form.name.trim()}>
-            <input className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} />
-          </WizardField>
-          <WizardField label="Branch" icon="building">
-            <select className={inputCls} value={form.branch_id} onChange={(e) => set("branch_id", e.target.value)}>
-              <option value="">— No branch —</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>{b.branch_name}</option>
-              ))}
-            </select>
-          </WizardField>
-          <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
-            <WizardField label="Email" error={errors.email} icon="mail" filled={!!form.email.trim() && !errors.email}>
-              <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
-            </WizardField>
-            <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
-              <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} maxLength={32} />
-            </WizardField>
-          </div>
-          <WizardField label="Designation" icon="user" filled={!!form.designation.trim()}>
-            <input className={inputCls} value={form.designation} onChange={(e) => set("designation", e.target.value)} />
-          </WizardField>
-          <div className="flex flex-wrap gap-5">
-            <label className="flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
-              <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_hiring_manager} onChange={(e) => set("is_hiring_manager", e.target.checked)} />
-              Hiring manager
-            </label>
-            <label className="flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
-              <input type="checkbox" className="h-4 w-4 accent-sky-600" checked={form.is_active} onChange={(e) => set("is_active", e.target.checked)} />
-              Active
-            </label>
-          </div>
-          <div className={wizFooterRow}>
-            <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
-            <button type="submit" className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} disabled={saving}>{saving ? "Saving…" : "Save contact"}</button>
-          </div>
-        </form>
-      </WizFormShell>
-    </Modal>
-  );
-}
 
 function ContactsTab({ customerId, canWrite, notify }: { customerId: number; canWrite: boolean; notify: Notify }) {
   const [rows, setRows] = useState<Contact[]>([]);
@@ -1169,7 +1109,9 @@ function ContactsTab({ customerId, canWrite, notify }: { customerId: number; can
     },
     { key: "email", label: "Email", render: (r) => r.email || "—" },
     { key: "phone", label: "Phone", render: (r) => r.phone || "—" },
-    { key: "designation", label: "Designation", render: (r) => r.designation || "—" },
+    { key: "designation", label: "Department", render: (r) => r.designation || "—" },
+    { key: "role", label: "Role", render: (r) => r.role || "—" },
+    { key: "contact_priority", label: "Priority", render: (r) => r.contact_priority || "—" },
     { key: "branch_id", label: "Branch", render: (r) => branchName(r.branch_id) },
     { key: "is_active", label: "Status", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
   ];
@@ -1203,12 +1145,12 @@ function ContactsTab({ customerId, canWrite, notify }: { customerId: number; can
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable columns={columns} rows={rows} loading={loading} emptyMessage="No contacts yet" />
       {modal && (
-        <ContactFormModal
+        <ContactPersonFormModal
           customerId={customerId}
           branches={branches}
           initial={modal.initial}
           onClose={() => setModal(null)}
-          onSaved={load}
+          onSaved={() => load()}
           notify={notify}
         />
       )}
@@ -1258,6 +1200,7 @@ function DocumentUploadModal({
       title={<span className="sr-only">Upload Document</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell

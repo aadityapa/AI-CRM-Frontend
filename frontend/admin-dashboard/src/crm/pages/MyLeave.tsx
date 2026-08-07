@@ -8,7 +8,7 @@ import React, { useEffect, useState } from "react";
 import { crmGet } from "../api";
 import { CrmLink } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
-import { EmptyState, ErrorBox, KpiCard, Spinner, StatusBadge } from "../components/ui";
+import { EmptyState, ErrorBox, KpiCard, PolicySourceChip, Spinner, StatusBadge } from "../components/ui";
 
 const daysFmt = (v?: number | null) =>
   v == null ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -21,6 +21,8 @@ type LeaveRow = {
   leave_accrual?: number | null;
   leave_consumed?: number | null;
   eligibility_label?: string | null;
+  /** Which policy layer credits this row: "project" | "branch" | "customer". */
+  policy_source?: string | null;
 };
 
 type ProjectLeave = {
@@ -41,7 +43,16 @@ type MyLeaveData = {
 };
 
 const cols: Column<LeaveRow>[] = [
-  { key: "leave_type_name", label: "Leave type", render: (r) => r.leave_type_name || "—" },
+  {
+    key: "leave_type_name",
+    label: "Leave type",
+    render: (r) => (
+      <div className="flex flex-col gap-0.5">
+        <span>{r.leave_type_name || "—"}</span>
+        <PolicySourceChip source={r.policy_source} />
+      </div>
+    ),
+  },
   { key: "leave_balance", label: "Balance", render: (r) => daysFmt(r.leave_balance) },
   { key: "leave_accrual", label: "Accrual / period", render: (r) => daysFmt(r.leave_accrual) },
   { key: "leave_consumed", label: "Consumed", render: (r) => daysFmt(r.leave_consumed) },
@@ -65,13 +76,13 @@ export function MyLeavePage() {
 
   const projects = data.projects || [];
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-display text-lg font-bold text-primary">My Leave</h1>
         <span className="text-sm text-muted">Across {projects.length} project mapping{projects.length === 1 ? "" : "s"}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <KpiCard label="Total leave balance" value={daysFmt(data.total_leave_balance)} />
         <KpiCard label="Active projects" value={String(projects.filter((p) => p.is_active && !p.is_exit).length)} />
       </div>

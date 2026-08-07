@@ -18,7 +18,16 @@ function DimensionBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function DimensionGrid({ scores }: { scores: DimensionScores }) {
+function DimensionGrid({
+  scores,
+  includeCommunication = true,
+}: {
+  scores: DimensionScores;
+  /** False when the template assessed technical substance only — the
+   *  communication and confidence bars are then omitted rather than drawn at
+   *  whatever the model happened to return for dimensions it was told to ignore. */
+  includeCommunication?: boolean;
+}) {
   return (
     <div className="rounded-card border border-subtle bg-surface-2 p-4 space-y-3">
       <p className="text-xs font-black uppercase text-brand-700 dark:text-brand-300 tracking-wide">
@@ -28,8 +37,12 @@ function DimensionGrid({ scores }: { scores: DimensionScores }) {
         <DimensionBar label="Technical accuracy" value={scores.technicalAccuracy} />
         <DimensionBar label="Concept coverage" value={scores.conceptCoverage} />
         <DimensionBar label="Depth of explanation" value={scores.depth} />
-        <DimensionBar label="Communication quality" value={scores.communication} />
-        <DimensionBar label="Confidence level" value={scores.confidence} />
+        {includeCommunication ? (
+          <>
+            <DimensionBar label="Communication quality" value={scores.communication} />
+            <DimensionBar label="Confidence level" value={scores.confidence} />
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -58,7 +71,13 @@ function LegacyStrengthsWeaknesses({ turn }: { turn: EnrichedTurn }) {
   );
 }
 
-export function ProfessionalAssessmentSections({ turn }: { turn: EnrichedTurn }) {
+export function ProfessionalAssessmentSections({
+  turn,
+  includeCommunication = true,
+}: {
+  turn: EnrichedTurn;
+  includeCommunication?: boolean;
+}) {
   const professional = turnHasProfessionalAssessment(turn);
   const rating =
     turn.overallRating != null
@@ -185,7 +204,9 @@ export function ProfessionalAssessmentSections({ turn }: { turn: EnrichedTurn })
         </div>
       ) : null}
 
-      {turn.dimensionScores ? <DimensionGrid scores={turn.dimensionScores} /> : null}
+      {turn.dimensionScores ? (
+        <DimensionGrid scores={turn.dimensionScores} includeCommunication={includeCommunication} />
+      ) : null}
     </div>
   );
 }

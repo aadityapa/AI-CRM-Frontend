@@ -106,7 +106,7 @@ function PromptDetail({ log, onClose }: { log: PromptLog; onClose: () => void })
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-backdrop backdrop-blur-sm overflow-auto p-4">
-      <div className="bg-surface-1 rounded-modal shadow-modal w-full max-w-5xl my-8 border border-subtle">
+      <div className="my-8 max-h-[calc(100vh-4rem)] w-full max-w-5xl overflow-hidden rounded-modal border border-subtle bg-surface-1 shadow-modal">
         <div className="sticky top-0 z-10 bg-surface-1 border-b border-subtle rounded-t-modal px-6 py-4 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-primary">Prompt Log Detail</h2>
@@ -122,9 +122,9 @@ function PromptDetail({ log, onClose }: { log: PromptLog; onClose: () => void })
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="max-h-[calc(100vh-9rem)] overflow-y-auto px-6 py-5 space-y-4">
           {/* Meta info grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
             {[
               ["Candidate", log.candidate_name || "-"],
               ["Role", log.candidate_role || "-"],
@@ -230,7 +230,7 @@ function LogsTab() {
       {/* Search & Filters bar */}
       <div className="glass rounded-card p-4 shadow-raised">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 flex-1 min-w-60">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:min-w-60">
             <Search className="w-4 h-4 text-muted" />
             <input
               type="text"
@@ -466,7 +466,7 @@ function StatsTab() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard icon={Zap} label="Total Calls" value={s.total_calls.toLocaleString()} color="indigo" />
         <StatCard icon={Coins} label="Total Tokens" value={s.total_tokens.toLocaleString()} color="violet" />
         <StatCard icon={TrendingUp} label="Prompt Tokens" value={s.total_prompt_tokens.toLocaleString()} color="sky" />

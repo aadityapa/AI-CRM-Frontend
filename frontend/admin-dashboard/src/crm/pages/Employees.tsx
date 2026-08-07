@@ -10,11 +10,12 @@ import {
   Pencil, Plus, Save, Trash2, User, X,
 } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs, type Meta } from "../api";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
 import { useCanEditTab } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import { EmployeeHistoryTab } from "./EmployeeHistory";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
@@ -32,7 +33,7 @@ import {
 } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -43,7 +44,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -271,8 +272,8 @@ function SkillsInput({ value, onChange }: { value: string[]; onChange: (v: strin
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    crmGet<any[]>("/api/skills?limit=200&is_active=true")
-      .then((r) => setAll((r.data || []).map((s: any) => s?.name).filter(Boolean)))
+    fetchAllMaster<any>("/api/skills", { is_active: true })
+      .then((rows) => setAll(rows.map((s: any) => s?.name).filter(Boolean)))
       .catch(() => {});
   }, []);
 
@@ -603,9 +604,10 @@ export function EmployeesListPage() {
           <RowActions
             entity="employee"
             itemLabel={r.full_name}
+            onView={() => crmNavigate(`employees/${r.id}`)}
             onEdit={() => crmNavigate(`employees/${r.id}`)}
             deleteUrl={`/api/employees/${r.id}`}
-            onDeleted={load}
+            onDeleted={() => afterListDelete(r.id, setRows, load)}
             notify={showToast}
             canEdit
             canDelete
@@ -715,7 +717,7 @@ function EmployeeReviewStep({ emp }: { emp: any }) {
         details below, then choose Done.
       </InfoChip>
       <div className="rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] p-5">
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           <InfoItem label="Name">{name || "—"}</InfoItem>
           <InfoItem label="Employee ID">{emp.employee_code || "—"}</InfoItem>
           <InfoItem label="Email (Official)">{emp.email || "—"}</InfoItem>
@@ -1085,7 +1087,7 @@ function EmployeeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionPr
           </Field>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           <InfoItem label="Title">{emp.title || "—"}</InfoItem>
           <InfoItem label="First name">{emp.first_name || "—"}</InfoItem>
           <InfoItem label="Middle name">{emp.middle_name || "—"}</InfoItem>
@@ -1324,6 +1326,7 @@ function EducationModal({
     <Modal
       title={<span className="sr-only">{initial ? "Edit Education" : "Add Education"}</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell
@@ -1552,6 +1555,7 @@ function ExperienceModal({
     <Modal
       title={<span className="sr-only">{initial ? "Edit Experience" : "Add Experience"}</span>}
       onClose={onClose}
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell
@@ -1937,7 +1941,7 @@ function OfficeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionProp
           </InfoItem>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           <InfoItem label="Work location">{emp.work_location || "—"}</InfoItem>
           <InfoItem label="Role">{emp.role_title || "—"}</InfoItem>
           <InfoItem label="Skills">
@@ -2033,7 +2037,7 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
           </Field>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <InfoItem label="Is resigned">{emp.is_resigned ? "Yes" : "No"}</InfoItem>
           <InfoItem label="Date of resignation">{fmtDate(emp.date_of_resignation)}</InfoItem>
           <InfoItem label="Notice period (days)">{emp.notice_period_days ?? "—"}</InfoItem>
@@ -2362,7 +2366,7 @@ function AttendanceRuleSection({ emp, canWrite, onSaved, showToast }: SectionPro
           </Field>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
           <InfoItem label="Min hours for full day">{emp.min_hours_full_day ?? "—"}</InfoItem>
           <InfoItem label="Min hours for half day">{emp.min_hours_half_day ?? "—"}</InfoItem>
           <InfoItem label="Normal hours per day">{emp.normal_hours_per_day ?? "—"}</InfoItem>

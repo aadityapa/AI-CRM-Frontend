@@ -13,7 +13,10 @@ export function KarnexBranding({
   variant?: "auto" | "light" | "dark";
 }) {
   const isSm = size === "sm";
-  const logoH = isSm ? 28 : 36;
+  const logoH = isSm ? 30 : 36;
+  const shellWidth = isSm ? 172 : 200;
+  const shellPaddingX = isSm ? "0.5rem" : "0.75rem";
+  const shellPaddingY = isSm ? "0.35rem" : "0.5rem";
   const src =
     variant === "dark"
       ? "/assets/karnex-logo-light.svg"
@@ -22,10 +25,17 @@ export function KarnexBranding({
         : "/assets/karnex-logo.svg";
 
   return (
-    <div className={`flex flex-col gap-1 select-none ${className}`}>
+    <div className={`flex flex-col gap-0.5 select-none ${className}`}>
       <div
-        className="inline-flex items-center justify-center rounded-card border border-subtle bg-surface-1 px-3 py-2 shadow-raised"
-        style={{ maxWidth: isSm ? 160 : 200 }}
+        className="inline-flex items-center justify-start rounded-card border border-subtle bg-surface-1 shadow-raised"
+        style={{
+          width: shellWidth,
+          maxWidth: shellWidth,
+          paddingLeft: shellPaddingX,
+          paddingRight: shellPaddingX,
+          paddingTop: shellPaddingY,
+          paddingBottom: shellPaddingY,
+        }}
       >
         <img
           src={src}
@@ -45,8 +55,8 @@ export function KarnexBranding({
           decoding="async"
         />
       </div>
-      <div className="text-xs">
-        <p className="m-0 font-bold uppercase tracking-widest text-muted">
+      <div className="pl-0.5 text-xs">
+        <p className="m-0 font-bold uppercase tracking-[0.28em] text-muted">
           AI HR SUITE
         </p>
         {!isSm && (

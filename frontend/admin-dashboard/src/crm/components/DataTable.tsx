@@ -36,6 +36,7 @@ export function DataTable<T extends { id?: number | string }>({
   loading,
   search,
   onSearch,
+  searchPlaceholder = "Search…",
   sort,
   onSort,
   onPage,
@@ -43,6 +44,10 @@ export function DataTable<T extends { id?: number | string }>({
   rowActions,
   filters,
   emptyMessage = "No records found",
+  selectable = false,
+  selectedIds,
+  onSelectionChange,
+  rowLabel,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -50,6 +55,7 @@ export function DataTable<T extends { id?: number | string }>({
   loading?: boolean;
   search?: string;
   onSearch?: (q: string) => void;
+  searchPlaceholder?: string;
   sort?: { by: string; dir: "asc" | "desc" };
   onSort?: (by: string) => void;
   onPage?: (page: number) => void;
@@ -58,8 +64,43 @@ export function DataTable<T extends { id?: number | string }>({
   rowActions?: (row: T) => React.ReactNode;
   filters?: React.ReactNode;
   emptyMessage?: string;
+  /**
+   * Opt-in row selection. Off by default, so every existing table that does
+   * not pass these props renders exactly as before.
+   */
+  selectable?: boolean;
+  selectedIds?: Set<string | number>;
+  onSelectionChange?: (next: Set<string | number>) => void;
+  /** Accessible name for a row's checkbox, e.g. (r) => r.candidate_name. */
+  rowLabel?: (row: T) => string;
 }) {
   const reduce = useReducedMotion();
+
+  const selected = selectedIds ?? new Set<string | number>();
+  const pageIds = rows.map((r) => r.id).filter((id): id is string | number => id != null);
+  const selectedOnPage = pageIds.filter((id) => selected.has(id)).length;
+  const allOnPageSelected = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  // Header checkbox shows a dash when only some of the page is selected —
+  // "select all" and "some are selected" are different states and a plain
+  // unchecked box would misreport the second as the first.
+  const someOnPageSelected = selectedOnPage > 0 && !allOnPageSelected;
+
+  const toggleRow = (id: string | number) => {
+    if (!onSelectionChange) return;
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onSelectionChange(next);
+  };
+
+  const togglePage = () => {
+    if (!onSelectionChange) return;
+    const next = new Set(selected);
+    // Selection survives pagination, so only this page's ids are touched.
+    if (allOnPageSelected) pageIds.forEach((id) => next.delete(id));
+    else pageIds.forEach((id) => next.add(id));
+    onSelectionChange(next);
+  };
+
   const allColumns: Column<T>[] = rowActions
     ? [
         ...columns,
@@ -68,21 +109,13 @@ export function DataTable<T extends { id?: number | string }>({
           label: "",
           align: "right",
           className: "w-24",
-          render: (row) => (
-            <div
-              className="flex justify-end"
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              {rowActions(row)}
-            </div>
-          ),
+          render: (row) => rowActions(row),
         },
       ]
     : columns;
   const colCount = allColumns.length;
   return (
-    <div className="elev-1 overflow-hidden rounded-panel">
+    <div className="elev-1 min-w-0 overflow-hidden rounded-panel">
       {(onSearch || filters) && (
         <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 py-3">
           {onSearch && (
@@ -90,7 +123,7 @@ export function DataTable<T extends { id?: number | string }>({
               <Search size={15} className="absolute left-2.5 top-1/2 z-10 -translate-y-1/2 text-muted" />
               <input
                 className={`${inputCls} pl-8 sm:!w-60`}
-                placeholder="Search…"
+                placeholder={searchPlaceholder}
                 value={search || ""}
                 onChange={(e) => onSearch(e.target.value)}
               />
@@ -101,11 +134,25 @@ export function DataTable<T extends { id?: number | string }>({
       )}
       {/* Mobile/tablet: table keeps its natural width and scrolls horizontally
           instead of crushing columns; from lg it fits the panel again. */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overscroll-x-contain">
         <table className="w-full min-w-max text-sm lg:min-w-0">
           {/* Sticky opaque header: surface bg + subtle bottom border. */}
           <thead className="sticky top-0 z-10 bg-surface-1">
             <tr className="border-b border-subtle text-left">
+              {selectable && (
+                <th scope="col" className="w-10 px-4 py-2.5">
+                  <input
+                    type="checkbox"
+                    className="block h-3.5 w-3.5 cursor-pointer accent-brand-600"
+                    checked={allOnPageSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someOnPageSelected;
+                    }}
+                    onChange={togglePage}
+                    aria-label={allOnPageSelected ? "Deselect all rows on this page" : "Select all rows on this page"}
+                  />
+                </th>
+              )}
               {allColumns.map((c) => (
                 <th
                   key={c.key}
@@ -136,10 +183,16 @@ export function DataTable<T extends { id?: number | string }>({
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              /* Skeleton loading rows (.shimmer recipe) — same geometry as data rows. */
+            {loading && rows.length === 0 ? (
+              /* Skeleton only on initial/empty load — keep existing rows visible while
+                 soft-refreshing (e.g. after delete) so the list updates in place. */
               Array.from({ length: SKELETON_ROWS }).map((_, r) => (
                 <tr key={`skeleton-${r}`} className="border-b border-subtle">
+                  {selectable && (
+                    <td className="h-12 px-4 py-2 align-middle">
+                      <div className="shimmer h-3.5 w-3.5 rounded" aria-hidden />
+                    </td>
+                  )}
                   {allColumns.map((c, i) => (
                     <td key={c.key} className="h-12 px-4 py-2 align-middle">
                       <div
@@ -154,7 +207,7 @@ export function DataTable<T extends { id?: number | string }>({
               ))
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={colCount}>
+                <td colSpan={colCount + (selectable ? 1 : 0)}>
                   <EmptyState message={emptyMessage} />
                 </td>
               </tr>
@@ -171,9 +224,22 @@ export function DataTable<T extends { id?: number | string }>({
                      only — no shadows/filters on dense tables). */
                   className={`row-hover border-b border-subtle transition-colors duration-micro ease-smooth ${
                     onRowClick ? "cursor-pointer active:bg-surface-0" : ""
-                  }`}
+                  } ${row.id != null && selected.has(row.id) ? "bg-brand-50 dark:bg-brand-900/20" : ""}`}
                   onClick={() => onRowClick && onRowClick(row)}
                 >
+                  {selectable && (
+                    /* stopPropagation: ticking a checkbox must not also open
+                       the row — selecting and navigating are different intents. */
+                    <td className="h-12 px-4 py-2 align-middle" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="block h-3.5 w-3.5 cursor-pointer accent-brand-600"
+                        checked={row.id != null && selected.has(row.id)}
+                        onChange={() => row.id != null && toggleRow(row.id)}
+                        aria-label={`Select ${rowLabel ? rowLabel(row) : `row ${i + 1}`}`}
+                      />
+                    </td>
+                  )}
                   {allColumns.map((c) => (
                     <td
                       key={c.key}
@@ -189,6 +255,9 @@ export function DataTable<T extends { id?: number | string }>({
             )}
           </tbody>
         </table>
+      </div>
+      <div className="border-t border-subtle px-4 py-2 text-xs text-muted lg:hidden">
+        Swipe horizontally to view all columns.
       </div>
       {meta && meta.pages > 1 && onPage && (
         <div className="flex items-center justify-between border-t border-subtle px-4 py-2.5 text-sm text-secondary">

@@ -90,7 +90,7 @@ export function SidebarUserBlock({
         aria-label={rail || compact ? tipLabel : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white/70 text-left shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-800 ${
+        className={`flex min-h-[40px] w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white/70 text-left shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-800 ${
           rail ? "justify-center p-1" : compact ? "justify-center p-2" : "p-2"
         }`}
       >

@@ -324,7 +324,7 @@ export default function App() {
   const showViewInBody = isViewAllowed(view) ? view : (rbacActive ? defaultLanding(effRoles) : "dashboard");
 
   return (
-    <div className="relative isolate min-h-screen bg-surface-0 text-primary transition-colors duration-200">
+    <div className="relative isolate min-h-screen overflow-x-clip bg-surface-0 text-primary transition-colors duration-200">
       {/* Aurora ambience — single fixed indigo/violet/cyan mesh behind ALL
           content (tokens.css .fx-aurora; z-index -1 inside this isolated
           root) + the ONE global mouse-follow spotlight (useSpotlight above). */}
@@ -347,7 +347,7 @@ export default function App() {
         <AnimatePresence mode="wait">
           <motion.div
             key={surfaceKey}
-            className="min-h-[calc(100vh-4rem)]"
+            className="min-h-[calc(100vh-4rem)] min-w-0"
             variants={pageMotion.variants}
             initial="initial"
             animate="animate"

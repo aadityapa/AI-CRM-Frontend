@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
-import { Modal, btnDanger, btnPrimary, btnSecondary, inputCls } from "./ui";
+import { Modal, ConfirmModal, btnDanger, btnPrimary, btnSecondary, inputCls } from "./ui";
 import { FieldLabel } from "./wizard";
 import {
   LEAVE_CREDIT_TYPE_CHOICES,
@@ -14,6 +14,7 @@ import {
   type LeaveRow,
   type LeaveType,
 } from "./ProjectPolicySections";
+import { PeriodTimingPicker } from "./PeriodTimingPicker";
 
 function formatDisplayDate(iso: string): string {
   if (!iso) return "";
@@ -44,6 +45,7 @@ export function LeaveBillingPolicyModal({
   const [form, setForm] = useState<LeaveRow>(() => initial ?? emptyLeaveRow());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [typeQuery, setTypeQuery] = useState("");
   const [typeOpen, setTypeOpen] = useState(false);
 
@@ -81,9 +83,6 @@ export function LeaveBillingPolicyModal({
     if (form.leave_credit_balance !== "" && Number.isNaN(Number(form.leave_credit_balance))) {
       errs.leave_credit_balance = "Must be a number";
     }
-    if (form.initial_credit_balance !== "" && Number.isNaN(Number(form.initial_credit_balance))) {
-      errs.initial_credit_balance = "Must be a number";
-    }
     const mcf = form.maximum_carry_forward === "" ? 0 : Number(form.maximum_carry_forward);
     if (!Number.isInteger(mcf) || mcf < 0) {
       errs.maximum_carry_forward = "Must be a whole number ≥ 0";
@@ -98,6 +97,10 @@ export function LeaveBillingPolicyModal({
     try {
       const normalized: LeaveRow = {
         ...form,
+        leave_credit_timing: form.leave_credit_timing || "Start_Of_Period",
+        leave_expire_timing: form.leave_expire
+          ? (form.leave_expire_timing || "End_Of_Period")
+          : "",
         maximum_carry_forward: form.maximum_carry_forward === "" ? "0" : String(Math.trunc(Number(form.maximum_carry_forward))),
       };
       await onSave(normalized);
@@ -110,6 +113,7 @@ export function LeaveBillingPolicyModal({
     setBusy(true);
     try {
       await onDelete(form);
+      setConfirmDelete(false);
     } finally {
       setBusy(false);
     }
@@ -198,7 +202,13 @@ export function LeaveBillingPolicyModal({
           <select
             className={inputCls}
             value={form.leave_credit_type}
-            onChange={(e) => set({ leave_credit_type: e.target.value })}
+            onChange={(e) => {
+              const leave_credit_type = e.target.value;
+              set({
+                leave_credit_type,
+                leave_credit_timing: form.leave_credit_timing || "Start_Of_Period",
+              });
+            }}
           >
             <option value="">-Select-</option>
             {LEAVE_CREDIT_TYPE_CHOICES.map((o) => (
@@ -208,6 +218,12 @@ export function LeaveBillingPolicyModal({
           {errors.leave_credit_type && (
             <p className="mt-1 text-xs text-danger" role="alert">{errors.leave_credit_type}</p>
           )}
+          <PeriodTimingPicker
+            cycle={form.leave_credit_type}
+            value={form.leave_credit_timing}
+            verb="Credit"
+            onChange={(v) => set({ leave_credit_timing: v })}
+          />
         </div>
 
         {/* 4. Leave Credit Balance */}
@@ -227,30 +243,21 @@ export function LeaveBillingPolicyModal({
           )}
         </div>
 
-        {/* 5. Initial Credit Balance */}
-        <div>
-          <FieldLabel label="Initial Credit Balance" />
-          <input
-            type="number"
-            step="0.01"
-            min={0}
-            className={inputCls}
-            placeholder="######.##"
-            value={form.initial_credit_balance}
-            onChange={(e) => set({ initial_credit_balance: e.target.value })}
-          />
-          {errors.initial_credit_balance && (
-            <p className="mt-1 text-xs text-danger" role="alert">{errors.initial_credit_balance}</p>
-          )}
-        </div>
-
         {/* 6. Leave_Expire * */}
         <div>
           <FieldLabel label="Leave_Expire" required />
           <select
             className={inputCls}
             value={form.leave_expire}
-            onChange={(e) => set({ leave_expire: e.target.value })}
+            onChange={(e) => {
+              const leave_expire = e.target.value;
+              set({
+                leave_expire,
+                leave_expire_timing: leave_expire
+                  ? (form.leave_expire_timing || "End_Of_Period")
+                  : "",
+              });
+            }}
           >
             <option value="">-Select-</option>
             {LEAVE_EXPIRE_CHOICES.map((o) => (
@@ -260,6 +267,12 @@ export function LeaveBillingPolicyModal({
           {errors.leave_expire && (
             <p className="mt-1 text-xs text-danger" role="alert">{errors.leave_expire}</p>
           )}
+          <PeriodTimingPicker
+            cycle={form.leave_expire}
+            value={form.leave_expire_timing}
+            verb="Expire"
+            onChange={(v) => set({ leave_expire_timing: v })}
+          />
         </div>
 
         {/* 7. Is Max Limit */}
@@ -289,23 +302,6 @@ export function LeaveBillingPolicyModal({
           )}
         </div>
 
-        {/* 9. Effective Date */}
-        <div>
-          <FieldLabel label="Effective Date" />
-          <input
-            type="date"
-            className={inputCls}
-            value={form.effective_date}
-            onChange={(e) => set({ effective_date: e.target.value })}
-          />
-          {form.effective_date && (
-            <p className="mt-1 text-[11px] text-muted">{formatDisplayDate(form.effective_date)}</p>
-          )}
-          {!form.effective_date && (
-            <p className="mt-1 text-[11px] text-muted">Format: dd-MMM-yyyy</p>
-          )}
-        </div>
-
         {/* 10. System Fields — header only */}
         <div className="border-t border-subtle pt-3">
           <p className="text-xs font-bold uppercase tracking-wider text-muted">System Fields</p>
@@ -320,7 +316,7 @@ export function LeaveBillingPolicyModal({
           type="button"
           className={btnDanger}
           disabled={busy}
-          onClick={() => void handleDelete()}
+          onClick={() => setConfirmDelete(true)}
         >
           Delete
         </button>
@@ -333,6 +329,17 @@ export function LeaveBillingPolicyModal({
           {busy ? "Saving…" : "Save"}
         </button>
       </div>
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete a leave policy?"
+          message={<>Do you want to delete this leave billing policy row? This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger
+          busy={busy}
+          onConfirm={() => { void handleDelete(); }}
+          onClose={() => { if (!busy) setConfirmDelete(false); }}
+        />
+      )}
     </Modal>
   );
 }

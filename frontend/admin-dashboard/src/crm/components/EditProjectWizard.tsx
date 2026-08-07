@@ -60,6 +60,7 @@ export type ProjectWizardInitial = {
   recurring_billing?: boolean | null;
   holidays_billable?: boolean | null;
   weekoff_billable?: boolean | null;
+  comp_off_billable?: boolean | null;
   hours_required_half_day?: number | null;
   hours_required_full_day?: number | null;
   hours_required_half_day_comp_off?: number | null;
@@ -98,6 +99,7 @@ type BranchPolicyPayload = {
   branch_name?: string | null;
   holidays_billable?: boolean | null;
   weekoff_billable?: boolean | null;
+  comp_off_billable?: boolean | null;
   leave_billable?: boolean | null;
   hours_required_half_day?: number | null;
   hours_required_full_day?: number | null;
@@ -144,6 +146,7 @@ function polFromInitial(initial: ProjectWizardInitial): PolicyFormState {
   return {
     holidays_billable: !!initial.holidays_billable,
     weekoff_billable: !!initial.weekoff_billable,
+    comp_off_billable: !!initial.comp_off_billable,
     hours_required_half_day: strOr(initial.hours_required_half_day),
     hours_required_full_day: strOr(initial.hours_required_full_day),
     hours_required_half_day_comp_off: strOr(initial.hours_required_half_day_comp_off),
@@ -175,6 +178,7 @@ function polFromBranch(branch: BranchPolicyPayload): PolicyFormState {
   return {
     holidays_billable: !!branch.holidays_billable,
     weekoff_billable: !!branch.weekoff_billable,
+    comp_off_billable: !!branch.comp_off_billable,
     hours_required_half_day: strOr(branch.hours_required_half_day),
     hours_required_full_day: strOr(branch.hours_required_full_day),
     hours_required_half_day_comp_off: strOr(branch.hours_required_half_day_comp_off),
@@ -200,11 +204,14 @@ function leaveRowsFromBranch(policies: Record<string, unknown>[] | undefined): L
   const creditMap: Record<string, string> = {
     "Credit Balance Every Month": "Monthly",
     "Carry Forward Every Month": "Monthly",
-    Yearly: "Annually",
-    One_Time: "Annually",
+    Yearly: "Yearly",
+    Annually: "Yearly",
+    One_Time: "Yearly",
   };
   const expireMap: Record<string, string> = {
-    Days: "Annually",
+    Days: "Monthly",
+    Annually: "Yearly",
+    "Carry Forward": "Yearly",
   };
   const toCredit = (raw: string) => {
     if (!raw) return "";
@@ -227,9 +234,11 @@ function leaveRowsFromBranch(policies: Record<string, unknown>[] | undefined): L
       leave_type_id: row.leave_type_id != null ? String(row.leave_type_id) : "",
       name: String(row.leave_name || row.name || ""),
       leave_credit_type: toCredit(String(row.leave_credit_type || "")),
+      leave_credit_timing: String(row.leave_credit_timing || "Start_Of_Period"),
       leave_credit_balance: row.leave_credit_balance != null ? String(row.leave_credit_balance) : "",
       initial_credit_balance: row.initial_credit_balance != null ? String(row.initial_credit_balance) : "0",
       leave_expire: toExpire(String(row.leave_expire || "")),
+      leave_expire_timing: String(row.leave_expire_timing || "End_Of_Period"),
       is_max_limit: !!row.is_max_limit,
       maximum_carry_forward: carry != null ? String(carry) : "0",
       effective_date: row.effective_date ? String(row.effective_date).slice(0, 10) : "",
@@ -264,9 +273,11 @@ function leaveRowPayload(row: LeaveRow) {
     leave_type_id: Number(row.leave_type_id),
     name: row.name.trim() || null,
     leave_credit_type: row.leave_credit_type,
+    leave_credit_timing: row.leave_credit_timing || "Start_Of_Period",
     leave_credit_balance: numOrNull(row.leave_credit_balance) ?? 0,
     initial_credit_balance: numOrNull(row.initial_credit_balance) ?? 0,
     leave_expire: row.leave_expire,
+    leave_expire_timing: row.leave_expire ? (row.leave_expire_timing || "End_Of_Period") : null,
     is_max_limit: row.is_max_limit,
     maximum_carry_forward: Math.trunc(numOrNull(row.maximum_carry_forward) ?? 0),
     effective_date: row.effective_date || null,
@@ -377,9 +388,11 @@ function ProjectWizard({
           leave_type_id: row.leave_type_id != null ? String(row.leave_type_id) : "",
           name: String(row.name || ""),
           leave_credit_type: String(row.leave_credit_type || "Monthly"),
+          leave_credit_timing: String(row.leave_credit_timing || "Start_Of_Period"),
           leave_credit_balance: row.leave_credit_balance != null ? String(row.leave_credit_balance) : "",
           initial_credit_balance: row.initial_credit_balance != null ? String(row.initial_credit_balance) : "0",
-          leave_expire: String(row.leave_expire || "Annually"),
+          leave_expire: String(row.leave_expire || "Yearly"),
+          leave_expire_timing: String(row.leave_expire_timing || "End_Of_Period"),
           is_max_limit: !!row.is_max_limit,
           maximum_carry_forward: row.maximum_carry_forward != null ? String(row.maximum_carry_forward) : "0",
           effective_date: row.effective_date ? String(row.effective_date).slice(0, 10) : "",

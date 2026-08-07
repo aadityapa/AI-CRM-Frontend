@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&family=Space+Grotesk:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
     <style>
@@ -32,14 +32,21 @@
           (t !== "light" &&
             (legacy === "1" ||
               (legacy !== "0" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)));
-        if (dark) document.documentElement.classList.add("dark", "kx-dark");
+        if (dark) {
+          document.documentElement.classList.add("dark", "kx-dark");
+        }
+        var accent = String(localStorage.getItem("karnexAccent") || "").toLowerCase();
+        var accents = { indigo:1, blue:1, teal:1, emerald:1, amber:1, rose:1, fuchsia:1, multi:1 };
+        if (accent && accent !== "indigo" && accents[accent]) {
+          document.documentElement.setAttribute("data-accent", accent);
+        }
       } catch (e) {}
     </script>
-    <script type="module" crossorigin src="/admin/assets/index-Cnuyd5QM.js"></script>
-    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-react-BksroS8u.js">
-    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-motion-c-B2hMRJ.js">
-    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-icons-Bq6n9Mo1.js">
-    <link rel="stylesheet" crossorigin href="/admin/assets/index-DUdf54OE.css">
+    <script type="module" crossorigin src="/admin/assets/index-NL51swwj.js"></script>
+    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-react-BC_GqIKx.js">
+    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-motion-CyiXVG82.js">
+    <link rel="modulepreload" crossorigin href="/admin/assets/vendor-icons-BX9YBqog.js">
+    <link rel="stylesheet" crossorigin href="/admin/assets/index-BQ8RTnKA.css">
   </head>
   <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
     <div id="root"></div>

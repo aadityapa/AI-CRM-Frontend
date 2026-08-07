@@ -7,7 +7,7 @@ import React from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Check, ChevronLeft, ChevronRight, Loader2, Cloud, CloudOff,
-  FolderOpen, RotateCcw, Lock, Info, Save,
+  RotateCcw, Lock, Info, Save,
   Building2, Mail, Phone, User, MapPin, Hash, Calendar, type LucideIcon,
 } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -35,10 +35,9 @@ const SECTION_HELPERS: Record<string, string> = {
   customerDetails: "Select the customer, branch, and key contacts for this opportunity.",
   rfiDetails: "Capture the request title, dates, and opportunity type.",
   timeAndMaterial: "Define the position, role, location, and engagement details.",
-  leaveHoliday: "Configure leave, holiday, and week-off billing rules.",
-  commercial: "Set billing type, rates, and commercial terms.",
-  ctcSlab: "Define candidate CTC bands and revenue assumptions.",
-  workPage: "Stage, scope, and contract duration for the work page.",
+  leaveHoliday: "Estimation only for costing. Holidays / Weekoff / Leave prefill only when a leave policy is linked to the selected branch; otherwise leave blank. The APPLIED leave policy always comes from branch/project settings, not this form.",
+  commercial: "Billing type, hours, and RFI Value (auto from CTC Annual Revenue × Period ÷ 12 × Positions).",
+  ctcSlab: "Define candidate CTC bands and revenue assumptions — enter these before Commercial Details.",
   attachments: "Attach customer JDs and supporting documents.",
   skillEval: "Required skills and evaluation criteria.",
   onboardingStatus: "Track onboarding progress for this opportunity.",
@@ -165,8 +164,8 @@ export function WizardTopBar({
 
   return (
     <div className="w-full min-w-0">
-      <div className="flex h-14 items-center gap-3 px-1">
-        <div className="min-w-0">
+      <div className="flex min-h-14 flex-wrap items-center gap-3 px-1 py-1">
+        <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold tracking-tight text-[color:var(--wiz-text)] sm:text-base">
             {title}
           </h2>
@@ -174,7 +173,7 @@ export function WizardTopBar({
             Step {safeStep} of {safeTotal}
           </p>
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2 sm:gap-2.5">
+        <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:gap-2.5">
           {showAutosave && autosaveStatus != null && (
             <AutosaveIndicator status={autosaveStatus} savedAt={savedAt ?? null} />
           )}
@@ -202,7 +201,7 @@ export function WizardTopBar({
           )}
         </div>
       </div>
-      <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/5">
+      <div className="h-0.5 w-full overflow-hidden rounded-full bg-[color:var(--wiz-border)]">
         <motion.div
           className="h-full rounded-full bg-gradient-to-r from-[#6D5DFB] to-[#8B7BFF]"
           initial={false}
@@ -228,7 +227,7 @@ function StepDot({
           ? "wiz-pulse-ring bg-[#6D5DFB] text-white ring-2 ring-[#8B7BFF]/60"
           : done
             ? "bg-[#6D5DFB] text-white"
-            : "border-2 border-white/15 bg-transparent text-[color:var(--wiz-muted)]"
+            : "border-2 border-[color:var(--wiz-border-strong)] bg-transparent text-[color:var(--wiz-muted)]"
       }`}
     >
       <AnimatePresence mode="wait" initial={false}>
@@ -279,7 +278,7 @@ export function WizardStepper({
           return (
             <li key={s.key} className={vertical ? "relative flex" : "relative shrink-0"}>
               {vertical && i < steps.length - 1 && (
-                <span aria-hidden className="absolute left-[13px] top-8 z-0 h-[calc(100%-6px)] w-px bg-white/10">
+                <span aria-hidden className="absolute left-[13px] top-8 z-0 h-[calc(100%-6px)] w-px bg-[color:var(--wiz-border-strong)]">
                   <span
                     className={`absolute inset-x-0 top-0 w-px bg-[#6D5DFB]/70 transition-all duration-300 ${
                       isPast ? "h-full" : "h-0"
@@ -297,9 +296,9 @@ export function WizardStepper({
                   vertical ? "w-full px-2.5 py-2" : "min-w-[9rem] flex-col gap-1 px-2 py-1.5"
                 } ${
                   isCurrent
-                    ? "bg-white/[0.06] shadow-[inset_0_0_0_1px_rgba(109,93,251,0.45)]"
+                    ? "bg-[color:var(--wiz-primary)]/10 shadow-[inset_0_0_0_1px_rgba(109,93,251,0.45)]"
                     : reachable
-                      ? "hover:bg-white/[0.04]"
+                      ? "hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                       : "cursor-not-allowed opacity-40"
                 }`}
               >
@@ -308,10 +307,10 @@ export function WizardStepper({
                   <span
                     className={`block truncate text-[13px] leading-snug ${
                       isCurrent
-                        ? "font-semibold text-white"
+                        ? "font-semibold text-[color:var(--wiz-text)]"
                         : isPast
-                          ? "font-medium text-white/80"
-                          : "font-medium text-[color:var(--wiz-muted)] group-hover:text-white/90"
+                          ? "font-medium text-[color:var(--wiz-text)]/80"
+                          : "font-medium text-[color:var(--wiz-muted)] group-hover:text-[color:var(--wiz-text)]/90"
                     }`}
                   >
                     {s.title}
@@ -349,11 +348,11 @@ export function WizardStepProgress({
   const done = clamped >= 100;
 
   return (
-    <div className="mt-6 rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-elevated)] p-3.5 shadow-[0_8px_32px_rgba(0,0,0,0.35)]">
+    <div className="wiz-step-progress mt-6 rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-elevated)] p-3.5">
       <div className="flex items-start gap-3">
         <div className="relative h-12 w-12 shrink-0" aria-hidden>
           <svg viewBox="0 0 44 44" className="h-12 w-12 -rotate-90">
-            <circle cx="22" cy="22" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3.5" />
+            <circle cx="22" cy="22" r={r} fill="none" stroke="var(--wiz-border-strong)" strokeWidth="3.5" />
             <circle
               cx="22" cy="22" r={r} fill="none"
               stroke={done ? "var(--wiz-success)" : "var(--wiz-primary)"}
@@ -361,7 +360,7 @@ export function WizardStepProgress({
               strokeDasharray={c} strokeDashoffset={offset}
             />
           </svg>
-          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold tabular-nums text-white">
+          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold tabular-nums text-[color:var(--wiz-text)]">
             {clamped}%
           </span>
         </div>
@@ -378,63 +377,30 @@ export function SectionHeaderBanner({
   title,
   description,
   headingRef,
-  icon,
 }: {
   title: string;
   description?: string;
   headingRef?: React.Ref<HTMLHeadingElement>;
+  /** Kept for call-site compatibility; the clean header omits the icon tile. */
   icon?: React.ReactNode;
 }) {
-  const uid = React.useId().replace(/:/g, "");
-  const glowId = `wizSky-${uid}`;
-
+  // Clean, compact step header (no gradient banner / icon tile / chart art) —
+  // a prominent 20px title over a muted one-line description, matching the
+  // reference design. Shared by New Opportunity + New Customer + New Candidate.
   return (
-    <header className="relative mb-6 overflow-hidden rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-elevated)] px-4 py-4 sm:px-5 sm:py-5">
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#6D5DFB]/20 via-transparent to-[#8B7BFF]/12" />
-      <div aria-hidden className="pointer-events-none absolute -right-8 -top-12 h-44 w-44 rounded-full bg-[#6D5DFB]/25 blur-3xl" />
-      <div className="relative z-[1] flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          {icon && (
-            <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#6D5DFB] text-white shadow-[0_0_28px_rgba(109,93,251,0.5)]">
-              {icon}
-            </span>
-          )}
-          <div className="min-w-0">
-            <h3
-              ref={headingRef}
-              tabIndex={-1}
-              className="text-[20px] font-semibold tracking-tight text-white outline-none"
-            >
-              {title}
-            </h3>
-            {description && (
-              <p className="mt-1 max-w-lg text-[12px] leading-relaxed text-[color:var(--wiz-muted)]">{description}</p>
-            )}
-          </div>
-        </div>
-        <div aria-hidden className="relative hidden h-[68px] w-40 shrink-0 lg:block">
-          <svg viewBox="0 0 176 76" className="h-full w-full" fill="none">
-            <defs>
-              <linearGradient id={glowId} x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#6D5DFB" stopOpacity="0.55" />
-                <stop offset="100%" stopColor="#8B7BFF" stopOpacity="0.2" />
-              </linearGradient>
-            </defs>
-            <rect width="176" height="76" rx="16" fill={`url(#${glowId})`} opacity="0.35" />
-            <rect x="10" y="36" width="20" height="32" rx="3" fill="#8B7BFF" opacity="0.7" />
-            <rect x="34" y="22" width="24" height="46" rx="3" fill="#6D5DFB" opacity="0.8" />
-            <rect x="62" y="30" width="18" height="38" rx="3" fill="#8B7BFF" opacity="0.65" />
-            <rect x="84" y="14" width="28" height="54" rx="3" fill="#6D5DFB" opacity="0.85" />
-            <rect x="116" y="26" width="22" height="42" rx="3" fill="#8B7BFF" opacity="0.7" />
-            <rect x="142" y="34" width="24" height="34" rx="3" fill="#6D5DFB" opacity="0.6" />
-            <g fill="white" opacity="0.4">
-              <circle cx="44" cy="34" r="1.4" /><circle cx="50" cy="34" r="1.4" />
-              <circle cx="44" cy="42" r="1.4" /><circle cx="50" cy="42" r="1.4" />
-              <circle cx="96" cy="28" r="1.4" /><circle cx="102" cy="28" r="1.4" />
-            </g>
-          </svg>
-        </div>
-      </div>
+    <header className="mb-6 border-b border-[color:var(--wiz-border)] pb-4">
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        className="text-xl font-bold tracking-tight text-[color:var(--wiz-text)] outline-none sm:text-[22px]"
+      >
+        {title}
+      </h2>
+      {description && (
+        <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[color:var(--wiz-muted)]">
+          {description}
+        </p>
+      )}
     </header>
   );
 }
@@ -472,8 +438,8 @@ export function WizardFooter({
   const safeStep = Math.min(stepIndex + 1, safeTotal);
 
   return (
-    <div className="flex w-full items-center gap-3">
-      <div className="flex min-w-0 flex-1 justify-start">
+    <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 justify-between sm:justify-start">
         <button
           type="button"
           className={`${btnSecondary} h-10 gap-1.5 rounded-xl border border-[color:var(--wiz-border)] bg-transparent px-3.5 text-[12px] text-[color:var(--wiz-text)] ${isFirstStep ? "opacity-40" : ""}`}
@@ -499,7 +465,7 @@ export function WizardFooter({
                   ? "h-1.5 w-6 bg-[#6D5DFB]"
                   : i < stepIndex
                     ? "h-1.5 w-1.5 bg-[#6D5DFB]/55"
-                    : "h-1.5 w-1.5 bg-white/15"
+                    : "h-1.5 w-1.5 bg-[color:var(--wiz-border-strong)]"
               }`}
             />
           ))}
@@ -508,13 +474,13 @@ export function WizardFooter({
 
       <div className="flex min-w-0 flex-1 justify-end">
         {isLastStep ? (
-          <button type="button" className={`${btnPrimary} btn-gradient h-10 rounded-xl px-4 text-[12px]`} onClick={onSubmit} disabled={busy}>
+          <button type="button" className={`${btnPrimary} btn-gradient min-w-[9rem] justify-center rounded-xl px-4 text-[12px]`} onClick={onSubmit} disabled={busy}>
             {busy ? (
               <><Loader2 size={15} className="animate-spin" aria-hidden />{submitBusyLabel}</>
             ) : submitLabel}
           </button>
         ) : (
-          <button type="button" className={`${btnPrimary} btn-gradient h-10 rounded-xl px-4 text-[12px]`} onClick={onNext} disabled={busy}>
+          <button type="button" className={`${btnPrimary} btn-gradient min-w-[9rem] justify-center rounded-xl px-4 text-[12px]`} onClick={onNext} disabled={busy}>
             Next
             <ChevronRight size={15} aria-hidden />
           </button>
@@ -527,7 +493,7 @@ export function WizardFooter({
 /* ======================================================= field chrome */
 export function FieldLabel({ label, required }: { label: string; required?: boolean }) {
   return (
-    <span className="wiz-field-label mb-1.5 block text-[11px] font-semibold text-[color:var(--wiz-label,#94a3b8)]">
+    <span className="wiz-field-label mb-1.5 block text-[11px] font-semibold text-[color:var(--wiz-label)]">
       {label}
       {required && <span className="ml-0.5 text-danger">*</span>}
     </span>
@@ -545,7 +511,7 @@ export function InfoChip({ children }: { children: React.ReactNode }) {
 
 export function AutoFilledBadge() {
   return (
-    <span className="mt-1 inline-flex items-center rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-medium text-[color:var(--wiz-muted)]">
+    <span className="mt-1 inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--wiz-muted)]">
       Auto Filled
     </span>
   );
@@ -682,7 +648,7 @@ export function WizardShell({
             <button
               type="button"
               onClick={onClose}
-              className={`mb-1 shrink-0 rounded-lg p-1.5 text-[color:var(--wiz-muted)] transition hover:bg-white/5 hover:text-white ${focusRing}`}
+              className={`mb-1 shrink-0 rounded-lg p-1.5 text-[color:var(--wiz-muted)] transition hover:bg-black/[0.04] hover:text-[color:var(--wiz-text)] dark:hover:bg-white/5 dark:hover:text-white ${focusRing}`}
               aria-label="Close"
             >
               <XIcon />
@@ -708,7 +674,7 @@ export function WizardShell({
             initial={reduce ? false : { x: -24, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             transition={{ duration: DUR.panel, ease: EASE }}
-            className="wiz-glass m-4 hidden w-[320px] shrink-0 overflow-y-auto rounded-[20px] p-4 md:block"
+            className="wiz-glass m-4 hidden w-[280px] shrink-0 overflow-y-auto rounded-[20px] p-4 lg:w-[320px] md:block"
           >
             <WizardStepper
               steps={steps}
@@ -724,7 +690,7 @@ export function WizardShell({
           {/* Content */}
           <div
             ref={contentRef}
-            className="wizard-body relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8"
+            className="wizard-body relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-8"
           >
             {/* Soft radial glow behind card */}
             <div
@@ -735,7 +701,7 @@ export function WizardShell({
           </div>
         </div>
 
-        <footer className="sticky bottom-0 z-20 shrink-0 border-t border-[color:var(--wiz-border)] bg-[color:var(--wiz-bg)] px-5 py-3 sm:px-8">
+        <footer className="wiz-chrome-footer sticky bottom-0 z-20 shrink-0 border-t border-[color:var(--wiz-border)] bg-[color:var(--wiz-bg)] px-5 py-3 sm:px-8">
           {footer}
         </footer>
       </div>
@@ -785,7 +751,7 @@ export function WizardStepCard({
         animate={{ opacity: 1, y: 0, x: 0 }}
         exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8, x: stepDir * -20 }}
         transition={reduce ? { duration: 0 } : { duration: DUR.panel, ease: EASE }}
-        className="wiz-card relative mx-auto max-w-[1000px] px-5 py-6 sm:px-8 sm:py-8"
+        className="wiz-card relative mx-auto max-w-[1000px] px-4 py-5 sm:px-8 sm:py-8"
       >
         {children}
       </motion.section>

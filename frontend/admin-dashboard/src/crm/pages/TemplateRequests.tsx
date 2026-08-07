@@ -8,15 +8,15 @@ import { useHasRole } from "../CrmApp";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import {
-  ErrorBox, Modal, StatusBadge, Tabs,
+  ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -27,7 +27,7 @@ function WizFormShell({
   children: ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -96,6 +96,7 @@ export function TemplateRequestsPage() {
   const [toast, showToast] = useToast();
   const [fulfillRow, setFulfillRow] = useState<TR | null>(null);
   const [prepareRow, setPrepareRow] = useState<TR | null>(null);
+  const [cancelRow, setCancelRow] = useState<TR | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -114,13 +115,15 @@ export function TemplateRequestsPage() {
   }, [tab, page]);
   useEffect(() => { load(); }, [load]);
 
-  const cancel = async (r: TR) => {
-    if (!window.confirm(`Cancel template request ${r.tr_number}?`)) return;
+  const confirmCancel = async () => {
+    if (!cancelRow) return;
+    const r = cancelRow;
     setBusyId(r.id);
     try {
       await crmPost(`/api/template-requests/${r.id}/cancel`);
       showToast("Request cancelled");
-      load();
+      setCancelRow(null);
+      afterListDelete(r.id, setRows, load);
     } catch (e: any) {
       showToast(e?.message || "Cancel failed", "err");
     } finally {
@@ -204,7 +207,7 @@ export function TemplateRequestsPage() {
             </button>
           )}
           {isTA && (r.status === "Pending_RMG" || r.status === "Template_Ready") && (
-            <button className={btnDanger} onClick={() => cancel(r)} disabled={busyId === r.id}>
+            <button className={btnDanger} onClick={() => setCancelRow(r)} disabled={busyId === r.id}>
               <X size={13} /> Cancel
             </button>
           )}
@@ -241,7 +244,7 @@ export function TemplateRequestsPage() {
               entity="template request"
               itemLabel={r.tr_number}
               deleteUrl={`/api/template-requests/${r.id}`}
-              onDeleted={load}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
               notify={showToast}
               canEdit={false}
               canDelete
@@ -255,6 +258,17 @@ export function TemplateRequestsPage() {
       )}
       {prepareRow && (
         <PrepareModal row={prepareRow} onClose={() => setPrepareRow(null)} onDone={() => { setPrepareRow(null); load(); }} toast={showToast} />
+      )}
+      {cancelRow && (
+        <ConfirmModal
+          title="Cancel template request?"
+          message={<>Do you want to cancel template request <b>{cancelRow.tr_number}</b>?</>}
+          confirmLabel="Cancel request"
+          danger
+          busy={busyId === cancelRow.id}
+          onConfirm={() => { void confirmCancel(); }}
+          onClose={() => { if (busyId !== cancelRow.id) setCancelRow(null); }}
+        />
       )}
       {toast}
     </div>
@@ -308,6 +322,7 @@ function FulfillModal({ row, onClose, onDone, toast }: {
       title={<span className="sr-only">{`Fulfil ${row.tr_number} — ${row.role_title}`}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -397,6 +412,7 @@ function PrepareModal({ row, onClose, onDone, toast }: {
       title={<span className="sr-only">{`Prepare L1 — ${row.tr_number}`}</span>}
       onClose={onClose}
       fullScreen
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell

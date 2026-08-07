@@ -249,7 +249,7 @@ function SubSection({
 function HistorySkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading employee history">
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className="glass fx-gradient-border fx-lift rounded-card px-4 py-3">
             <Skeleton className="h-3 w-20" />
@@ -361,7 +361,7 @@ export function EmployeeHistoryTab({ employeeId }: { employeeId: number }) {
   return (
     <div className="space-y-4">
       {/* -------------------------------------------------- Summary strip */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryTile
           label="Joined"
           value={fmtDate(emp.date_of_joining)}
@@ -404,7 +404,7 @@ export function EmployeeHistoryTab({ employeeId }: { employeeId: number }) {
 
       {/* -------------------------------------------------------- Billing */}
       <HistoryCard title="Billing">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
           <DefItem label="Total billable hours" value={fmtNum(billing.total_billable_hours)} />
           <DefItem label="Total billable days" value={fmtNum(billing.total_billable_days)} />
           <DefItem label="Total invoiced" value={fmtInr(billing.total_invoiced_amount)} />

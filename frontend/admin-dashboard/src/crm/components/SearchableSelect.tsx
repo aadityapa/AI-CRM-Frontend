@@ -65,6 +65,8 @@ export function SearchableSelect({
   const [highlight, setHighlight] = React.useState(0);
   const [addingInline, setAddingInline] = React.useState(false);
   const [addDraft, setAddDraft] = React.useState("");
+  const [openUpward, setOpenUpward] = React.useState(false);
+  const [listMaxHeight, setListMaxHeight] = React.useState<number | null>(null);
   const hasValue = !!value;
 
   React.useEffect(() => {
@@ -108,6 +110,27 @@ export function SearchableSelect({
   React.useEffect(() => {
     if (open && !addingInline) inputRef.current?.focus();
   }, [open, addingInline]);
+
+  React.useLayoutEffect(() => {
+    if (!open || addingInline || !inputRef.current) return;
+    const updatePosition = () => {
+      const rect = inputRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const viewportHeight = window.innerHeight;
+      const spaceBelow = viewportHeight - rect.bottom - 12;
+      const spaceAbove = rect.top - 12;
+      const openUp = spaceBelow < 220 && spaceAbove > spaceBelow;
+      setOpenUpward(openUp);
+      setListMaxHeight(Math.max(140, Math.min(openUp ? spaceAbove : spaceBelow, 320)));
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition, { passive: true });
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, addingInline, query, localOptions.length]);
 
   React.useEffect(() => {
     if (addingInline) addInputRef.current?.focus();
@@ -178,7 +201,6 @@ export function SearchableSelect({
           type="button"
           id={fieldId}
           disabled={disabled}
-          aria-invalid={!!err || undefined}
           aria-describedby={describedBy}
           aria-haspopup="listbox"
           className={`${lockedInputCls} ${err ? inputErrCls : ""} ${
@@ -323,7 +345,10 @@ export function SearchableSelect({
           <ul
             id={listId}
             role="listbox"
-            className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-control border border-subtle bg-surface-1 py-1 shadow-raised"
+            className={`ss-popover absolute z-20 w-full overflow-auto rounded-control border border-subtle bg-surface-1 py-1 shadow-raised ${
+              openUpward ? "bottom-full mb-1" : "top-full mt-1"
+            }`}
+            style={listMaxHeight ? { maxHeight: `${listMaxHeight}px` } : undefined}
           >
             {filtered.length === 0 && !canAdd ? (
               <li className="px-3 py-2 text-sm text-muted">No matches</li>
@@ -349,6 +374,7 @@ export function SearchableSelect({
             {canAdd && (
               <li
                 role="option"
+                aria-selected={false}
                 className="cursor-pointer border-t border-subtle px-3 py-2 text-sm font-semibold text-brand-600 hover:bg-surface-2"
                 onMouseDown={(e) => {
                   e.preventDefault();

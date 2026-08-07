@@ -3,19 +3,22 @@
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * one primary action per screen, right-aligned numerics in tables. */
 import React, { useCallback, useEffect, useState } from "react";
-import { ArrowRightLeft, Pencil, Plus } from "lucide-react";
+import { ArrowRightLeft, Pencil, Plus, UserPlus } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanEditTab } from "../useAccess";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
-import { RowActions } from "../components/RowActions";
+import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
+import { AiInterviewCell } from "../components/AiInterviewCell";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
 import { NewOpportunityForm } from "./opportunity/NewOpportunityForm";
+import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import {
   EmptyState,
   ErrorBox,
@@ -75,6 +78,15 @@ type ProfileRow = {
   phone?: string | null;
   experience_years?: number | null;
   notice_period?: string | null;
+  /* AI L1 outcome — see AiInterviewCell. */
+  ai_interview_status?: string | null;
+  ai_interview_result?: string | null;
+  ai_overall_score_percent?: number | null;
+  ai_hr_decision?: string | null;
+  ai_hr_decision_label?: string | null;
+  ai_effective_result?: string | null;
+  ai_is_overridden?: boolean;
+  ai_report_link?: string | null;
   technical_domain?: string | null;
   cv_url?: string | null;
   current_ctc?: number | null;
@@ -109,7 +121,7 @@ export function pipelineStageLabel(stage: string): string {
  * stage sub-select (first stage selected by default) to keep server-side
  * pagination correct. */
 const TAB_STAGES: Record<string, string[]> = {
-  Active: ["New", "Active"],
+  Active: ["Active", "New"],
   On_Hold: ["On_Hold"],
   Closed: ["Closed_Won", "Closed_Lost", "Closed_Partial"],
   Rejected: ["Rejected"],
@@ -134,6 +146,8 @@ const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : "
 
 export function OpportunitiesListPage() {
   const canWrite = useHasRole("Sales", "Sales_Head") && useCanEditTab("opportunities");
+  // Roles allowed to create a Candidate Profile.
+  const canApply = useHasRole("TA", "Sales", "RMG");
   const [tab, setTab] = useState("Active");
   const [stage, setStage] = useState<string>(TAB_STAGES.Active[0]);
   const [rows, setRows] = useState<Opportunity[]>([]);
@@ -145,6 +159,8 @@ export function OpportunitiesListPage() {
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState<{ by: string; dir: "asc" | "desc" }>({ by: "created_at", dir: "desc" });
   const [showCreate, setShowCreate] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [applyTo, setApplyTo] = useState<Opportunity | null>(null);
   const [toast, showToast] = useToast();
 
   useEffect(() => {
@@ -246,6 +262,7 @@ export function OpportunitiesListPage() {
                   setPage(1);
                 }}
               >
+                <option value="">All</option>
                 {stages.map((s) => (
                   <option key={s} value={s}>
                     {pipelineStageLabel(s)}
@@ -256,17 +273,41 @@ export function OpportunitiesListPage() {
           }
           emptyMessage="No opportunities in this stage"
           rowActions={canWrite ? (r) => (
+            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {canApply && (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:!text-indigo-600"
+                  title="Apply a candidate to this opportunity"
+                  aria-label={`Apply a candidate to ${r.title}`}
+                  onClick={(e) => { e.stopPropagation(); setApplyTo(r); }}
+                >
+                  <UserPlus size={15} />
+                </button>
+              )}
             <RowActions
               entity="opportunity"
               itemLabel={r.title}
-              onEdit={() => crmNavigate(`opportunities/${r.id}`)}
+              onView={() => crmNavigate(`opportunities/${r.id}`)}
+              onEdit={() => setEditId(r.id)}
               deleteUrl={`/api/opportunities/${r.id}`}
-              onDeleted={load}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
               notify={showToast}
               canEdit
               canDelete
             />
+            </span>
           ) : undefined}
+        />
+      )}
+
+      {applyTo && (
+        <ApplyToOpportunityModal
+          mode="pick-candidate"
+          opportunityId={applyTo.id}
+          opportunityLabel={`${applyTo.opp_id} — ${applyTo.title}`}
+          onClose={() => setApplyTo(null)}
+          onApplied={(msg) => { showToast(msg); load(); }}
         />
       )}
 
@@ -276,6 +317,17 @@ export function OpportunitiesListPage() {
           onCreated={() => {
             setShowCreate(false);
             showToast("Opportunity created");
+            load();
+          }}
+        />
+      )}
+      {editId != null && (
+        <NewOpportunityForm
+          opportunityId={editId}
+          onClose={() => setEditId(null)}
+          onCreated={() => {
+            setEditId(null);
+            showToast("Opportunity updated");
             load();
           }}
         />
@@ -295,10 +347,18 @@ export function OpportunityDetailPage() {
   const canWrite = useHasRole("Sales", "Sales_Head") && useCanEditTab("opportunities");
   const canArchive = useHasRole("Sales_Head");
   const canApprove = useHasRole("Sales_Head"); // Sales Head (or Admin) signs off
+  const canApplyHere = useHasRole("TA", "Sales", "RMG");
+  const [applyHere, setApplyHere] = useState(false);
+  // Skill Evaluation Details are owned by RMG (and Admin/CEO) — Sales & Sales Head
+  // can view but not add/edit. RMG fills these in during approval review.
+  const canEditSkills = useHasRole("RMG", "Admin", "CEO");
 
   const [opp, setOpp] = useState<Opportunity | null>(null);
   const [log, setLog] = useState<ActivityEntry[]>([]);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  const [profileMeta, setProfileMeta] = useState<Meta | undefined>(undefined);
+  const [profilePage, setProfilePage] = useState(1);
+  const [profileSearch, setProfileSearch] = useState("");
   const [linkedTemplate, setLinkedTemplate] = useState<{
     template_name?: string | null;
     template_job_id?: string | null;
@@ -309,6 +369,9 @@ export function OpportunityDetailPage() {
   const [showSkills, setShowSkills] = useState(false);
   const [showStage, setShowStage] = useState(false);
   const [showReject, setShowReject] = useState(false);
+  // Sales Head opens the full wizard to review (and optionally correct)
+  // before signing off — approval happens on save inside the wizard.
+  const [reviewing, setReviewing] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [toast, showToast] = useToast();
@@ -319,14 +382,24 @@ export function OpportunityDetailPage() {
       .catch(() => {});
   }, [id]);
 
+  // Server-paged: a busy opportunity can carry hundreds of applicants, so never
+  // fetch "the first 100 and hope" — page + search against the API instead.
   const loadProfiles = useCallback(async () => {
     try {
-      const res = await crmGet<ProfileRow[]>(`/api/candidate-profiles${qs({ opportunity_id: id, limit: 100 })}`);
+      const res = await crmGet<ProfileRow[]>(
+        `/api/candidate-profiles${qs({
+          opportunity_id: id,
+          page: profilePage,
+          limit: 20,
+          search: profileSearch || undefined,
+        })}`,
+      );
       setProfiles(res.data || []);
+      setProfileMeta(res.meta);
     } catch {
       /* linked profiles are non-fatal */
     }
-  }, [id]);
+  }, [id, profilePage, profileSearch]);
 
   const loadLinkedTemplate = useCallback(async () => {
     try {
@@ -476,6 +549,9 @@ export function OpportunityDetailPage() {
       label: "Pipeline status",
       render: (r) => <StatusBadge status={r.pipeline_status} />,
     },
+    // The applicants table had no AI interview column at all, so an opportunity
+    // gave no sign of how its candidates had done in their L1.
+    { key: "ai_interview", label: "AI Interview", render: (r) => <AiInterviewCell row={r} /> },
     {
       key: "created_at",
       label: "Applied on",
@@ -521,8 +597,16 @@ export function OpportunityDetailPage() {
             </span>
             {canApprove && (
               <div className="ml-auto flex gap-2">
-                <button className={btnPrimary} disabled={approvalBusy} onClick={doApprove}>
-                  Approve
+                <button className={btnPrimary} disabled={approvalBusy} onClick={() => setReviewing(true)}>
+                  Review &amp; Approve
+                </button>
+                <button
+                  className={btnSecondary}
+                  disabled={approvalBusy}
+                  onClick={doApprove}
+                  title="Approve without opening the form"
+                >
+                  Approve as-is
                 </button>
                 <button className={btnDanger} disabled={approvalBusy} onClick={() => setShowReject(true)}>
                   Reject
@@ -546,6 +630,18 @@ export function OpportunityDetailPage() {
           </div>
         )}
 
+        {reviewing && (
+          <NewOpportunityForm
+            opportunityId={Number(id)}
+            approvalMode
+            onClose={() => setReviewing(false)}
+            onCreated={() => {
+              setReviewing(false);
+              reloadOpp();
+            }}
+          />
+        )}
+
         {showReject && (
           <Modal title={`Reject ${opp.opp_id}`} onClose={() => setShowReject(false)}>
             <Field label="Rejection reason" required>
@@ -567,7 +663,7 @@ export function OpportunityDetailPage() {
             </div>
           </Modal>
         )}
-        <dl className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="mt-6 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
           {info.map(([label, value]) => (
             <div key={label}>
               <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
@@ -597,8 +693,8 @@ export function OpportunityDetailPage() {
 
       <div className={cardCls}>
         <div className="fx-hairline-b mb-4 flex flex-wrap items-center justify-between gap-2 pb-3">
-          <h2 className="text-base font-bold text-primary">Skills</h2>
-          {canWrite && (
+          <h2 className="text-base font-bold text-primary">Skill Evaluation Details</h2>
+          {canEditSkills && (
             <button className={btnSecondary} onClick={() => setShowSkills(true)}>
               <Pencil size={14} /> Edit skills
             </button>
@@ -627,16 +723,32 @@ export function OpportunityDetailPage() {
       </div>
 
       <div className={cardCls}>
-        <h2 className="fx-hairline-b mb-4 pb-3 text-base font-bold text-primary">Applicants</h2>
+        <div className="fx-hairline-b mb-4 flex flex-wrap items-center justify-between gap-2 pb-3">
+          <h2 className="text-base font-bold text-primary">
+            Applicants
+            {profileMeta?.total ? (
+              <span className="ml-2 text-sm font-semibold text-muted">({profileMeta.total})</span>
+            ) : null}
+          </h2>
+          {canApplyHere && (
+            <button className={btnSecondary} onClick={() => setApplyHere(true)}>
+              <UserPlus size={15} /> Apply a Candidate
+            </button>
+          )}
+        </div>
         <p className="mb-4 text-sm text-muted">Candidates applied to this opportunity.</p>
-        {profiles.length === 0 ? (
+        {profiles.length === 0 && !profileSearch ? (
           <EmptyState message="No candidates have applied to this opportunity yet." />
         ) : (
           <DataTable<ProfileRow>
             columns={applicantCols}
             rows={profiles}
+            meta={profileMeta}
+            onPage={setProfilePage}
+            search={profileSearch}
+            onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
             onRowClick={(r) => crmNavigate(`profiles/${r.id}`)}
-            emptyMessage="No candidates have applied to this opportunity yet."
+            emptyMessage="No applicants match your search."
           />
         )}
       </div>
@@ -702,8 +814,8 @@ function EditSkillsModal({
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    crmGet<SkillOpt[]>("/api/skills?limit=100&is_active=true")
-      .then((r) => setAll(r.data || []))
+    fetchAllMaster<SkillOpt>("/api/skills", { is_active: true })
+      .then((rows) => setAll(rows))
       .catch((e: any) => setError(e?.message || "Failed to load skills"));
   }, []);
 

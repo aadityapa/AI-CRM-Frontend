@@ -455,19 +455,103 @@ function onFullscreenChange() {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Keyboard lockdown
+ *
+ * The interview is answered by voice — there is no answer field to type into.
+ * A keyboard therefore serves no legitimate purpose during a live interview,
+ * and every key it can send is a way to leave, copy, or look something up.
+ * So keys are swallowed rather than merely logged.
+ *
+ * Two carve-outs, both deliberate:
+ *
+ *  1. A template can enable a typed transcript (`enable_transcript_input`).
+ *     When the candidate is focused in that field, typing must work or the
+ *     interview becomes impossible to complete. Modifier combinations stay
+ *     blocked even there.
+ *  2. Tab and Shift+Tab still move focus. Removing them would strand anyone
+ *     using a screen reader or who cannot use a mouse, and moving focus between
+ *     two on-screen buttons is not an integrity risk.
+ * ------------------------------------------------------------------------- */
+
+/** Keys that remain usable because blocking them would break accessibility. */
+const KEYBOARD_ALLOWED_KEYS = new Set(["Tab"]);
+
+/** Combinations worth naming in the violation log rather than silently eating. */
+function _namedViolationFor(e) {
+  if (e.key === "Escape" && e.ctrlKey) return "ctrl_esc";
+  if (e.key === "Escape") return "key_escape";
+  if (e.key === "F11") return "key_f11";
+  if (e.altKey && e.key === "Tab") return "alt_tab";
+  if (e.key === "Meta" || e.key === "OS") return "windows_key";
+  return null;
+}
+
+function _keyboardAllowed(e) {
+  // Focus is in a transcript box the template deliberately turned on.
+  if (_isEditableTarget(e.target)) {
+    // Plain typing yes; Ctrl/Cmd/Alt combinations no — those are copy, paste,
+    // find, new tab, print, view-source, devtools.
+    return !(e.ctrlKey || e.metaKey || e.altKey);
+  }
+  if (KEYBOARD_ALLOWED_KEYS.has(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    return true;
+  }
+  return false;
+}
+
 function onIntegrityKeyDown(e) {
   if (!securityActive) return;
+
+  const named = _namedViolationFor(e);
+  if (named) {
+    void reportViolation(named, `${VIOLATION_LABELS[named] || named} detected`);
+  }
+
+  if (_keyboardAllowed(e)) return;
+
+  // Swallow it. preventDefault stops the browser acting on the key;
+  // stopPropagation keeps it from reaching any page handler.
+  e.preventDefault();
+  e.stopPropagation();
+  if (!named) _noteKeyboardAttempt(e);
+}
+
+/**
+ * Tell the candidate why nothing happened, and log the attempt — but only
+ * occasionally. Someone resting a hand on the keyboard should not generate a
+ * hundred identical events or a strobing toast.
+ */
+let _lastKeyboardNoticeAt = 0;
+let _keyboardAttemptCount = 0;
+const KEYBOARD_NOTICE_INTERVAL_MS = 4000;
+
+function _noteKeyboardAttempt(e) {
+  _keyboardAttemptCount += 1;
+  const now = Date.now();
+  if (now - _lastKeyboardNoticeAt < KEYBOARD_NOTICE_INTERVAL_MS) return;
+  _lastKeyboardNoticeAt = now;
+  try {
+    window.dispatchEvent(
+      new CustomEvent("karnex:keyboard-blocked", {
+        detail: { key: e.key, attempts: _keyboardAttemptCount },
+      })
+    );
+  } catch (_) {
+    // non-fatal
+  }
+}
+
+/** Swallow clipboard and context-menu actions for the same reason. */
+function onBlockedClipboardEvent(e) {
+  if (!securityActive) return;
   if (_isEditableTarget(e.target)) return;
+  e.preventDefault();
+  e.stopPropagation();
+}
 
-  let type = null;
-  if (e.key === "Escape" && e.ctrlKey) type = "ctrl_esc";
-  else if (e.key === "Escape") type = "key_escape";
-  else if (e.key === "F11") type = "key_f11";
-  else if (e.altKey && e.key === "Tab") type = "alt_tab";
-  else if (e.key === "Meta" || e.key === "OS") type = "windows_key";
-
-  if (!type) return;
-  void reportViolation(type, `${VIOLATION_LABELS[type] || type} detected`);
+export function keyboardAttemptCount() {
+  return _keyboardAttemptCount;
 }
 
 function bindIntegrityListeners() {
@@ -480,6 +564,13 @@ function bindIntegrityListeners() {
   window.addEventListener("blur", onWindowBlur);
   window.addEventListener("focus", onWindowFocus);
   document.addEventListener("keydown", onIntegrityKeyDown, true);
+  // keypress/keyup as well, so a swallowed keydown cannot be followed by the
+  // browser acting on the later events in the same key press.
+  document.addEventListener("keypress", onIntegrityKeyDown, true);
+  document.addEventListener("copy", onBlockedClipboardEvent, true);
+  document.addEventListener("cut", onBlockedClipboardEvent, true);
+  document.addEventListener("paste", onBlockedClipboardEvent, true);
+  document.addEventListener("contextmenu", onBlockedClipboardEvent, true);
 }
 
 function unbindIntegrityListeners() {
@@ -492,6 +583,11 @@ function unbindIntegrityListeners() {
   window.removeEventListener("blur", onWindowBlur);
   window.removeEventListener("focus", onWindowFocus);
   document.removeEventListener("keydown", onIntegrityKeyDown, true);
+  document.removeEventListener("keypress", onIntegrityKeyDown, true);
+  document.removeEventListener("copy", onBlockedClipboardEvent, true);
+  document.removeEventListener("cut", onBlockedClipboardEvent, true);
+  document.removeEventListener("paste", onBlockedClipboardEvent, true);
+  document.removeEventListener("contextmenu", onBlockedClipboardEvent, true);
 }
 
 export function activateInterviewSecurity() {
@@ -500,6 +596,8 @@ export function activateInterviewSecurity() {
   violationCount = 0;
   Object.keys(violationCountsByType).forEach((k) => delete violationCountsByType[k]);
   lastBlurTime = 0;
+  _keyboardAttemptCount = 0;
+  _lastKeyboardNoticeAt = 0;
 
   createWarningModal();
   createViolationBadge();

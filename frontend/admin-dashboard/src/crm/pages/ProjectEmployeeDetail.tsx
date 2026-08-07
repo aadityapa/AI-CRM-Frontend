@@ -9,13 +9,14 @@ import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable, type Column } from "../components/DataTable";
 import {
-  EmptyState, ErrorBox, Field, KpiCard, Modal, Spinner, StatusBadge, Tabs,
+  EmptyState, ErrorBox, Field, KpiCard, Modal, PolicySourceChip, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
 import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
+import { leaveTimingCaption } from "../components/PeriodTimingPicker";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
- * (dark themed body + gradient SectionHeaderBanner) inside the existing Modal.
+ * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
   title, subtitle, icon, children,
@@ -26,7 +27,7 @@ function WizFormShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full px-4 py-6 sm:px-6 sm:py-8">
+    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         {children}
@@ -66,6 +67,12 @@ type LeaveDetail = {
   eligibility_label?: string | null;
   yearly_entitlement?: number | null;
   monthly_entitlement?: number | null;
+  leave_credit_type?: string | null;
+  leave_credit_timing?: string | null;
+  leave_expire?: string | null;
+  leave_expire_timing?: string | null;
+  /** Which policy layer credits this row: "project" | "branch" | "customer". */
+  policy_source?: string | null;
 };
 
 type LeaveEligibilityRow = {
@@ -318,6 +325,7 @@ function PeApplyLeaveModal({
       title={<span className="sr-only">Apply leave (this project mapping)</span>}
       onClose={onClose}
       wide
+      scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
@@ -572,7 +580,22 @@ export function ProjectEmployeeDetailPage() {
   if (!pe) return <Spinner label="Loading project employee…" />;
 
   const leaveCols: Column<LeaveDetail>[] = [
-    { key: "leave_type_name", label: "Leave type", render: (r) => r.leave_type_name || `Type #${r.leave_type_id}` },
+    {
+      key: "leave_type_name",
+      label: "Leave type",
+      render: (r) => {
+        const caption = leaveTimingCaption(r);
+        return (
+          <div className="flex flex-col gap-0.5">
+            <span>{r.leave_type_name || `Type #${r.leave_type_id}`}</span>
+            {caption && (
+              <span className="text-[11px] text-muted">{caption}</span>
+            )}
+            <PolicySourceChip source={r.policy_source} />
+          </div>
+        );
+      },
+    },
     {
       key: "eligibility_label", label: "Eligible",
       render: (r) => (
@@ -721,7 +744,7 @@ export function ProjectEmployeeDetailPage() {
 
       {tab === "general" && (
         <div className="space-y-4 rounded-card border border-subtle bg-surface-1 p-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <InfoItem label="Employee">{pe.employee_name || "—"}</InfoItem>
             <InfoItem label="Email">{pe.employee_email || "—"}</InfoItem>
             <InfoItem label="Project">{pe.project_name || "—"}</InfoItem>
@@ -731,7 +754,7 @@ export function ProjectEmployeeDetailPage() {
           </div>
           {canWrite ? (
             <>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                 <Field label="Onboarding date">
                   <input type="date" className={inputCls} value={onboarding} onChange={(e) => setOnboarding(e.target.value)} />
                 </Field>
@@ -775,7 +798,7 @@ export function ProjectEmployeeDetailPage() {
               </div>
             </>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
               <InfoItem label="Onboarding">{dt(pe.onboarding_date)}</InfoItem>
               <InfoItem label="Experience">{pe.experience_years ?? "—"} yr</InfoItem>
               <InfoItem label="Project experience">{pe.project_experience_years ?? "—"} yr</InfoItem>
@@ -817,7 +840,7 @@ export function ProjectEmployeeDetailPage() {
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <KpiCard
               label="Balance"
               value={Number(summary.balance ?? pe.leave_balance_total ?? 0)}
