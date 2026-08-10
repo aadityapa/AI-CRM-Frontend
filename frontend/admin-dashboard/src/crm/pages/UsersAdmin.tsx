@@ -1,5 +1,6 @@
-/** Users administration (Admin-only): list/search users, create users with CRM
- * roles, replace roles, activate/deactivate, toggle employee portal access. */
+/** Users administration (Admin/CEO): create login accounts (email + password),
+ * assign CRM roles, activate/deactivate, and delete access. Users update their
+ * own profile details from My Profile after first login. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, Lock, Plus, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
 import { crmGet, crmPost, crmDelete, qs } from "../api";
@@ -311,7 +312,16 @@ function CreateUserModal({
   const [roles, setRoles] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [usernameTouched, setUsernameTouched] = useState(false);
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const onEmailChange = (email: string) => {
+    set("email", email);
+    if (!usernameTouched) {
+      const local = email.trim().split("@")[0] || "";
+      set("username", local.toLowerCase().replace(/[^a-z0-9._-]/g, ""));
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -322,18 +332,19 @@ function CreateUserModal({
     if (!form.username.trim()) errs.username = "Username is required";
     if (!form.password) errs.password = "Password is required";
     else if (form.password.length < 8) errs.password = "Password must be at least 8 characters";
+    if (roles.length === 0) errs.roles = "Assign at least one CRM role so they can access the app";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setSaving(true);
     try {
       const res = await crmPost("/api/users", {
         full_name: form.full_name.trim(),
-        email: form.email.trim(),
-        username: form.username.trim(),
+        email: form.email.trim().toLowerCase(),
+        username: form.username.trim().toLowerCase(),
         password: form.password,
         roles,
       });
-      notify(res.message || "User created");
+      notify(res.message || "User created — they can log in with this email or username");
       onSaved();
       onClose();
     } catch (err: any) {
@@ -353,7 +364,7 @@ function CreateUserModal({
     >
       <WizFormShell
         title="Create User"
-        subtitle="Set up account credentials and assign the CRM roles this user needs."
+        subtitle="Admin/CEO grants app access here — email + password for login. The user updates their own profile details after signing in."
         icon={<UserCog size={20} aria-hidden />}
       >
         <form onSubmit={submit} className="space-y-5">
@@ -361,11 +372,26 @@ function CreateUserModal({
             <input className={inputCls} value={form.full_name} onChange={(e) => set("full_name", e.target.value)} />
           </WizardField>
           <WizardField label="Email" required error={errors.email} icon="mail" filled={!!form.email.trim() && !errors.email}>
-            <input className={inputCls} value={form.email} onChange={(e) => set("email", e.target.value)} />
+            <input
+              className={inputCls}
+              type="email"
+              value={form.email}
+              onChange={(e) => onEmailChange(e.target.value)}
+              placeholder="name@karnex.in"
+              autoComplete="off"
+            />
           </WizardField>
           <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
             <WizardField label="Username" required error={errors.username} icon="user" filled={!!form.username.trim() && !errors.username}>
-              <input className={inputCls} value={form.username} onChange={(e) => set("username", e.target.value)} autoComplete="off" />
+              <input
+                className={inputCls}
+                value={form.username}
+                onChange={(e) => {
+                  setUsernameTouched(true);
+                  set("username", e.target.value);
+                }}
+                autoComplete="off"
+              />
             </WizardField>
             <WizardField label="Password" required error={errors.password} icon="lock">
               <input
@@ -379,7 +405,8 @@ function CreateUserModal({
             </WizardField>
           </div>
           <div>
-            <FieldLabel label="CRM roles" />
+            <FieldLabel label="CRM roles" required />
+            {errors.roles && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{errors.roles}</p>}
             <RoleCheckboxes selected={roles} onChange={setRoles} />
           </div>
           <div className={wizFooterRow}>
@@ -771,7 +798,7 @@ export function UsersAdminPage() {
   useEffect(() => { setPage(1); }, [dSearch]);
 
   if (!isAdmin) {
-    return <ErrorBox error="Access denied: the Users page is available to Admins only." />;
+    return <ErrorBox error="Access denied: the Users page is available to Admin and CEO only." />;
   }
 
   const toggleActive = async () => {
@@ -912,7 +939,13 @@ export function UsersAdminPage() {
     <div>
       {toast}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Users</h1>
+        <div>
+          <h1 className="text-display text-xl font-bold text-primary">Users</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
+            Admin/CEO control who can access the application. Create an account with email and password,
+            assign roles, then the user signs in and updates their own profile details.
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button className={btnSecondary} onClick={() => crmNavigate("access-templates")}>
             <ShieldCheck size={15} /> Access Templates
@@ -957,8 +990,8 @@ export function UsersAdminPage() {
         <ConfirmModal
           title="Delete user"
           message={
-            <>Permanently delete <b>{deleteFor.username}</b> ({deleteFor.full_name || deleteFor.email})? This cannot be undone.
-            If the user is linked to records they created, deletion is blocked — deactivate them instead.</>
+            <>Permanently delete <b>{deleteFor.username}</b> ({deleteFor.full_name || deleteFor.email})?
+            They will lose login access immediately. History they created is kept and reassigned to you when needed.</>
           }
           confirmLabel="Delete"
           danger
