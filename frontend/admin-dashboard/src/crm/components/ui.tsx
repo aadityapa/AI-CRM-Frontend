@@ -16,7 +16,7 @@ export const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-
 
 /* ---------- Status badge (consistent colour map per spec) ---------- */
 const GREEN = ["Active", "Closed_Won", "Joined", "Approved", "Paid", "Fulfilled", "Accepted", "Passed", "Present", "Open_For_Sourcing", "Confirmed"];
-const BLUE = ["In_Progress", "Submitted", "Scheduled", "Posted_On_Portals", "Scored", "New", "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening", "Customer_Interview", "Shortlisted", "Customer_Approval", "Preboarding", "Completed", "Closed_Partial"];
+const BLUE = ["In_Progress", "Submitted", "Scheduled", "Posted_On_Portals", "Scored", "New", "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening", "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval", "Preboarding", "Completed", "Closed_Partial"];
 const YELLOW = ["On_Hold", "Pending", "Pending_Scan", "Partially_Paid", "Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Unpaid", "Half_Day", "Blanket", "Draft"];
 const RED = ["Rejected", "Closed_Lost", "Cancelled", "Failed", "Expired", "Absent", "Sales_Head_Rejected", "Engineering_Rejected", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Exhausted"];
 const GREY = ["Archived", "Inactive", "Closed", "Not_Scheduled", "Removed", "Leave", "Holiday"];
@@ -34,11 +34,20 @@ export function statusColor(status: string): string {
 /** Display-name overrides for stored status values (DB values stay unchanged). */
 export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   Customer_Interview: "Customer Interviewing",
+  // The customer's own two interview rounds. Labelled "Customer L1/L2" rather
+  // than a bare "L1/L2" because RMG runs its OWN L1 and L2 much earlier in the
+  // pipeline — without the prefix, a status reading "L2 Interview" is genuinely
+  // ambiguous about who conducted it.
+  // Label only: the stored values stay L1_Feedback / L2_Feedback.
+  L1_Feedback: "Customer L1 Interview",
+  L2_Feedback: "Customer L2 Interview",
   // "Shortlisted" on its own was ambiguous — we shortlist internally too. This
   // stage specifically means the CUSTOMER shortlisted them. Label only: the
   // stored value stays `Shortlisted`, so no migration and no data rewrite.
   Shortlisted: "Customer Shortlisted",
   Customer_Approval: "Customer Approved",
+  // The team says "Pre Onboarding"; the column has always stored "Preboarding".
+  Preboarding: "Pre Onboarding",
 };
 
 export function statusLabel(status: string): string {

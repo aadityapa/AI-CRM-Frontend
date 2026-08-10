@@ -24,6 +24,8 @@ import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
 import { AiInterviewCell } from "../components/AiInterviewCell";
 import { ProfilesListPage as ProfilesDirectory } from "./profiles/ProfilesListPage";
+import { SalesHeadApprovalBanner } from "../components/SalesHeadApprovalBanner";
+import { RoundProgress } from "../components/RoundProgress";
 import {
   ScheduleAiInterviewModal,
   toInputValue,
@@ -266,9 +268,11 @@ type AiInterviewLink = {
 
 type AiScheduleResult = SharedAiScheduleResult;
 
+/** Pipeline order — the filter dropdown and the status column both read this. */
 const ACTIVE_STATUSES = [
   "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening",
-  "Customer_Interview", "Shortlisted", "Customer_Approval", "Preboarding", "Joined",
+  "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval",
+  "Preboarding", "Joined",
 ];
 const REJECTED_STATUSES = ["Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Rejected"];
 const REJECTION_LIKE = new Set(REJECTED_STATUSES);
@@ -620,9 +624,23 @@ export function ProfileDetailPage() {
   const [detail, setDetail] = useState<ProfileDetail | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("overview");
-  /** Set by the Overview action buttons so the Interviews tab opens the right modal. */
-  const [interviewIntent, setInterviewIntent] = useState<"schedule" | "feedback" | null>(null);
   const isRmg = useHasRole("RMG");
+  const isSalesHead = useHasRole("Sales_Head");
+
+  /** Newest offer, shown to Sales Head as the terms they are approving. */
+  const latestOffer = useMemo(() => {
+    const offers = detail?.offers || [];
+    if (offers.length === 0) return null;
+    const newest = [...offers].sort((a, b) =>
+      String(b.offer_date || "").localeCompare(String(a.offer_date || "")) || b.id - a.id,
+    )[0];
+    return {
+      ctc: newest.ctc,
+      joining_date: newest.joining_date,
+      offer_date: newest.offer_date,
+      status: newest.status,
+    };
+  }, [detail?.offers]);
 
   // AI interview sessions — fetched on page load (powers the header pending
   // badge) and reused by the AI Interview tab.
@@ -733,6 +751,17 @@ export function ProfileDetailPage() {
                 <span className="text-xs">No CV on file</span>
               )}
             </div>
+            {/* The ladder so far. Pipeline status says WHERE they are; this
+                says what happened on the way, without opening a tab. */}
+            <div className="mt-2">
+              <RoundProgress
+                rounds={detail.interview_events || []}
+                aiScore={aiLatest?.overall_score_percent}
+                aiResult={aiLatest?.effective_result || aiLatest?.result}
+                fmtDateTime={fmtDateTime}
+                onOpen={() => setTab("interviews")}
+              />
+            </div>
             <div className="mt-2 text-sm text-secondary">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted">Opportunity</span>{" "}
               {detail.opportunity ? (
@@ -786,6 +815,21 @@ export function ProfileDetailPage() {
         />
       )}
 
+      {/* Sales Head's one decision, at the one stage they own. Without this
+          they had to find "Preboarding" in a generic dropdown, with nothing
+          explaining that choosing it IS the approval. */}
+      {isSalesHead && detail.pipeline_status === "Customer_Approval" && (
+        <SalesHeadApprovalBanner
+          profileId={detail.id}
+          candidateName={detail.candidate?.full_name || `Candidate #${detail.candidate_id}`}
+          offer={latestOffer}
+          fmtLac={fmtLac}
+          fmtDate={fmtDate}
+          onDone={load}
+          showToast={showToast}
+        />
+      )}
+
       <div className="mb-4">
         <Tabs
           tabs={[
@@ -806,10 +850,6 @@ export function ProfileDetailPage() {
           detail={detail}
           onReload={load}
           showToast={showToast}
-          onOpenInterviews={(intent) => {
-            setInterviewIntent(intent);
-            setTab("interviews");
-          }}
         />
       )}
       {tab === "interviews" && (
@@ -818,8 +858,6 @@ export function ProfileDetailPage() {
           events={detail.interview_events || []}
           onReload={load}
           showToast={showToast}
-          intent={interviewIntent}
-          onIntentHandled={() => setInterviewIntent(null)}
         />
       )}
       {tab === "skills" && <SkillsTab detail={detail} onReload={load} showToast={showToast} />}
@@ -854,19 +892,20 @@ function OverviewTab({
   detail,
   onReload,
   showToast,
-  onOpenInterviews,
 }: {
   detail: ProfileDetail;
   onReload: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
-  /** Jump to the Interviews tab, optionally opening the add/edit modal. */
-  onOpenInterviews?: (intent: "schedule" | "feedback") => void;
 }) {
   const canEdit = useHasRole("TA", "Sales", "RMG");
   const [currentCtc, setCurrentCtc] = useState(rupeesToLac(detail.current_ctc));
   const [expectedCtc, setExpectedCtc] = useState(rupeesToLac(detail.expected_ctc));
   const [approvalAmount, setApprovalAmount] = useState(rupeesToLac(detail.ctc_approval_amount));
   const [commercialApproved, setCommercialApproved] = useState(detail.commercial_approved);
+  // Workflow references: issued outside this system, so they can only be typed.
+  const [offerRef, setOfferRef] = useState(detail.offer_letter_reference ?? "");
+  const [employeeRef, setEmployeeRef] = useState(detail.employee_ref ?? "");
+  const [onboardingDate, setOnboardingDate] = useState(detail.customer_onboarding_date ?? "");
   const [saving, setSaving] = useState(false);
   const [showTransition, setShowTransition] = useState(false);
   // Workflow actions. Scheduling and feedback reuse the Interviews tab's modal
@@ -892,6 +931,9 @@ function OverviewTab({
     setExpectedCtc(detail.expected_ctc?.toString() ?? "");
     setApprovalAmount(detail.ctc_approval_amount?.toString() ?? "");
     setCommercialApproved(detail.commercial_approved);
+    setOfferRef(detail.offer_letter_reference ?? "");
+    setEmployeeRef(detail.employee_ref ?? "");
+    setOnboardingDate(detail.customer_onboarding_date ?? "");
   }, [detail]);
 
   const allowed = detail.allowed_next_statuses || [];
@@ -905,6 +947,10 @@ function OverviewTab({
         expected_ctc: lacToRupees(expectedCtc),
         ctc_approval_amount: lacToRupees(approvalAmount),
         commercial_approved: commercialApproved,
+        // Send null rather than "" so clearing a reference actually clears it.
+        offer_letter_reference: offerRef.trim() || null,
+        employee_ref: employeeRef.trim() || null,
+        customer_onboarding_date: onboardingDate || null,
       });
       showToast("Profile updated");
       onReload();
@@ -948,29 +994,59 @@ function OverviewTab({
         </Field>
       </div>
 
-      {/* Workflow detail — imported from Zoho and stamped by the actions below.
-          These are read-only here; each has its own action or tab that owns it. */}
+      {/* Workflow. The handover dates are stamped by the pipeline itself when the
+          profile reaches each stage, so they stay read-only — a typed date would
+          drift from the status history that turnaround time is measured against.
+          The references have no automated source and so are editable here.
+          Stage, Commercial Approval Status and Created by used to sit in this
+          block; the first two restated the pipeline status and the checkbox
+          below, and nothing ever wrote the third. */}
       <div className="mt-5 rounded-xl border border-subtle bg-surface-2 p-4">
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
           Workflow
         </div>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3">
           {([
-            ["Stage", detail.stage],
-            ["Submitted to Sales", fmtDate(detail.sales_submission_date)],
-            ["Submitted for Technical", fmtDate(detail.technical_submission_date)],
-            ["Submitted to Customer", fmtDate(detail.customer_submission_date)],
-            ["Onboarding Date", fmtDate(detail.customer_onboarding_date)],
-            ["Commercial Approval Status", detail.commercial_approval_status],
-            ["Offer Letter Reference", detail.offer_letter_reference],
-            ["Employee Reference", detail.employee_ref],
-            ["Created by", detail.created_by_name],
-          ] as [string, React.ReactNode][]).map(([label, value]) => (
+            ["Submitted for Technical", detail.technical_submission_date,
+             "Stamped when the profile reaches Technical Screening"],
+            ["Submitted to Sales", detail.sales_submission_date,
+             "Stamped when the profile reaches Sales Screening"],
+            ["Submitted to Customer", detail.customer_submission_date,
+             "Stamped when the profile is submitted to the customer"],
+          ] as [string, string | null | undefined, string][]).map(([label, value, hint]) => (
             <div key={label}>
               <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
-              <dd className="mt-0.5 text-sm text-primary">{value || "—"}</dd>
+              <dd className="mt-0.5 text-sm text-primary" title={value ? undefined : hint}>
+                {value ? fmtDate(value) : <span className="text-muted">Not yet</span>}
+              </dd>
             </div>
           ))}
+        </dl>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Offer Letter Reference">
+            <input
+              className={inputCls} value={offerRef} disabled={!canEdit}
+              placeholder="e.g. KRX/OL/2026/0142"
+              onChange={(e) => setOfferRef(e.target.value)}
+            />
+          </Field>
+          <Field label="Employee Reference">
+            <input
+              className={inputCls} value={employeeRef} disabled={!canEdit}
+              placeholder="Issued after joining"
+              onChange={(e) => setEmployeeRef(e.target.value)}
+            />
+          </Field>
+          <Field label="Onboarding Date">
+            <input
+              type="date" className={inputCls} value={onboardingDate} disabled={!canEdit}
+              onChange={(e) => setOnboardingDate(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3">
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted">CV</dt>
             <dd className="mt-0.5 text-sm">
@@ -1027,42 +1103,33 @@ function OverviewTab({
         )}
       </div>
 
-      {/* Workflow actions — each performs the real pipeline step, not just a label. */}
-      <div className="mt-5 flex flex-wrap gap-2 border-t border-subtle pt-4">
-        <button
-          className={btnSecondary}
-          onClick={() => onOpenInterviews?.("schedule")}
-          title="Add an interview round on the Interviews tab"
-        >
-          <GitBranch size={15} /> Schedule Technical Interview
-        </button>
-        <button
-          className={btnSecondary}
-          onClick={() => onOpenInterviews?.("feedback")}
-          title="Record the result and feedback for the latest round"
-        >
-          <FileText size={15} /> Submit Technical Feedback
-        </button>
-        {canSubmitToCustomer && (
+      {/*
+        Workflow actions.
+
+        "Schedule Technical Interview" and "Submit Technical Feedback" were
+        removed (Aug 2026). Both were pure navigation — they jumped to the
+        Interviews tab and opened a modal that tab already offers. Neither was
+        role-gated, so Sales saw two buttons labelled "Technical" leading to a
+        tab where they can only write the customer round: a dead end presented
+        as an action.
+
+        "Submit to Customer" stays, but only while it is still doable. Once
+        submitted it used to become a disabled button reading "Submitted
+        8/8/2026" — a status display shaped like a control, duplicating the
+        "Submitted to Customer" row in the Workflow list directly above.
+      */}
+      {canSubmitToCustomer && !detail.customer_submission_date && (
+        <div className="mt-5 flex flex-wrap gap-2 border-t border-subtle pt-4">
           <button
-            className={btnSecondary}
+            className={btnPrimary}
             onClick={submitToCustomer}
-            disabled={submitting || !!detail.customer_submission_date}
-            title={
-              detail.customer_submission_date
-                ? `Already submitted on ${fmtDate(detail.customer_submission_date)}`
-                : "Stamp today's date and move to Customer Screening"
-            }
+            disabled={submitting}
+            title="Stamp today's date and move to Customer Screening"
           >
-            <ArrowRight size={15} />{" "}
-            {detail.customer_submission_date
-              ? `Submitted ${fmtDate(detail.customer_submission_date)}`
-              : submitting
-                ? "Submitting…"
-                : "Submit to Customer"}
+            <ArrowRight size={15} /> {submitting ? "Submitting…" : "Submit to Customer"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="mt-6 border-t border-subtle pt-4 text-xs text-muted">
         Created {fmtDate(detail.created_at)} · Last updated {fmtDate(detail.updated_at)}
@@ -1079,6 +1146,7 @@ function OverviewTab({
               .filter(Boolean)
               .join(" · ") || null
           }
+          hasOffer={(detail.offers || []).length > 0}
           onClose={() => setShowTransition(false)}
           onDone={(msg) => {
             setShowTransition(false);
@@ -1097,6 +1165,7 @@ function TransitionModal({
   allowed,
   candidateName,
   opportunityLabel,
+  hasOffer,
   onClose,
   onDone,
 }: {
@@ -1107,11 +1176,18 @@ function TransitionModal({
    *  to see WHO they are about to move, not just from-status → to-status. */
   candidateName?: string | null;
   opportunityLabel?: string | null;
+  /** Customer Approved needs an offer; when there is none we collect it here. */
+  hasOffer?: boolean;
   onClose: () => void;
   onDone: (message?: string) => void;
 }) {
   const [newStatus, setNewStatus] = useState("");
   const [comment, setComment] = useState("");
+  // Offer fields, shown inline when moving to Customer Approved.
+  const [offerCtc, setOfferCtc] = useState("");
+  const [offerJoining, setOfferJoining] = useState("");
+  const [offerDate, setOfferDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [offerError, setOfferError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [commentError, setCommentError] = useState("");
@@ -1119,19 +1195,45 @@ function TransitionModal({
   const submit = async () => {
     setError("");
     setCommentError("");
+    setOfferError("");
     if (!newStatus) {
       setError("Select the new status");
       return;
     }
-    if (comment.trim().length < 5) {
-      setCommentError("A comment is mandatory (minimum 5 characters)");
+    // Only enforced where the note carries information — mirrors
+    // comment_required_for() on the server.
+    if (noteRequired && comment.trim().length < 5) {
+      setCommentError(
+        leavingCustomerInterview
+          ? "Record what the customer said (minimum 5 characters)"
+          : "Say why this is moving (minimum 5 characters)",
+      );
       return;
+    }
+    if (needsOffer) {
+      if (!offerCtc.trim() || Number(offerCtc) <= 0) {
+        setOfferError("Enter the offered CTC");
+        return;
+      }
+      if (!offerDate) {
+        setOfferError("Pick the offer date");
+        return;
+      }
     }
     setBusy(true);
     try {
       const res = await crmPost(`/api/candidate-profiles/${profileId}/status-transition`, {
         new_status: newStatus,
-        comment: comment.trim(),
+        comment: comment.trim() || undefined,
+        // Sent with the move so both land in one transaction — a rejected
+        // transition rolls the offer back instead of orphaning it.
+        offer: needsOffer
+          ? {
+              offer_date: offerDate,
+              ctc: lacToRupees(offerCtc),
+              joining_date: offerJoining || null,
+            }
+          : undefined,
       });
       onDone(res.message);
     } catch (e: any) {
@@ -1141,11 +1243,45 @@ function TransitionModal({
   };
 
   const isReject = !!newStatus && REJECTION_LIKE.has(newStatus);
-  /** Mirrors _record_customer_round_from_transition on the server: leaving the
-   *  customer interview with a verdict turns this feedback into a round. */
-  const leavingCustomerInterview =
-    currentStatus === "Customer_Interview" &&
+  /**
+   * Mirrors _record_customer_round_from_transition on the server.
+   *
+   * Two moments make this field the customer's actual interview feedback:
+   *   - ARRIVING at L1/L2 Feedback — that round's verdict is in
+   *   - LEAVING the customer's ladder with a decision
+   * Everything else is just a reason for the activity log.
+   */
+  const CUSTOMER_LADDER = ["Customer_Interview", "L1_Feedback", "L2_Feedback"];
+  const arrivingAtFeedback = ["L1_Feedback", "L2_Feedback"].includes(newStatus);
+  const closingTheLadder =
+    CUSTOMER_LADDER.includes(currentStatus) &&
     ["Shortlisted", "Customer_Approval", "Customer_Rejected"].includes(newStatus);
+  const leavingCustomerInterview = arrivingAtFeedback || closingTheLadder;
+  const feedbackRoundLabel =
+    newStatus === "L1_Feedback" ? "L1" : newStatus === "L2_Feedback" ? "L2" : null;
+
+  /**
+   * Is a written note required? Mirrors comment_required_for() on the server.
+   *
+   * Requiring one on every move made it noise on routine progress — people
+   * type "ok" to get past it, and that habit devalues the notes that matter.
+   * It is asked for where nothing else records the information: rejections,
+   * backward moves, and the customer's feedback.
+   */
+  const BACKWARD: Record<string, string[]> = {
+    Customer_Screening: ["Sales_Screening"],
+    Customer_Interview: ["Customer_Screening"],
+    L1_Feedback: ["Customer_Interview"],
+    L2_Feedback: ["L1_Feedback"],
+  };
+  const noteRequired =
+    isReject ||
+    leavingCustomerInterview ||
+    (BACKWARD[currentStatus] || []).includes(newStatus);
+
+  /** Customer Approved needs an offer; collect it here rather than sending the
+   *  user to the Offers tab and back. */
+  const needsOffer = newStatus === "Customer_Approval" && !hasOffer;
   return (
     <Modal
       title={<span className="sr-only">Change Pipeline Status</span>}
@@ -1244,32 +1380,97 @@ function TransitionModal({
           )}
         </AnimatePresence>
 
-        {/* "Comment" undersold what this field is. At a customer stage it IS
-            the customer's interview feedback, and it is now saved as a
-            Customer Interview round so it appears on the Interviews tab with
-            the L1 and L2 feedback rather than only in the activity log. */}
+        {/*
+          Two different things wear the same input.
+
+          Leaving an interview stage with a verdict, what you type IS the
+          interview feedback — it is saved as a round and shows on the
+          Interviews tab. Every other move just needs to say why, for the
+          activity log.
+
+          Both stay mandatory. Making routine moves noteless would leave the
+          activity log — the only record most stages have — unable to explain
+          why anything moved.
+        */}
+        {/* Offer terms, inline. Customer Approved cannot be entered without an
+            offer, so asking for it here removes a detour to the Offers tab and
+            back — and both writes land in one server transaction. */}
+        <AnimatePresence>
+          {needsOffer && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="rounded-card border border-brand-200 bg-brand-50 p-3 dark:border-brand-500/40 dark:bg-brand-900/20">
+                <p className="mb-2 text-xs font-semibold text-brand-700 dark:text-brand-300">
+                  Offer terms — these are what Sales Head will approve.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <WizardField label="Offered CTC (Lac)" required>
+                    <input
+                      type="number" min={0} step={0.01} placeholder="e.g. 12.50"
+                      className={inputCls}
+                      value={offerCtc}
+                      onChange={(e) => setOfferCtc(e.target.value)}
+                    />
+                  </WizardField>
+                  <WizardField label="Joining date">
+                    <input
+                      type="date" className={inputCls}
+                      value={offerJoining}
+                      onChange={(e) => setOfferJoining(e.target.value)}
+                    />
+                  </WizardField>
+                  <WizardField label="Offer date" required>
+                    <input
+                      type="date" className={inputCls}
+                      value={offerDate}
+                      onChange={(e) => setOfferDate(e.target.value)}
+                    />
+                  </WizardField>
+                </div>
+                {offerError && <p className="mt-1 text-xs font-semibold text-danger">{offerError}</p>}
+                <p className="mt-2 text-xs text-muted">
+                  Saved to the Offers tab and sent to Sales Head for approval.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* The note is only asked for where it records something nothing else
+            does — see noteRequired. Routine progress does not need one. */}
+        {noteRequired && (
         <WizardField
-          label="Feedback"
+          label={leavingCustomerInterview ? "Feedback" : "Reason"}
           required
           error={commentError}
           info={
-            leavingCustomerInterview
-              ? "Saved as the Customer Interview round — it will appear on the Interviews tab."
-              : undefined
+            feedbackRoundLabel
+              ? `Saved as the customer's ${feedbackRoundLabel} round — it will appear on the Interviews tab.`
+              : leavingCustomerInterview
+                ? "Saved against the customer round — it will appear on the Interviews tab."
+                : undefined
           }
         >
           <textarea
             className={`${inputCls} ${commentError ? "input-error" : ""}`}
-            rows={3}
+            rows={leavingCustomerInterview ? 3 : 2}
             placeholder={
-              leavingCustomerInterview
-                ? "What did the customer say? (mandatory, min 5 characters)"
-                : "Why is this status changing? (mandatory, min 5 characters)"
+              feedbackRoundLabel
+                ? `What did the customer say after their ${feedbackRoundLabel} round? (min 5 characters)`
+                : leavingCustomerInterview
+                  ? "What did the customer say? (min 5 characters)"
+                  : "Why is this moving? (min 5 characters)"
             }
             value={comment}
             onChange={(e) => setComment(e.target.value)}
           />
         </WizardField>
+        )}
         {error && <ErrorBox error={error} />}
 
         <div className="flex items-center justify-end gap-2 pt-1">
@@ -1734,16 +1935,11 @@ function InterviewsTab({
   events,
   onReload,
   showToast,
-  intent,
-  onIntentHandled,
 }: {
   profileId: number;
   events: InterviewEventRow[];
   onReload: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
-  /** "schedule" opens a blank round; "feedback" edits the latest one. */
-  intent?: "schedule" | "feedback" | null;
-  onIntentHandled?: () => void;
 }) {
   /**
    * Rounds are owned per kind, not per tab.
@@ -1767,23 +1963,6 @@ function InterviewsTab({
   const [editing, setEditing] = useState<InterviewEventRow | null>(null);
   const [removing, setRemoving] = useState<InterviewEventRow | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // Honour an action clicked on the Overview tab.
-  useEffect(() => {
-    if (!intent) return;
-    if (intent === "schedule") {
-      setAdding(true);
-    } else if (intent === "feedback") {
-      // Latest round, so feedback lands on the interview that just happened.
-      const latest = events.length ? events[events.length - 1] : null;
-      if (latest) setEditing(latest);
-      else {
-        setAdding(true);
-        showToast("No interview round yet — add one, then record its feedback");
-      }
-    }
-    onIntentHandled?.();
-  }, [intent]);
 
   const remove = async () => {
     if (!removing) return;
@@ -2286,7 +2465,9 @@ function AiInterviewTab({
   onReload: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
-  const canTrigger = useHasRole("TA", "RMG", "Sales");
+  // AI L1 is TA's step — matches TRIGGER_ROLES on the server, which RMG and
+  // Sales are no longer part of.
+  const canTrigger = useHasRole("TA");
   const [showSchedule, setShowSchedule] = useState(false);
   const [editing, setEditing] = useState<AiInterviewLink | null>(null);
   const [cancelling, setCancelling] = useState<AiInterviewLink | null>(null);
