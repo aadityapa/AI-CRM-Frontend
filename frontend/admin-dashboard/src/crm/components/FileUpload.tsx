@@ -4,6 +4,7 @@ import { Download, FileText, Upload } from "lucide-react";
 import { authFetch } from "../../api/client";
 import { crmUpload } from "../api";
 import { Modal, btnSecondary } from "./ui";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 export function FileUploadButton({
   path,
@@ -235,7 +236,9 @@ function FilePreviewModal({
           const mammoth = await import("mammoth");
           const result = await mammoth.convertToHtml({ arrayBuffer: bytes });
           if (cancelled) return;
-          setHtml(result.value || "<p>(Empty document)</p>");
+          // Candidate CVs arrive via the public apply form: never render mammoth
+          // output unsanitised (a crafted .docx can carry a javascript: link).
+          setHtml(sanitizeHtml(result.value) || "<p>(Empty document)</p>");
           setKind("html");
         } else if (ext === "txt" || typed.type.startsWith("text/")) {
           const t = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
