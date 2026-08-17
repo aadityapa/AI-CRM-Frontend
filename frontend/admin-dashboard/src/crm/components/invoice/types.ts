@@ -80,6 +80,11 @@ export interface InvoiceData {
   customer_id?: number | null;
   customer_name?: string | null;
   sac_code?: string | null;
+  /** Qty/Rate column labels from the PE billing unit (e.g. "Billed Qty
+      (Months)" / "Rate/Month (INR)") — server-resolved so the on-screen view
+      matches the PDF. Absent on old cached payloads → hourly fallback. */
+  qty_label?: string | null;
+  rate_label?: string | null;
   lines: InvoiceLine[];
   seller: SellerDetails;
   buyer: PartyDetails;

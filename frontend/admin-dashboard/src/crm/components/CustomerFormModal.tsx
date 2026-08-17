@@ -12,7 +12,7 @@ import { Field, Modal, btnSecondary, inputCls } from "./ui";
 import { motion as motionTok } from "../../design-system/tokens/tokens";
 import { customerTypeOptionsForPo, normalizeCustomerType } from "../lib/customerType";
 import {
-  CONTACT_ROLES, COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
+  CONTACT_ROLES, COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES, stateForCity,
 } from "../constants/geo";
 import { normalizePhoneForSave } from "../lib/phone";
 import {
@@ -96,6 +96,8 @@ type DocRow = {
   start_date: string;
   end_date: string;
   status: string;
+  /** Persisted row whose metadata changed — PUT on save. */
+  dirty?: boolean;
 };
 
 const uid = () => Math.random().toString(36).slice(2, 11);
@@ -309,6 +311,8 @@ export function CustomerFormModal({
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [leaveRows, setLeaveRows] = useState<LeaveRow[]>([]);
   const [removedLeaveIds, setRemovedLeaveIds] = useState<number[]>([]);
+  /** Persisted documents the user deleted in the form — removed from the DB on save. */
+  const [removedDocIds, setRemovedDocIds] = useState<number[]>([]);
   const [addingType, setAddingType] = useState(false);
 
   const setField = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
@@ -353,8 +357,11 @@ export function CustomerFormModal({
       crmGet<BranchRow[]>(`/api/customers/${id}/branches`),
       crmGet<ContactRow[]>(`/api/customers/${id}/contacts`),
       crmGet<Record<string, unknown>[]>(`/api/customer-leave-policies?customer_id=${id}&limit=200`),
+      // Documents were saved but never loaded back, so the edit form looked
+      // like the upload had been lost — and people re-uploaded duplicates.
+      crmGet<Record<string, unknown>[]>(`/api/customers/${id}/documents`).catch(() => ({ data: [] })),
     ])
-      .then(([cust, polRes, brRes, ctRes, leaveRes]) => {
+      .then(([cust, polRes, brRes, ctRes, leaveRes, docRes]) => {
         const c = cust.data || {};
         setHasPo(!!c.has_po);
         setF((s) => ({
@@ -392,6 +399,21 @@ export function CustomerFormModal({
             .map(apiToLeaveRow),
         );
         setRemovedLeaveIds([]);
+        setDocs(
+          ((docRes.data || []) as Record<string, unknown>[]).map((d) => ({
+            key: uid(),
+            id: Number(d.id),
+            document_type_id: String(d.document_type_id ?? ""),
+            file: null,
+            file_name:
+              String(d.file_url || "").split("/").pop() ||
+              String(d.document_type_name || "Uploaded document"),
+            start_date: String(d.start_date || ""),
+            end_date: String(d.end_date || ""),
+            status: String(d.status || "Active"),
+          })),
+        );
+        setRemovedDocIds([]);
       })
       .catch(() => {});
   }, [initial?.id]);
@@ -425,7 +447,8 @@ export function CustomerFormModal({
         return validBranches.length ? "complete" : branches.some((b) => b.branch_name) ? "partial" : "empty";
       case "documents":
         if (!docs.length) return "empty";
-        return docs.every((d) => d.document_type_id && d.file) ? "complete" : "partial";
+        // A persisted row (id) is complete without a File object in memory.
+        return docs.every((d) => d.document_type_id && (d.file || d.id)) ? "complete" : "partial";
       case "billingPolicy": {
         const leaveBad = leaveRows.some(
           (r) => r.leave_type_id && (!r.leave_credit_type || !r.leave_expire),
@@ -769,17 +792,37 @@ export function CustomerFormModal({
   };
 
   const saveDocuments = async (customerId: number) => {
+    // Deletions first, so replacing a document (delete + re-add with the same
+    // type) never trips a duplicate.
+    for (const rid of removedDocIds) {
+      try {
+        await crmDelete(`/api/customers/${customerId}/documents/${rid}`);
+      } catch { /* already gone */ }
+    }
     for (const d of docs) {
+      if (d.id) {
+        // Persisted row: metadata edits go through PUT; the file itself is
+        // immutable server-side (replace = delete + re-add).
+        if (d.dirty) {
+          await crmPut(`/api/customers/${customerId}/documents/${d.id}`, {
+            document_type_id: d.document_type_id ? Number(d.document_type_id) : null,
+            start_date: d.start_date || null,
+            end_date: d.end_date || null,
+            status: docDisplayStatus(d),
+          });
+        }
+        continue;
+      }
       if (!d.file || !d.document_type_id) continue;
-      const status = docDisplayStatus(d);
       const fields: Record<string, string> = {
         document_type_id: d.document_type_id,
-        status,
+        status: docDisplayStatus(d),
       };
       if (d.start_date) fields.start_date = d.start_date;
       if (d.end_date) fields.end_date = d.end_date;
       await crmUpload(`/api/customers/${customerId}/documents`, d.file, fields);
     }
+    setRemovedDocIds([]);
   };
 
   const submit = async () => {
@@ -806,11 +849,14 @@ export function CustomerFormModal({
         min_hours_full_day: Number(pol.min_hours_full_day) || 8,
         min_hours_half_day: Number(pol.min_hours_half_day) || 4,
         comp_off_billable: compOn,
-        comp_off_balance: compOn ? numOrNull(String(pol.comp_off_balance)) : null,
-        comp_off_balance_initial: compOn ? numOrNull(String(pol.comp_off_balance_initial)) : null,
-        comp_off_max_limit: compOn ? numOrNull(String(pol.comp_off_max_limit)) : null,
-        comp_off_max_carry_forward: compOn ? numOrNull(String(pol.comp_off_max_carry_forward)) : null,
+        // Balance/limit config belongs to the CREDIT mode (comp-off not
+        // billed). When billed, no credit accrues — send nulls.
+        comp_off_balance: compOn ? null : numOrNull(String(pol.comp_off_balance)),
+        comp_off_balance_initial: compOn ? null : numOrNull(String(pol.comp_off_balance_initial)),
+        comp_off_max_limit: compOn ? null : numOrNull(String(pol.comp_off_max_limit)),
+        comp_off_max_carry_forward: compOn ? null : numOrNull(String(pol.comp_off_max_carry_forward)),
         normal_hours_per_day: numOrNull(String(pol.normal_hours_per_day)),
+        week_off_days: String(pol.week_off_days ?? "").trim() || null,
         user_role: String(pol.user_role || "").trim() || null,
         operation: String(pol.operation || "").trim() || null,
       };
@@ -867,7 +913,17 @@ export function CustomerFormModal({
   };
 
   const updateDoc = (key: string, patch: Partial<DocRow>) => {
-    setDocs((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setDocs((rows) => rows.map((r) => (
+      r.key === key ? { ...r, ...patch, dirty: r.dirty || !!r.id } : r
+    )));
+  };
+
+  const removeDoc = (key: string) => {
+    setDocs((rows) => {
+      const target = rows.find((r) => r.key === key);
+      if (target?.id) setRemovedDocIds((ids) => [...ids, target.id!]);
+      return rows.filter((r) => r.key !== key);
+    });
   };
 
   const header = (
@@ -951,7 +1007,14 @@ export function CustomerFormModal({
                 allowAdd
                 searchable
                 placeholder="Search city…"
-                onChange={(v) => setField("city", v)}
+                onChange={(v) => {
+                  setField("city", v);
+                  // Picking a city answers the state question too. A state the
+                  // map doesn't know leaves the field alone rather than blanking
+                  // a value the user typed for a city we don't recognise.
+                  const st = stateForCity(v);
+                  if (st) setField("state", st);
+                }}
               />
             </Field>
             <Field label="State / Province">
@@ -1036,7 +1099,10 @@ export function CustomerFormModal({
                             allowAdd
                             searchable
                             placeholder="City / District"
-                            onChange={(v) => updateBranch(b.key, { city: v })}
+                            onChange={(v) => {
+                              const st = stateForCity(v);
+                              updateBranch(b.key, st ? { city: v, state: st } : { city: v });
+                            }}
                           />
                           <SearchableSelect
                             value={b.state}
@@ -1064,7 +1130,7 @@ export function CustomerFormModal({
                   <div className="mt-4 border-t border-subtle pt-4">
                     <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-muted">Branch contacts</p>
                     <div className="space-y-3">
-                      {b.contact_rows.map((cr, cri) => (
+                      {b.contact_rows.map((cr) => (
                         <React.Fragment key={cr.key}>
                           <div className="rounded-control border border-subtle/80 bg-surface-1/60 p-3">
                             {b.contact_rows.length > 1 && (
@@ -1132,18 +1198,19 @@ export function CustomerFormModal({
                               </Field>
                             </div>
                           </div>
-                          {cri === 0 && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 rounded-control border border-subtle bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-500"
-                              onClick={() => addBranchContact(b.key)}
-                              aria-label="Add contact person"
-                            >
-                              <Plus size={14} /> Add contact
-                            </button>
-                          )}
                         </React.Fragment>
                       ))}
+                      {/* After the whole list, not pinned under the first row —
+                          a new contact appears above the button, never between
+                          existing cards. */}
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-control border border-subtle bg-brand-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-500"
+                        onClick={() => addBranchContact(b.key)}
+                        aria-label="Add contact person"
+                      >
+                        <Plus size={14} /> Add contact
+                      </button>
                     </div>
                     <p className="mt-2 text-xs text-muted">
                       These contacts appear in Opportunity / Requirement dropdowns when this branch is selected.
@@ -1165,7 +1232,18 @@ export function CustomerFormModal({
         return (
           <>
             <div className={tableWrap}>
-              <table className="min-w-[720px] w-full text-sm">
+              {/* No min-width: all six columns must fit the section without a
+                  horizontal scrollbar. Width hints keep the date inputs usable
+                  while the name/file columns absorb the slack. */}
+              <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[22%]" />
+                  <col className="w-[17%]" />
+                  <col className="w-[17%]" />
+                  <col className="w-[15%]" />
+                  <col className="w-[7%]" />
+                </colgroup>
                 <thead className={tableHead}>
                   <tr>
                     <th className={thCls}>Document name</th>
@@ -1199,19 +1277,28 @@ export function CustomerFormModal({
                           </select>
                         </td>
                         <td className={tdCls}>
-                          <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-brand-600 dark:text-brand-400">
-                            <Upload size={14} />
-                            {d.file_name || "Select file"}
-                            <input
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                e.target.value = "";
-                                if (file) updateDoc(d.key, { file, file_name: file.name });
-                              }}
-                            />
-                          </label>
+                          {d.id ? (
+                            // Already uploaded — the file is immutable on the
+                            // server; replacing it is delete + re-add.
+                            <span className="inline-flex items-center gap-2 break-all text-sm text-secondary" title="Uploaded — to replace, delete this row and add a new one">
+                              <Upload size={14} className="shrink-0 opacity-60" />
+                              {d.file_name}
+                            </span>
+                          ) : (
+                            <label className="inline-flex cursor-pointer items-center gap-2 break-all text-sm font-semibold text-brand-600 dark:text-brand-400">
+                              <Upload size={14} className="shrink-0" />
+                              {d.file_name || "Select file"}
+                              <input
+                                type="file"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  e.target.value = "";
+                                  if (file) updateDoc(d.key, { file, file_name: file.name });
+                                }}
+                              />
+                            </label>
+                          )}
                         </td>
                         <td className={tdCls}>
                           <input type="date" className={inputCls} value={d.start_date}
@@ -1231,7 +1318,6 @@ export function CustomerFormModal({
                               });
                             }}
                           />
-                          <p className="mt-1 text-[10px] text-muted">Document expires on this date</p>
                         </td>
                         <td className={tdCls}>
                           <select
@@ -1246,7 +1332,8 @@ export function CustomerFormModal({
                           <button
                             type="button"
                             className="rounded-control p-1.5 text-muted transition-colors hover:text-danger"
-                            onClick={() => setDocs((rows) => rows.filter((r) => r.key !== d.key))}
+                            onClick={() => removeDoc(d.key)}
+                            aria-label="Remove document"
                           >
                             <Trash2 size={15} />
                           </button>
@@ -1296,31 +1383,36 @@ export function CustomerFormModal({
                 ))}
               </div>
 
-              <div className="rounded-control border border-subtle bg-surface-2/20 p-4">
-                <div className="mb-3">
-                  <p className="text-sm font-bold text-primary">
-                    Leave Billing Policy
-                    <span className="ml-2 inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">
-                      Customer defaults
-                    </span>
-                  </p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    FALLBACK rules — they apply only to branches that have no leave policy of
-                    their own. Each branch's own Leave Billing Policy (Branch wizard) overrides
-                    these per leave type, and a project can override the branch again.
-                  </p>
+              {/* Per-leave-type billing rules only matter once leave is
+                  billable at all — hidden otherwise so the form asks nothing
+                  it will not use. Saved rows are kept, just not shown. */}
+              {!!pol.leave_billable && (
+                <div className="rounded-control border border-subtle bg-surface-2/20 p-4">
+                  <div className="mb-3">
+                    <p className="text-sm font-bold text-primary">
+                      Leave Billing Policy
+                      <span className="ml-2 inline-flex items-center rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">
+                        Customer defaults
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      FALLBACK rules — they apply only to branches that have no leave policy of
+                      their own. Each branch's own Leave Billing Policy (Branch wizard) overrides
+                      these per leave type, and a project can override the branch again.
+                    </p>
+                  </div>
+                  <LeaveBillingPolicySection
+                    leaveRows={leaveRows}
+                    leaveTypes={leaveTypes}
+                    errors={errors}
+                    addingType={addingType}
+                    onSaveRow={(row) => saveLeaveRow(row)}
+                    onDeleteRow={(row) => deleteLeaveRow(row)}
+                    onAddType={addLeaveType}
+                    emptyMessage="No leave policy rows yet for this customer."
+                  />
                 </div>
-                <LeaveBillingPolicySection
-                  leaveRows={leaveRows}
-                  leaveTypes={leaveTypes}
-                  errors={errors}
-                  addingType={addingType}
-                  onSaveRow={(row) => saveLeaveRow(row)}
-                  onDeleteRow={(row) => deleteLeaveRow(row)}
-                  onAddType={addLeaveType}
-                  emptyMessage="No leave policy rows yet for this customer."
-                />
-              </div>
+              )}
             </div>
 
             <div className="space-y-4 border-t border-subtle pt-6">
@@ -1338,26 +1430,33 @@ export function CustomerFormModal({
                   checked={compOn}
                   onChange={(e) => {
                     const on = e.target.checked;
+                    // Billed comp-off means NO leave credit, so the balance
+                    // fields only apply while this is OFF — turning it on
+                    // clears them.
                     setPol((s) => ({
                       ...s,
                       comp_off_billable: on,
-                      ...(on ? {} : {
+                      ...(on ? {
                         comp_off_balance: "",
                         comp_off_balance_initial: "",
                         comp_off_max_limit: "",
                         comp_off_max_carry_forward: "",
-                      }),
+                      } : {}),
                     }));
                   }}
                 />
                 Comp off billable
               </label>
+              {/* Enabled when comp-off is NOT billed: that is when weekend /
+                  holiday work credits comp-off leave, and these fields govern
+                  how much can accrue and carry. When it IS billed, no credit
+                  accrues and there is nothing for them to configure. */}
               <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
                 <Field label="Comp off balance">
                   <input
                     type="number"
                     className={inputCls}
-                    disabled={!compOn}
+                    disabled={compOn}
                     value={String(pol.comp_off_balance ?? "")}
                     onChange={(e) => setPolicy("comp_off_balance", e.target.value)}
                   />
@@ -1366,7 +1465,7 @@ export function CustomerFormModal({
                   <input
                     type="number"
                     className={inputCls}
-                    disabled={!compOn}
+                    disabled={compOn}
                     value={String(pol.comp_off_balance_initial ?? "")}
                     onChange={(e) => setPolicy("comp_off_balance_initial", e.target.value)}
                   />
@@ -1375,7 +1474,7 @@ export function CustomerFormModal({
                   <input
                     type="number"
                     className={inputCls}
-                    disabled={!compOn}
+                    disabled={compOn}
                     value={String(pol.comp_off_max_limit ?? "")}
                     onChange={(e) => setPolicy("comp_off_max_limit", e.target.value)}
                   />
@@ -1384,7 +1483,7 @@ export function CustomerFormModal({
                   <input
                     type="number"
                     className={inputCls}
-                    disabled={!compOn}
+                    disabled={compOn}
                     value={String(pol.comp_off_max_carry_forward ?? "")}
                     onChange={(e) => setPolicy("comp_off_max_carry_forward", e.target.value)}
                   />
@@ -1412,6 +1511,41 @@ export function CustomerFormModal({
                   <input type="number" step="0.5" className={inputCls} value={String(pol.normal_hours_per_day ?? "")}
                     onChange={(e) => setPolicy("normal_hours_per_day", e.target.value)} />
                 </Field>
+              </div>
+              {/* Week-off pattern (0072). Sat+Sun unless this customer works a
+                  different week (Gulf: Fri+Sat). Branches and projects can
+                  override it the same way they override billability. */}
+              <div>
+                <p className="text-sm font-semibold text-primary">Week-off days</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  Which days count as the weekend on generated timesheets. Default: Saturday + Sunday.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, idx) => {
+                    const selected = String(pol.week_off_days ?? "5,6")
+                      .split(",").map((s) => s.trim()).filter(Boolean).map(Number);
+                    const on = selected.includes(idx);
+                    return (
+                      <label key={label} className="flex items-center gap-1.5 text-sm font-medium text-primary">
+                        <input
+                          type="checkbox"
+                          className={chk}
+                          checked={on}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...selected, idx]
+                              : selected.filter((d) => d !== idx);
+                            const uniq = [...new Set(next)].sort((a, b) => a - b);
+                            // All seven off is nonsense; the server rejects it too.
+                            if (uniq.length >= 7) return;
+                            setPolicy("week_off_days", uniq.join(","));
+                          }}
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>

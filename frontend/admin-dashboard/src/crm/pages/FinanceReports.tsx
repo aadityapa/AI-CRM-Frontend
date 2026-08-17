@@ -309,13 +309,15 @@ function ReceivablesTab() {
 
 /* -------------------------------------------------------------------- page */
 
-export function FinanceReportsPage() {
+/** `embedded` — rendered as an inner tab (Reports → Financial Reports): the
+ * host page owns the h1, so the header block collapses to the description. */
+export function FinanceReportsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [tab, setTab] = useState("ledger");
   const [toast] = useToast();
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-display text-xl font-bold text-primary">Financial Reports</h1>
+      <div className={embedded ? "mb-4" : "mb-6"}>
+        {!embedded && <h1 className="text-display text-xl font-bold text-primary">Financial Reports</h1>}
         <p className="mt-1 text-sm text-muted">
           Customer-wise complete ledger and payment receivables with aging.
         </p>

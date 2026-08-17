@@ -35,6 +35,9 @@ const InvoiceTaxInvoicePage = lazy(() =>
   import("./components/invoice/InvoicePage").then((m) => ({ default: m.InvoicePage })),
 );
 const TdsPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.TdsPage })));
+const PayrollPage = lazy(() =>
+  import("./pages/Payroll").then((m) => ({ default: m.PayrollPage })),
+);
 const FinanceReportsPage = lazy(() =>
   import("./pages/FinanceReports").then((m) => ({ default: m.FinanceReportsPage })),
 );
@@ -78,6 +81,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "invoices/:id", element: InvoiceDetailPage },
   { pattern: "tds", element: TdsPage },
   { pattern: "finance-reports", element: FinanceReportsPage },
+  { pattern: "payroll", element: PayrollPage },
   { pattern: "employees", element: EmployeesListPage },
   { pattern: "employees/:id", element: EmployeeDetailPage },
   { pattern: "users", element: UsersAdminPage },

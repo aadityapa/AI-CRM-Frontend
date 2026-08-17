@@ -1,11 +1,9 @@
 /** CRM sidebar / command-palette nav entries (shared, no CrmApp side effects). */
 import type { ComponentType } from "react";
 import {
-  Banknote,
   Briefcase,
   Building2,
   CalendarClock,
-  CalendarDays,
   CalendarOff,
   Clock,
   FileSpreadsheet,
@@ -31,6 +29,8 @@ export type CrmNavItem = {
 export const CRM_NAV: CrmNavItem[] = [
   { path: "", label: "Dashboard", icon: LayoutDashboard, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
   { path: "customers", label: "Customers", icon: Building2, roles: ["Admin", "Sales", "Sales_Head", "TA"] },
+  // Rate Card lives INSIDE each customer branch (Customers → Branches tab)
+  // since Aug 2026 — no standalone sidebar page.
   { path: "opportunities", label: "Opportunities", icon: Target, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
   { path: "candidates", label: "Candidates", icon: Users, roles: ["Admin", "TA", "Sales", "Sales_Head"] },
   { path: "template-requests", label: "Template Requests", icon: FileText, roles: ["Admin", "TA", "RMG"] },
@@ -39,15 +39,22 @@ export const CRM_NAV: CrmNavItem[] = [
   // interviews is not their workflow, which is also why the upcoming-interviews
   // widget was removed from their dashboard.
   { path: "calendar", label: "Interview Calendar", icon: CalendarClock, roles: ["Admin", "CEO", "TA", "RMG"] },
-  { path: "projects", label: "Projects", icon: Briefcase, roles: ["Admin", "Sales", "Sales_Head"] },
+  // Projects is the PROJECT HUB (Aug 2026): its tabs carry Project Employees,
+  // Timesheets, Purchase Orders and Invoices — the old Timesheets sidebar
+  // entry was replaced by this. Roles = union of everything the hub serves.
+  { path: "projects", label: "Projects", icon: Briefcase,
+    roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance", "RMG", "TA"] },
   { path: "project-employees", label: "Project Employees", icon: Network, roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance"] },
-  { path: "my-leave", label: "My Leave", icon: CalendarDays, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
-  { path: "leave-applications", label: "Leave Applications", icon: CalendarDays, roles: ["Admin", "HR"] },
+  // My Leave and Leave Applications live INSIDE Timesheets (the attendance
+  // hub) since Aug 2026 — no standalone sidebar pages; routes stay for deep
+  // links. TA is on Timesheets' roles ONLY for the My Leave tab: inside the
+  // page, non-timesheet roles see just that tab.
   { path: "holidays", label: "Holidays", icon: CalendarOff, roles: ["Admin", "HR"] },
-  { path: "timesheets", label: "Timesheets", icon: Clock, roles: ["Admin", "HR", "Finance", "RMG", "Sales", "Sales_Head"] },
   { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
   { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
-  { path: "finance-reports", label: "Financial Reports", icon: Banknote, roles: ["Admin", "Finance", "Sales_Head"] },
+  // Financial Reports lives INSIDE Reports (Reports → Financial Reports tab)
+  // and Payroll INSIDE Timesheets (Timesheets → Payroll tab) since Aug 2026 —
+  // no standalone sidebar pages. Their routes stay for deep links.
   { path: "employees", label: "Employees", icon: UserCog, roles: ["Admin", "HR"] },
   { path: "reports", label: "Reports", icon: FileSpreadsheet, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
   { path: "users", label: "Users", icon: UserCog, roles: ["Admin", "CEO"] },

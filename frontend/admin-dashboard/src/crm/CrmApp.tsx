@@ -415,6 +415,17 @@ export default function CrmApp() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // Admin-authored copy overrides (status tooltips, empty-state text).
+  // Fire-and-forget: the built-in copy is already correct, overrides just
+  // customise it, so nothing waits on this request.
+  useEffect(() => {
+    import("./lib/statusHelp").then(({ setUiTextOverrides }) => {
+      crmGet<Record<string, string>>("/api/ui-text")
+        .then((r) => setUiTextOverrides(r.data))
+        .catch(() => {});
+    });
+  }, []);
+
   useEffect(() => {
     crmGet<Me>("/api/me")
       .then((r) => setMe(r.data))
@@ -460,9 +471,31 @@ export default function CrmApp() {
     );
   }
 
+  // The Customer page is the hub (Aug 2026): these pages exist as tabs inside
+  // every customer, so anyone who can open Customers reaches them customer-
+  // first and their sidebar entries disappear — the rail stays short. Users
+  // WITHOUT Customers access (Finance, RMG, HR, employees) keep the global
+  // entries: for them the sidebar is the only road to those pages.
+  // "opportunities" is NOT here although the hub covers it: that sidebar
+  // entry is also the Requirements workspace (cross-customer sourcing for
+  // TA/RMG), which no customer tab replaces.
+  // "timesheets" left the set in Aug 2026: it became the attendance hub
+  // hosting Payroll, My Leave and Leave Applications — personal tabs no
+  // customer tab replaces, so the global entry stays for everyone.
+  // "projects" is deliberately NOT here any more: it became the project hub
+  // (PE / Timesheets / POs / Invoices tabs) replacing the Timesheets entry.
+  const HUB_COVERED = new Set([
+    "project-employees", "holidays",
+    "pos", "invoices",
+  ]);
+  const customersRoleOk = isSuperAdmin(me.roles)
+    || (NAV.find((n) => n.path === "customers")?.roles || []).some((r) => me.roles.includes(r));
+  const hasCustomersAccess = crmTabVisibleFromMe(me, "customers", customersRoleOk, false);
+
   const visible = NAV.filter((n) => {
     const roleOk = isSuperAdmin(me.roles) || n.roles.some((r) => me.roles.includes(r));
     const mandatory = n.path === "";
+    if (hasCustomersAccess && HUB_COVERED.has(n.path)) return false;
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (
@@ -499,7 +532,7 @@ export default function CrmApp() {
           transition={reduce ? { duration: 0 } : { duration: MOTION_DUR.slow, ease: MOTION_EASE_OUT }}
         >
           <div className={`flex h-full min-h-0 w-full min-w-0 flex-col ${sidebarCollapsed ? "p-1" : "p-1.5"}`}>
-            <div className="glass flex h-full min-h-0 flex-col overflow-hidden rounded-panel">
+            <div className="kx-chrome-navy glass flex h-full min-h-0 flex-col overflow-hidden rounded-panel">
               <div
                 className={`flex items-center border-b border-subtle ${
                   sidebarCollapsed ? "flex-col gap-0.5 px-0.5 py-1" : "justify-between gap-1 px-2 py-1.5"
@@ -551,7 +584,7 @@ export default function CrmApp() {
         <div className="min-w-0 flex-1 overflow-x-hidden md:flex md:min-h-0 md:flex-col">
           {/* Glass header bar (E1 glass; nothing glossy nested inside it) with
               the v3 gradient hairline along its bottom edge. */}
-          <div className="crm-print-hide glass fx-hairline-b flex min-w-0 items-center justify-between gap-3 border-x-0 border-t-0 px-3 py-2 sm:px-4">
+          <div className="crm-print-hide kx-chrome-navy glass fx-hairline-b flex min-w-0 items-center justify-between gap-3 border-x-0 border-t-0 px-3 py-2 sm:px-4">
             <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-primary">
               <button
                 type="button"
@@ -610,7 +643,7 @@ export default function CrmApp() {
                   onClick={() => setDrawerOpen(false)}
                 />
                 <motion.aside
-                  className="elev-3 absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-panel"
+                  className="kx-chrome-navy elev-3 absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-panel"
                   initial={reduce ? { opacity: 0 } : { x: "-100%" }}
                   animate={reduce ? { opacity: 1 } : { x: 0 }}
                   exit={reduce ? { opacity: 0 } : { x: "-100%" }}

@@ -3,10 +3,11 @@
  * API: GET/PUT /api/projects/employees/{pe_id}, leave sub-resources. */
 import React, { useCallback, useEffect, useState } from "react";
 import { CalendarDays, CalendarOff, ExternalLink, Plus, RefreshCw, Save } from "lucide-react";
-import { crmGet, crmPost, crmPut, qs } from "../api";
+import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
+import { RateHistory } from "./ProjectEmployees";
 import { DataTable, type Column } from "../components/DataTable";
 import {
   EmptyState, ErrorBox, Field, KpiCard, Modal, PolicySourceChip, Spinner, StatusBadge, Tabs,
@@ -182,6 +183,7 @@ type PeDetail = {
   work_mode?: string | null;
   billing_rate?: number | null;
   billing_unit?: string | null;
+  rates?: import("./ProjectEmployees").RateRowOut[];
   is_active?: boolean;
   is_exit?: boolean;
   exit_date?: string | null;
@@ -476,6 +478,198 @@ function InvoiceTab({ peId, projectId }: { peId: number; projectId?: number | nu
   );
 }
 
+/* ------------------------------------------- commercial details (editable) */
+
+type RateDraftRow = { id?: number; effective_from: string; rate: string };
+
+/** The Commercial Details section, now an editor rather than a plaque.
+ *
+ * Each stored rate can be corrected (date or amount), deleted, or joined by a
+ * new row — hitting the same /rates endpoints the PO panel's Edit/Add Rate
+ * use, so there is exactly one rate history everywhere. Validity ranges stay
+ * DERIVED; editing a date re-flows the neighbours automatically, which is
+ * also how a broken history (two rates sharing a start date) gets fixed:
+ * change or delete one of the twins.
+ */
+function RateHistorySection({ pe, reload, notify }: {
+  pe: { id: number; rates?: import("./ProjectEmployees").RateRowOut[]; billing_unit?: string | null };
+  reload: () => void;
+  notify: (m: string, k?: "ok" | "err") => void;
+}) {
+  const canEditRates = useHasRole("Sales_Head", "Finance", "HR", "RMG");
+  const [editing, setEditing] = useState(false);
+  const [drafts, setDrafts] = useState<RateDraftRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const stored = (pe.rates || []).filter((r) => r.effective_from);
+
+  const startEditing = () => {
+    setDrafts([...stored]
+      .sort((a, b) => String(a.effective_from).localeCompare(String(b.effective_from)))
+      .map((r) => ({
+        id: r.id, effective_from: r.effective_from!.slice(0, 10),
+        rate: r.rate != null ? String(r.rate) : "",
+      })));
+    setError("");
+    setEditing(true);
+  };
+
+  /* Live duplicate detection. Legacy data (from the old bug that stacked a
+     new rate on the same date at every save) can arrive in this editor
+     ALREADY containing twins — so the collision is flagged the moment the
+     editor opens, on the exact rows, not as a mystery refusal at save time. */
+  const dupDates = React.useMemo(() => {
+    const seen = new Map<string, number>();
+    drafts.forEach((d) => {
+      if (d.effective_from) seen.set(d.effective_from, (seen.get(d.effective_from) || 0) + 1);
+    });
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([d]) => d));
+  }, [drafts]);
+  const dupMessage = dupDates.size
+    ? `Two rates start on ${[...dupDates].map((d) =>
+        new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }),
+      ).join(", ")} — change the date on one of the highlighted rows, or delete the wrong one, then save.`
+    : "";
+
+  const setDraft = (i: number, key: "effective_from" | "rate", value: string) =>
+    setDrafts((rows) => rows.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
+
+  const removeRow = async (i: number) => {
+    const row = drafts[i];
+    if (row.id == null) {
+      setDrafts((rows) => rows.filter((_, idx) => idx !== i));
+      return;
+    }
+    if (drafts.filter((d) => d.id != null).length <= 1) {
+      setError("Keep at least one rate — billing needs a rate in force");
+      return;
+    }
+    setBusy(true);
+    try {
+      await crmDelete(`/api/projects/employees/${pe.id}/rates/${row.id}`);
+      setDrafts((rows) => rows.filter((_, idx) => idx !== i));
+      notify("Rate deleted");
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to delete rate", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    const complete = drafts.filter((d) => d.effective_from && d.rate && Number(d.rate) > 0);
+    if (complete.length !== drafts.length) {
+      setError("Every row needs an Effective From date and a rate above zero");
+      return;
+    }
+    if (dupDates.size) {
+      setError(dupMessage);
+      return;
+    }
+    setError("");
+    setBusy(true);
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      for (const d of drafts) {
+        const orig = stored.find((r) => r.id === d.id);
+        if (d.id == null) {
+          await crmPost(`/api/projects/employees/${pe.id}/rates`, {
+            effective_from: d.effective_from, rate: Number(d.rate),
+            is_current_rate: d.effective_from <= today,
+          });
+        } else if (orig && (orig.effective_from!.slice(0, 10) !== d.effective_from
+                            || String(orig.rate ?? "") !== d.rate)) {
+          await crmPut(`/api/projects/employees/${pe.id}/rates/${d.id}`, {
+            effective_from: d.effective_from, rate: Number(d.rate),
+          });
+        }
+      }
+      notify("Commercial Details saved");
+      setEditing(false);
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to save rates", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!editing) {
+    if (!stored.length && !canEditRates) return null;
+    return (
+      <div className="rounded-card border border-subtle bg-surface-2/50 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-xs font-bold uppercase tracking-wide text-muted">
+            Commercial Details — rate history
+          </div>
+          {canEditRates && (
+            <button type="button" className={`${btnSecondary} !px-2 !py-1 text-xs`} onClick={startEditing}>
+              Edit rates
+            </button>
+          )}
+        </div>
+        {stored.length
+          ? <RateHistory rates={pe.rates} unit={pe.billing_unit} />
+          : <span className="text-sm text-muted">No rates yet — click Edit rates to add the first one.</span>}
+        <p className="mt-2 text-[11px] text-muted">
+          Each rate runs until the day before the next begins; the latest runs onwards.
+          Timesheet invoices pick the rate in force for their month automatically.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-card border border-subtle bg-surface-2/50 p-3">
+      <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
+        Commercial Details — edit rates
+      </div>
+      <div className="space-y-2">
+        {drafts.map((d, i) => (
+          <div key={d.id ?? `new-${i}`} className="flex flex-wrap items-end gap-2">
+            <Field label="Effective from">
+              <input type="date"
+                className={`${inputCls} ${d.effective_from && dupDates.has(d.effective_from)
+                  ? "!border-danger ring-2 ring-danger/50" : ""}`}
+                value={d.effective_from}
+                aria-invalid={!!d.effective_from && dupDates.has(d.effective_from)}
+                onChange={(e) => setDraft(i, "effective_from", e.target.value)} />
+            </Field>
+            <Field label={`Rate${pe.billing_unit ? ` (${pe.billing_unit})` : ""}`}>
+              <input type="number" min={0} step="0.01" className={inputCls} value={d.rate}
+                placeholder="0.00" onChange={(e) => setDraft(i, "rate", e.target.value)} />
+            </Field>
+            <button type="button"
+              className={`${btnSecondary} !px-2 !py-1.5 text-xs hover:!text-rose-600`}
+              disabled={busy} onClick={() => removeRow(i)}>
+              Delete
+            </button>
+            {d.id == null && <span className="pb-2 text-[11px] font-semibold text-sky-600">new</span>}
+          </div>
+        ))}
+      </div>
+      <button type="button"
+        className={`mt-2 text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400 ${focusRing} rounded-control`}
+        onClick={() => setDrafts((rows) => [...rows, { effective_from: "", rate: "" }])}>
+        + Add New
+      </button>
+      {(error || dupMessage) && (
+        <div className="mt-2 text-xs font-semibold text-danger" role="alert">{error || dupMessage}</div>
+      )}
+      <div className="mt-3 flex justify-end gap-2 border-t border-subtle pt-3">
+        <button type="button" className={btnSecondary} disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
+        <button type="button" className={btnPrimary} disabled={busy || dupDates.size > 0}
+          title={dupDates.size ? "Fix the highlighted duplicate dates first" : undefined}
+          onClick={save}>
+          {busy ? "Saving…" : "Save rates"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ProjectEmployeeDetailPage() {
   const { id } = useCrmParams();
   const canWrite = useHasRole("Sales_Head", "HR");
@@ -752,6 +946,7 @@ export function ProjectEmployeeDetailPage() {
             <InfoItem label="Current rate">{money(pe.billing_rate)} / {pe.billing_unit || "—"}</InfoItem>
             <InfoItem label="Leave balance total">{pe.leave_balance_total ?? "—"}</InfoItem>
           </div>
+          <RateHistorySection pe={pe} reload={load} notify={notify} />
           {canWrite ? (
             <>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">

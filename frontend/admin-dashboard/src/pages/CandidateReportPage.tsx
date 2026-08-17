@@ -195,8 +195,9 @@ export function CandidateReportPage({
         if (!alive) return;
         setError(String((e as Error)?.message || e));
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        /* no `return` in finally (no-unsafe-finally): it would swallow any
+           pending exception/return — guard the state update instead. */
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -221,8 +222,9 @@ export function CandidateReportPage({
         if (!alive) return;
         setRecord(null);
       } finally {
-        if (!alive) return;
-        setRecordBusy(false);
+        /* no `return` in finally (no-unsafe-finally): it would swallow any
+           pending exception/return — guard the state update instead. */
+        if (alive) setRecordBusy(false);
       }
     })();
     return () => {

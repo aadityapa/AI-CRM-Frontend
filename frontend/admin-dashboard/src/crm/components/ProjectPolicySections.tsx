@@ -347,8 +347,9 @@ export function LeaveBillingPolicySection({
         <table className="w-full min-w-max text-sm">
           <thead className="bg-surface-2">
             <tr>
+              {/* Single name column — "Name" always mirrored "Leave Name"
+                  and the duplicate invited the two to drift apart. */}
               <th className={thCls}>Leave Name</th>
-              <th className={thCls}>Name</th>
               <th className={thCls}>Leave Credit Type *</th>
               <th className={thCls}>Leave Credit Balance</th>
               <th className={thCls}>Leave Expire *</th>
@@ -377,7 +378,6 @@ export function LeaveBillingPolicySection({
                       <p className="mt-1 text-xs text-danger">{errors[`leave_type_${i}`]}</p>
                     )}
                   </td>
-                  <td className={tdCls}>{r.name || "—"}</td>
                   <td className={tdCls}>
                     {r.leave_credit_type || "—"}
                     {errors[`credit_${i}`] && (

@@ -30,7 +30,27 @@ export type AskAiHelpContext = {
   read_only: boolean;
 };
 
-export type ChatTurn = { role: "user" | "assistant"; content: string; navigateTo?: string | null };
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+  navigateTo?: string | null;
+  /** Whitelisted read queries the assistant ran to answer this turn. */
+  toolsUsed?: string[];
+};
+
+/** Tool name -> what it looked up, for the "checked your data" line under a reply. */
+export const TOOL_LABELS: Record<string, string> = {
+  search_requirements: "requirements",
+  get_requirement: "requirement detail",
+  top_resumes_for_requirement: "candidate shortlist",
+  search_candidate_profiles: "candidate pipeline",
+  pipeline_counts: "pipeline totals",
+  search_opportunities: "opportunities",
+  timesheet_status: "timesheets",
+  search_purchase_orders: "purchase orders",
+  search_invoices: "invoices",
+  leave_balances: "leave balances",
+};
 
 export async function fetchHelpContext(route: string): Promise<AskAiHelpContext> {
   const { data } = await crmGet<AskAiHelpContext>(
@@ -48,7 +68,9 @@ export async function postAssist(opts: {
     message: opts.message,
     route: opts.route,
     history: opts.history,
-    enable_tools: false,
+    // Whitelisted READ queries. The server filters them by the caller's roles
+    // and every one of them is a SELECT — the assistant still cannot write.
+    enable_tools: true,
     confirm_actions: true,
   });
   return data;

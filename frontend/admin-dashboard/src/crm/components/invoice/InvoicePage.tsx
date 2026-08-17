@@ -31,7 +31,8 @@ export function TaxInvoiceDocument({
         <BuyerCard party={data.buyer} />
         <ShippingCard party={data.shipping} />
       </div>
-      <InvoiceTable lines={data.lines} defaultSac={data.sac_code} />
+      <InvoiceTable lines={data.lines} defaultSac={data.sac_code}
+        qtyLabel={data.qty_label} rateLabel={data.rate_label} />
       <div className={styles.totalsRow}>
         <GSTSummary gst={data.gst} />
         <TotalsPanel gst={data.gst} />

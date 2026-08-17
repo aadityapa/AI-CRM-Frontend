@@ -152,6 +152,7 @@ export function CreatableMasterCombobox({
           }}
           role="combobox"
           aria-expanded={open}
+          aria-controls="creatable-master-listbox"
           aria-autocomplete="list"
           className="input-recessed w-full h-11 rounded-control px-4 pr-10 text-sm text-primary"
           placeholder={placeholder}
@@ -162,7 +163,8 @@ export function CreatableMasterCombobox({
       </div>
 
       {open ? (
-        <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-overlay">
+        <div id="creatable-master-listbox" role="listbox"
+          className="absolute z-40 mt-2 w-full overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-overlay">
           {items.length ? (
             items.map((item, idx) => {
               const val = itemValue(item, kind);

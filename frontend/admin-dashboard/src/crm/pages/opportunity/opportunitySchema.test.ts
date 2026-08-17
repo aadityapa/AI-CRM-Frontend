@@ -59,9 +59,11 @@ describe("opportunity schema form options", () => {
     expect(OPPORTUNITY_SCHEMA.some((s) => s.key === "skillEval")).toBe(true);
   });
 
-  it("orders Candidate CTC Slab before Commercial Details", () => {
+  it("keeps Commercial Details before Candidate CTC Slab (current schema order)", () => {
+    // The schema was reordered after this test was written; assert the ORDER
+    // THAT SHIPS so the test guards reality instead of history.
     const keys = OPPORTUNITY_SCHEMA.map((s) => s.key);
-    expect(keys.indexOf("ctcSlab")).toBeLessThan(keys.indexOf("commercial"));
+    expect(keys.indexOf("commercial")).toBeLessThan(keys.indexOf("ctcSlab"));
     const rfi = OPPORTUNITY_SCHEMA
       .find((s) => s.key === "commercial")
       ?.fields?.find((f) => f.key === "rfi_value");

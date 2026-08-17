@@ -68,7 +68,7 @@ export function LeaveBillingPolicyModal({
   const pickType = (t: LeaveType) => {
     set({
       leave_type_id: String(t.id),
-      // Auto-fill Name from Leave Name; keep editable afterward.
+      // `name` always mirrors the selected leave type — no separate edit path.
       name: t.name,
     });
     setTypeQuery("");
@@ -132,28 +132,48 @@ export function LeaveBillingPolicyModal({
   return (
     <Modal title="Leave Billing Policy" onClose={onClose} medium>
       <div className="space-y-4">
-        {/* 1. Leave Name */}
+        {/* 1. Leave Name — the ONLY name field. The free-text "Name" twin is
+            gone: two name columns holding the same value invited them to
+            drift apart, and a policy renamed away from its leave type broke
+            the timesheet's per-type billability lookup (matched by name). */}
         <div>
           <FieldLabel label="Leave Name" />
-          <input
-            className={inputCls}
-            placeholder="-Select-"
-            value={typeOpen || typeQuery ? typeQuery : (selectedType?.name || "")}
-            onFocus={() => {
-              setTypeOpen(true);
-              setTypeQuery(selectedType?.name || "");
-            }}
-            onChange={(e) => {
-              setTypeQuery(e.target.value);
-              setTypeOpen(true);
-              set({ leave_type_id: "" });
-            }}
-            onBlur={() => {
-              // Delay so option click registers
-              window.setTimeout(() => setTypeOpen(false), 150);
-            }}
-            autoComplete="off"
-          />
+          {selectedType && !typeOpen ? (
+            // Committed value is locked — editing it would detach the label
+            // from the leave type it identifies. "Change" re-opens the search.
+            <div className="flex items-center gap-2">
+              <div className={`${inputCls} flex items-center bg-surface-2/50 text-primary`} aria-readonly="true">
+                {selectedType.name}
+              </div>
+              <button
+                type="button"
+                className={`${btnSecondary} !px-2.5 !py-1.5 text-xs`}
+                onClick={() => {
+                  setTypeQuery("");
+                  setTypeOpen(true);
+                }}
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <input
+              className={inputCls}
+              placeholder="-Select-"
+              value={typeQuery}
+              onFocus={() => setTypeOpen(true)}
+              onChange={(e) => {
+                setTypeQuery(e.target.value);
+                setTypeOpen(true);
+                set({ leave_type_id: "" });
+              }}
+              onBlur={() => {
+                // Delay so option click registers
+                window.setTimeout(() => setTypeOpen(false), 150);
+              }}
+              autoComplete="off"
+            />
+          )}
           {typeOpen && (
             <div className="mt-1 max-h-40 overflow-y-auto rounded-control border border-subtle bg-surface-1">
               {filtered.length === 0 ? (
@@ -184,16 +204,6 @@ export function LeaveBillingPolicyModal({
           {errors.leave_type_id && (
             <p className="mt-1 text-xs text-danger" role="alert">{errors.leave_type_id}</p>
           )}
-        </div>
-
-        {/* 2. Name */}
-        <div>
-          <FieldLabel label="Name" />
-          <input
-            className={inputCls}
-            value={form.name}
-            onChange={(e) => set({ name: e.target.value })}
-          />
         </div>
 
         {/* 3. Leave Credit Type * */}

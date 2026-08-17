@@ -59,7 +59,9 @@ const cols: Column<LeaveRow>[] = [
   { key: "eligibility_label", label: "Policy", render: (r) => r.eligibility_label || "—" },
 ];
 
-export function MyLeavePage() {
+/** `embedded` — rendered as an inner tab (Timesheets → My Leave): the host
+ * page owns the h1, so the title is hidden. */
+export function MyLeavePage({ embedded = false }: { embedded?: boolean } = {}) {
   const [data, setData] = useState<MyLeaveData | null>(null);
   const [err, setErr] = useState("");
 
@@ -78,7 +80,7 @@ export function MyLeavePage() {
   return (
     <div className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-lg font-bold text-primary">My Leave</h1>
+        {!embedded && <h1 className="text-display text-lg font-bold text-primary">My Leave</h1>}
         <span className="text-sm text-muted">Across {projects.length} project mapping{projects.length === 1 ? "" : "s"}</span>
       </div>
 

@@ -29,6 +29,7 @@ import {
   AiThinking, ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import {
   SectionHeaderBanner, FieldLabel, WizardField, InfoChip, lockedInputCls,
 } from "../components/wizard";
@@ -1064,7 +1065,7 @@ export function RequirementsListPage() {
           emptyMessage={
             taMode && !statusFilter && !dq
               ? "Nothing to source yet — requirements appear here once RMG approves them for sourcing."
-              : "No requirements found"
+              : <TeachingEmpty page="requirements" />
           }
           filters={
             taMode ? (

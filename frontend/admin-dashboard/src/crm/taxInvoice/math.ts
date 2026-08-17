@@ -132,7 +132,7 @@ function normalizeServiceMonth(period?: string): string {
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
   ];
-  let abbr =
+  const abbr =
     abbrs.find((a) => a.toLowerCase() === key) ||
     (() => {
       const i = full.indexOf(key);

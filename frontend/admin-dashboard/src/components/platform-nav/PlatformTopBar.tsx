@@ -230,7 +230,7 @@ export function PlatformTopBar({
   return (
     <>
       <header
-        className={`glass fx-hairline-b sticky top-0 z-40 rounded-none border-x-0 border-t-0 transition-[box-shadow,background-color] duration-base ease-smooth ${
+        className={`kx-chrome-navy glass fx-hairline-b sticky top-0 z-40 rounded-none border-x-0 border-t-0 transition-[box-shadow,background-color] duration-base ease-smooth ${
           scrolled ? "shadow-overlay !backdrop-blur-md" : ""
         }`}
       >

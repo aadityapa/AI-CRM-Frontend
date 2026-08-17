@@ -16,21 +16,21 @@
 
 :root {
   /* --------------------------------------------------------------- SURFACES
-     DUNE GLOW (day): warm desert-sand ladder — ivory-sand page, warm-white
-     cards. surface-2 is the HOVER/RAISED tint (one step deeper dune than the
-     card); surface-3 is deep chrome. Night (.dark) is untouched. */
-  --surface-0: #faf6ef; /* page background — warm ivory sand */
-  --surface-1: #fffdf8; /* card — warm white */
-  --surface-2: #f3ede2; /* hover tint / popover — light dune */
-  --surface-3: #ede5d6; /* deep chrome / modal recess */
+     ENTERPRISE BLUE (day): cool blue-gray ladder — pale blue-gray page, white
+     cards (the JobDiva product look). surface-2 is the HOVER/RAISED tint (one
+     step deeper than the card); surface-3 is deep chrome. Night (.dark) is
+     untouched. */
+  --surface-0: #f2f5f9; /* page background — pale blue-gray */
+  --surface-1: #ffffff; /* card — white */
+  --surface-2: #e9eef5; /* hover tint / popover — light blue-gray */
+  --surface-3: #dfe6ef; /* deep chrome / modal recess */
 
-  --text-primary:   #2b2416; /* warm near-black brown (12+:1 on sand) */
-  --text-secondary: #57503e; /* warm slate-brown (7+:1 on sand) */
-  /* Spec muted #857c66 fails AA on sand (3.3 on s3); AA-tuned warm muted: */
-  --text-muted:     #6e6650; /* ≥4.5:1 on every day surface incl. s3 */
+  --text-primary:   #1c2a41; /* cool navy near-black (12+:1 on page) */
+  --text-secondary: #43536b; /* cool slate (6+:1 on every day surface) */
+  --text-muted:     #55647c; /* AA-tuned: ≥4.5:1 on every day surface incl. s3 */
 
-  --border-subtle: rgba(87, 70, 38, 0.14);
-  --border-strong: rgba(87, 70, 38, 0.26);
+  --border-subtle: rgba(30, 49, 84, 0.14);
+  --border-strong: rgba(30, 49, 84, 0.26);
 
   /* -------------------------------------------------------------- ELEVATION
      Legacy names -> the four canonical levels (flat/raised/overlay/modal).
@@ -42,18 +42,18 @@
   --e3-shadow: var(--elev-modal);
 
   /* Specular edges — kept for compatibility, toned WAY down (calm-premium).
-     Day: soft amber top-edge glow for cards/KPIs via shared elev classes. */
-  --edge-highlight: inset 0 1px 0 rgba(251, 191, 36, 0.28);
-  --edge-shade:     inset 0 -1px 0 rgba(87, 70, 38, 0.05);
+     Day: soft white top-edge highlight for cards/KPIs via shared elev classes. */
+  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --edge-shade:     inset 0 -1px 0 rgba(30, 49, 84, 0.05);
 
   /* ------------------------------------------------------------------ GLASS
      v3: real (but disciplined) translucency — ONLY .glass surfaces are
      translucent; opaque token surfaces stay for tables/busy screens (perf +
      readability). Light: 80% white. Dark: 6% white over the near-black page
      (composites to ~= surface-1, so every verified text pair still holds). */
-  --glass-bg:            rgba(255, 252, 245, 0.80); /* dune-warmed glass */
+  --glass-bg:            rgba(255, 255, 255, 0.82); /* cool white glass */
   --glass-border-top:    rgba(255, 255, 255, 0.70);
-  --glass-border-bottom: rgba(87, 70, 38, 0.10);
+  --glass-border-bottom: rgba(30, 49, 84, 0.10);
   --glass-blur: 12px;
 
   /* ------------------------------------------------------------------ SHEEN
@@ -65,72 +65,72 @@
     rgba(255, 255, 255, 0.03) 28%,
     rgba(255, 255, 255, 0) 42%
   );
-  --shimmer-tint: rgba(255, 253, 248, 0.55);
-  --recess-shadow: inset 0 1px 2px rgba(87, 70, 38, 0.07);
+  --shimmer-tint: rgba(255, 255, 255, 0.60);
+  --recess-shadow: inset 0 1px 2px rgba(30, 49, 84, 0.07);
   --btn-gloss: rgba(255, 255, 255, 0);        /* retired — flat-first buttons */
   --btn-gloss-hover: rgba(255, 255, 255, 0);  /* retired — flat-first buttons */
 
   /* Interactive-control hover tint (theme-aware; used by .btn-depth etc.). */
-  --control-hover:  #f3ede2; /* light dune */
-  --control-active: #eae1d0; /* deeper dune */
+  --control-hover:  #e9eef5; /* light blue-gray */
+  --control-active: #dde5ee; /* deeper blue-gray */
 
   /* ------------------------------------------------------ AI ACCENT (ONLY on
      AI-generated / AI-active surfaces — never for generic decoration) */
   --ai-gradient: linear-gradient(135deg, var(--brand-400) 0%, var(--violet-500) 100%);
-  --ai-glow: 0 0 20px rgba(99, 102, 241, 0.18);
+  --ai-glow: 0 0 20px rgba(59, 130, 246, 0.18);
 
   /* ------------------------------------------------------------- v3 EFFECTS
      Brand bloom (shadow-only, like --ai-glow — an accent bloom, NOT a fifth
      elevation level), the solid-button gradient pair, row-hover tint and the
-     .fx-grid line color. Pigments: brand-500 (99,102,241) / violet (139,92,
-     246) / accent (34,211,238). */
-  --glow-brand: 0 0 16px rgba(99, 102, 241, 0.25), 0 0 40px rgba(139, 92, 246, 0.10);
-  --glow-brand-strong: 0 0 24px rgba(99, 102, 241, 0.35), 0 0 56px rgba(139, 92, 246, 0.16);
+     .fx-grid line color. Pigments: brand-500 (59,130,246) / navy (30,64,
+     175) / accent (34,211,238). */
+  --glow-brand: 0 0 16px rgba(59, 130, 246, 0.25), 0 0 40px rgba(30, 64, 175, 0.10);
+  --glow-brand-strong: 0 0 24px rgba(59, 130, 246, 0.35), 0 0 56px rgba(30, 64, 175, 0.16);
   --btn-gradient: linear-gradient(135deg, var(--brand-600) 0%, var(--violet-600) 100%);
   --btn-gradient-hover: linear-gradient(135deg, var(--brand-700) 0%, var(--violet-700) 100%);
   --btn-gradient-active: linear-gradient(135deg, var(--brand-800) 0%, var(--violet-800) 100%);
-  --row-hover: rgba(217, 119, 6, 0.06);   /* dune amber row tint */
-  --fx-grid-line: rgba(87, 70, 38, 0.06);
-  --fx-spot: rgba(245, 158, 11, 0.06);    /* warm golden spotlight */
+  --row-hover: rgba(37, 99, 235, 0.06);   /* royal-blue row tint */
+  --fx-grid-line: rgba(30, 49, 84, 0.06);
+  --fx-spot: rgba(37, 99, 235, 0.05);     /* cool blue spotlight */
 
-  /* ------------------------------------------------------ DUNE GLOW (day)
-     Warm sand aurora mesh — overrides the imported cool defaults for DAY
-     only (.dark redefines its own --aurora-* set, so night is untouched). */
+  /* ------------------------------------------------- ENTERPRISE SKY (day)
+     Cool blue aurora mesh — overrides the imported defaults for DAY only
+     (.dark redefines its own --aurora-* set, so night is untouched). */
   --aurora-a: radial-gradient(
     110% 64% at 50% -12%,
-    rgba(255, 252, 244, 0.55) 0%,
-    rgba(253, 230, 138, 0.16) 38%,
-    rgba(245, 158, 11, 0) 68%
+    rgba(240, 246, 255, 0.55) 0%,
+    rgba(191, 219, 254, 0.18) 38%,
+    rgba(59, 130, 246, 0) 68%
   );
   --aurora-b: radial-gradient(
     80% 55% at 12% 0%,
-    rgba(245, 158, 11, 0.12) 0%,
-    rgba(245, 158, 11, 0) 60%
+    rgba(37, 99, 235, 0.07) 0%,
+    rgba(37, 99, 235, 0) 60%
   );
   --aurora-c: radial-gradient(
     70% 50% at 88% 8%,
-    rgba(217, 119, 6, 0.08) 0%,
-    rgba(217, 119, 6, 0) 60%
+    rgba(30, 64, 175, 0.05) 0%,
+    rgba(30, 64, 175, 0) 60%
   );
   --aurora-vignette: radial-gradient(
     135% 120% at 50% 38%,
-    rgba(87, 70, 38, 0) 60%,
-    rgba(87, 70, 38, 0.04) 100%
+    rgba(15, 30, 64, 0) 60%,
+    rgba(15, 30, 64, 0.04) 100%
   );
   --aurora-hero-a: radial-gradient(
     90% 70% at 30% -10%,
-    rgba(245, 158, 11, 0.16) 0%,
-    rgba(245, 158, 11, 0) 62%
+    rgba(37, 99, 235, 0.14) 0%,
+    rgba(37, 99, 235, 0) 62%
   );
   --aurora-hero-b: radial-gradient(
     70% 56% at 92% 8%,
-    rgba(251, 191, 36, 0.12) 0%,
-    rgba(251, 191, 36, 0) 60%
+    rgba(59, 130, 246, 0.11) 0%,
+    rgba(59, 130, 246, 0) 60%
   );
   --aurora-hero-c: radial-gradient(
     60% 48% at 70% 104%,
-    rgba(217, 119, 6, 0.09) 0%,
-    rgba(217, 119, 6, 0) 58%
+    rgba(30, 64, 175, 0.08) 0%,
+    rgba(30, 64, 175, 0) 58%
   );
 
   /* ----------------------------------------------------------------- MOTION
@@ -197,13 +197,13 @@
   --control-hover:  #263349;
   --control-active: #2e3d57;
 
-  --ai-glow: 0 0 20px rgba(99, 102, 241, 0.28);
+  --ai-glow: 0 0 20px rgba(59, 130, 246, 0.28);
 
-  --glow-brand: 0 0 16px rgba(99, 102, 241, 0.35), 0 0 40px rgba(139, 92, 246, 0.16);
-  --glow-brand-strong: 0 0 24px rgba(99, 102, 241, 0.45), 0 0 56px rgba(139, 92, 246, 0.22);
-  --row-hover: rgba(99, 102, 241, 0.09);
+  --glow-brand: 0 0 16px rgba(59, 130, 246, 0.35), 0 0 40px rgba(37, 99, 235, 0.16);
+  --glow-brand-strong: 0 0 24px rgba(59, 130, 246, 0.45), 0 0 56px rgba(37, 99, 235, 0.22);
+  --row-hover: rgba(59, 130, 246, 0.09);
   --fx-grid-line: rgba(148, 163, 184, 0.07);
-  --fx-spot: rgba(99, 102, 241, 0.06);
+  --fx-spot: rgba(59, 130, 246, 0.06);
 }
 
 /* Heavy backdrop-filter janks mobile GPUs — halve the blur radius. */
@@ -346,12 +346,12 @@ html {
     transparent 70%
   );
 }
-/* Day spotlight mid-stop: warm amber (night keeps the violet mid-stop above). */
+/* Day spotlight mid-stop: cool blue (night keeps the mid-stop above). */
 html:not(.dark) .fx-spotlight {
   background: radial-gradient(
     720px circle at var(--spot-x, 50%) var(--spot-y, -20%),
     var(--fx-spot) 0%,
-    rgba(217, 119, 6, 0.02) 45%,
+    rgba(37, 99, 235, 0.02) 45%,
     transparent 70%
   );
 }
@@ -419,12 +419,12 @@ html:not(.dark) .fx-spotlight {
   border-radius: inherit;
   padding: 1px;
   pointer-events: none;
-  /* Pigments: brand-500 / violet-500 / accent-400 (same convention as the
+  /* Pigments: brand-500 / navy / accent-400 (same convention as the
      aurora tokens — rgba of system pigments). */
   background: linear-gradient(
     var(--fx-border-angle, 135deg),
-    rgba(99, 102, 241, 0.55),
-    rgba(139, 92, 246, 0.45) 50%,
+    rgba(59, 130, 246, 0.55),
+    rgba(30, 64, 175, 0.45) 50%,
     rgba(34, 211, 238, 0.35)
   );
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -486,8 +486,8 @@ html:not(.dark) .fx-spotlight {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(99, 102, 241, 0.35) 30%,
-    rgba(139, 92, 246, 0.30) 55%,
+    rgba(59, 130, 246, 0.35) 30%,
+    rgba(37, 99, 235, 0.30) 55%,
     rgba(34, 211, 238, 0.22) 78%,
     transparent 100%
   );
@@ -496,9 +496,9 @@ html:not(.dark) .fx-hairline-b::after {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(245, 158, 11, 0.38) 30%,
-    rgba(217, 119, 6, 0.30) 55%,
-    rgba(251, 191, 36, 0.24) 78%,
+    rgba(37, 99, 235, 0.38) 30%,
+    rgba(30, 64, 175, 0.30) 55%,
+    rgba(59, 130, 246, 0.24) 78%,
     transparent 100%
   );
 }
@@ -578,7 +578,7 @@ html:not(.dark) .fx-hairline-b::after {
   border: var(--bw-1) solid transparent;
   background:
     linear-gradient(var(--surface-1), var(--surface-1)) padding-box,
-    linear-gradient(var(--ai-angle), var(--brand-400), #8b5cf6, var(--brand-400)) border-box;
+    linear-gradient(var(--ai-angle), var(--brand-400), var(--violet-500), var(--brand-400)) border-box;
   box-shadow: var(--ai-glow);
   animation: ai-rotate 2.4s linear infinite;
 }
@@ -808,8 +808,8 @@ html.dark .platform-form-shell::before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 70% 40% at 50% -10%, rgba(109, 93, 251, 0.12), transparent 55%),
-    radial-gradient(ellipse 90% 50% at 50% 115%, rgba(109, 93, 251, 0.05), transparent 60%),
+    radial-gradient(ellipse 70% 40% at 50% -10%, rgba(59, 130, 246, 0.12), transparent 55%),
+    radial-gradient(ellipse 90% 50% at 50% 115%, rgba(59, 130, 246, 0.05), transparent 60%),
     radial-gradient(ellipse 140% 110% at 50% 50%, transparent 62%, rgba(0, 0, 0, 0.32) 100%);
 }
 
@@ -818,8 +818,8 @@ html.dark .platform-form-card {
   box-shadow:
     0 32px 96px rgba(0, 0, 0, 0.55),
     0 8px 28px rgba(0, 0, 0, 0.38),
-    0 0 44px rgba(109, 93, 251, 0.10),
-    0 0 0 1px rgba(109, 93, 251, 0.10),
+    0 0 44px rgba(59, 130, 246, 0.10),
+    0 0 0 1px rgba(59, 130, 246, 0.10),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
@@ -830,7 +830,7 @@ html.dark .platform-form-popover {
     0 16px 48px rgba(0, 0, 0, 0.55),
     0 4px 14px rgba(0, 0, 0, 0.40),
     inset 0 2px 10px rgba(0, 0, 0, 0.32),
-    0 0 0 1px rgba(109, 93, 251, 0.08);
+    0 0 0 1px rgba(59, 130, 246, 0.08);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -909,6 +909,38 @@ html.dark {
   --score-weak-bd:     rgba(244, 63, 94, 0.40);
   --score-weak-fg:     #fda4af;
   --score-weak-ring:   #e11d48;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   NAVY CHROME  (Aug 2026 — JobDiva-style enterprise shell)
+   ══════════════════════════════════════════════════════════════════════
+   Scoped variable override for the app chrome ONLY (platform top bar, CRM
+   sidebar + CRM header). Everything inside these containers is token-driven,
+   so re-pointing the vars restyles the chrome dark-navy with light text in
+   BOTH themes — zero component-logic changes. Content areas stay light. */
+.kx-chrome-navy {
+  --surface-0: #10263f;
+  --surface-1: #1b3a5f;
+  --surface-2: #234a77;
+  --surface-3: #2c5788;
+  --text-primary:   #f4f8fd;
+  --text-secondary: #cfdded;
+  --text-muted:     #a5bad2;
+  --kx-text:        #f4f8fd;
+  --kx-text-muted:  #a5bad2;
+  --border-subtle: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.30);
+  --glass-bg:            rgba(16, 38, 63, 0.92);
+  --glass-border-top:    rgba(255, 255, 255, 0.12);
+  --glass-border-bottom: rgba(2, 10, 20, 0.45);
+  --control-hover:  #234a77;
+  --control-active: #2c5788;
+  --row-hover: rgba(255, 255, 255, 0.08);
+  --recess-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.30);
+  --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --edge-shade:     inset 0 -1px 0 rgba(2, 10, 20, 0.40);
+  --shimmer-tint: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 
 /* ══════════════════════════════════════════════════════════════════════

@@ -43,25 +43,25 @@ const WHITE = [255, 255, 255];
 const LIGHT = {
   name: "LIGHT",
   sheenAlpha: 0.05, // --sheen worst-case top stop: rgba(255,255,255,0.05)
-  s0: hex("#faf6ef"), // --surface-0 Dune Glow page (warm ivory sand)
-  s1: hex("#fffdf8"), // --surface-1 warm-white card
-  s2: hex("#f3ede2"), // --surface-2 light dune
-  s3: hex("#ede5d6"), // --surface-3 deep chrome
-  // Day glass: rgba(255,252,245,0.80) over the page (worst case ≈ warm white).
-  glass: over(hex("#faf6ef"), hex("#fffcf5"), 0.8),
-  textPrimary: hex("#2b2416"),
-  textSecondary: hex("#57503e"),
-  textMuted: hex("#6e6650"), // AA-tuned (spec #857c66 fails on s3 sand)
-  // v3 indigo ramp (anchored #6366f1) — brand interactive unchanged
-  brand300: hex("#a5b4fc"),
-  brand500: hex("#6366f1"),
-  brand600: hex("#4f46e5"),
-  brand700: hex("#4338ca"),
-  brand800: hex("#3730a3"),
-  // v3 violet (gradient far-stops for solid buttons / nav pill)
-  violet600: hex("#7c3aed"),
-  violet700: hex("#6d28d9"),
-  violet800: hex("#5b21b6"),
+  s0: hex("#f2f5f9"), // --surface-0 enterprise page (pale blue-gray)
+  s1: hex("#ffffff"), // --surface-1 white card
+  s2: hex("#e9eef5"), // --surface-2 light blue-gray
+  s3: hex("#dfe6ef"), // --surface-3 deep chrome
+  // Day glass: rgba(255,255,255,0.82) over the page (worst case ≈ white).
+  glass: over(hex("#f2f5f9"), WHITE, 0.82),
+  textPrimary: hex("#1c2a41"),
+  textSecondary: hex("#43536b"),
+  textMuted: hex("#55647c"), // AA-tuned for every day surface incl. s3
+  // v4 royal-blue ramp (anchored #3b82f6) — JobDiva enterprise brand
+  brand300: hex("#93c5fd"),
+  brand500: hex("#3b82f6"),
+  brand600: hex("#2563eb"),
+  brand700: hex("#1d4ed8"),
+  brand800: hex("#1e40af"),
+  // v4 navy (gradient far-stops for solid buttons / nav pill)
+  violet600: hex("#1e40af"),
+  violet700: hex("#1e3a8a"),
+  violet800: hex("#172b66"),
   success: hex("#047857"),
   warning: hex("#b45309"),
   danger: hex("#c81e2c"),
@@ -87,14 +87,14 @@ const DARK = {
   textPrimary: hex("#f1f5f9"), // neutral-100
   textSecondary: hex("#b6c2d4"), // v3 nudge (asked #94a3b8 fails s3+sheen)
   textMuted: hex("#9dabbf"), // v3 keep (asked #64748b is 3.64 on s1 — fails)
-  brand300: hex("#a5b4fc"),
-  brand500: hex("#6366f1"),
-  brand600: hex("#4f46e5"),
-  brand700: hex("#4338ca"),
-  brand800: hex("#3730a3"),
-  violet600: hex("#7c3aed"),
-  violet700: hex("#6d28d9"),
-  violet800: hex("#5b21b6"),
+  brand300: hex("#93c5fd"),
+  brand500: hex("#3b82f6"),
+  brand600: hex("#2563eb"),
+  brand700: hex("#1d4ed8"),
+  brand800: hex("#1e40af"),
+  violet600: hex("#1e40af"),
+  violet700: hex("#1e3a8a"),
+  violet800: hex("#172b66"),
   // v3 cyan accent — live indicators / AI highlights (dark surfaces only).
   accent400: hex("#22d3ee"),
   // v3 semantic family anchors (decorative/large-UI, dark surfaces).

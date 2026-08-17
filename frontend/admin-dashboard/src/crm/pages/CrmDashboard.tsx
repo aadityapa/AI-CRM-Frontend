@@ -689,6 +689,66 @@ function FinanceSection() {
 
 /* ---------- Page ---------- */
 
+/* ------------------------------------------------ my work — the to-do list
+   FIRST on the dashboard, before any chart: the user's own pending actions,
+   already filtered by their roles and access template on the server. Nobody
+   needs training to read a to-do list — this panel is how each role learns
+   its job. Zero items renders a quiet "all clear", not an empty box. */
+type MyWorkItem = { key: string; count: number; label: string; path: string; urgency: string };
+
+function MyWorkPanel() {
+  const [items, setItems] = useState<MyWorkItem[] | null>(null);
+
+  useEffect(() => {
+    crmGet<{ items: MyWorkItem[]; all_clear: boolean }>("/api/dashboard/my-work")
+      .then((r) => setItems(r.data?.items || []))
+      .catch(() => setItems([]));
+  }, []);
+
+  if (items === null) return null; // no skeleton flash for a small panel
+  return (
+    <FadeInUp>
+      <div className="rounded-card border border-subtle bg-surface-1 p-4 shadow-raised sm:p-5">
+        <h2 className="text-sm font-bold tracking-wide text-primary">Your work today</h2>
+        {items.length === 0 ? (
+          <p className="mt-2 text-sm text-muted">
+            All clear — nothing is waiting on you right now.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-1.5">
+            {items.map((it) => (
+              <li key={it.key}>
+                <CrmLink
+                  to={it.path}
+                  className="group flex items-center gap-3 rounded-control px-2 py-1.5 transition-colors hover:bg-surface-2"
+                >
+                  <span
+                    className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-xs font-bold ${
+                      it.urgency === "danger"
+                        ? "bg-danger-soft text-danger"
+                        : it.urgency === "warning"
+                          ? "bg-warning-soft text-warning"
+                          : "bg-surface-2 text-secondary"
+                    }`}
+                  >
+                    {it.count}
+                  </span>
+                  <span className="text-sm text-secondary group-hover:text-primary">
+                    {it.label}
+                  </span>
+                  <span className="ml-auto text-xs font-semibold text-brand-600 opacity-0 transition-opacity group-hover:opacity-100 dark:text-brand-300">
+                    Open →
+                  </span>
+                </CrmLink>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </FadeInUp>
+  );
+}
+
 export function CrmDashboardPage() {
   const me = useMe();
   const showExecutive = useHasRole("Sales_Head");
@@ -716,6 +776,7 @@ export function CrmDashboardPage() {
           Welcome back, {me.full_name || me.username}
         </p>
       </FadeInUp>
+      <MyWorkPanel />
       {showPoExpiry && <PoExpiryWarnings />}
       {showBench && <BenchCard />}
       {showExecutive && <ExecutiveSection />}

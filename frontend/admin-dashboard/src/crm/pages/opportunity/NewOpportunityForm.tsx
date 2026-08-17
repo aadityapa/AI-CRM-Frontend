@@ -104,6 +104,8 @@ function ctcBillingInputs(
     holidaysBillable: isTm ? details.holidays_billable : undefined,
     weekoffBillable: isTm ? details.weekoff_billable : undefined,
     leaveBillable: isTm ? details.leave_billable : undefined,
+    // Paid leaves the customer bills (APTIV rule) — added back to billing days.
+    paidLeaves: isTm ? details.paid_leaves : undefined,
     // Branch Billing Properties cap (Max Billable Hours / Month) — inherited
     // from the effective-policy fetch; caps annual billing hours at cap × 12.
     maxBillableHoursMonth: isTm ? details.max_billable_hours_month : undefined,
@@ -161,6 +163,7 @@ export function NewOpportunityForm({
   onCreated,
   opportunityId,
   approvalMode = false,
+  initialCustomerId,
 }: {
   onClose: () => void;
   onCreated?: () => void;
@@ -169,13 +172,18 @@ export function NewOpportunityForm({
   /** Sales Head reviewing before sign-off: saves any edits, then approves in the
    * same action, so a correction can never be left un-approved by accident. */
   approvalMode?: boolean;
+  /** Customer-hub "New Opportunity": the customer is already chosen there. */
+  initialCustomerId?: number;
 }) {
   const reduce = useReducedMotion();
   const [toast, notify] = useToast();
   const isSales = useHasRole("Sales", "Sales_Head");
   // A plain Sales person — Sales_Head and Admin keep the full status list, since
   // they oversee the whole pipeline rather than just opening it.
-  const isSalesOnly = useHasRole("Sales") && !useHasRole("Sales_Head");
+  // Both hooks must run unconditionally (rules-of-hooks) — combine after.
+  const hasSales = useHasRole("Sales");
+  const hasSalesHead = useHasRole("Sales_Head");
+  const isSalesOnly = hasSales && !hasSalesHead;
   const isEdit = opportunityId != null;
   const [state, setState] = useState<OpportunityFormState>(() => emptyState());
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -281,9 +289,187 @@ export function NewOpportunityForm({
     return () => { alive = false; };
   }, [opportunityId]);
 
+  // Customer-hub launch: pre-select the customer the button was pressed on.
+  // Once, create-mode only, and never overriding a choice already made.
+  useEffect(() => {
+    if (opportunityId || !initialCustomerId) return;
+    setState((s) => (s.core.customer_id
+      ? s
+      : { ...s, core: { ...s.core, customer_id: String(initialCustomerId) } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCustomerId, opportunityId]);
+
   // Dependent dropdowns when the customer or branch changes.
   const customerId = state.core.customer_id;
   const branchId = state.core.branch_id;
+
+  // Customer Rate Card (experience-band pricing) — feeds the CTC Slab rate
+  // auto-fill. 403/404 simply means no auto-fill (e.g. a role outside
+  // Sales/Sales_Head reviewing the form): the rate stays manual, never blocks.
+  const [rateCard, setRateCard] = useState<Record<string, any>[]>([]);
+  // Leave & Holiday keys the BRANCH policy defined — rendered read-only in the
+  // form (they're the branch's commercial terms, not per-opportunity choices;
+  // change them on the customer's branch, not here). Keys the branch does NOT
+  // define stay editable for costing.
+  const [policyLockedKeys, setPolicyLockedKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (!customerId) { setRateCard([]); return; }
+    let alive = true;
+    crmGet<Record<string, any>[]>(`/api/rate-cards?customer_id=${customerId}`)
+      .then((r) => { if (alive) setRateCard(r.data || []); })
+      .catch(() => { if (alive) setRateCard([]); });
+    return () => { alive = false; };
+  }, [customerId]);
+
+  /** Rate Card → slab Rate, branch-wise (0077). The selected BRANCH's bands
+   * are preferred; customer-wide (NULL-branch) bands are the fallback. Exact
+   * band match (Exp Min & Max) first, then the band CONTAINING Exp Min.
+   * Column = the opportunity's Billing Type; when the customer quoted exactly
+   * ONE unit, that unit is used regardless — it IS their billing basis. Only
+   * EMPTY rate cells are filled: auto-fill is a starting point, a typed
+   * number is a decision.
+   *
+   * WIDE BANDS AUTO-BUILD THE SLAB LADDER (Aug 2026): a customer rate of,
+   * say, ₹1000 for 3–7 yrs means the SAME revenue for every year the
+   * employee spends inside that band. So filling year 3 also generates rows
+   * for years 4, 5 and 6: first row keeps its Hike % (default 10) and gets
+   * Appraisal Cycle "Annual"; the generated rows carry Hike 0 and no cycle —
+   * no new money arrives from the customer until their NEXT band, so there
+   * is no hike headroom, and the Approved CTC stays at the full budget. */
+  const applyRateCardToSlab = (rows: Record<string, unknown>[]) => {
+    if (!rateCard.length) return rows;
+    const colByBilling: Record<string, string> = {
+      "Per Hour": "rate_hourly", "Per Day": "rate_daily",
+      "Per Month": "rate_monthly", "Per Year": "rate_yearly",
+    };
+    const btCol = colByBilling[String(details.billing_type ?? "")];
+    const RATE_KEYS = ["rate_hourly", "rate_daily", "rate_weekly", "rate_monthly", "rate_yearly"];
+    // Slab VERSIONS (0079): only the ladder current TODAY prices new
+    // opportunities — the newest effective_from on-or-before today wins;
+    // future ladders wait, expired ones are history. NULL = since forever.
+    const pickCurrentVersion = (rows: Record<string, any>[]) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const keys = [...new Set(rows.map((b) => String(b.effective_from || "")))].sort();
+      const cur = keys.filter((k) => k <= today).pop();
+      return cur === undefined ? [] : rows.filter((b) => String(b.effective_from || "") === cur);
+    };
+    const branchRows = pickCurrentVersion(
+      rateCard.filter((b) => String(b.branch_id ?? "") === String(branchId ?? "")));
+    const fallbackRows = pickCurrentVersion(rateCard.filter((b) => b.branch_id == null));
+    const findBand = (lo: number, hi: number) => {
+      for (const pool of [branchRows, fallbackRows]) {
+        const hit = pool.find((b) => Number(b.exp_min) === lo && Number(b.exp_max) === hi)
+          ?? (Number.isFinite(lo)
+            ? pool.find((b) => lo >= Number(b.exp_min) && lo < Number(b.exp_max))
+            : undefined);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    const bandValue = (band: Record<string, any>) => {
+      let value = btCol ? band[btCol] : null;
+      if (value == null) {
+        const quoted = RATE_KEYS.filter((k) => band[k] != null);
+        if (quoted.length === 1) value = band[quoted[0]];
+      }
+      return value;
+    };
+
+    const out: Record<string, unknown>[] = [...rows];
+    rows.forEach((r, idx) => {
+      if (r.rate !== "" && r.rate !== null && r.rate !== undefined) return;
+      const lo = Number(r.exp_min);
+      const band = findBand(lo, Number(r.exp_max));
+      if (!band) return;
+      const value = bandValue(band);
+      if (value == null) return;
+      out[idx] = {
+        ...r,
+        rate: value,
+        // TARGET = the END of the rate band (Zoho parity, 14 Aug 2026): the
+        // candidate's target is the year the customer's next rate arrives.
+        // Exp 3 in a 3–5 band targets 5 → cycles = 1; exp 4 targets 5 →
+        // cycles = 0. This is what makes Appraisal Cycles descend inside a
+        // band instead of sitting at 0 everywhere.
+        target_exp: (r.target_exp === "" || r.target_exp == null)
+          && Number.isFinite(Number(band.exp_max))
+          ? Number(band.exp_max)
+          : r.target_exp,
+      };
+      // Ladder: one row per further year inside the band (…until the year
+      // whose target would cross into the customer's next rate band). Each
+      // generated row keeps the default Hike 10% — its Appraisal Cycles
+      // auto-derive to 0 (target − min − 1), so Approved CTC = full budget,
+      // exactly the NEXUS behaviour for the final year of a band.
+      const bandEnd = Number(band.exp_max);
+      if (!Number.isFinite(lo) || !Number.isFinite(bandEnd)) return;
+      for (let m = Math.floor(lo) + 1; m + 1 <= bandEnd; m++) {
+        if (out.some((x) => Number(x.exp_min) === m)) continue;  // never duplicate
+        out.push({
+          exp_min: m,
+          target_exp: bandEnd,  // band end (Zoho parity) — cycles descend to 0
+          rate: value,
+          management_cost_pct: r.management_cost_pct ?? 30,
+          hike_pct: 10,
+        });
+      }
+    });
+    // Rows no band could price: default the target to the next year so the
+    // derivation chain still runs (cycles 0, budget = approved).
+    return out.map((r) => {
+      const lo = Number(r.exp_min);
+      if ((r.target_exp === "" || r.target_exp == null) && Number.isFinite(lo)) {
+        return { ...r, target_exp: lo + 1 };
+      }
+      return r;
+    });
+  };
+
+  // AUTO-BUILD the Candidate CTC Slab from T&M experience (14 Aug 2026):
+  // Exp. Min / Exp. Max in Time & Material Details define the ladder — one
+  // row per year from Exp Min until the TARGET (Exp Max) is met, rates from
+  // the branch slab, nothing to add manually. Rows carry an __auto marker
+  // (stripped by sanitizeCtcSlab) so a slab anyone EDITED is never rebuilt;
+  // changing the experience range regenerates only an untouched ladder.
+  useEffect(() => {
+    const lo = Number(details.tm_exp_min);
+    const hi = Number(details.tm_exp_max);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo || type !== "T&M") return;
+    setState((prev) => {
+      const untouched = prev.ctcSlab.length === 0
+        || prev.ctcSlab.every((r) => (r as Record<string, unknown>).__auto === true);
+      if (!untouched) return prev;
+      const rows: Record<string, unknown>[] = [];
+      for (let m = Math.floor(lo); m + 1 <= Math.ceil(hi); m++) {
+        // target_exp deliberately EMPTY: applyRateCardToSlab sets it to the
+        // rate band's end (Zoho parity), falling back to m+1 outside bands.
+        rows.push({ __auto: true, exp_min: m,
+          hike_pct: 10, management_cost_pct: 30 });
+      }
+      if (!rows.length) return prev;
+      const filled = applyRateCardToSlab(rows);
+      const sameAsBefore = prev.ctcSlab.length === filled.length
+        && JSON.stringify(prev.ctcSlab) === JSON.stringify(filled);
+      if (sameAsBefore) return prev;
+      return recalculateOpportunityState({
+        ...prev, ctcSlab: filled as typeof prev.ctcSlab });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details.tm_exp_min, details.tm_exp_max, type, rateCard,
+      String(details.billing_type ?? "")]);
+
+  // Re-fill when the card arrives late or the Billing Type changes — both can
+  // happen AFTER slab rows exist (edit mode loads state before the card).
+  useEffect(() => {
+    setState((prev) => {
+      if (!prev.ctcSlab.length || !rateCard.length) return prev;
+      const next = applyRateCardToSlab(prev.ctcSlab as Record<string, unknown>[]);
+      return JSON.stringify(next) === JSON.stringify(prev.ctcSlab)
+        ? prev
+        : recalculateOpportunityState({ ...prev, ctcSlab: next as typeof prev.ctcSlab });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateCard, String(details.billing_type ?? "")]);
   useEffect(() => {
     if (!customerId) { setBranches([]); setContacts([]); return; }
     let alive = true;
@@ -375,22 +561,26 @@ export function NewOpportunityForm({
     if (!branchId) {
       setPolicyBranchId("");
       setBranchHasLeavePolicy(false);
+      setPolicyLockedKeys([]);
       setState((s) => {
         const tm = { ...(s.detailsByType["T&M"] || {}) };
         let changed = false;
-        // Holidays & Leave reset to 0 (policy-driven); Weekoff stays the
-        // standard 104 (weekends) since it isn't tied to any leave policy.
-        for (const key of ["holidays", "leave"] as const) {
-          if (tm[key] !== 0) {
-            tm[key] = 0;
-            changed = true;
-          }
+        // Holidays reset to 0 (branch-calendar-driven); Leave defaults to the
+        // standard 24 (agreed Aug 2026 — it feeds the CTC Slab deduction);
+        // Weekoff stays 104 (52 weekends), not tied to any leave policy.
+        if (tm.holidays !== 0) {
+          tm.holidays = 0;
+          changed = true;
+        }
+        if (tm.leave !== 24) {
+          tm.leave = 24;
+          changed = true;
         }
         if (tm.weekoff !== 104) {
           tm.weekoff = 104;
           changed = true;
         }
-        for (const key of ["credit_leave_monthly", "leave_policy"] as const) {
+        for (const key of ["credit_leave_monthly", "leave_policy", "paid_leaves"] as const) {
           if (tm[key] !== undefined && tm[key] !== "") {
             tm[key] = "";
             changed = true;
@@ -429,9 +619,34 @@ export function NewOpportunityForm({
               },
             };
           };
+          // EVERYTHING here is PREFILLED from the branch policy but stays
+          // EDITABLE (changed 14 Aug 2026 on request — locking blocked
+          // legitimate per-deal costing adjustments, e.g. Aptiv).
+          const locked: string[] = [];
+          // Paid leaves the customer bills (APTIV rule): explicit policy
+          // figure first; else the branch's linked leave-policy total — the
+          // accrued leaves (1.5/mo = 18/yr) are exactly what the customer
+          // agreed to PAY for, while the standard 24 still deducts:
+          // 365 − 104 − 10 − 24 = 227, + 18 paid = 245 billing days.
+          const linkedLeaveTotal = p.branch_leave_total ?? p.leave_total;
+          const paidLeaves =
+            p.billable_leaves_per_year != null && Number.isFinite(Number(p.billable_leaves_per_year))
+              ? Number(p.billable_leaves_per_year)
+              : (linked && linkedLeaveTotal != null && Number.isFinite(Number(linkedLeaveTotal))
+                ? Number(linkedLeaveTotal)
+                : null);
+          setTmDetail("paid_leaves", paidLeaves ?? "");
           if (typeof p.holidays_billable === "boolean") setTmDetail("holidays_billable", p.holidays_billable);
           if (typeof p.weekoff_billable === "boolean") setTmDetail("weekoff_billable", p.weekoff_billable);
-          if (typeof p.leave_billable === "boolean") setTmDetail("leave_billable", p.leave_billable);
+          // Partial-billing model: when the customer pays for SOME leaves,
+          // leave must DEDUCT (billable=false) and the paid days add back —
+          // a blanket leave_billable=true would skip the deduction entirely
+          // (Aptiv read 251 days instead of 245).
+          if (paidLeaves != null && paidLeaves > 0) {
+            setTmDetail("leave_billable", false);
+          } else if (typeof p.leave_billable === "boolean") {
+            setTmDetail("leave_billable", p.leave_billable);
+          }
           if (p.working_hours_per_day != null && Number.isFinite(Number(p.working_hours_per_day))) {
             setTmDetail("hours_per_day", Number(p.working_hours_per_day));
           }
@@ -448,29 +663,24 @@ export function NewOpportunityForm({
           // even when no branch leave policy is linked. 0 when the branch has
           // no calendar of its own.
           const branchHolidays = p.branch_holidays_count;
-          setTmDetail(
-            "holidays",
-            branchHolidays != null && Number.isFinite(Number(branchHolidays))
-              ? Number(branchHolidays)
-              : 0,
-          );
+          if (branchHolidays != null && Number.isFinite(Number(branchHolidays))) {
+            setTmDetail("holidays", Number(branchHolidays));
+          } else {
+            setTmDetail("holidays", 0);
+          }
           // WEEKOFF is not policy-driven — always the standard 104 (52 weekends),
           // unless a future branch weekoff_count is sent.
-          setTmDetail(
-            "weekoff",
-            p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))
-              ? Number(p.weekoff_count)
-              : 104,
-          );
-          // LEAVE prefills ONLY when a leave policy row is linked to THIS branch.
+          if (p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))) {
+            setTmDetail("weekoff", Number(p.weekoff_count));
+          } else {
+            setTmDetail("weekoff", 104);
+          }
+          // LEAVE (the deduction) is ALWAYS the standard 24 — the linked
+          // leave policy's total is the customer's PAID allowance and already
+          // landed in paid_leaves above. Putting it here (the old behaviour)
+          // both under-deducted and skipped the add-back.
+          setTmDetail("leave", 24);
           if (linked) {
-            const leaveTotal = p.branch_leave_total ?? p.leave_total;
-            setTmDetail(
-              "leave",
-              leaveTotal != null && Number.isFinite(Number(leaveTotal))
-                ? Number(leaveTotal)
-                : 0,
-            );
             if (p.credit_leave_monthly != null && Number.isFinite(Number(p.credit_leave_monthly))) {
               setTmDetail("credit_leave_monthly", Number(p.credit_leave_monthly));
             } else {
@@ -483,10 +693,10 @@ export function NewOpportunityForm({
               }
             }
           } else {
-            setTmDetail("leave", 0);
             setTmDetail("credit_leave_monthly", "");
             setTmDetail("leave_policy", "");
           }
+          setPolicyLockedKeys(locked);  // always empty now — prefill, never lock
           return recalculateOpportunityState(next);
         });
         setPolicyBranchId(String(branchId));
@@ -836,9 +1046,14 @@ export function NewOpportunityForm({
   // ---- wizard section nav --------------------------------------------------
   // Skill Evaluation Details is RMG/Admin/CEO territory — Sales & Sales Head never
   // see it in the wizard; RMG adds it on the approval screen after submission.
+  // "leaveHoliday" is presented as ONE merged step (Aug 2026): Leave & Holiday
+  // Details + Commercial Details + Candidate CTC Slab + RFI Value. The schema
+  // keeps three sections (field metadata, validation and hydration unchanged);
+  // only the wizard folds them into a single card, RFI last.
   const visibleSections = OPPORTUNITY_SCHEMA.filter(
-    (s) => sectionVisible(s, type) && !(s.key === "skillEval" && isSales),
-  );
+    (s) => sectionVisible(s, type) && !(s.key === "skillEval" && isSales)
+      && s.key !== "commercial" && s.key !== "ctcSlab",
+  ).map((s) => (s.key === "leaveHoliday" ? { ...s, title: "Commercials & CTC Slab" } : s));
   const totalSteps = visibleSections.length;
   const clampedStep = Math.min(Math.max(stepIndex, 0), Math.max(totalSteps - 1, 0));
   const currentSection = visibleSections[clampedStep];
@@ -859,16 +1074,23 @@ export function NewOpportunityForm({
   }, [clampedStep, reduce]);
 
   const sectionStatus = (secKey: string): "empty" | "partial" | "complete" | "error" => {
-    const sec = OPPORTUNITY_SCHEMA.find((s) => s.key === secKey);
-    if (!sec) return "empty";
-    if (!sec.fields?.length) {
+    // The merged Commercials step spans three schema sections.
+    const keys = secKey === "leaveHoliday" ? ["leaveHoliday", "commercial"] : [secKey];
+    const secs = OPPORTUNITY_SCHEMA.filter((s) => keys.includes(s.key));
+    if (!secs.length) return "empty";
+    if (secKey === "leaveHoliday"
+        && Object.keys(errors).some((k) => k.startsWith("ctcSlab."))) {
+      return "error";  // slab row problems surface on the merged step chip
+    }
+    if (secs.length === 1 && !secs[0].fields?.length) {
       // Table / attachments / activity steps have no required field list — treat as complete when visited.
-      if (sec.kind === "table" || sec.kind === "attachments" || sec.kind === "activityLog") return "complete";
+      const k = secs[0].kind;
+      if (k === "table" || k === "attachments" || k === "activityLog") return "complete";
       return "empty";
     }
-    const reqd = sec.fields.filter(
+    const reqd = secs.flatMap((sec) => (sec.fields || []).filter(
       (f) => f.required && fieldVisible(sec, f, type) && fieldMatchesShowWhen(f, state.core, details),
-    );
+    ));
     if (reqd.some((f) => errors[f.key])) return "error";
     if (!reqd.length) return "complete";
     const filled = reqd.filter((f) => {
@@ -881,25 +1103,29 @@ export function NewOpportunityForm({
 
   /** Validate required fields in one section; flash + focus the first invalid field. */
   const validateSection = (secKey: string): boolean => {
-    const sec = OPPORTUNITY_SCHEMA.find((s) => s.key === secKey);
-    if (!sec) return true;
+    // Merged Commercials step → validate all three schema sections at once.
+    const keys = secKey === "leaveHoliday" ? ["leaveHoliday", "commercial"] : [secKey];
+    const secs = OPPORTUNITY_SCHEMA.filter((s) => keys.includes(s.key));
+    if (!secs.length) return true;
     const nextErrs: Record<string, string> = { ...errors };
     let firstInvalid: string | null = null;
 
-    for (const f of sec.fields || []) {
-      if (!fieldVisible(sec, f, type)) continue;
-      if (!fieldMatchesShowWhen(f, state.core, details)) continue;
-      if (f.type === "readonly") continue;
-      const m = validateField(f);
-      if (m) {
-        nextErrs[f.key] = m;
-        if (!firstInvalid) firstInvalid = f.key;
-      } else {
-        delete nextErrs[f.key];
+    for (const sec of secs) {
+      for (const f of sec.fields || []) {
+        if (!fieldVisible(sec, f, type)) continue;
+        if (!fieldMatchesShowWhen(f, state.core, details)) continue;
+        if (f.type === "readonly") continue;
+        const m = validateField(f);
+        if (m) {
+          nextErrs[f.key] = m;
+          if (!firstInvalid) firstInvalid = f.key;
+        } else {
+          delete nextErrs[f.key];
+        }
       }
     }
 
-    if (secKey === "ctcSlab" && type) {
+    if ((secKey === "ctcSlab" || secKey === "leaveHoliday") && type) {
       state.ctcSlab.forEach((row, index) => {
         const message = validateCtcExperience(row);
         const ek = `ctcSlab.${index}.experience`;
@@ -951,7 +1177,13 @@ export function NewOpportunityForm({
   // ---- submit / draft / reset ---------------------------------------------
   const runFullValidation = (): boolean => {
     const errs: Record<string, string> = {};
-    for (const sec of visibleSections) {
+    // visibleSections folds commercial + ctcSlab into the merged Commercials
+    // step — their FIELDS must still be validated here.
+    const validationSections = [
+      ...visibleSections,
+      ...OPPORTUNITY_SCHEMA.filter((x) => x.key === "commercial" || x.key === "ctcSlab"),
+    ];
+    for (const sec of validationSections) {
       for (const f of sec.fields || []) {
         if (!fieldVisible(sec, f, type)) continue;
         if (!fieldMatchesShowWhen(f, state.core, details)) continue;
@@ -1145,94 +1377,182 @@ export function NewOpportunityForm({
     />
   );
 
-  const renderStepBody = (s: (typeof visibleSections)[number]) => (
-    <>
-      {s.key === "leaveHoliday" && type === "T&M" && !!policyBranchId
-        && String(state.core.branch_id) === policyBranchId && (
-        branchHasLeavePolicy ? (
-          <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
-            Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
-              || "the selected branch"}&rsquo;s billing policy — editable.
-          </p>
-        ) : (
-          <p className="-mt-2 mb-5 text-xs leading-relaxed text-muted">
-            No leave policy linked to {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
-              || "this branch"}. Leave shows 0 until a leave policy is linked; Holidays reflect this branch&rsquo;s holiday calendar and Weekoff is the standard 104 (52 weekends). Edit any value if needed for costing.
-          </p>
-        )
-      )}
-      {s.key === "ctcSlab" && type === "T&M" && state.ctcSlab.length > 0
-        && !String(details.billing_type ?? "").trim() && (
-        <p className="-mt-2 mb-5 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
-          Revenue, Engineering Budget and Approved CTC auto-calculate once you set a{" "}
-          <span className="font-semibold">Billing Type</span> in{" "}
-          <span className="font-semibold">Commercial Details</span> — a Rate alone can&rsquo;t be
-          annualised without knowing whether it&rsquo;s per hour, day, month or year.
-        </p>
-      )}
-      {s.kind === "table" ? (
-        <TableSection section={s} type={type}
-          rows={(s.key === "ctcSlab" ? state.ctcSlab : state.skills) as any[]}
-          options={options}
-          rowErrors={s.key === "ctcSlab" ? errors : undefined}
-          onRows={(rows) => setState((prev) => (
-            s.key === "ctcSlab"
-              ? recalculateOpportunityState({ ...prev, ctcSlab: rows })
-              : { ...prev, skills: rows }
-          ))} />
-      ) : s.kind === "attachments" ? (
-        <AttachmentsSection rows={attachments} onRows={setAttachments} />
-      ) : s.kind === "activityLog" ? (
-        <ActivityLogSection opportunityId={opportunityId} />
-      ) : (
-        <SectionFields
-          section={s} type={type} values={state.core} details={details} errors={errors}
-          options={options} nextFieldKey={nextField} strictSequential={STRICT_SEQUENTIAL_MODE} flashKeys={flash}
-          forceReadonlyKeys={
-            calculateRfiValue({
-              revenueAnnual: state.ctcSlab[0]?.revenue_annual,
-              periodMonths: resolveRfiPeriodMonths(type, details),
-              positionsCount: details.tm_positions_count,
-            }) !== null
-              ? ["rfi_value"]
-              : []
+  /** Shared SectionFields renderer — one props blob for every fields block.
+   * `dense` = compact grid for the merged Commercials step (fit one screen). */
+  const renderFields = (sec: (typeof OPPORTUNITY_SCHEMA)[number], dense = false) => (
+    <SectionFields
+      dense={dense}
+      section={sec} type={type} values={state.core} details={details} errors={errors}
+      options={options} nextFieldKey={nextField} strictSequential={STRICT_SEQUENTIAL_MODE} flashKeys={flash}
+      forceReadonlyKeys={[
+        ...(calculateRfiValue({
+          revenueAnnual: state.ctcSlab[0]?.revenue_annual,
+          periodMonths: resolveRfiPeriodMonths(type, details),
+          positionsCount: details.tm_positions_count,
+        }) !== null
+          ? ["rfi_value"]
+          : []),
+        // Branch-defined Leave & Holiday terms are read-only here —
+        // they change on the customer's branch, not per opportunity.
+        ...policyLockedKeys,
+      ]}
+      disabledReason={(f) => {
+        if (f.key === "customer_type" && !customerHasPo) {
+          return "Locked to NN until the customer has a purchase order.";
+        }
+        if (f.dependsOn && !state.core[f.dependsOn.field]) return f.dependsOn.hint;
+        return null;
+      }}
+      onChange={onChange} onBlur={onBlur}
+      registerRef={(k, el) => { fieldRefs.current[k] = el; }}
+      onAddNew={(kind) => {
+        if (kind === "customer") { setAddCustomer(true); return; }
+        if (kind === "contact" || kind === "hiringManager") {
+          if (!customerId) { notify("Select a customer first", "err"); return; }
+          setNewContactFor(kind);
+          return;
+        }
+        if (kind === "role") {
+          const raw = window.prompt("Add a custom role (e.g. Lead Engineer)");
+          const name = (raw || "").trim();
+          if (!name) return;
+          const existing = [...ROLE_OPTIONS, ...customRoles]
+            .find((r) => r.value.toLowerCase() === name.toLowerCase());
+          if (existing) {
+            setState((st) => setDetail(st, "tm_role", existing.value));
+            notify(`Role "${existing.label}" selected`);
+            return;
           }
-          disabledReason={(f) => {
-            if (f.key === "customer_type" && !customerHasPo) {
-              return "Locked to NN until the customer has a purchase order.";
-            }
-            if (f.dependsOn && !state.core[f.dependsOn.field]) return f.dependsOn.hint;
-            return null;
-          }}
-          onChange={onChange} onBlur={onBlur}
-          registerRef={(k, el) => { fieldRefs.current[k] = el; }}
-          onAddNew={(kind) => {
-            if (kind === "customer") { setAddCustomer(true); return; }
-            if (kind === "contact" || kind === "hiringManager") {
-              if (!customerId) { notify("Select a customer first", "err"); return; }
-              setNewContactFor(kind);
-              return;
-            }
-            if (kind === "role") {
-              const raw = window.prompt("Add a custom role (e.g. Lead Engineer)");
-              const name = (raw || "").trim();
-              if (!name) return;
-              const existing = [...ROLE_OPTIONS, ...customRoles]
-                .find((r) => r.value.toLowerCase() === name.toLowerCase());
-              if (existing) {
-                setState((st) => setDetail(st, "tm_role", existing.value));
-                notify(`Role "${existing.label}" selected`);
-                return;
-              }
-              setCustomRoles((prev) => [...prev, { value: name, label: name }]);
-              setState((st) => setDetail(st, "tm_role", name));
-              notify(`Role "${name}" added`);
-            }
-          }}
-        />
-      )}
-    </>
+          setCustomRoles((prev) => [...prev, { value: name, label: name }]);
+          setState((st) => setDetail(st, "tm_role", name));
+          notify(`Role "${name}" added`);
+        }
+      }}
+    />
   );
+
+  const slabTable = () => {
+    const slabSec = OPPORTUNITY_SCHEMA.find((x) => x.key === "ctcSlab")!;
+    return (
+      <TableSection section={slabSec} type={type}
+        rows={state.ctcSlab as any[]}
+        options={options}
+        rowErrors={errors}
+        onRows={(rows) => setState((prev) => recalculateOpportunityState({
+          ...prev,
+          ctcSlab: applyRateCardToSlab(rows as Record<string, unknown>[]) as typeof prev.ctcSlab,
+        }))} />
+    );
+  };
+
+  /** Sub-heading inside the merged Commercials card. */
+  const subHead = (title: string, desc?: string) => (
+    <div className="mb-3">
+      <h3 className="text-sm font-bold tracking-wide text-primary">{title}</h3>
+      {desc && <p className="mt-0.5 text-xs leading-relaxed text-muted">{desc}</p>}
+    </div>
+  );
+  /** Bordered mini-panel — the merged step lays these out in a 2-up grid so
+   * the whole step fits one viewport without scrolling (Aug 2026 redesign). */
+  const subPanel = "rounded-card border border-subtle bg-surface-0/60 p-4";
+
+  const renderStepBody = (s: (typeof visibleSections)[number]) => {
+    // ---- Merged step: Leave & Holiday + Commercial + CTC Slab + RFI ------
+    // One card, read top-to-bottom in calculation order: the costing inputs,
+    // the billing basis, the slab that turns them into money, and the RFI
+    // Value the money rolls up into — RFI deliberately LAST (Aug 2026).
+    if (s.key === "leaveHoliday") {
+      const leaveSec = OPPORTUNITY_SCHEMA.find((x) => x.key === "leaveHoliday")!;
+      const commSec = OPPORTUNITY_SCHEMA.find((x) => x.key === "commercial")!;
+      const commFields = (commSec.fields || []).filter(
+        (f) => f.key !== "rfi_value" && fieldVisible(commSec, f, type),
+      );
+      const rfiField = (commSec.fields || []).find((f) => f.key === "rfi_value");
+      const showLeave = (leaveSec.fields || []).some((f) => fieldVisible(leaveSec, f, type));
+      // One-viewport layout: Leave & Holiday and Commercial Details sit side
+      // by side (each an internal 2-col grid), the slab table spans the full
+      // width below, and RFI Value is a slim horizontal strip at the bottom.
+      return (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+            {showLeave && (
+              <div className={subPanel}>
+                {subHead("Leave & Holiday Details",
+                  "Costing basis, prefilled from the branch policy — every value stays editable for this opportunity.")}
+                {type === "T&M" && !!policyBranchId
+                  && String(state.core.branch_id) === policyBranchId && (
+                  branchHasLeavePolicy ? (
+                    <p className="-mt-1 mb-3 text-xs leading-relaxed text-muted">
+                      Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
+                        || "the selected branch"}&rsquo;s billing policy — the leave policy&rsquo;s
+                      paid allowance lands in Paid Leave and adds back to billing days; the
+                      standard 24 leave deduction stays. Adjust any value for this deal.
+                    </p>
+                  ) : (
+                    <p className="-mt-1 mb-3 text-xs leading-relaxed text-muted">
+                      No leave policy linked to {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
+                        || "this branch"}. Leave defaults to the standard 24/year; Holidays reflect this branch&rsquo;s holiday calendar and Weekoff is the standard 104 (52 weekends). Every value is editable for costing.
+                    </p>
+                  )
+                )}
+                {renderFields(leaveSec, true)}
+              </div>
+            )}
+            {commFields.length > 0 && (
+              <div className={subPanel}>
+                {subHead("Commercial Details",
+                  "Billing type and hours — the basis every slab rate is annualised on.")}
+                {renderFields({ ...commSec, fields: commFields }, true)}
+              </div>
+            )}
+          </div>
+          <div className={subPanel}>
+            {subHead("Candidate CTC Slab",
+              "Rates auto-fill from the customer's Rate Card by experience band; Revenue, Engineering Budget and Approved CTC calculate as you type.")}
+            {type === "T&M" && state.ctcSlab.length > 0
+              && !String(details.billing_type ?? "").trim() && (
+              <p className="-mt-1 mb-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+                Revenue, Engineering Budget and Approved CTC auto-calculate once you set a{" "}
+                <span className="font-semibold">Billing Type</span> in{" "}
+                <span className="font-semibold">Commercial Details</span> above — a Rate alone
+                can&rsquo;t be annualised without knowing whether it&rsquo;s per hour, day, month or year.
+              </p>
+            )}
+            {slabTable()}
+          </div>
+          {rfiField && (
+            <div className={`${subPanel} lg:flex lg:items-center lg:justify-between lg:gap-8`}>
+              <div className="lg:max-w-xl [&>div]:mb-0">
+                {subHead("RFI Value",
+                  "Rolls up automatically from the slab's Annual Revenue x (Period / 12) x Positions.")}
+              </div>
+              <div className="mt-3 lg:mt-0 lg:w-80 lg:shrink-0 [&>div]:sm:!grid-cols-1">
+                {renderFields({ ...commSec, fields: [rfiField] }, true)}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ---- Every other step, exactly as before -----------------------------
+    return (
+      <>
+        {s.kind === "table" ? (
+          <TableSection section={s} type={type}
+            rows={state.skills as any[]}
+            options={options}
+            onRows={(rows) => setState((prev) => ({ ...prev, skills: rows }))} />
+        ) : s.kind === "attachments" ? (
+          <AttachmentsSection rows={attachments} onRows={setAttachments} />
+        ) : s.kind === "activityLog" ? (
+          <ActivityLogSection opportunityId={opportunityId} />
+        ) : (
+          renderFields(s)
+        )}
+      </>
+    );
+  };
 
   return (
     <>
@@ -1308,7 +1628,11 @@ export function NewOpportunityForm({
                       ? { duration: 0 }
                       : { duration: motionTok.panel, ease: motionTok.easeOut }
                   }
-                  className="wiz-moonlit-form-card mx-auto max-w-3xl rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8"
+                  className={`wiz-moonlit-form-card mx-auto rounded-card border border-subtle bg-surface-1 shadow-raised ${
+                    currentSection.key === "leaveHoliday"
+                      ? "max-w-7xl px-5 py-5 sm:px-6 sm:py-5"
+                      : "max-w-3xl px-5 py-6 sm:px-8 sm:py-8"
+                  }`}
                 >
                   <WizardStepHeader
                     title={currentSection.title}
@@ -1714,6 +2038,14 @@ function ActivityLogSection({ opportunityId }: { opportunityId?: number }) {
 
 /* ------------------------------------------------------------ table section */
 /** Editable skill-evaluation table or vertical CTC slab cards. */
+/** Indian-format money for DERIVED slab cells: 2022161.4 → "20,22,161.40". */
+function fmtMoneyCell(v: unknown): string {
+  if (v === "" || v === null || v === undefined) return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function TableSection({ section, type, rows, options, rowErrors, onRows }: {
   section: any;
   type: OpportunityType | "";
@@ -1725,7 +2057,24 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
   void type;
   const cols = section.table.columns as FieldDef[];
   const list = rows || [];
-  const addRow = () => onRows([...list, {}]);
+  // New slab rows open with the agreed defaults (Aug 2026): Hike 10% and
+  // Management Cost 30%. For the CTC slab, Add New CONTINUES THE LADDER:
+  // the new row starts where the slab currently ends (highest Target Exp),
+  // which lets the rate card fill its Rate immediately — and when that year
+  // opens a NEW band (e.g. 10 after a 7–10 band), the band's remaining years
+  // auto-append too, so one click yields the whole next slab, not one row.
+  const addRow = () => {
+    if (section.key !== "ctcSlab") return onRows([...list, {}]);
+    const ends = list
+      .map((r) => Number((r as any).target_exp ?? (r as any).exp_max ?? (r as any).exp_min))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const next = ends.length ? Math.max(...ends) : null;
+    onRows([...list, {
+      hike_pct: 10,
+      management_cost_pct: 30,
+      ...(next !== null ? { exp_min: next } : {}),
+    }]);
+  };
   const removeRow = (i: number) => onRows(list.filter((_, idx) => idx !== i));
   const setCell = (i: number, key: string, value: unknown) => {
     onRows(list.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
@@ -1740,92 +2089,13 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
     );
   }
 
-  /* Candidate CTC Slab: stacked cards — no horizontal scroll */
-  if (section.key === "ctcSlab") {
-    return (
-      <div className="space-y-4 pb-6">
-        {list.map((row, i) => (
-          <div
-            key={i}
-            className="rounded-card border border-subtle bg-surface-2/40 p-4 sm:p-5"
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold text-primary">
-                CTC Slab {list.length > 1 ? i + 1 : ""}
-              </div>
-              <button
-                type="button"
-                aria-label={`Remove CTC slab ${i + 1}`}
-                className="inline-flex items-center gap-1 rounded-control px-2 py-1 text-xs font-semibold text-muted transition-colors duration-micro ease-smooth hover:bg-surface-1 hover:text-danger"
-                onClick={() => removeRow(i)}
-              >
-                <Trash2 size={14} /> Remove
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {cols.map((c) => {
-                const derived = !!c.computed;
-                const opts = c.options || (c.optionsSource ? options[c.optionsSource] : undefined);
-                const id = `ctc-${i}-${c.key}`;
-                return (
-                  <label key={c.key} className="flex flex-col gap-1.5" htmlFor={id}>
-                    <span className="text-xs font-semibold text-muted">
-                      {c.label}
-                      {derived ? (
-                        <span className="ml-1 font-normal opacity-70">(auto)</span>
-                      ) : null}
-                    </span>
-                    {c.type === "checkbox" ? (
-                      <input
-                        id={id}
-                        type="checkbox"
-                        className="mt-1 h-4 w-4 accent-brand-600"
-                        checked={!!row[c.key]}
-                        onChange={(e) => setCell(i, c.key, e.target.checked)}
-                      />
-                    ) : opts ? (
-                      <select
-                        id={id}
-                        className={`${inputCls} w-full`}
-                        value={String(row[c.key] ?? "")}
-                        onChange={(e) => setCell(i, c.key, e.target.value)}
-                      >
-                        <option value="">—</option>
-                        {opts.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        id={id}
-                        readOnly={derived}
-                        title={derived ? "Calculated automatically" : undefined}
-                        type={["number", "currency", "percent"].includes(c.type) ? "number" : "text"}
-                        min={c.min}
-                        max={c.max}
-                        step="any"
-                        className={`${inputCls} w-full ${derived ? "cursor-default bg-surface-2/80 opacity-80" : ""}`}
-                        value={String(row[c.key] ?? "")}
-                        onChange={(e) => setCell(i, c.key, e.target.value)}
-                      />
-                    )}
-                  </label>
-                );
-              })}
-            </div>
-            {rowErrors?.[`ctcSlab.${i}.experience`] && (
-              <p className="mt-3 text-xs font-semibold text-danger">
-                {rowErrors[`ctcSlab.${i}.experience`]}
-              </p>
-            )}
-          </div>
-        ))}
-        <button type="button" className={btnSecondary} onClick={addRow}>
-          <Plus size={14} /> {section.table.addLabel}
-        </button>
-      </div>
-    );
-  }
+  /* Candidate CTC Slab renders through the SAME compact table below (Aug 2026
+     one-viewport redesign): one row per slab, so five slabs cost five rows —
+     not five tall cards. Computed columns are flagged "(auto)" in the header. */
+  const slab = section.key === "ctcSlab";
+  const cellInput = slab
+    ? "input-recessed w-full min-w-20 rounded-control px-2 py-1 text-sm"
+    : "input-recessed min-w-28 w-full rounded-control px-2 py-1 text-sm";
 
   return (
     <div className="space-y-2">
@@ -1833,7 +2103,15 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
         <table className="w-full min-w-max text-sm lg:min-w-0">
           <thead>
             <tr className="text-left text-xs text-muted">
-              {cols.map((c) => <th key={c.key} className="px-2 py-1 font-semibold">{c.label}</th>)}
+              {slab && <th className="px-1 py-1 font-semibold">#</th>}
+              {cols.map((c) => (
+                <th key={c.key} className="px-2 py-1 font-semibold">
+                  {c.label}
+                  {slab && c.computed ? (
+                    <span className="ml-1 font-normal opacity-70">(auto)</span>
+                  ) : null}
+                </th>
+              ))}
               <th />
             </tr>
           </thead>
@@ -1841,6 +2119,9 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
             {list.map((row, i) => (
               <React.Fragment key={i}>
                 <tr className="border-t border-subtle">
+                  {slab && (
+                    <td className="px-1 py-1 text-xs font-semibold text-muted tabular-nums">{i + 1}</td>
+                  )}
                   {cols.map((c) => {
                     const derived = !!c.computed;
                     const opts = c.options || (c.optionsSource ? options[c.optionsSource] : undefined);
@@ -1850,30 +2131,38 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
                           <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={!!row[c.key]}
                             onChange={(e) => setCell(i, c.key, e.target.checked)} />
                         ) : opts ? (
-                          <select className="input-recessed w-full rounded-control px-2 py-1 text-sm"
+                          <select className={`input-recessed w-full rounded-control px-2 py-1 text-sm ${slab ? "min-w-20" : ""}`}
                             value={String(row[c.key] ?? "")} onChange={(e) => setCell(i, c.key, e.target.value)}>
                             <option value="">—</option>
                             {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
+                        ) : derived && c.type === "currency" ? (
+                          // Derived money reads like money (Zoho parity):
+                          // 20,22,161.40 — full width, tooltip carries the
+                          // exact value in case the column is still tight.
+                          <input readOnly type="text" tabIndex={-1}
+                            title={fmtMoneyCell(row[c.key]) || "Calculated automatically"}
+                            className={`${cellInput} !min-w-28 cursor-default bg-surface-2 text-right tabular-nums opacity-80`}
+                            value={fmtMoneyCell(row[c.key])} />
                         ) : (
                           <input readOnly={derived} title={derived ? "Calculated automatically" : undefined}
                             type={["number", "currency", "percent"].includes(c.type) ? "number" : "text"}
                             min={c.min} max={c.max} step="any"
-                            className={`input-recessed min-w-28 w-full rounded-control px-2 py-1 text-sm ${derived ? "bg-surface-2 opacity-70" : ""}`}
+                            className={`${cellInput} ${derived ? "cursor-default bg-surface-2 opacity-70" : ""}`}
                             value={String(row[c.key] ?? "")} onChange={(e) => setCell(i, c.key, e.target.value)} />
                         )}
                       </td>
                     );
                   })}
                   <td className="px-1">
-                    <button type="button" aria-label="Remove row"
+                    <button type="button" aria-label={slab ? `Remove CTC slab ${i + 1}` : "Remove row"}
                       className="rounded-control p-1 text-muted transition-colors duration-micro ease-smooth hover:text-danger"
                       onClick={() => removeRow(i)}><Trash2 size={14} /></button>
                   </td>
                 </tr>
                 {rowErrors?.[`ctcSlab.${i}.experience`] && (
                   <tr>
-                    <td colSpan={cols.length + 1} className="px-2 pb-2 text-xs font-semibold text-danger">
+                    <td colSpan={cols.length + (slab ? 2 : 1)} className="px-2 pb-2 text-xs font-semibold text-danger">
                       {rowErrors[`ctcSlab.${i}.experience`]}
                     </td>
                   </tr>
