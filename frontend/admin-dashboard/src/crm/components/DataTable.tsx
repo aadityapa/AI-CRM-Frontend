@@ -63,7 +63,8 @@ export function DataTable<T extends { id?: number | string }>({
   /** Optional last column (right-aligned). Clicks inside stopPropagation from row navigation. */
   rowActions?: (row: T) => React.ReactNode;
   filters?: React.ReactNode;
-  emptyMessage?: string;
+  /** ReactNode so empty lists can teach (what this page is for, what to do). */
+  emptyMessage?: React.ReactNode;
   /**
    * Opt-in row selection. Off by default, so every existing table that does
    * not pass these props renders exactly as before.

@@ -22,7 +22,8 @@ export function Timeline({ entries }: { entries: ActivityEntry[] }) {
           <div className="text-sm font-semibold text-primary">
             {String(e.action_type || "").replace(/_/g, " ")}
           </div>
-          {e.comment && <div className="mt-0.5 text-sm text-secondary">{e.comment}</div>}
+          {/* Update entries carry one "field: old → new" diff per line. */}
+          {e.comment && <div className="mt-0.5 whitespace-pre-line text-sm text-secondary">{e.comment}</div>}
           <div className="mt-0.5 text-xs text-muted">
             {e.full_name || e.username || "system"} · {new Date(e.timestamp).toLocaleString()}
           </div>

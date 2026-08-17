@@ -2,12 +2,13 @@
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Ban, ClipboardCheck, DollarSign, FileDown, FileText, IndianRupee, Layers, MapPin, Pencil, Plus, Receipt,
+  Ban, ClipboardCheck, DollarSign, FileDown, FileText, IndianRupee, Layers, MapPin, Pencil, Plus,
+  Receipt, RefreshCw,
 } from "lucide-react";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
 import { useHasRole } from "../CrmApp";
-import { useCanEditTab } from "../useAccess";
+import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -15,6 +16,7 @@ import {
   btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, inputCls,
   Modal, Spinner, StatusBadge, Tabs, useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import {
   InfoChip, SectionHeaderBanner, WizardField, WizardFooter, WizardShell, WizardStepCard,
   WizardTopBar, type WizardStep,
@@ -328,7 +330,9 @@ const PO_TABS = [
 ];
 
 export function PurchaseOrdersPage() {
-  const canWrite = useHasRole("Finance") && useCanEditTab("pos");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Finance");
+  const canWrite = useCanAct("pos", "edit", canWriteRole);
   const [tab, setTab] = useState("Active");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -337,6 +341,18 @@ export function PurchaseOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+
+  // Deep-link create (hub "New …" buttons): ?create=1 opens the dialog once,
+  // then strips the flag so refresh / back never reopen it.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("create") === "1") {
+      setEditPoId(null); setShowNew(true);
+      sp.delete("create");
+      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [editPoId, setEditPoId] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
@@ -388,7 +404,7 @@ export function PurchaseOrdersPage() {
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`pos/${r.id}`)}
-        emptyMessage={`No ${tab.toLowerCase()} purchase orders`}
+        emptyMessage={<TeachingEmpty page="pos" />}
         rowActions={canWrite ? (r) => (
           <RowActions
             entity="purchase order"
@@ -454,7 +470,8 @@ function POFormModal({
   const [receivedDate, setReceivedDate] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [poType, setPoType] = useState("Open PO");
+  // Regular PO is the house default; edit hydration overwrites this from the row.
+  const [poType, setPoType] = useState("Regular PO");
   const [paymentTerms, setPaymentTerms] = useState("");
   const [taxSlabKey, setTaxSlabKey] = useState("");
   const [interState, setInterState] = useState(false);
@@ -1165,7 +1182,9 @@ function POFormModal({
 
 export function PODetailPage() {
   const { id } = useCrmParams();
-  const canWrite = useHasRole("Finance") && useCanEditTab("pos");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Finance");
+  const canWrite = useCanAct("pos", "edit", canWriteRole);
   const [po, setPo] = useState<any | null>(null);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -1174,6 +1193,7 @@ export function PODetailPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [showRenew, setShowRenew] = useState(false);
   const [toast, showToast] = useToast();
   const customers = useNameMap("/api/customers?limit=100");
 
@@ -1259,6 +1279,11 @@ export function PODetailPage() {
               <Pencil size={15} /> Edit
             </button>
           )}
+          {canWrite && po.status !== "Cancelled" && (
+            <button className={btnSecondary} onClick={() => setShowRenew(true)}>
+              <RefreshCw size={15} /> Renew PO
+            </button>
+          )}
           {canWrite && po.status === "Active" && (
             <button className={btnDanger} onClick={() => setShowCancel(true)}>
               <Ban size={15} /> Cancel PO
@@ -1266,6 +1291,31 @@ export function PODetailPage() {
           )}
         </div>
       </div>
+
+      {/* The renewal chain, stated on both ends. Finance used to track "which
+          PO replaced which" outside the system entirely. */}
+      {(po.renewed_from || (po.renewals || []).length > 0) && (
+        <div className="rounded-card border border-subtle bg-surface-1 px-4 py-3 text-xs shadow-raised">
+          {po.renewed_from && (
+            <div className="text-secondary">
+              Renews{" "}
+              <CrmLink to={`pos/${po.renewed_from.id}`} className="font-semibold text-sky-600 hover:underline">
+                {po.renewed_from.po_number}
+              </CrmLink>
+              {po.renewed_from.end_date ? ` (ended ${fmtDate(po.renewed_from.end_date)})` : ""}
+            </div>
+          )}
+          {(po.renewals || []).map((r: any) => (
+            <div key={r.id} className="text-secondary">
+              Renewed by{" "}
+              <CrmLink to={`pos/${r.id}`} className="font-semibold text-sky-600 hover:underline">
+                {r.po_number}
+              </CrmLink>
+              {r.start_date ? ` (from ${fmtDate(r.start_date)})` : ""}
+            </div>
+          ))}
+        </div>
+      )}
 
       <Card title="PO Details" hero>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
@@ -1380,6 +1430,19 @@ export function PODetailPage() {
           notify={showToast}
         />
       )}
+      {showRenew && (
+        <RenewPoModal
+          po={po}
+          customerName={customerName}
+          onClose={() => setShowRenew(false)}
+          onRenewed={(newId, message) => {
+            setShowRenew(false);
+            showToast(message);
+            crmNavigate(`pos/${newId}`);
+          }}
+          onError={(m) => showToast(m, "err")}
+        />
+      )}
       {showCancel && (
         <ConfirmModal
           title="Cancel Purchase Order"
@@ -1467,6 +1530,114 @@ function AllocateModal({
   );
 }
 
+/**
+ * Raise the next PO in a series from the one that is expiring.
+ *
+ * Before this, the expiry notices told Finance a PO was running out and then
+ * left them to re-key the same customer, branches, contact, tax slab and
+ * payment terms into a blank New PO form. Everything except the number, the
+ * value and the dates is inherited here and shown as inherited, so the person
+ * renewing can see what is carried rather than having to remember it.
+ *
+ * The PO number has no default on purpose: it is the customer's reference, so
+ * generating one would invent a document that does not exist on their side.
+ */
+function RenewPoModal({
+  po,
+  customerName,
+  onClose,
+  onRenewed,
+  onError,
+}: {
+  po: any;
+  customerName: string;
+  onClose: () => void;
+  onRenewed: (newPoId: number, message: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const dayAfter = (iso?: string | null) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const [poNumber, setPoNumber] = useState("");
+  const [totalValue, setTotalValue] = useState("");
+  const [startDate, setStartDate] = useState(() => dayAfter(po.end_date));
+  const [endDate, setEndDate] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const totalN = num(totalValue);
+  const totalErr =
+    totalValue === "" ? "" : totalN === undefined || totalN <= 0 ? "Enter a positive PO value" : "";
+  const dateErr =
+    startDate && endDate && endDate < startDate ? "End date is before the start date" : "";
+  const unspent = Number(po.balance_value || 0);
+
+  const submit = async () => {
+    if (!poNumber.trim() || totalN === undefined || totalN <= 0 || totalErr || dateErr) return;
+    setBusy(true);
+    try {
+      const res = await crmPost<any>(`/api/purchase-orders/${po.id}/renew`, {
+        po_number: poNumber.trim(),
+        total_value: totalN,
+        start_date: startDate || null,
+        end_date: endDate || null,
+      });
+      onRenewed(res.data?.id, res.message || "Renewal purchase order created");
+    } catch (e: any) {
+      onError(e?.message || "Failed to renew the purchase order");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <FinanceModalShell
+      title="Renew Purchase Order"
+      subtitle={`Raise the next PO for ${customerName || "this customer"}, carrying forward the terms of ${po.po_number}.`}
+      icon={<RefreshCw size={20} aria-hidden />}
+      onClose={onClose}
+      busy={busy}
+      onSubmit={() => void submit()}
+      submitLabel="Create renewal"
+      submitBusyLabel="Creating…"
+      submitDisabled={busy || !poNumber.trim() || totalValue === "" || !!totalErr || !!dateErr}
+    >
+      <InfoChip>
+        Carried over: customer, billing and delivery branch, contact, PO type, tax slab and payment
+        terms. {po.po_number} is left exactly as it is — its invoices still reconcile against it.
+      </InfoChip>
+      {unspent > 0 && (
+        <InfoChip>
+          {po.po_number} has {inr(unspent)} unspent. That balance stays with it and is not added to
+          the renewal — enter the new order's own value below.
+        </InfoChip>
+      )}
+      <WizardField label="New PO number" required icon="hash"
+        info="As issued by the customer — this is their reference, not ours.">
+        <input className={inputCls} value={poNumber} autoFocus
+          onChange={(e) => setPoNumber(e.target.value)} placeholder="e.g. 4500123456" />
+      </WizardField>
+      <WizardField label="PO value (₹)" required icon="hash"
+        error={totalErr || undefined} filled={totalN !== undefined && totalN > 0 && !totalErr}>
+        <input type="number" min={0} step="0.01" className={inputCls} value={totalValue}
+          onChange={(e) => setTotalValue(e.target.value)} />
+      </WizardField>
+      <WizardField label="Start date" icon="calendar"
+        info="Defaults to the day after the current PO ends, so there is no uncovered day between them.">
+        <input type="date" className={inputCls} value={startDate}
+          onChange={(e) => setStartDate(e.target.value)} />
+      </WizardField>
+      <WizardField label="End date" icon="calendar" error={dateErr || undefined}>
+        <input type="date" className={inputCls} value={endDate}
+          onChange={(e) => setEndDate(e.target.value)} />
+      </WizardField>
+    </FinanceModalShell>
+  );
+}
+
 /* =====================================================================
  * INVOICES — list
  * =================================================================== */
@@ -1478,7 +1649,9 @@ const INVOICE_TABS = [
 ];
 
 export function InvoicesPage() {
-  const canWrite = useHasRole("Finance") && useCanEditTab("invoices");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Finance");
+  const canWrite = useCanAct("invoices", "edit", canWriteRole);
   const [tab, setTab] = useState("Unpaid");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -1487,6 +1660,18 @@ export function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+
+  // Deep-link create (hub "New …" buttons): ?create=1 opens the dialog once,
+  // then strips the flag so refresh / back never reopen it.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("create") === "1") {
+      setShowNew(true);
+      sp.delete("create");
+      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
   const projects = useNameMap("/api/projects?limit=100");
@@ -1543,7 +1728,7 @@ export function InvoicesPage() {
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
-        emptyMessage={`No ${tab.replace(/_/g, " ").toLowerCase()} invoices`}
+        emptyMessage={<TeachingEmpty page="invoices" />}
         rowActions={(r) => (
           <RowActions
             entity="invoice"
@@ -1795,7 +1980,9 @@ function InvoiceFormModal({
 
 export function InvoiceDetailPage() {
   const { id } = useCrmParams();
-  const canWrite = useHasRole("Finance") && useCanEditTab("invoices");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Finance");
+  const canWrite = useCanAct("invoices", "edit", canWriteRole);
   const [inv, setInv] = useState<any | null>(null);
   const [error, setError] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -2269,7 +2456,9 @@ const TDS_TABS = [
 ];
 
 export function TdsPage() {
-  const canWrite = useHasRole("Finance") && useCanEditTab("invoices");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Finance");
+  const canWrite = useCanAct("invoices", "edit", canWriteRole);
   const [tab, setTab] = useState("Pending");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);

@@ -9,6 +9,7 @@ import type { Meta } from "../api";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
+import { useCrmAccess } from "../useAccess";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -27,6 +28,7 @@ import {
   inputCls,
   useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import {
   SectionHeaderBanner, WizardField,
 } from "../components/wizard";
@@ -349,7 +351,7 @@ export function CandidatesListPage() {
               />
             </>
           }
-          emptyMessage="No candidates found"
+          emptyMessage={<TeachingEmpty page="candidates" />}
           rowActions={canWrite ? (r) => (
             <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               {/* Every candidate gets this — applying creates a Candidate Profile,
@@ -453,11 +455,41 @@ function CandidateFormModal({
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
-  const submit = async () => {
+  // Template field grants: lock what the template sets to view-only. Applies
+  // on EDIT — creating a record types every field of a record that doesn't
+  // exist yet, which the tab-level "create" grant already covers.
+  const acc = useCrmAccess("candidates");
+  const locked = (registryKey: string) => isEdit && !acc.canEditField(registryKey);
+
+  type DupMatch = { id: number; name: string; email?: string | null; phone?: string | null; match_on: string[] };
+  const [dupes, setDupes] = useState<DupMatch[] | null>(null);
+
+  const submit = async (opts?: { skipDupCheck?: boolean }) => {
     if (!form.first_name.trim()) return setError("First name is required");
     if (!form.email.trim()) return setError("Email is required");
     setBusy(true);
     setError("");
+    // Duplicate check BEFORE creating (create mode only): the same person
+    // arrives via portal, referral and import, and merging records after
+    // profiles hang off both is miserable. A warning, not a wall — the
+    // recruiter can still create.
+    if (!isEdit && !opts?.skipDupCheck) {
+      try {
+        const q = new URLSearchParams();
+        if (form.phone.trim()) q.set("phone", form.phone.trim());
+        if (form.email.trim()) q.set("email", form.email.trim());
+        const fullName = [form.first_name, form.middle_name, form.last_name]
+          .map((s) => s.trim()).filter(Boolean).join(" ");
+        if (fullName) q.set("name", fullName);
+        const res = await crmGet<DupMatch[]>(`/api/candidates/check-duplicates?${q.toString()}`);
+        if ((res.data || []).length > 0) {
+          setDupes(res.data);
+          setBusy(false);
+          return;
+        }
+      } catch { /* the check must never block creation */ }
+    }
+    setDupes(null);
     const payload = {
       salutation: form.salutation || null,
       first_name: form.first_name.trim(),
@@ -484,6 +516,22 @@ function CandidateFormModal({
       resignation_status: form.resignation_status,
       last_working_day: form.resignation_status && form.last_working_day ? form.last_working_day : null,
     };
+    // Drop view-only fields from the edit payload — the server rejects a save
+    // that touches them, and an unchanged echo of a locked field still counts
+    // as touching it.
+    if (isEdit) {
+      const FIELD_OF: Record<string, string> = {
+        salutation: "name", first_name: "name", middle_name: "name", last_name: "name",
+        email: "email", phone: "phone",
+        experience_years: "experience_years", notice_period: "notice_period",
+        current_ctc: "current_ctc", expected_ctc: "expected_ctc",
+        resignation_status: "resignation", last_working_day: "resignation",
+      };
+      for (const key of Object.keys(payload)) {
+        const reg = FIELD_OF[key];
+        if (reg && !acc.canEditField(reg)) delete (payload as Record<string, unknown>)[key];
+      }
+    }
     try {
       const res = isEdit
         ? await crmPut<Candidate>(`/api/candidates/${initial!.id}`, payload)
@@ -520,7 +568,7 @@ function CandidateFormModal({
           </select>
         </WizardField>
         <WizardField label="First name" required icon="user" filled={!!form.first_name.trim()}>
-          <input className={inputCls} value={form.first_name} onChange={(e) => set("first_name", e.target.value)} />
+          <input className={inputCls} value={form.first_name} disabled={locked("name")} onChange={(e) => set("first_name", e.target.value)} />
         </WizardField>
         <WizardField label="Middle name" icon="user">
           <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
@@ -531,7 +579,7 @@ function CandidateFormModal({
 
         <div className={secHead}>Basic details</div>
         <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
-          <input className={inputCls} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+          <input className={inputCls} type="email" value={form.email} disabled={locked("email")} onChange={(e) => set("email", e.target.value)} />
           {/* Kept visible and editable so it can be replaced, but flagged — this
               address is a system placeholder, not a way to reach the candidate. */}
           {isPlaceholderEmail(form.email) && (
@@ -542,7 +590,7 @@ function CandidateFormModal({
           )}
         </WizardField>
         <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
-          <input className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
+          <input className={inputCls} value={form.phone} disabled={locked("phone")} onChange={(e) => set("phone", e.target.value)} />
         </WizardField>
         <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
           <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
@@ -554,10 +602,10 @@ function CandidateFormModal({
           </select>
         </WizardField>
         <WizardField label="Experience (years)" icon="hash" filled={form.experience_years !== ""}>
-          <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} onChange={(e) => set("experience_years", e.target.value)} />
+          <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} disabled={locked("experience_years")} onChange={(e) => set("experience_years", e.target.value)} />
         </WizardField>
         <WizardField label="Notice period">
-          <input className={inputCls} value={form.notice_period} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
+          <input className={inputCls} value={form.notice_period} disabled={locked("notice_period")} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
         </WizardField>
         <WizardField className="sm:col-span-2" label="Current address">
           <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
@@ -601,30 +649,70 @@ function CandidateFormModal({
 
         <div className={secHead}>Compensation</div>
         <WizardField label="Current CTC (Lac)" icon="hash" filled={form.current_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} onChange={(e) => set("current_ctc", e.target.value)} />
+          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} disabled={locked("current_ctc")} onChange={(e) => set("current_ctc", e.target.value)} />
         </WizardField>
         <WizardField label="Expected CTC (Lac)" icon="hash" filled={form.expected_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} onChange={(e) => set("expected_ctc", e.target.value)} />
+          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} disabled={locked("expected_ctc")} onChange={(e) => set("expected_ctc", e.target.value)} />
         </WizardField>
 
         <div className={secHead}>Separation</div>
         <div className="flex items-end gap-4 pb-1">
           <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
-            <input type="checkbox" checked={form.resignation_status} onChange={(e) => set("resignation_status", e.target.checked)} />
+            <input type="checkbox" checked={form.resignation_status} disabled={locked("resignation")} onChange={(e) => set("resignation_status", e.target.checked)} />
             Resigned / serving notice
           </label>
         </div>
         {form.resignation_status && (
           <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
-            <input className={inputCls} type="date" value={form.last_working_day} onChange={(e) => set("last_working_day", e.target.value)} />
+            <input className={inputCls} type="date" value={form.last_working_day} disabled={locked("resignation")} onChange={(e) => set("last_working_day", e.target.value)} />
           </WizardField>
         )}
       </div>
+      {dupes && dupes.length > 0 && (
+        <div className="mt-4 rounded-card border border-warning/40 bg-warning-soft p-4" role="alert">
+          <p className="text-sm font-bold text-warning">
+            Possible duplicate{dupes.length > 1 ? "s" : ""} — is this the same person?
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {dupes.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-2 text-sm text-secondary">
+                <span className="font-semibold text-primary">{d.name || `#${d.id}`}</span>
+                {d.phone && <span>{d.phone}</span>}
+                {d.email && !d.email.endsWith("@import.karnex.in") && <span>{displayEmail(d.email)}</span>}
+                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">
+                  same {d.match_on.join(" + ")}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                  onClick={() => { onClose(); crmNavigate(`candidates/${d.id}`); }}
+                >
+                  View
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-secondary">
+            Open the existing record instead of creating a second one — or, if this really is a
+            different person, create anyway.
+          </p>
+        </div>
+      )}
       <div className={wizFooterRow}>
         <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : isEdit ? "Save changes" : "Create Candidate"}
-        </button>
+        {dupes && dupes.length > 0 && !isEdit ? (
+          <button
+            className={`${btnSecondary} ml-auto h-10 rounded-xl px-4`}
+            onClick={() => void submit({ skipDupCheck: true })}
+            disabled={busy}
+          >
+            {busy ? "Saving…" : "Create anyway — different person"}
+          </button>
+        ) : (
+          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={() => void submit()} disabled={busy}>
+            {busy ? "Saving…" : isEdit ? "Save changes" : "Create Candidate"}
+          </button>
+        )}
       </div>
       </WizFormShell>
     </Modal>

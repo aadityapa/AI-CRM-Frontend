@@ -33,31 +33,33 @@
   </script>
   <style>
     :root {
-      --brand-navy: #1a3652;
-      --brand-navy-mid: #27547a;
-      --brand-navy-soft: #e6f0f8;
-      --brand-gold: #24bfe8;
-      --brand-gold-deep: #1694b8;
-      --brand-gold-soft: #e8f8ff;
-      --bg: #e8eef5;
-      --nav: #f4f8fc;
-      --nav-muted: #55718a;
+      /* JobDiva-aligned enterprise palette — matches the admin dashboard's
+         royal-blue/navy brand ramp (brand-600 #2563eb, navy #10263f). */
+      --brand-navy: #10263f;
+      --brand-navy-mid: #2563eb;
+      --brand-navy-soft: #dbeafe;
+      --brand-gold: #3b82f6;
+      --brand-gold-deep: #1d4ed8;
+      --brand-gold-soft: #eff6ff;
+      --bg: #eef2f8;
+      --nav: #f5f8fc;
+      --nav-muted: #55677f;
       --panel: #ffffff;
-      --text: #1d3448;
-      --muted: #607c96;
+      --text: #1c2a41;
+      --muted: #5b6d87;
       --accent: var(--brand-navy-mid);
       --accent-2: var(--brand-gold);
       --accent-soft: var(--brand-navy-soft);
       --good: #1aa184;
-      --warn: #2cd2ff;
+      --warn: #38bdf8;
       --bad: #ef5d73;
-      --border: #c5d6e6;
+      --border: #c9d6e8;
       --radius-sm: 10px;
       --radius-md: 14px;
       --radius-lg: 18px;
       --motion-fast: 0.18s ease;
       --motion-med: 0.28s ease;
-      --panel-glow: rgba(44, 210, 255, 0.18);
+      --panel-glow: rgba(59, 130, 246, 0.16);
     }
     * { box-sizing: border-box; }
     body {
@@ -3122,9 +3124,9 @@
       box-shadow: 0 8px 16px rgba(39, 84, 122, 0.12);
     }
     button.success {
-      background: linear-gradient(135deg, #1cb8df, #2cd2ff);
-      color: #022138;
-      box-shadow: 0 8px 18px rgba(44, 210, 255, 0.35);
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: #ffffff;
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
     }
     button::after {
       content: "";
@@ -5190,8 +5192,8 @@
       color: #fff;
     }
     .auth-card input:focus-visible {
-      border-color: var(--brand-gold, #24bfe8);
-      box-shadow: 0 0 0 2px rgba(36, 191, 232, 0.2);
+      border-color: var(--brand-gold, #3b82f6);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
     }
     .auth-title {
       margin: 0 0 4px;

@@ -87,6 +87,59 @@ export const INDIAN_CITIES = [
   "Mangalore",
 ] as const;
 
+/**
+ * City → state, for the address forms' autofill. Picking a city answers the
+ * state question — asking the user to answer it again invites mismatches
+ * (Bangalore/Kerala, Pune/Gujarat) that end up on GST invoices.
+ */
+export const CITY_STATE: Record<string, string> = {
+  Bangalore: "Karnataka",
+  Mumbai: "Maharashtra",
+  Pune: "Maharashtra",
+  Delhi: "Delhi",
+  Gurgaon: "Haryana",
+  Noida: "Uttar Pradesh",
+  Hyderabad: "Telangana",
+  Chennai: "Tamil Nadu",
+  Kolkata: "West Bengal",
+  Ahmedabad: "Gujarat",
+  Jaipur: "Rajasthan",
+  Chandigarh: "Chandigarh",
+  Kochi: "Kerala",
+  Coimbatore: "Tamil Nadu",
+  Indore: "Madhya Pradesh",
+  Nagpur: "Maharashtra",
+  Thiruvananthapuram: "Kerala",
+  Mysore: "Karnataka",
+  Visakhapatnam: "Andhra Pradesh",
+  Bhubaneswar: "Odisha",
+  Lucknow: "Uttar Pradesh",
+  Vadodara: "Gujarat",
+  Nashik: "Maharashtra",
+  Surat: "Gujarat",
+  Patna: "Bihar",
+  Raipur: "Chhattisgarh",
+  Bhopal: "Madhya Pradesh",
+  Guwahati: "Assam",
+  Ranchi: "Jharkhand",
+  Dehradun: "Uttarakhand",
+  Amritsar: "Punjab",
+  Ludhiana: "Punjab",
+  Faridabad: "Haryana",
+  Ghaziabad: "Uttar Pradesh",
+  Kanpur: "Uttar Pradesh",
+  Agra: "Uttar Pradesh",
+  Vijayawada: "Andhra Pradesh",
+  Madurai: "Tamil Nadu",
+  Tiruchirappalli: "Tamil Nadu",
+  Mangalore: "Karnataka",
+};
+
+/** State for a known city; empty string for free-typed cities we don't know. */
+export function stateForCity(city: string): string {
+  return CITY_STATE[(city || "").trim()] || "";
+}
+
 /** Country list — India is the default for new address forms. */
 export const COUNTRIES = [
   "India",

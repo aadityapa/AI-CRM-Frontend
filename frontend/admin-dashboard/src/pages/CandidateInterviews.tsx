@@ -241,8 +241,9 @@ function InterviewQAPanel({
         if (!alive) return;
         setError(String(e?.message || e));
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        /* no `return` in finally (no-unsafe-finally): it would swallow any
+           pending exception/return — guard the state update instead. */
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -381,8 +382,9 @@ export function CandidateInterviewsPage({
         setError(String(e?.message || e));
         setData(null);
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        /* no `return` in finally (no-unsafe-finally): it would swallow any
+           pending exception/return — guard the state update instead. */
+        if (alive) setLoading(false);
       }
     })();
     return () => {

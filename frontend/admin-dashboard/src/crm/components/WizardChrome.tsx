@@ -21,9 +21,11 @@ const SECTION_HELPERS: Record<string, string> = {
   customerDetails: "Select the customer, branch, and key contacts for this opportunity.",
   rfiDetails: "Capture the request title, dates, and opportunity type.",
   timeAndMaterial: "Define the position, role, location, and engagement details.",
-  leaveHoliday: "Estimation only for costing. Holidays come from the selected branch's own holiday calendar; Leave prefills only when a leave policy is linked to the branch (else 0); Weekoff always calculates to the standard 104 (52 weekends). The APPLIED leave policy always comes from branch/project settings, not this form.",
+  // "leaveHoliday" is the MERGED Commercials step: Leave & Holiday costing +
+  // Commercial Details + Candidate CTC Slab, with RFI Value rolling up last.
+  leaveHoliday: "Everything commercial in one place: leave & holiday costing from the branch, billing type and hours, the Candidate CTC Slab — and the RFI Value it rolls up into.",
   commercial: "Billing type, hours, and RFI Value (auto from CTC Annual Revenue × Period ÷ 12 × Positions).",
-  ctcSlab: "Define candidate CTC bands and revenue assumptions — enter these before Commercial Details.",
+  ctcSlab: "Define candidate CTC bands and revenue assumptions.",
   attachments: "Attach customer JDs and supporting documents.",
   skillEval: "Required skills and evaluation criteria.",
   onboardingStatus: "Track onboarding progress for this opportunity.",

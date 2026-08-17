@@ -1,5 +1,7 @@
 /** Access Templates (Admin/CEO) — create department/role-wise templates that grant,
- * per CRM tab and per field, a mode of View or Insert/Edit, and assign them to users.
+ * per CRM tab, a LADDER mode (View < Edit < Create — higher includes lower) and,
+ * per field, View or Edit. For assigned users the template is AUTHORITATIVE:
+ * it decides what they can do, even beyond their role's defaults.
  * API: /api/access-templates (+ /registry, /assign). Tokens/components only. */
 import React, { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Save, Trash2, UserPlus, X } from "lucide-react";
@@ -22,10 +24,18 @@ type User = { id: number; full_name?: string; email?: string; username?: string 
 type Dept = { id: number; name: string };
 
 const ROLES = ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"];
+/** Tab modes are a ladder: each level includes everything below it. */
 const MODE_OPTS = [
   { value: "", label: "No access" },
   { value: "view", label: "View" },
-  { value: "edit", label: "Insert / Edit" },
+  { value: "edit", label: "View + Edit" },
+  { value: "create", label: "View + Edit + Create" },
+];
+/** Field grants stop at edit — creating happens at record level, not per field. */
+const FIELD_MODE_OPTS = [
+  { value: "", label: "Tab default" },
+  { value: "view", label: "View only" },
+  { value: "edit", label: "Edit" },
 ];
 
 type Form = {
@@ -168,7 +178,11 @@ export function AccessTemplatesPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-display text-lg font-bold text-primary">Access Templates</h1>
-          <p className="text-xs text-muted">Admin/CEO — grant each tab & field as View or Insert/Edit, then assign to users.</p>
+          <p className="text-xs text-muted">
+            Admin/CEO — grant each tab a mode (View &lt; Edit &lt; Create, higher includes lower)
+            and lock individual fields, then assign to users. For assigned users the template is
+            the authority: it decides what they can do, even beyond their role's defaults.
+          </p>
         </div>
         <button type="button" className={btnSecondary} onClick={openNewTemplate}>
           <Plus size={14} /> New template
@@ -260,17 +274,23 @@ export function AccessTemplatesPage() {
                         </select>
                       </div>
                       {open && tab.fields.length > 0 && (
-                        <div className="space-y-1 bg-surface-2 px-6 py-2">
-                          {tab.fields.map((fld) => (
-                            <div key={fld.key} className="flex items-center justify-between gap-2">
-                              <span className="text-sm text-secondary">{fld.label}</span>
-                              <select className={`${inputCls} max-w-40`}
-                                value={form.fieldAccess[tab.key]?.[fld.key] || ""}
-                                onChange={(e) => setFieldMode(tab.key, fld.key, e.target.value)}>
-                                {MODE_OPTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                              </select>
-                            </div>
-                          ))}
+                        <div className="bg-surface-2 px-6 py-2">
+                          <p className="mb-1.5 text-[11px] text-muted">
+                            Fields inherit the tab mode unless set here. A view-only field stays
+                            locked even when the tab allows edit.
+                          </p>
+                          <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                            {tab.fields.map((fld) => (
+                              <div key={fld.key} className="flex items-center justify-between gap-2">
+                                <span className="text-sm text-secondary">{fld.label}</span>
+                                <select className={`${inputCls} max-w-36`}
+                                  value={form.fieldAccess[tab.key]?.[fld.key] || ""}
+                                  onChange={(e) => setFieldMode(tab.key, fld.key, e.target.value)}>
+                                  {FIELD_MODE_OPTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>

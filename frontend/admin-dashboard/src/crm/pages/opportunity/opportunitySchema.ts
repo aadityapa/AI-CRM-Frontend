@@ -285,7 +285,15 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "leave_policy", label: "Leave Policy", type: "select", optionsSource: "leavePolicy", visibleFor: ["T&M"] },
       { key: "holidays", label: "Holidays", type: "number", visibleFor: ["T&M"] },
       { key: "weekoff", label: "Weekoff", type: "number", default: 104.0, visibleFor: ["T&M"] },
-      { key: "leave", label: "Leave", type: "number", visibleFor: ["T&M"] },
+      // 24 = the standard yearly leave (agreed Aug 2026). Branch leave policy
+      // overrides it when linked; either way it deducts in the CTC Slab maths.
+      { key: "leave", label: "Leave", type: "number", default: 24.0, visibleFor: ["T&M"] },
+      // Paid leaves the CUSTOMER covers (APTIV rule): added back to billing
+      // days. Inherited from the branch/customer billing policy and locked
+      // when set there; editable for costing otherwise.
+      { key: "paid_leaves", label: "Paid Leave (Billed by Customer)", type: "number",
+        visibleFor: ["T&M"],
+        helperText: "Leave days the customer pays for — added back to Actual Billing Days." },
     ],
   },
 
@@ -340,7 +348,10 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
         { key: "engineering_budget", label: "Engineering Budget", type: "currency",
           computed: { from: ["revenue_annual", "management_cost_pct"], formula: "ctcDerive" } },
         { key: "hike_pct", label: "Hike %", type: "percent", min: 0 },
-        { key: "appraisal_cycle", label: "Appraisal Cycle", type: "select", optionsSource: "appraisalCycle" },
+        // NUMBER of appraisal cycles inside the band (NEXUS parity):
+        // auto = Target − Exp Min − 1; Approved CTC = Budget ÷ (1+Hike%)^cycles.
+        { key: "appraisal_cycle", label: "Appraisal Cycles", type: "number", min: 0,
+          computed: { from: ["exp_min", "target_exp"], formula: "ctcDerive" } },
         { key: "approved_ctc_lac", label: "Approved CTC [Lac]", type: "currency",
           computed: { from: ["engineering_budget", "hike_pct"], formula: "ctcDerive" } },
       ],
@@ -372,23 +383,10 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
     },
   },
 
-  // ---- Onboarding Status (always) -------------------------------------------
-  {
-    key: "onboardingStatus",
-    title: "Onboarding Status",
-    kind: "fields",
-    fields: [
-      { key: "onboarding_status", label: "Onboarding Status", type: "select", optionsSource: "onboardingStatus" },
-    ],
-  },
-
-  // ---- Activity Histories (read-only, edit mode) ----------------------------
-  {
-    key: "activityHistories",
-    title: "Activity Histories",
-    kind: "activityLog",
-    readOnly: true,
-  },
+  // Onboarding Status and Activity Histories were removed from the FORM
+  // (Aug 2026): a new opportunity always starts at "Sales Validation" (set as
+  // the default, not asked), and history reads better on the detail page's
+  // Activity Log tab than inside an editing surface.
 ];
 
 /* ------------------------------------------------------------ helpers ------ */

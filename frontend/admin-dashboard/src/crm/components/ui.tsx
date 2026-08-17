@@ -5,8 +5,9 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, CheckCircle2, Inbox, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Inbox, Info, X, XCircle } from "lucide-react";
 import { AnimatedNumber } from "./motion3d";
+import { statusHelp } from "../lib/statusHelp";
 
 /* Mirrors the motion tokens in src/styles/tokens.css (--dur-*, --ease-out).
  * framer-motion needs raw numbers — keep in sync with tokens.css. */
@@ -48,6 +49,13 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   Customer_Approval: "Customer Approved",
   // The team says "Pre Onboarding"; the column has always stored "Preboarding".
   Preboarding: "Pre Onboarding",
+  // Vocabulary pass (Aug 2026): say WHO the ball is with, in plain words.
+  // Label only — stored values unchanged, no migration.
+  Pending_Sales_Head_Approval: "Awaiting Sales Head approval",
+  Pending_Engineering_Review: "Awaiting RMG review",
+  Pending_RMG: "Awaiting RMG template",
+  RMG_Review: "RMG Review",
+  Self_Withdrawn: "Candidate Withdrew",
 };
 
 export function statusLabel(status: string): string {
@@ -56,12 +64,20 @@ export function statusLabel(status: string): string {
 
 export function StatusBadge({ status, label }: { status?: string | null; label?: string }) {
   if (!status) return null;
+  // Every badge explains itself: hover shows what the status means and WHO
+  // acts next (crm/lib/statusHelp.ts). This is where the workflow's tribal
+  // knowledge lives now, instead of in colleagues' heads.
+  const help = statusHelp(String(status));
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset ring-subtle ${statusColor(status)}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset ring-subtle ${statusColor(status)} ${help ? "cursor-help" : ""}`}
+      title={help}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden />
       {label ?? statusLabel(String(status))}
+      {help && (
+        <Info size={12} className="shrink-0 opacity-60" aria-label={`What does ${statusLabel(String(status))} mean?`} />
+      )}
     </span>
   );
 }
@@ -478,7 +494,9 @@ export function EmptyState({
   onAction,
   action,
 }: {
-  message: string;
+  /** Widened to ReactNode so empty states can TEACH (title + explanation),
+   * not just report absence. */
+  message: React.ReactNode;
   icon?: React.ReactNode;
   actionLabel?: string;
   onAction?: () => void;
@@ -496,7 +514,7 @@ export function EmptyState({
       >
         {icon ?? <Inbox size={22} />}
       </span>
-      <p className="max-w-xs text-sm text-muted">{message}</p>
+      <div className="max-w-md text-sm text-muted">{message}</div>
       {actionLabel && onAction && (
         <button type="button" className={btnSecondary} onClick={onAction}>
           {actionLabel}

@@ -31,7 +31,7 @@ export function initBackground() {
     }
     geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( vertices, 3 ) );
 
-    const material = new THREE.PointsMaterial( { size: 4, color: 0x24bfe8, transparent: true, opacity: 0.6, sizeAttenuation: true } );
+    const material = new THREE.PointsMaterial( { size: 4, color: 0x3b82f6, transparent: true, opacity: 0.6, sizeAttenuation: true } );
     particles = new THREE.Points( geometry, material );
     scene.add( particles );
 
@@ -85,6 +85,6 @@ export function setInterviewMode(isInterview) {
     if (isInterview) {
         particles.material.color.setHex(0xf8b228);
     } else {
-        particles.material.color.setHex(0x24bfe8);
+        particles.material.color.setHex(0x3b82f6);
     }
 }

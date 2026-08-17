@@ -8,13 +8,19 @@ import { CalendarDays, ChevronDown, ChevronRight, Lock, LockOpen, Pencil, Plus, 
 import { crmDelete, crmGet, crmPost, crmPut, crmPatch } from "../api";
 import { HolidayNameField } from "../components/HolidayNameField";
 import { EditBranchWizard } from "../components/BranchWizardModal";
-import { crmNavigate, useCrmParams } from "../routerHooks";
+import { useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable, type Column } from "../components/DataTable";
 import {
-  ConfirmModal, EmptyState, ErrorBox, Field, KpiCard, Modal, Spinner, StatusBadge,
+  ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
+import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
+import {
+  BranchEmployeesTab, BranchInvoicesTab, BranchPosTab, BranchProjectsTab, BranchTimesheetsTab,
+} from "../components/BranchHubTabs";
+import { BranchRateCardEditor } from "./RateCards";
 
 const OBSERVANCE = ["Mandatory", "Optional"];
 const fmtDate = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString() : "—");
@@ -90,6 +96,27 @@ export function BranchPolicyPage() {
   const [form, setForm] = useState<Partial<BranchPolicy>>({});
   const [saving, setSaving] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const [tab, setTab] = useState("policy");
+
+  // Branch hub tabs (Aug 2026): everything under this customer's branch —
+  // Projects / Timesheets / Invoices / POs / Employees. Gating mirrors the
+  // Customers hub tabs (roles + Access Templates), so the branch drill-down
+  // never shows more than the sidebar/customer pages would.
+  const projRole = useHasRole("Sales", "Sales_Head");
+  const finRole = useHasRole("Finance", "Sales", "Sales_Head");
+  const tsRole = useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head");
+  const peRole = useHasRole("Sales", "Sales_Head", "HR", "Finance");
+  const canSeeProjects = useCanAct("projects", "view", projRole);
+  const canSeeTimesheets = useCanAct("timesheets", "view", tsRole);
+  const canSeeInvoices = useCanAct("invoices", "view", finRole);
+  const canSeePos = useCanAct("pos", "view", finRole);
+  const canSeeEmployees = useCanAct("project-employees", "view", peRole);
+  // CTC Slab tab (17 Aug 2026): the SAME BranchRateCardEditor the Banknote
+  // button opens on the Customers → Branches tab — one component, one API,
+  // so an edit made in either place is what the other shows. It re-fetches
+  // on every mount, so switching to this tab always shows the latest slab.
+  const rcRole = useHasRole("Sales", "Sales_Head");
+  const canSeeCtcSlab = useCanAct("rate-cards", "view", rcRole);
 
   const load = useCallback(async () => {
     try {
@@ -193,7 +220,7 @@ export function BranchPolicyPage() {
           ]} />
           <h1 className="mt-1 text-display text-lg font-bold text-primary">{data.branch_name}</h1>
         </div>
-        {edit
+        {tab === "policy" && (edit
           ? <div className="flex gap-2">
               <button type="button" className={btnSecondary} onClick={() => { setEdit(false); setForm(data); }}>Cancel</button>
               <button type="button" className={btnPrimary} onClick={savePolicy} disabled={saving}><Save size={14} /> Save</button>
@@ -201,11 +228,11 @@ export function BranchPolicyPage() {
           : <div className="flex gap-2">
               <button type="button" className={btnSecondary} onClick={() => setEdit(true)}>Edit policy</button>
               <button type="button" className={btnPrimary} onClick={() => setShowWizard(true)}><Pencil size={14} /> Edit branch</button>
-            </div>}
+            </div>)}
       </div>
       {err && <ErrorBox error={err} />}
 
-      {/* 1 — Branch Identity */}
+      {/* Branch Identity — always visible above the tabs */}
       <Block title="Branch Identity">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
           <Info label="Customer">{data.customer_name || data.customer_id}</Info>
@@ -217,37 +244,59 @@ export function BranchPolicyPage() {
         </div>
       </Block>
 
-      {/* 2 — Projects (drill-down to Project detail) */}
-      <Block title="Projects" hint="Click a project to open Overview / Team / Timesheet / PO & Invoices.">
-        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KpiCard label="Projects" value={String(data.linked_projects.length)} />
-        </div>
-        {data.linked_projects.length === 0
-          ? <EmptyState message="No projects for this branch yet." />
-          : (
-            <DataTable
-              columns={[
-                {
-                  key: "name",
-                  label: "Name",
-                  render: (p: LinkedProject) => (
-                    <span className="font-semibold text-brand-600 dark:text-brand-300">{p.name}</span>
-                  ),
-                },
-                {
-                  key: "status",
-                  label: "Status",
-                  render: (p: LinkedProject) => <StatusBadge status={p.status || "—"} />,
-                },
-              ]}
-              rows={data.linked_projects}
-              loading={false}
-              emptyMessage="No projects for this branch yet."
-              onRowClick={(p) => crmNavigate(`projects/${p.id}`)}
-            />
-          )}
-      </Block>
+      {/* Branch hub — everything under this customer's branch, tabbed */}
+      <Tabs
+        tabs={[
+          { key: "policy", label: "Policy & Billing" },
+          ...(canSeeProjects
+            ? [{ key: "projects", label: "Projects", count: data.linked_projects.length }]
+            : []),
+          ...(canSeeTimesheets ? [{ key: "timesheets", label: "Timesheets" }] : []),
+          ...(canSeeInvoices ? [{ key: "invoices", label: "Invoices" }] : []),
+          ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
+          ...(canSeeEmployees ? [{ key: "employees", label: "Employees Working" }] : []),
+          ...(canSeeCtcSlab ? [{ key: "ctc-slab", label: "CTC Slab" }] : []),
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
 
+      {tab === "projects" && canSeeProjects && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchProjectsTab projects={data.linked_projects} />
+        </div>
+      )}
+      {tab === "timesheets" && canSeeTimesheets && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchTimesheetsTab projects={data.linked_projects} />
+        </div>
+      )}
+      {tab === "invoices" && canSeeInvoices && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchInvoicesTab projects={data.linked_projects} />
+        </div>
+      )}
+      {tab === "pos" && canSeePos && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchPosTab customerId={data.customer_id} branchId={data.id} />
+        </div>
+      )}
+      {tab === "employees" && canSeeEmployees && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchEmployeesTab projects={data.linked_projects} />
+        </div>
+      )}
+      {tab === "ctc-slab" && canSeeCtcSlab && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchRateCardEditor
+            customerId={data.customer_id}
+            branchId={data.id}
+            branchName={data.branch_name}
+          />
+        </div>
+      )}
+
+      {tab === "policy" && (<>
       {/* 3 — Holiday Billing Policy */}
       <Block title="Holiday Billing Policy" hint="Per calendar year. Click a year to view its holidays.">
         <BranchHolidayYearsPanel branchId={Number(id)} notify={notify} />
@@ -310,6 +359,7 @@ export function BranchPolicyPage() {
             />
           : <DataTable columns={leaveCols} rows={data.leave_policies.map((p) => ({ ...p, id: p.id }))} loading={false} emptyMessage="No rows" />}
       </Block>
+      </>)}
       {showWizard && (
         <EditBranchWizard
           customerId={data.customer_id}

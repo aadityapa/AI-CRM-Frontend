@@ -47,34 +47,34 @@ describe("CRM Opportunities nav merge", () => {
 });
 
 describe("OpportunitiesWorkspace sub-tabs", () => {
-  it("Sales sees Pipeline, Requirements, and Applicants", () => {
+  it("Sales sees Pipeline T&M, Pipeline SOW, and Applicants", () => {
     expect(visibleOpportunitySubTabs(["Sales"])).toEqual([
       "pipeline",
-      "requirements",
+      "sow",
       "applicants",
     ]);
   });
 
-  it("Sales_Head sees all three sub-tabs", () => {
+  it("Sales_Head sees the same three sub-tabs", () => {
     expect(visibleOpportunitySubTabs(["Sales_Head"])).toEqual([
       "pipeline",
-      "requirements",
+      "sow",
       "applicants",
     ]);
   });
 
-  it("RMG sees only Requirements", () => {
-    expect(visibleOpportunitySubTabs(["RMG"])).toEqual(["requirements"]);
+  it("RMG sees no tab buttons (Requirements is deep-link only now)", () => {
+    expect(visibleOpportunitySubTabs(["RMG"])).toEqual([]);
   });
 
-  it("mounts Pipeline by default for Sales", () => {
+  it("mounts Pipeline T&M by default for Sales", () => {
     render(
       <CrmMeProvider value={me(["Sales"])}>
         <OpportunitiesWorkspace />
       </CrmMeProvider>,
     );
-    expect(screen.getByText("Pipeline")).toBeTruthy();
-    expect(screen.getByText("Requirements")).toBeTruthy();
+    expect(screen.getByText("Pipeline T&M")).toBeTruthy();
+    expect(screen.getByText("Pipeline SOW")).toBeTruthy();
     expect(screen.getByText("Applicants")).toBeTruthy();
     expect(screen.getByTestId("pipeline-view")).toBeTruthy();
   });

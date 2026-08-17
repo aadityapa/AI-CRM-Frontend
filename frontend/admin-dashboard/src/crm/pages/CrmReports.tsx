@@ -4,11 +4,14 @@ import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import { authFetch } from "../../api/client";
 import { qs, crmGet } from "../api";
+import { useHasRole, useMe } from "../CrmApp";
+import { crmTabVisibleFromMe } from "../useAccess";
+import { FinanceReportsPage } from "./FinanceReports";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { ErrorBox, Field, StatusBadge, Tabs, btnSecondary, inputCls, useToast } from "../components/ui";
 
-type TabKey = "opportunities" | "profiles" | "productivity";
+type TabKey = "opportunities" | "profiles" | "productivity" | "financial";
 
 const TABS = [
   { key: "opportunities", label: "Opportunities" },
@@ -16,11 +19,16 @@ const TABS = [
   { key: "productivity", label: "Recruiter Productivity" },
 ];
 
+/* Financial Reports lives INSIDE Reports since Aug 2026 (no standalone
+   sidebar page) — the tab appears only for Admin/Finance/Sales_Head,
+   mirroring the old sidebar entry's role rules + Access Templates. */
+const FINANCIAL_TAB = { key: "financial", label: "Financial Reports" };
+
 const TEAM_OPTIONS = ["Sales", "RMG", "TA"];
 const OPP_STATUS_OPTIONS = ["Active", "On Hold", "Rejected", "Closed", "Archived"];
 const PROFILE_STATUS_OPTIONS = ["Active", "Rejected", "Joined"];
 
-const CSV_FILENAMES: Record<TabKey, string> = {
+const CSV_FILENAMES: Record<Exclude<TabKey, "financial">, string> = {
   opportunities: "opportunities-report.csv",
   profiles: "candidate-profiles-report.csv",
   productivity: "recruiter-productivity-report.csv",
@@ -103,6 +111,13 @@ export function CrmReportsPage() {
   const [toast, showToast] = useToast();
   const [tab, setTab] = useState<TabKey>("opportunities");
 
+  // Financial Reports tab — mirrors the old sidebar entry's gating
+  // (Admin/Finance/Sales_Head + Access Templates).
+  const me = useMe();
+  const financialRoleOk = useHasRole("Finance", "Sales_Head");
+  const showFinancial = crmTabVisibleFromMe(me, "finance-reports", financialRoleOk, false);
+  const tabs = showFinancial ? [...TABS, FINANCIAL_TAB] : TABS;
+
   // Per-tab filters
   const [oppTeam, setOppTeam] = useState("");
   const [oppStatus, setOppStatus] = useState("");
@@ -125,6 +140,8 @@ export function CrmReportsPage() {
         : `/api/reports/recruiter-productivity${qs({ from: prodFrom, to: prodTo })}`;
 
   useEffect(() => {
+    // The Financial tab hosts its own component with its own data fetching.
+    if (tab === "financial") return;
     let alive = true;
     setLoading(true);
     setError("");
@@ -155,7 +172,7 @@ export function CrmReportsPage() {
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
-      a.download = CSV_FILENAMES[tab];
+      a.download = CSV_FILENAMES[tab as Exclude<TabKey, "financial">];
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -235,8 +252,10 @@ export function CrmReportsPage() {
           Pull operational reports and export them as CSV.
         </p>
       </div>
-      <Tabs tabs={TABS} active={tab} onChange={(k) => setTab(k as TabKey)} />
-      {error ? (
+      <Tabs tabs={tabs} active={tab} onChange={(k) => setTab(k as TabKey)} />
+      {tab === "financial" ? (
+        showFinancial && <FinanceReportsPage embedded />
+      ) : error ? (
         <ErrorBox error={error} onRetry={() => setTick((t) => t + 1)} />
       ) : (
         <DataTable
@@ -247,7 +266,7 @@ export function CrmReportsPage() {
           emptyMessage="No rows match the current filters"
         />
       )}
-      {!loading && !error && (
+      {tab !== "financial" && !loading && !error && (
         <div className="text-xs text-muted tabular-nums">{rows.length} row{rows.length === 1 ? "" : "s"}</div>
       )}
       {toast}

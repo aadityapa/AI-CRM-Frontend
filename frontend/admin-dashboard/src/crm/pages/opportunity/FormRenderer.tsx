@@ -53,6 +53,8 @@ export interface FieldRenderProps {
   onBlur: (f: FieldDef) => void;
   registerRef?: (key: string, el: HTMLElement | null) => void;
   onAddNew?: (kind: NonNullable<FieldDef["addNew"]>, f: FieldDef) => void;
+  /** Compact grid (merged Commercials step) — tighter gaps, same fields. */
+  dense?: boolean;
 }
 
 
@@ -208,8 +210,10 @@ function FieldControl({
       break;
     case "checkbox":
       control = (
-        <label className="flex items-center gap-2 text-sm text-secondary">
-          <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={!!value} disabled={disabled}
+        <label className={`flex items-center gap-2 text-sm text-secondary ${forceReadonly ? "cursor-default opacity-70" : ""}`}
+          title={forceReadonly ? "Set by the branch billing policy — edit it on the customer's branch" : undefined}>
+          <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={!!value}
+            disabled={disabled || forceReadonly}
             id={f.key} onChange={(e) => onChange(f, e.target.checked)}
             ref={(el) => registerRef?.(f.key, el)} />
           {f.label}
@@ -382,7 +386,13 @@ export function SectionFields(props: FieldRenderProps) {
     return null;
   }
   return (
-    <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+    <div
+      className={
+        props.dense
+          ? "grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2"
+          : "grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2"
+      }
+    >
       {fields.map((f) => (
         <div
           key={f.key}

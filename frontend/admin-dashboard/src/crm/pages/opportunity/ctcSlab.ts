@@ -30,6 +30,10 @@ export type BillingInputs = {
   /** Contractual cap from branch Billing Properties (Max Billable Hours / Month).
    *  Annual billing hours never exceed cap × 12. Blank/0 = no cap. */
   maxBillableHoursMonth?: unknown;
+  /** Paid leaves/year the CUSTOMER covers (the "APTIV rule", 0078): added
+   *  back to billing days even though leave itself is not billable —
+   *  365−104−10−24 = 227, +18 paid = 245. Capped at the leave deducted. */
+  paidLeaves?: unknown;
 };
 
 export type BillingBases = {
@@ -60,11 +64,16 @@ function isTrue(value: unknown): boolean {
  * Blank values count as zero; hours remain blank until Hours Per Day is supplied.
  */
 export function calculateBillingBases(inputs: BillingInputs): BillingBases {
+  const leaveDeducted = isTrue(inputs.leaveBillable) ? 0 : zeroWhenBlank(inputs.leave);
   const deductions =
     (isTrue(inputs.weekoffBillable) ? 0 : zeroWhenBlank(inputs.weekoff)) +
     (isTrue(inputs.holidaysBillable) ? 0 : zeroWhenBlank(inputs.holidays)) +
-    (isTrue(inputs.leaveBillable) ? 0 : zeroWhenBlank(inputs.leave));
-  const actualBillingDays = roundMoney(Math.max(0, 365 - deductions));
+    leaveDeducted;
+  // Paid leaves the customer bills come BACK into the base — capped at what
+  // leave deducted (when leave is fully billable nothing was deducted, so
+  // nothing returns; paying for more leaves than taken out is impossible).
+  const paidAddBack = Math.min(zeroWhenBlank(inputs.paidLeaves), leaveDeducted);
+  const actualBillingDays = roundMoney(Math.max(0, 365 - deductions + paidAddBack));
   const hoursPerDay = finiteOrNull(inputs.hoursPerDay);
   let actualBillingHours: number | "" =
     hoursPerDay === null ? "" : roundMoney(actualBillingDays * Math.max(0, hoursPerDay));
@@ -87,10 +96,11 @@ export function calculateCtcSlabRow(
   inputs: BillingInputs,
 ): CtcSlabRow {
   const bases = calculateBillingBases(inputs);
-  // Exp Max is derived: midpoint of Exp Min and Target Exp (legacy parity).
+  // Exp Max is derived: midpoint of Exp Min and Target Exp, ROUNDED UP to
+  // the whole year (Zoho parity, 14 Aug 2026): 7→8 shows 8, never 7.5.
   const expMin = finiteOrNull(row.exp_min);
   const targetExp = finiteOrNull(row.target_exp);
-  const expMax = expMin !== null && targetExp !== null ? roundMoney((expMin + targetExp) / 2) : "";
+  const expMax = expMin !== null && targetExp !== null ? Math.ceil((expMin + targetExp) / 2) : "";
   row = { ...row, exp_max: expMax };
   const rate = finiteOrNull(row.rate);
   const managementCostPct = zeroWhenBlank(row.management_cost_pct);
@@ -149,7 +159,20 @@ export function calculateCtcSlabRow(
   const annualRounded = roundMoney(annual);
   const monthly = roundMoney(annual / 12);
   const engineeringBudget = roundMoney(annual * (1 - managementCostPct / 100));
-  const approvedDenominator = 1 + hikePct / 100;
+  // APPRAISAL CYCLES (NEXUS parity, 14 Aug 2026): hikes that must fit inside
+  // the fixed budget before the candidate leaves the band — auto-derived as
+  // Target − Exp Min − 1 (the joining year needs no hike).
+  //   Approved CTC = Budget / (1 + hike%)^cycles
+  // 5→7 = 1 cycle (÷1.1); 6→7 = 0 (full budget); 7→10 = 2 (÷1.21). Legacy
+  // rows without exp/target fall back to the old single division (1 cycle).
+  const cyclesAuto =
+    expMin !== null && targetExp !== null
+      ? Math.max(0, Math.round(targetExp - expMin) - 1)
+      : null;
+  const cyclesRaw = finiteOrNull(row.appraisal_cycle);
+  const cycles = cyclesAuto ?? (cyclesRaw !== null ? Math.max(0, Math.round(cyclesRaw)) : 1);
+  if (cyclesAuto !== null) row = { ...row, appraisal_cycle: cyclesAuto };
+  const approvedDenominator = Math.pow(1 + hikePct / 100, cycles);
   const approvedCTC =
     approvedDenominator > 0 ? roundMoney(engineeringBudget / approvedDenominator) : "";
 

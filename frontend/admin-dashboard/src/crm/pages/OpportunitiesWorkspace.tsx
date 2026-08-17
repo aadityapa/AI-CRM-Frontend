@@ -7,7 +7,7 @@ import { OpportunitiesListPage } from "./Opportunities";
 import { RequirementsListPage } from "./Requirements";
 import { ProfilesListPage } from "./Profiles";
 
-export type OppWorkspaceTab = "pipeline" | "requirements" | "applicants";
+export type OppWorkspaceTab = "pipeline" | "sow" | "requirements" | "applicants";
 
 /** Roles that see the Pipeline (opportunities table) sub-tab. */
 export const PIPELINE_TAB_ROLES = ["Admin", "Sales", "Sales_Head"] as const;
@@ -32,8 +32,10 @@ export function visibleOpportunitySubTabs(roles: string[]): OppWorkspaceTab[] {
   const set = new Set(roles);
   const isAdmin = set.has("Admin") || set.has("CEO");
   const tabs: OppWorkspaceTab[] = [];
-  if (isAdmin || PIPELINE_TAB_ROLES.some((r) => set.has(r))) tabs.push("pipeline");
-  if (isAdmin || REQUIREMENTS_TAB_ROLES.some((r) => set.has(r))) tabs.push("requirements");
+  if (isAdmin || PIPELINE_TAB_ROLES.some((r) => set.has(r))) tabs.push("pipeline", "sow");
+  // "requirements" is NOT a visible tab any more (removed 14 Aug 2026 on
+  // request) — the panel still renders for deep links (?opp_tab=requirements
+  // and the legacy /requirements redirect), it just has no tab button.
   if (isAdmin || APPLICANTS_TAB_ROLES.some((r) => set.has(r))) tabs.push("applicants");
   return tabs;
 }
@@ -41,7 +43,7 @@ export function visibleOpportunitySubTabs(roles: string[]): OppWorkspaceTab[] {
 function readInitialTab(fallback: OppWorkspaceTab): OppWorkspaceTab {
   try {
     const v = new URLSearchParams(window.location.search).get("opp_tab");
-    if (v === "requirements" || v === "pipeline" || v === "applicants") return v;
+    if (v === "requirements" || v === "pipeline" || v === "sow" || v === "applicants") return v;
   } catch {
     /* ignore */
   }
@@ -59,27 +61,47 @@ export function OpportunitiesWorkspace({
 
   const tabs = useMemo(() => {
     const out: { key: OppWorkspaceTab; label: string }[] = [];
-    if (canPipeline) out.push({ key: "pipeline", label: "Pipeline" });
-    if (canRequirements) out.push({ key: "requirements", label: "Requirements" });
+    if (canPipeline) {
+      out.push({ key: "pipeline", label: "Pipeline T&M" });
+      out.push({ key: "sow", label: "Pipeline SOW" });
+    }
+    // Requirements tab removed from the strip (14 Aug 2026) — the panel still
+    // answers deep links so RMG/TA workflows and old bookmarks keep working.
     if (canApplicants) out.push({ key: "applicants", label: "Applicants" });
     return out;
-  }, [canPipeline, canRequirements, canApplicants]);
+  }, [canPipeline, canApplicants]);
 
   const defaultTab = preferTab && tabs.some((t) => t.key === preferTab)
     ? preferTab
     : (tabs[0]?.key || "pipeline");
 
   const [tab, setTab] = useState<OppWorkspaceTab>(() =>
-    preferTab && (preferTab === "pipeline" || preferTab === "requirements" || preferTab === "applicants")
+    preferTab && (preferTab === "pipeline" || preferTab === "sow"
+      || preferTab === "requirements" || preferTab === "applicants")
       ? preferTab
       : readInitialTab(defaultTab),
   );
 
   useEffect(() => {
+    // "requirements" stays valid without a tab button (deep links only).
+    if (tab === "requirements" && canRequirements) return;
     if (!tabs.some((t) => t.key === tab) && tabs[0]) setTab(tabs[0].key);
-  }, [tabs, tab]);
+  }, [tabs, tab, canRequirements]);
 
   if (!tabs.length) {
+    // RMG/TA-style users: no pipeline tab buttons, but Requirements is their
+    // whole workflow — render it directly instead of a dead end.
+    if (canRequirements) {
+      return (
+        <div>
+          <div className="mb-6">
+            <h1 className="text-display text-xl font-bold text-primary">Requirements</h1>
+            <p className="mt-1 text-sm text-muted">Sourcing pipeline across all customers.</p>
+          </div>
+          <RequirementsListPage />
+        </div>
+      );
+    }
     return (
       <div className="rounded-card border border-subtle bg-surface-1 px-4 py-6 text-sm text-muted">
         You do not have access to Opportunities.
@@ -104,7 +126,8 @@ export function OpportunitiesWorkspace({
         />
       </div>
 
-      {tab === "pipeline" && canPipeline ? <OpportunitiesListPage /> : null}
+      {tab === "pipeline" && canPipeline ? <OpportunitiesListPage typeFilter="T&M" /> : null}
+      {tab === "sow" && canPipeline ? <OpportunitiesListPage typeFilter="SOW" /> : null}
       {tab === "requirements" && canRequirements ? <RequirementsListPage /> : null}
       {tab === "applicants" && canApplicants ? (
         <ProfilesListPage

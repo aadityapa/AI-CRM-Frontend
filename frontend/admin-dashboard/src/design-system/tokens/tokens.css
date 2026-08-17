@@ -19,33 +19,33 @@
 
 :root {
   /* ------------------------------------------------------------------ BRAND
-     v3: one hue, INDIGO — anchored at #6366F1 (brand-500). Evolves the old
-     Stripe-blue ramp toward the 2026 AI-SaaS language (OpenAI/Vercel energy).
+     v4 "JobDiva enterprise": one hue, ROYAL BLUE — anchored at #3B82F6
+     (brand-500), the classic staffing-ATS corporate blue.
      brand-500 = accent (white text held to the 3.0:1 large-UI tier).
-     brand-600 = primary action surface (white text >= 4.5:1 — 6.29 measured).
+     brand-600 = primary action surface (white text >= 4.5:1).
      brand-700/800 = hover / active for solid brand buttons (white AA+). */
-  --brand-50:  #eef2ff;
-  --brand-100: #e0e7ff;
-  --brand-200: #c7d2fe;
-  --brand-300: #a5b4fc;
-  --brand-400: #818cf8;
-  --brand-500: #6366f1;
-  --brand-600: #4f46e5;
-  --brand-700: #4338ca;
-  --brand-800: #3730a3;
-  --brand-900: #312e81;
+  --brand-50:  #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-300: #93c5fd;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --brand-800: #1e40af;
+  --brand-900: #1e3a8a;
 
-  /* ----------------------------------------------------------------- VIOLET
-     Secondary hue (promoted from the old inline ai-gradient #8b5cf6). Used
-     ONLY as the far stop of brand gradients (buttons, nav pill, AI surfaces)
-     — never as a standalone action color. White text on violet-600/700/800
-     is AA body (5.71 / 7.11 / 8.97 measured). */
-  --violet-300: #c4b5fd;
-  --violet-400: #a78bfa;
-  --violet-500: #8b5cf6;
-  --violet-600: #7c3aed;
-  --violet-700: #6d28d9;
-  --violet-800: #5b21b6;
+  /* ----------------------------------------------------------------- "VIOLET"
+     Secondary hue slot (name kept for compatibility) — now DEEP NAVY, so all
+     brand gradients read royal-blue → navy (JobDiva chrome). Used ONLY as the
+     far stop of brand gradients (buttons, nav pill, AI surfaces) — never as a
+     standalone action color. White text on 600/700/800 is AA body. */
+  --violet-300: #94b8f0;
+  --violet-400: #5a8fdd;
+  --violet-500: #1d4ed8;
+  --violet-600: #1e40af;
+  --violet-700: #1e3a8a;
+  --violet-800: #172b66;
 
   /* ----------------------------------------------------------------- ACCENT
      Cyan — NEW in v3, used SPARINGLY: live indicators, AI highlights, the far
@@ -130,71 +130,71 @@
   --space-16: 64px;
 
   /* -------------------------------------------------------------- ELEVATION
-     Exactly FOUR levels — flat, raised, overlay, modal. Day = Dune Glow:
-     warm sand contact + ambient (rgba(146,104,21,…)) plus a 1px amber
+     Exactly FOUR levels — flat, raised, overlay, modal. Day = cool enterprise:
+     neutral navy-ink contact + ambient (rgba(15,30,64,…)) plus a 1px white
      top-edge highlight for shared .elev-* / KPI cards. Night (`.dark`)
-     deepens overlay/modal with violet ring + halo for cinematic form chrome. */
+     deepens overlay/modal with a blue ring + halo for cinematic form chrome. */
   --elev-flat: none;
   --elev-raised:
-    inset 0 1px 0 rgba(251, 191, 36, 0.22),
-    0 1px 2px rgba(146, 104, 21, 0.08),
-    0 1px 3px rgba(146, 104, 21, 0.10);
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 1px 2px rgba(15, 30, 64, 0.06),
+    0 1px 3px rgba(15, 30, 64, 0.08);
   --elev-overlay:
-    inset 0 1px 0 rgba(251, 191, 36, 0.18),
-    0 2px 6px rgba(146, 104, 21, 0.08),
-    0 12px 28px rgba(146, 104, 21, 0.10);
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 2px 6px rgba(15, 30, 64, 0.07),
+    0 12px 28px rgba(15, 30, 64, 0.10);
   --elev-modal:
-    inset 0 1px 0 rgba(251, 191, 36, 0.14),
-    0 8px 20px rgba(146, 104, 21, 0.10),
-    0 24px 56px rgba(146, 104, 21, 0.14);
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    0 8px 20px rgba(15, 30, 64, 0.10),
+    0 24px 56px rgba(15, 30, 64, 0.14);
 
   /* Modal / overlay backdrop — neutral-900 ink at 60%, blurred by --glass-blur.
      Tailwind `bg-backdrop`. */
   --backdrop: rgba(15, 23, 42, 0.60);
 
   /* -------------------------------------------------------- AURORA AMBIENCE
-     Day = Dune Glow warm sand mesh (amber/gold + faint rose-sand). Night
-     (`.dark`) keeps the indigo/violet/cyan moonlight mesh byte-identical.
+     Day = cool sky mesh (faint royal-blue / navy — JobDiva enterprise calm).
+     Night (`.dark`) keeps a blue/cyan moonlight mesh.
      `.fx-aurora` / `.moonlight` in src/styles/tokens.css consume these.
      Pure pre-composited gradients — NO backdrop-filter, NO blur().
      Per-glow alpha stays capped so verified surface contrast is preserved.
      -hero variants (login-like hero surfaces ONLY) may go slightly stronger. */
   --aurora-a: radial-gradient(
     110% 64% at 50% -12%,
-    rgba(255, 252, 244, 0.55) 0%,
-    rgba(253, 230, 138, 0.16) 38%,
-    rgba(245, 158, 11, 0) 68%
+    rgba(240, 246, 255, 0.55) 0%,
+    rgba(191, 219, 254, 0.18) 38%,
+    rgba(59, 130, 246, 0) 68%
   );
   --aurora-b: radial-gradient(
     80% 55% at 12% 0%,
-    rgba(245, 158, 11, 0.12) 0%,
-    rgba(245, 158, 11, 0) 60%
+    rgba(37, 99, 235, 0.07) 0%,
+    rgba(37, 99, 235, 0) 60%
   );
   --aurora-c: radial-gradient(
     70% 50% at 88% 8%,
-    rgba(217, 119, 6, 0.08) 0%,
-    rgba(217, 119, 6, 0) 60%
+    rgba(30, 64, 175, 0.05) 0%,
+    rgba(30, 64, 175, 0) 60%
   );
   --aurora-vignette: radial-gradient(
     135% 120% at 50% 38%,
-    rgba(87, 70, 38, 0) 60%,
-    rgba(87, 70, 38, 0.04) 100%
+    rgba(15, 30, 64, 0) 60%,
+    rgba(15, 30, 64, 0.04) 100%
   );
-  /* Hero variant — stronger dune mesh for login-like hero surfaces only. */
+  /* Hero variant — stronger blue mesh for login-like hero surfaces only. */
   --aurora-hero-a: radial-gradient(
     90% 70% at 30% -10%,
-    rgba(245, 158, 11, 0.16) 0%,
-    rgba(245, 158, 11, 0) 62%
+    rgba(37, 99, 235, 0.14) 0%,
+    rgba(37, 99, 235, 0) 62%
   );
   --aurora-hero-b: radial-gradient(
     70% 56% at 92% 8%,
-    rgba(251, 191, 36, 0.12) 0%,
-    rgba(251, 191, 36, 0) 60%
+    rgba(59, 130, 246, 0.11) 0%,
+    rgba(59, 130, 246, 0) 60%
   );
   --aurora-hero-c: radial-gradient(
     60% 48% at 70% 104%,
-    rgba(217, 119, 6, 0.09) 0%,
-    rgba(217, 119, 6, 0) 58%
+    rgba(30, 64, 175, 0.08) 0%,
+    rgba(30, 64, 175, 0) 58%
   );
   /* Legacy names — every existing var keeps working (aliases of aurora). */
   --moonlight-a: var(--aurora-a);
@@ -233,36 +233,36 @@
   --danger-solid-hover:  #c81e2c;
   --danger-solid-active: #ad1a26;
 
-  /* Night elevation — cinematic float for overlays/modals (violet ring +
+  /* Night elevation — cinematic float for overlays/modals (blue ring +
      halo + top-edge highlight). Day :root elev values stay untouched. */
   --elev-raised:  0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.30);
   --elev-overlay:
     0 4px 14px rgba(0, 0, 0, 0.50),
     0 16px 40px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(109, 93, 251, 0.08),
+    0 0 0 1px rgba(59, 130, 246, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --elev-modal:
     0 32px 96px rgba(0, 0, 0, 0.60),
     0 8px 28px rgba(0, 0, 0, 0.40),
-    0 0 44px rgba(109, 93, 251, 0.10),
-    0 0 0 1px rgba(109, 93, 251, 0.10),
+    0 0 44px rgba(59, 130, 246, 0.10),
+    0 0 0 1px rgba(59, 130, 246, 0.10),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* Deeper ink so the dark page (near-black already) still separates. */
   --backdrop: rgba(2, 6, 23, 0.65);
 
-  /* Aurora — indigo-led mesh (brand-400/500 pigments), violet secondary,
+  /* Aurora — blue-led mesh (brand-400/500 pigments), navy secondary,
      faint cyan tail, deep-ink vignette. Alphas stay ≤ 0.15 per glow. */
   --aurora-a: radial-gradient(
     110% 64% at 50% -12%,
-    rgba(129, 140, 248, 0.14) 0%,
-    rgba(99, 102, 241, 0.06) 40%,
-    rgba(99, 102, 241, 0) 70%
+    rgba(96, 165, 250, 0.14) 0%,
+    rgba(59, 130, 246, 0.06) 40%,
+    rgba(59, 130, 246, 0) 70%
   );
   --aurora-b: radial-gradient(
     64% 48% at 88% 102%,
-    rgba(139, 92, 246, 0.09) 0%,
-    rgba(139, 92, 246, 0) 62%
+    rgba(37, 99, 235, 0.09) 0%,
+    rgba(37, 99, 235, 0) 62%
   );
   --aurora-c: radial-gradient(
     46% 38% at 8% 92%,
@@ -276,13 +276,13 @@
   );
   --aurora-hero-a: radial-gradient(
     90% 70% at 30% -10%,
-    rgba(99, 102, 241, 0.22) 0%,
-    rgba(99, 102, 241, 0) 62%
+    rgba(59, 130, 246, 0.22) 0%,
+    rgba(59, 130, 246, 0) 62%
   );
   --aurora-hero-b: radial-gradient(
     70% 56% at 92% 8%,
-    rgba(139, 92, 246, 0.16) 0%,
-    rgba(139, 92, 246, 0) 60%
+    rgba(37, 99, 235, 0.16) 0%,
+    rgba(37, 99, 235, 0) 60%
   );
   --aurora-hero-c: radial-gradient(
     60% 48% at 70% 104%,

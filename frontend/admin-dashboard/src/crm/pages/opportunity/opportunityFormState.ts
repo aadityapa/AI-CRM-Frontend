@@ -64,7 +64,13 @@ export function isCoreKey(key: string): boolean {
 }
 
 export function emptyState(): OpportunityFormState {
-  return { core: {}, detailsByType: {}, ctcSlab: [], skills: [], activeType: "", isLoaded: false, version: 1 };
+  // onboarding_status is no longer a form field — every new opportunity
+  // starts at "Sales Validation" (the pipeline moves it on from there).
+  // hydrateFromServer overwrites this for edits, so existing values survive.
+  return {
+    core: { onboarding_status: "Sales Validation" },
+    detailsByType: {}, ctcSlab: [], skills: [], activeType: "", isLoaded: false, version: 1,
+  };
 }
 
 /** Switch the active type WITHOUT discarding any per-type detail values. */
@@ -239,7 +245,10 @@ function sanitizeCtcSlab(rows: Record<string, unknown>[]): Record<string, unknow
     .map((r) => {
       const out: Record<string, unknown> = {};
       for (const key of numericKeys) out[key] = toFloatOrNull(r[key]);
-      out.appraisal_cycle = emptyToNull(r.appraisal_cycle);
+      // Cycles are NUMBERS in the UI since the power-rule rework, but the API
+      // column is a string — stringify or pydantic v2 rejects the int.
+      const ac = emptyToNull(r.appraisal_cycle);
+      out.appraisal_cycle = ac === null || ac === undefined ? null : String(ac);
       return out;
     });
 }

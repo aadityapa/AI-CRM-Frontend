@@ -12,7 +12,7 @@
  * Branch → form caps: max_billable_hours_per_day → max_billable_hours_day (etc.)
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Briefcase, CircleDot, Clock3, FolderKanban, GitBranch, Timer } from "lucide-react";
+import { CircleDot, Clock3, FolderKanban, GitBranch, Timer } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { ConfirmModal, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
@@ -76,14 +76,6 @@ export type ProjectWizardInitial = {
   initial_no_billing_period?: string | null;
 };
 
-type OppOption = {
-  id: number;
-  title: string;
-  customer_id?: number;
-  customer_name?: string;
-  branch_id?: number | null;
-  branch_name?: string | null;
-};
 type CustomerOption = { id: number; name: string };
 type BranchOption = { id: number; branch_name: string };
 
@@ -138,7 +130,7 @@ const POLICY_SECTION_DEFS: SectionDef[] = [
 const CREATE_DETAILS_SECTION: SectionDef = {
   key: "projectDetails",
   title: "Project Details",
-  description: "Name, opportunity, customer, and branch for the new project.",
+  description: "Name, customer, and branch for the new project.",
   icon: <FolderKanban size={18} />,
 };
 
@@ -288,7 +280,6 @@ function leaveRowPayload(row: LeaveRow) {
 function ProjectWizard({
   mode,
   initial,
-  opps = [],
   customers = [],
   onClose,
   onSaved,
@@ -296,7 +287,6 @@ function ProjectWizard({
 }: {
   mode: "create" | "edit";
   initial?: ProjectWizardInitial;
-  opps?: OppOption[];
   customers?: CustomerOption[];
   onClose: () => void;
   onSaved: (project?: { id: number }) => void;
@@ -318,7 +308,6 @@ function ProjectWizard({
 
   const [name, setName] = useState(initial?.name || "");
   const [status, setStatus] = useState(initial?.status || "Active");
-  const [oppId, setOppId] = useState("");
   const [customerId, setCustomerId] = useState(
     initial?.customer_id != null ? String(initial.customer_id) : "",
   );
@@ -412,8 +401,8 @@ function ProjectWizard({
   const sectionStatus = (key: SectionDef["key"]): StepStatus => {
     switch (key) {
       case "projectDetails":
-        if (errors.name || errors.opp || errors.customer || errors.branch) return "error";
-        if (!(name.trim() && oppId && customerId)) return "empty";
+        if (errors.name || errors.customer || errors.branch) return "error";
+        if (!(name.trim() && customerId)) return "empty";
         if (branchRequired && !branchId) return "empty";
         return "complete";
       case "leavePolicy": {
@@ -447,7 +436,7 @@ function ProjectWizard({
         status: sectionStatus(s.key),
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [name, status, oppId, customerId, branchId, branches, pol, leaveRows, errors, sections],
+    [name, status, customerId, branchId, branches, pol, leaveRows, errors, sections],
   );
 
   const stepCompletePct = (() => {
@@ -479,7 +468,6 @@ function ProjectWizard({
     const key = sections[idx]?.key;
     if (key === "projectDetails") {
       if (!name.trim()) errs.name = "Name is required";
-      if (!oppId) errs.opp = "Opportunity is required";
       if (!customerId) errs.customer = "Customer is required";
       if (branchRequired && !branchId) errs.branch = "Branch is required";
     }
@@ -547,7 +535,6 @@ function ProjectWizard({
         // fields are only included when set so branch seeding still applies.
         const body: Record<string, unknown> = {
           name: name.trim(),
-          opportunity_id: Number(oppId),
           customer_id: Number(customerId),
           status,
           billing_cycle_start_day: policy.billing_cycle_start_day,
@@ -789,45 +776,6 @@ function ProjectWizard({
     }
   };
 
-  const onOppChange = (v: string) => {
-    setOppId(v);
-    const opp = opps.find((o) => String(o.id) === v);
-    const cid = opp?.customer_id != null ? String(opp.customer_id) : "";
-    setCustomerId(cid);
-    setBranchId("");
-    setBranches([]);
-    setErrors((e) => {
-      const next = { ...e };
-      delete next.opp;
-      delete next.customer;
-      delete next.branch;
-      return next;
-    });
-    if (!isCreate || !v || !cid) return;
-
-    void (async () => {
-      let preferred: number | null = opp?.branch_id != null ? Number(opp.branch_id) : null;
-      let branchName = opp?.branch_name ?? null;
-      if (preferred == null) {
-        try {
-          const res = await crmGet<{ branch_id?: number | null; branch_name?: string | null }>(
-            `/api/opportunities/${v}`,
-          );
-          const d = res.data;
-          if (d?.branch_id != null) preferred = Number(d.branch_id);
-          if (d?.branch_name) branchName = d.branch_name;
-        } catch {
-          preferred = null;
-        }
-      }
-      await loadBranchesForCustomer(cid, preferred, { prefill: true });
-      // If preferred was resolved after load with a name hint and selected, ensure prefill used name.
-      if (preferred != null && branchName) {
-        // loadBranchesForCustomer already prefills when preferred/single matches.
-      }
-    })();
-  };
-
   const title = isCreate
     ? "New Project"
     : `Edit Project — ${name || initial?.name || ""}`;
@@ -889,22 +837,6 @@ function ProjectWizard({
                 <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
                   {PROJECT_STATUSES.map((s) => (
                     <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                  ))}
-                </select>
-              </WizardField>
-              <WizardField
-                label="Opportunity"
-                required
-                error={errors.opp}
-                icon={<Briefcase size={15} className="text-muted" aria-hidden />}
-                filled={!!oppId}
-              >
-                <select className={inputCls} value={oppId} onChange={(e) => onOppChange(e.target.value)}>
-                  <option value="">Select opportunity…</option>
-                  {opps.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.title}{o.customer_name ? ` — ${o.customer_name}` : ""}
-                    </option>
                   ))}
                 </select>
               </WizardField>
@@ -1072,15 +1004,15 @@ export function EditProjectWizard({
   );
 }
 
-/** New Project — Project Details + same merged policy sections as Edit. */
+/** New Project — Project Details + same merged policy sections as Edit.
+ * No Opportunity field: projects stand on their own (internal work, direct
+ * engagements). Forcing a pick here fabricated sales lineage. */
 export function CreateProjectWizard({
-  opps,
   customers,
   onClose,
   onSaved,
   notify,
 }: {
-  opps: OppOption[];
   customers: CustomerOption[];
   onClose: () => void;
   onSaved: (project: { id: number }) => void;
@@ -1089,7 +1021,6 @@ export function CreateProjectWizard({
   return (
     <ProjectWizard
       mode="create"
-      opps={opps}
       customers={customers}
       onClose={onClose}
       onSaved={(p) => { if (p) onSaved(p); }}

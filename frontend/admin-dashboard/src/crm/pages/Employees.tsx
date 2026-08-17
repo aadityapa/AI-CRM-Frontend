@@ -12,7 +12,7 @@ import {
 import { crmDelete, crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
-import { useCanEditTab } from "../useAccess";
+import { useCanAct, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -22,6 +22,7 @@ import {
   btnPrimary, btnSecondary, ConfirmModal, EmptyState, ErrorBox, Field, inputCls,
   Modal, Spinner, StatusBadge, Tabs, useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import { WizardAurora } from "../components/WizardAurora";
 import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
 import {
@@ -517,7 +518,9 @@ const EMP_TABS = [
 ];
 
 export function EmployeesListPage() {
-  const canWrite = useHasRole("HR") && useCanEditTab("employees");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("HR");
+  const canWrite = useCanAct("employees", "edit", canWriteRole);
   const [tab, setTab] = useState("Active");
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
@@ -599,7 +602,7 @@ export function EmployeesListPage() {
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`employees/${r.id}`)}
         filters={filters}
-        emptyMessage={`No ${tab.toLowerCase()} employees`}
+        emptyMessage={<TeachingEmpty page="employees" />}
         rowActions={canWrite ? (r) => (
           <RowActions
             entity="employee"
@@ -646,7 +649,9 @@ const DETAIL_TABS = [
 
 export function EmployeeDetailPage() {
   const { id } = useCrmParams();
-  const canWrite = useHasRole("HR") && useCanEditTab("employees");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("HR");
+  const canWrite = useCanAct("employees", "edit", canWriteRole);
   const [emp, setEmp] = useState<any | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("profile");
@@ -958,6 +963,9 @@ function EmployeeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionPr
     aadhar: emp.aadhar || "",
   }));
   const { busy, save } = useEmployeeSave(emp.id, onSaved, showToast);
+  // Template field grant: CTC is the classic "HR sees it, others don't" field.
+  const acc = useCrmAccess("employees");
+  const canEditCtc = acc.canEditField("current_ctc");
 
   const submit = async () => {
     const v = d.draft!;
@@ -974,7 +982,7 @@ function EmployeeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionPr
       email: v.email.trim(),
       gender: v.gender || null,
       blood_group: v.blood_group || null,
-      current_ctc: num(v.current_ctc) ?? null,
+      ...(canEditCtc ? { current_ctc: num(v.current_ctc) ?? null } : {}),
       employee_code: sOrNull(v.employee_code),
       date_of_joining: v.date_of_joining || null,
       emergency_number: sOrNull(v.emergency_number),
@@ -1052,7 +1060,7 @@ function EmployeeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionPr
             </select>
           </Field>
           <Field label="Current CTC">
-            <input type="number" min={0} className={inputCls} value={d.draft!.current_ctc} onChange={(e) => d.patch({ current_ctc: e.target.value })} />
+            <input type="number" min={0} className={inputCls} value={d.draft!.current_ctc} disabled={!canEditCtc} onChange={(e) => d.patch({ current_ctc: e.target.value })} />
           </Field>
           <div>
             <span className="mb-1 block text-xs font-semibold text-secondary">CV</span>

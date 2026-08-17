@@ -12,6 +12,7 @@ import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
 import { useHasRole } from "../CrmApp";
+import { useCanAct, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -897,7 +898,18 @@ function OverviewTab({
   onReload: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
-  const canEdit = useHasRole("TA", "Sales", "RMG");
+  // Template-aware, per field: the template decides which of these inputs are
+  // live for templated users; untemplated users keep the role default. This is
+  // the "grey out what this role doesn't need" behaviour from the old system.
+  const roleOk = useHasRole("TA", "Sales", "RMG");
+  const acc = useCrmAccess("profiles");
+  const canEdit = useCanAct("profiles", "edit", roleOk);
+  const fld = (key: string) => canEdit && acc.canEditField(key);
+  const canEditCtc = fld("current_ctc");
+  const canEditExpected = fld("expected_ctc");
+  const canEditApproval = fld("approved_ctc");
+  const canEditOffers = fld("offers");
+  const canEditOnboarding = fld("submit_to_customer");
   const [currentCtc, setCurrentCtc] = useState(rupeesToLac(detail.current_ctc));
   const [expectedCtc, setExpectedCtc] = useState(rupeesToLac(detail.expected_ctc));
   const [approvalAmount, setApprovalAmount] = useState(rupeesToLac(detail.ctc_approval_amount));
@@ -942,16 +954,22 @@ function OverviewTab({
   const save = async () => {
     setSaving(true);
     try {
-      await crmPut(`/api/candidate-profiles/${detail.id}`, {
-        current_ctc: lacToRupees(currentCtc),
-        expected_ctc: lacToRupees(expectedCtc),
-        ctc_approval_amount: lacToRupees(approvalAmount),
-        commercial_approved: commercialApproved,
+      // Only send fields this user may edit — the server rejects the whole
+      // payload if it carries a view-only field, and rightly so.
+      const body: Record<string, unknown> = {};
+      if (canEditCtc) body.current_ctc = lacToRupees(currentCtc);
+      if (canEditExpected) body.expected_ctc = lacToRupees(expectedCtc);
+      if (canEditApproval) {
+        body.ctc_approval_amount = lacToRupees(approvalAmount);
+        body.commercial_approved = commercialApproved;
+      }
+      if (canEditOffers) {
         // Send null rather than "" so clearing a reference actually clears it.
-        offer_letter_reference: offerRef.trim() || null,
-        employee_ref: employeeRef.trim() || null,
-        customer_onboarding_date: onboardingDate || null,
-      });
+        body.offer_letter_reference = offerRef.trim() || null;
+        body.employee_ref = employeeRef.trim() || null;
+      }
+      if (canEditOnboarding) body.customer_onboarding_date = onboardingDate || null;
+      await crmPut(`/api/candidate-profiles/${detail.id}`, body);
       showToast("Profile updated");
       onReload();
     } catch (e: any) {
@@ -976,19 +994,19 @@ function OverviewTab({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Current CTC (Lac)">
           <input
-            type="number" min={0} step={0.01} placeholder="e.g. 22.00" className={inputCls} value={currentCtc} disabled={!canEdit}
+            type="number" min={0} step={0.01} placeholder="e.g. 22.00" className={inputCls} value={currentCtc} disabled={!canEditCtc}
             onChange={(e) => setCurrentCtc(e.target.value)}
           />
         </Field>
         <Field label="Expected CTC (Lac)">
           <input
-            type="number" min={0} step={0.01} placeholder="e.g. 25.00" className={inputCls} value={expectedCtc} disabled={!canEdit}
+            type="number" min={0} step={0.01} placeholder="e.g. 25.00" className={inputCls} value={expectedCtc} disabled={!canEditExpected}
             onChange={(e) => setExpectedCtc(e.target.value)}
           />
         </Field>
         <Field label="CTC Approval (Lac)">
           <input
-            type="number" min={0} step={0.01} placeholder="e.g. 26.00" className={inputCls} value={approvalAmount} disabled={!canEdit}
+            type="number" min={0} step={0.01} placeholder="e.g. 26.00" className={inputCls} value={approvalAmount} disabled={!canEditApproval}
             onChange={(e) => setApprovalAmount(e.target.value)}
           />
         </Field>
@@ -1026,21 +1044,21 @@ function OverviewTab({
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Offer Letter Reference">
             <input
-              className={inputCls} value={offerRef} disabled={!canEdit}
+              className={inputCls} value={offerRef} disabled={!canEditOffers}
               placeholder="e.g. KRX/OL/2026/0142"
               onChange={(e) => setOfferRef(e.target.value)}
             />
           </Field>
           <Field label="Employee Reference">
             <input
-              className={inputCls} value={employeeRef} disabled={!canEdit}
+              className={inputCls} value={employeeRef} disabled={!canEditOffers}
               placeholder="Issued after joining"
               onChange={(e) => setEmployeeRef(e.target.value)}
             />
           </Field>
           <Field label="Onboarding Date">
             <input
-              type="date" className={inputCls} value={onboardingDate} disabled={!canEdit}
+              type="date" className={inputCls} value={onboardingDate} disabled={!canEditOnboarding}
               onChange={(e) => setOnboardingDate(e.target.value)}
             />
           </Field>
@@ -1085,7 +1103,7 @@ function OverviewTab({
               type="checkbox"
               className="h-4 w-4 accent-brand-600"
               checked={commercialApproved}
-              disabled={!canEdit}
+              disabled={!canEditApproval}
               onChange={(e) => setCommercialApproved(e.target.checked)}
             />
             Commercial approved

@@ -2,8 +2,8 @@
  * assign CRM roles, activate/deactivate, and delete access. Users update their
  * own profile details from My Profile after first login. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyRound, Lock, Plus, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
-import { crmGet, crmPost, crmDelete, qs } from "../api";
+import { KeyRound, Lock, Plus, Send, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
+import { crmGet, crmPost, crmPut, crmDelete, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmNavigate } from "../routerHooks";
@@ -295,6 +295,373 @@ function RoleCheckboxes({
   onChange: (roles: string[]) => void;
 }) {
   return <RoleSelector selected={selected} onChange={onChange} />;
+}
+
+/* -------------------------------------------------------- invite user */
+
+/** Add someone by EMAIL alone. The account is created with roles and an
+ * unusable password; they receive an invitation mail with a set-password link
+ * and complete their own details after first login. This is the "new RMG
+ * joins" path: no password exchange, no profile typing by the admin. */
+function InviteUserModal({ onClose, onSaved, notify }: {
+  onClose: () => void; onSaved: () => void; notify: (m: string, k?: "ok" | "err") => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      setError("Enter a valid email address");
+      return;
+    }
+    if (!roles.length) {
+      setError("Pick at least one role");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      const res = await crmPost("/api/users/invite", {
+        email: email.trim().toLowerCase(),
+        full_name: fullName.trim(),
+        roles,
+      });
+      notify(res.message || "Invitation sent");
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      notify(err?.message || "Failed to send invitation", "err");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title="Invite user" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <p className="text-xs text-muted">
+          They receive an email with a set-password link (valid 7 days), sign in, and fill
+          their own profile. You only choose the address and the roles.
+        </p>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-secondary">Email <span className="text-danger">*</span></span>
+          <input className={inputCls} type="email" value={email} placeholder="new.person@karnex.in"
+            onChange={(e) => { setEmail(e.target.value); setError(""); }} />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-secondary">Full name (optional)</span>
+          <input className={inputCls} value={fullName} placeholder="Derived from the email if left blank"
+            onChange={(e) => setFullName(e.target.value)} />
+        </label>
+        <div>
+          <span className="mb-1 block text-xs font-semibold text-secondary">CRM roles <span className="text-danger">*</span></span>
+          <RoleCheckboxes selected={roles} onChange={(r) => { setRoles(r); setError(""); }} />
+        </div>
+        {error && <div className="text-xs font-semibold text-danger" role="alert">{error}</div>}
+        <div className="flex justify-end gap-2 border-t border-subtle pt-4">
+          <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className={btnPrimary} disabled={saving}>
+            {saving ? "Sending…" : "Send invitation"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------- email flows */
+
+type EmailFlow = {
+  event: string;
+  label: string;
+  description: string;
+  default_roles: string[];
+  roles: string[];
+  extra_emails: string[];
+  enabled: boolean;
+  subject_template?: string | null;
+  body_template?: string | null;
+  customized: boolean;
+};
+
+/** Which roles receive which application email — the reason nobody edits code
+ * when an approver changes. Each flow saves independently; Reset returns it
+ * to the code default. */
+function EmailFlowsPanel({ allRoles, flows, reload, notify }: {
+  allRoles: string[];
+  flows: EmailFlow[];
+  reload: () => void;
+  notify: (m: string, k?: "ok" | "err") => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, EmailFlow>>({});
+  const [busyEvent, setBusyEvent] = useState<string | null>(null);
+  useEffect(() => {
+    setDrafts(Object.fromEntries(flows.map((f) => [f.event, { ...f }])));
+  }, [flows]);
+
+  const setFlow = (event: string, patch: Partial<EmailFlow>) =>
+    setDrafts((d) => ({ ...d, [event]: { ...d[event], ...patch } }));
+
+  const save = async (event: string) => {
+    const f = drafts[event];
+    if (!f) return;
+    if (f.enabled && !f.roles.length && !f.extra_emails.length) {
+      notify("An enabled flow needs at least one role or extra email — or disable it", "err");
+      return;
+    }
+    setBusyEvent(event);
+    try {
+      const res = await crmPut(`/api/email-flows/${event}`, {
+        roles: f.roles, extra_emails: f.extra_emails, enabled: f.enabled,
+        subject_template: f.subject_template || null,
+        body_template: f.body_template || null,
+      });
+      notify(res.message || "Flow saved");
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to save flow", "err");
+    } finally {
+      setBusyEvent(null);
+    }
+  };
+
+  const reset = async (event: string) => {
+    setBusyEvent(event);
+    try {
+      await crmDelete(`/api/email-flows/${event}`);
+      notify("Flow reset to default");
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to reset flow", "err");
+    } finally {
+      setBusyEvent(null);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-card border border-subtle bg-surface-1">
+      <div className="border-b border-subtle px-4 py-3">
+        <div className="text-sm font-bold text-primary">Email flows</div>
+        <p className="mt-0.5 text-xs text-muted">
+          Who receives which application email. Change roles here when people join or leave —
+          no code changes. An unchecked flow's default is shown until you customise it.
+        </p>
+      </div>
+      <div className="divide-y divide-[color:var(--border-subtle)]">
+        {Object.values(drafts).map((f) => (
+          <div key={f.event} className="px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-sm font-semibold text-primary">{f.label}</span>
+                {f.customized && (
+                  <span className="ml-2 rounded-control bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    Customised
+                  </span>
+                )}
+                <div className="text-xs text-muted">{f.description}</div>
+              </div>
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-secondary">
+                <input type="checkbox" checked={f.enabled}
+                  onChange={(e) => setFlow(f.event, { enabled: e.target.checked })} />
+                Enabled
+              </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {allRoles.map((r) => (
+                <label key={r} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={f.roles.includes(r)}
+                    disabled={!f.enabled}
+                    onChange={(e) =>
+                      setFlow(f.event, {
+                        roles: e.target.checked ? [...f.roles, r] : f.roles.filter((x) => x !== r),
+                      })}
+                  />
+                  {r}
+                </label>
+              ))}
+            </div>
+            {/* Wording templates (0071): the email's TEXT becomes admin data.
+                Empty = the application's standard wording. Placeholders are
+                replaced when the mail is queued. */}
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-muted">
+                  Custom subject (blank = standard) — placeholders: {"{subject} {recipient} {company}"}
+                </span>
+                <input
+                  className={`${inputCls} text-xs`}
+                  value={f.subject_template || ""}
+                  disabled={!f.enabled}
+                  placeholder="e.g. [Karnex] {subject}"
+                  onChange={(e) => setFlow(f.event, { subject_template: e.target.value })}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-muted">
+                  Custom body (blank = standard) — {"{body}"} inserts the standard text
+                </span>
+                <textarea
+                  className={`${inputCls} min-h-[2.25rem] text-xs`}
+                  rows={2}
+                  value={f.body_template || ""}
+                  disabled={!f.enabled}
+                  placeholder={"Dear {recipient},\n\n{body}\n\nRegards, {company}"}
+                  onChange={(e) => setFlow(f.event, { body_template: e.target.value })}
+                />
+              </label>
+            </div>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <label className="block min-w-[16rem] flex-1">
+                <span className="mb-1 block text-[11px] font-semibold text-muted">
+                  Extra email addresses (comma separated — auditors, group mailboxes)
+                </span>
+                <input
+                  className={`${inputCls} text-xs`}
+                  value={f.extra_emails.join(", ")}
+                  disabled={!f.enabled}
+                  onChange={(e) =>
+                    setFlow(f.event, {
+                      extra_emails: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                    })}
+                />
+              </label>
+              <button type="button" className={`${btnPrimary} !px-3 !py-1.5 text-xs`}
+                disabled={busyEvent === f.event} onClick={() => save(f.event)}>
+                {busyEvent === f.event ? "Saving…" : "Save"}
+              </button>
+              {f.customized && (
+                <button type="button" className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
+                  disabled={busyEvent === f.event} onClick={() => reset(f.event)}>
+                  Reset to default
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------- action permissions */
+
+type ActionPerm = {
+  action: string;
+  label: string;
+  description: string;
+  default_roles: string[];
+  roles: string[];
+  customized: boolean;
+};
+
+/** WHO MAY DO each gated action (approve timesheets, manage POs…), the
+ * companion of Email Flows' who-hears-about-it. Admin/CEO always pass, so an
+ * empty selection means "admins only" — lock-out is impossible. */
+function ActionPermissionsPanel({ allRoles, actions, reload, notify }: {
+  allRoles: string[];
+  actions: ActionPerm[];
+  reload: () => void;
+  notify: (m: string, k?: "ok" | "err") => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, ActionPerm>>({});
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  useEffect(() => {
+    setDrafts(Object.fromEntries(actions.map((a) => [a.action, { ...a }])));
+  }, [actions]);
+
+  const setPerm = (action: string, roles: string[]) =>
+    setDrafts((d) => ({ ...d, [action]: { ...d[action], roles } }));
+
+  const save = async (action: string) => {
+    const a = drafts[action];
+    if (!a) return;
+    setBusyAction(action);
+    try {
+      const res = await crmPut(`/api/action-permissions/${action}`, { roles: a.roles });
+      notify(res.message || "Permission saved");
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to save permission", "err");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const reset = async (action: string) => {
+    setBusyAction(action);
+    try {
+      await crmDelete(`/api/action-permissions/${action}`);
+      notify("Permission reset to default");
+      reload();
+    } catch (e: any) {
+      notify(e?.message || "Failed to reset permission", "err");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-card border border-subtle bg-surface-1">
+      <div className="border-b border-subtle px-4 py-3">
+        <div className="text-sm font-bold text-primary">Action permissions</div>
+        <p className="mt-0.5 text-xs text-muted">
+          Who may perform each action. Admin/CEO always can — ticking nobody means admins only.
+          Changes apply within a minute, without a restart.
+        </p>
+      </div>
+      <div className="divide-y divide-[color:var(--border-subtle)]">
+        {Object.values(drafts).map((a) => (
+          <div key={a.action} className="px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-sm font-semibold text-primary">{a.label}</span>
+                {a.customized && (
+                  <span className="ml-2 rounded-control bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    Customised
+                  </span>
+                )}
+                <div className="text-xs text-muted">{a.description}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" className={`${btnPrimary} !px-3 !py-1.5 text-xs`}
+                  disabled={busyAction === a.action} onClick={() => save(a.action)}>
+                  {busyAction === a.action ? "Saving…" : "Save"}
+                </button>
+                {a.customized && (
+                  <button type="button" className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
+                    disabled={busyAction === a.action} onClick={() => reset(a.action)}>
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {allRoles.map((r) => (
+                <label key={r} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={a.roles.includes(r)}
+                    onChange={(e) =>
+                      setPerm(a.action, e.target.checked
+                        ? [...a.roles, r]
+                        : a.roles.filter((x) => x !== r))}
+                  />
+                  {r}
+                  {a.default_roles.includes(r) && <span className="text-[10px] text-muted">(default)</span>}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /* -------------------------------------------------------- create user */
@@ -771,7 +1138,47 @@ export function UsersAdminPage() {
   const [portalBusyId, setPortalBusyId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<AccessTemplateOpt[]>([]);
   const [templateBusyId, setTemplateBusyId] = useState<number | null>(null);
+  const [showInvite, setShowInvite] = useState(false);
+  const [flows, setFlows] = useState<EmailFlow[]>([]);
+  const [perms, setPerms] = useState<ActionPerm[]>([]);
+  const [allRoles, setAllRoles] = useState<string[]>([]);
+  const [pausedIds, setPausedIds] = useState<Set<number>>(new Set());
+  const [pauseBusyId, setPauseBusyId] = useState<number | null>(null);
   const dSearch = useDebounced(search);
+
+  const loadFlows = useCallback(async () => {
+    try {
+      const res = await crmGet<{ flows: EmailFlow[]; all_roles: string[]; paused_user_ids: number[] }>(
+        "/api/email-flows",
+      );
+      setFlows(res.data?.flows || []);
+      setAllRoles(res.data?.all_roles || []);
+      setPausedIds(new Set(res.data?.paused_user_ids || []));
+    } catch { /* flows panel simply stays empty pre-migration */ }
+    try {
+      const res = await crmGet<{ actions: ActionPerm[] }>("/api/action-permissions");
+      setPerms(res.data?.actions || []);
+    } catch { /* permissions panel stays empty pre-migration */ }
+  }, []);
+  useEffect(() => { if (isAdmin) loadFlows(); }, [isAdmin, loadFlows]);
+
+  const toggleEmailPause = async (u: UserRow) => {
+    const paused = pausedIds.has(u.id);
+    setPauseBusyId(u.id);
+    try {
+      const res = await crmPost(`/api/users/${u.id}/email-pause`, { paused: !paused });
+      notify(res.message || "Email preference updated");
+      setPausedIds((prev) => {
+        const next = new Set(prev);
+        if (paused) next.delete(u.id); else next.add(u.id);
+        return next;
+      });
+    } catch (e: any) {
+      notify(e?.message || "Failed to update email preference", "err");
+    } finally {
+      setPauseBusyId(null);
+    }
+  };
 
   useEffect(() => {
     crmGet<AccessTemplateOpt[]>("/api/access-templates")
@@ -894,6 +1301,29 @@ export function UsersAdminPage() {
     },
     { key: "is_active", label: "Status", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
     {
+      key: "_email",
+      label: "Email",
+      render: (r) => {
+        const paused = pausedIds.has(r.id);
+        return (
+          <button
+            type="button"
+            className={`inline-flex items-center rounded-control px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${
+              paused
+                ? "bg-warning-soft text-warning ring-warning/30"
+                : "bg-success-soft text-success ring-success/30"
+            } disabled:opacity-50`}
+            title={paused ? "Application email is paused for this user — click to resume"
+              : "Application email is on — click to pause (e.g. when they leave)"}
+            disabled={pauseBusyId === r.id}
+            onClick={(e) => { e.stopPropagation(); toggleEmailPause(r); }}
+          >
+            {pauseBusyId === r.id ? "…" : paused ? "Paused" : "On"}
+          </button>
+        );
+      },
+    },
+    {
       key: "_actions",
       label: "Actions",
       className: "text-right",
@@ -950,6 +1380,9 @@ export function UsersAdminPage() {
           <button className={btnSecondary} onClick={() => crmNavigate("access-templates")}>
             <ShieldCheck size={15} /> Access Templates
           </button>
+          <button className={btnSecondary} onClick={() => setShowInvite(true)}>
+            <Send size={15} /> Invite User
+          </button>
           <button className={btnPrimary} onClick={() => setShowCreate(true)}>
             <Plus size={15} /> Create User
           </button>
@@ -966,7 +1399,14 @@ export function UsersAdminPage() {
         onPage={setPage}
         emptyMessage="No users found"
       />
+      {perms.length > 0 && (
+        <ActionPermissionsPanel allRoles={allRoles} actions={perms} reload={loadFlows} notify={notify} />
+      )}
+      {flows.length > 0 && (
+        <EmailFlowsPanel allRoles={allRoles} flows={flows} reload={loadFlows} notify={notify} />
+      )}
       {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} onSaved={load} notify={notify} />}
+      {showInvite && <InviteUserModal onClose={() => setShowInvite(false)} onSaved={load} notify={notify} />}
       {rolesFor && <EditRolesModal user={rolesFor} onClose={() => setRolesFor(null)} onSaved={load} notify={notify} />}
       {tabAccessFor && <TabAccessModal user={tabAccessFor} onClose={() => setTabAccessFor(null)} onSaved={load} notify={notify} />}
       {toggleActiveFor && (

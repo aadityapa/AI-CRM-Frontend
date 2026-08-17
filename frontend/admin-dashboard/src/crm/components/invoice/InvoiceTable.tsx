@@ -6,9 +6,15 @@ import styles from "./taxInvoice.module.css";
 export function InvoiceTable({
   lines,
   defaultSac,
+  qtyLabel,
+  rateLabel,
 }: {
   lines: InvoiceLine[];
   defaultSac?: string | null;
+  /** Server-resolved from the PE billing unit; hourly wording is only the
+      fallback for payloads predating qty_label/rate_label. */
+  qtyLabel?: string | null;
+  rateLabel?: string | null;
 }) {
   const rows = padLines(lines, 5);
 
@@ -28,8 +34,8 @@ export function InvoiceTable({
             <th>S.No</th>
             <th>Description of Services</th>
             <th>SAC Code</th>
-            <th className={styles.num}>Billing Hours</th>
-            <th className={styles.num}>Rate/Hour</th>
+            <th className={styles.num}>{qtyLabel || "Billing Hours"}</th>
+            <th className={styles.num}>{rateLabel || "Rate/Hour"}</th>
             <th className={styles.num}>Amount</th>
           </tr>
         </thead>

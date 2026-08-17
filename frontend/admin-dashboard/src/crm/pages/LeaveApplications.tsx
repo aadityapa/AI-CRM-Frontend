@@ -15,6 +15,7 @@ import {
   ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
@@ -83,7 +84,9 @@ const iconBtn =
 
 /* ================================================================ LIST PAGE */
 
-export function LeaveApplicationsPage() {
+/** `embedded` — rendered as an inner tab (Timesheets → Leave Applications):
+ * the host page owns the h1, so the title is hidden. */
+export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const isHr = useHasRole("HR");
   const [tab, setTab] = useState("Pending");
   const [rows, setRows] = useState<LeaveApplication[]>([]);
@@ -222,7 +225,7 @@ export function LeaveApplicationsPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Leave Applications</h1>
+        {!embedded && <h1 className="text-display text-xl font-bold text-primary">Leave Applications</h1>}
         <button className={btnPrimary} onClick={() => setShowApply(true)}>
           <Plus size={15} /> Apply Leave
         </button>
@@ -239,7 +242,7 @@ export function LeaveApplicationsPage() {
           meta={meta}
           loading={loading}
           onPage={setPage}
-          emptyMessage="No leave applications found"
+          emptyMessage={<TeachingEmpty page="leave-applications" />}
           filters={
             <>
               <select

@@ -3,12 +3,12 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Eye, Lock, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
+import { Banknote, Building2, Eye, Lock, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole } from "../CrmApp";
-import { useCanEditTab, useCrmAccess } from "../useAccess";
+import { useCanAct, useCrmAccess } from "../useAccess";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -17,6 +17,9 @@ import { FileLink, FileUploadButton } from "../components/FileUpload";
 import { CustomerFormModal } from "../components/CustomerFormModal";
 import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
 import { EditBranchWizard } from "../components/BranchWizardModal";
+import { BranchRateCardEditor } from "./RateCards";
+const LazyNewOpportunityForm = React.lazy(() =>
+  import("./opportunity/NewOpportunityForm").then((m) => ({ default: m.NewOpportunityForm })));
 import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
 import {
   COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
@@ -25,6 +28,7 @@ import {
   ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
@@ -140,7 +144,10 @@ export { CustomerFormModal } from "../components/CustomerFormModal";
 /* ------------------------------------------------------------- list page */
 
 export function CustomersListPage() {
-  const canWrite = useHasRole("Sales", "Sales_Head") && useCanEditTab("customers");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Sales", "Sales_Head");
+  // Template-aware: for templated users the template alone decides.
+  const canWrite = useCanAct("customers", "edit", canWriteRole);
   const { isReadOnly } = useCrmAccess("customers");
   const [toast, notify] = useToast();
   const [rows, setRows] = useState<Customer[]>([]);
@@ -235,7 +242,7 @@ export function CustomersListPage() {
         onSort={(by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "asc" ? "desc" : "asc" }))}
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`customers/${r.id}`)}
-        emptyMessage="No customers found"
+        emptyMessage={<TeachingEmpty page="customers" />}
         filters={
           <>
             <select className={`${inputCls} !w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
@@ -739,6 +746,8 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
   const [wizardRow, setWizardRow] = useState<Branch | null>(null);
   const [policyRow, setPolicyRow] = useState<Branch | null>(null);
   const [deleting, setDeleting] = useState<Branch | null>(null);
+  // Rate Card modal — branch-wise experience-band pricing (0077).
+  const [rateCardFor, setRateCardFor] = useState<Branch | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isAdmin = useHasRole("Admin", "CEO");
   const [busy, setBusy] = useState(false);
@@ -816,6 +825,11 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
           <button className={iconBtn} title="Open branch" aria-label="Open branch"
             onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}`); }}>
             <Eye size={15} />
+          </button>
+          <button className={iconBtn} title="CTC Slab — experience-band rates for this branch"
+            aria-label="CTC Slab"
+            onClick={(e) => { e.stopPropagation(); setRateCardFor(r); }}>
+            <Banknote size={15} />
           </button>
           {canWrite && (
             <>
@@ -919,7 +933,17 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
         <ConfirmModal
           title="Delete branch"
           message={
-            deleteError ? (
+            isAdmin ? (
+              /* Admin/CEO policy: one confirmation, then delete. Force from the
+                 first click — no "try, fail, ask again" detour. Referencing
+                 records are detached, never deleted, so the warning explains
+                 that up front instead of appearing as an error afterwards. */
+              <>
+                Delete branch <b>{deleting.branch_name}</b>? Linked contacts,
+                opportunities, projects, POs and holidays are kept — they simply lose
+                their branch link and can be reassigned later. This cannot be undone.
+              </>
+            ) : deleteError ? (
               <>
                 Delete branch <b>{deleting.branch_name}</b> anyway? Linked contacts,
                 opportunities, projects, POs and holidays are kept — they simply lose
@@ -933,9 +957,23 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
           danger
           busy={busy}
           error={deleteError}
-          onConfirm={() => remove(!!deleteError)}
+          onConfirm={() => remove(isAdmin || !!deleteError)}
           onClose={() => { setDeleting(null); setDeleteError(null); }}
         />
+      )}
+
+      {rateCardFor && (
+        <Modal
+          title={`CTC Slab — ${rateCardFor.branch_name}`}
+          onClose={() => setRateCardFor(null)}
+          medium
+        >
+          <BranchRateCardEditor
+            customerId={customerId}
+            branchId={rateCardFor.id}
+            branchName={rateCardFor.branch_name}
+          />
+        </Modal>
       )}
     </div>
   );
@@ -954,6 +992,7 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
   const [form, setForm] = useState({
     min_hours_full_day: "8",
     min_hours_half_day: "4",
+    billable_leaves_per_year: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -967,6 +1006,8 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
         setForm({
           min_hours_full_day: String(res.data.min_hours_full_day ?? 8),
           min_hours_half_day: String(res.data.min_hours_half_day ?? 4),
+          billable_leaves_per_year: res.data.billable_leaves_per_year != null
+            ? String(res.data.billable_leaves_per_year) : "",
         });
       }
     } catch (e: any) {
@@ -994,6 +1035,8 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
       const res = await crmPut(`/api/customers/${customerId}/billing-policy`, {
         min_hours_full_day: full,
         min_hours_half_day: half,
+        billable_leaves_per_year: form.billable_leaves_per_year === ""
+          ? null : Number(form.billable_leaves_per_year),
       });
       setExists(true);
       notify(res.message || "Billing policy saved");
@@ -1035,6 +1078,20 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
             disabled={!canWrite}
             onChange={(e) => setForm((f) => ({ ...f, min_hours_half_day: e.target.value }))}
           />
+        </Field>
+        <Field label="Paid leaves / year (billed to customer)">
+          <input
+            type="number" step="0.5" min={0} max={366}
+            className={inputCls}
+            value={form.billable_leaves_per_year}
+            disabled={!canWrite}
+            placeholder="e.g. 18 — blank = none"
+            onChange={(e) => setForm((f) => ({ ...f, billable_leaves_per_year: e.target.value }))}
+          />
+          <p className="mt-1 text-[11px] text-muted">
+            Leave days this customer pays for even when leave is not billable — added
+            back to the CTC Slab&rsquo;s billing days (e.g. 365−104−10−24 = 227, +18 paid = 245).
+          </p>
         </Field>
       </div>
       {canWrite && (
@@ -1352,12 +1409,349 @@ function DocumentsTab({ customerId, canWrite, notify }: { customerId: number; ca
   );
 }
 
+/* ------------------------------------------------ customer hub tabs (Aug 2026)
+
+   The customer page is the HUB: everything that belongs to a customer is a
+   tab here — each one a customer-filtered view of the same data the global
+   sidebar pages show, linking into the SAME detail pages (an opportunity
+   opens with its own tabs; a project carries its Project Employees, and each
+   employee their Timesheets). The sidebar stays for cross-customer work. */
+
+type HubFilter = {
+  key: string;                 // query param name
+  label: string;
+  options: { value: string; label: string }[];   // "" = All (not sent)
+};
+
+export function CustomerScopedTable<T extends { id: number }>({
+  base, columns, onRow, emptyMessage, searchable = true, filters,
+}: {
+  base: string;                       // e.g. /api/opportunities?customer_id=7
+  columns: Column<T>[];
+  onRow?: (r: T) => void;
+  emptyMessage: string;
+  searchable?: boolean;
+  /** Server-side filters rendered as a select bar above the table. */
+  filters?: HubFilter[];
+}) {
+  const [rows, setRows] = useState<T[]>([]);
+  const [meta, setMeta] = useState<Meta | undefined>(undefined);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [filterVals, setFilterVals] = useState<Record<string, string>>({});
+  const filterQuery = (filters || [])
+    .map((f) => (filterVals[f.key] ? `&${f.key}=${encodeURIComponent(filterVals[f.key])}` : ""))
+    .join("");
+
+  // New scope or filter → page 1, or a stale page number returns nothing.
+  useEffect(() => { setPage(1); }, [base, filterQuery]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    const url = `${base}${filterQuery}&page=${page}&limit=20${
+      searchable && search ? `&search=${encodeURIComponent(search)}` : ""}`;
+    crmGet<T[]>(url)
+      .then((r) => { if (alive) { setRows(r.data || []); setMeta(r.meta); setError(""); } })
+      .catch((e: any) => { if (alive) setError(e?.message || "Failed to load"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [base, page, search, searchable, filterQuery]);
+
+  if (error) return <ErrorBox error={error} />;
+  return (
+    <div>
+      {(filters || []).length > 0 && (
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          {(filters || []).map((f) => (
+            <label key={f.key} className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-muted">{f.label}</span>
+              <select
+                className={`${inputCls} !w-auto min-w-[10rem] text-xs`}
+                value={filterVals[f.key] || ""}
+                onChange={(e) => setFilterVals((m) => ({ ...m, [f.key]: e.target.value }))}
+              >
+                <option value="">All</option>
+                {f.options.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+      {loading && rows.length === 0 ? (
+        <Spinner label="Loading…" />
+      ) : (
+        <DataTable<T>
+          columns={columns}
+          rows={rows}
+          meta={meta}
+          onPage={setPage}
+          {...(searchable ? { search, onSearch: (q: string) => { setSearch(q); setPage(1); } } : {})}
+          onRowClick={onRow}
+          emptyMessage={emptyMessage}
+        />
+      )}
+    </div>
+  );
+}
+
+const optsFromValues = (values: string[]) =>
+  values.map((v) => ({ value: v, label: v.replace(/_/g, " ") }));
+
+export const hubMoney = (v: unknown) =>
+  v === null || v === undefined ? "—" : `₹${Number(v).toLocaleString("en-IN")}`;
+
+function CustomerOpportunitiesTab({ customerId }: { customerId: number }) {
+  const canCreate = useCanAct("opportunities", "create", useHasRole("Sales", "Sales_Head"));
+  const [showCreate, setShowCreate] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const cols: Column<any>[] = [
+    { key: "opp_id", label: "ID", render: (r) => <span className="font-mono text-xs">{r.opp_id}</span> },
+    { key: "title", label: "Title", render: (r) => <span className="font-semibold text-primary">{r.title}</span> },
+    { key: "opp_type", label: "Type", render: (r) => String(r.opp_type || "—").replace(/_/g, " ") },
+    { key: "pipeline_stage", label: "Stage", render: (r) => <StatusBadge status={r.pipeline_stage} /> },
+    { key: "rfi_value", label: "RFI Value", align: "right", render: (r) => hubMoney(r.rfi_value) },
+    { key: "created_at", label: "Created", align: "right", render: (r) => fmtDate(r.created_at) },
+  ];
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted">
+          This customer&rsquo;s opportunities — open one for its full detail (details, applicants,
+          skill evaluation, activity log).
+        </p>
+        {canCreate && (
+          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
+            <Plus size={15} /> New Opportunity
+          </button>
+        )}
+      </div>
+      {showCreate && (
+        <React.Suspense fallback={<Spinner label="Opening the opportunity wizard…" />}>
+          <LazyNewOpportunityForm
+            initialCustomerId={customerId}
+            onClose={() => setShowCreate(false)}
+            onCreated={() => { setShowCreate(false); setReloadKey((k) => k + 1); }}
+          />
+        </React.Suspense>
+      )}
+      <CustomerScopedTable key={reloadKey}
+        base={`/api/opportunities?customer_id=${customerId}`} columns={cols}
+        onRow={(r) => crmNavigate(`opportunities/${r.id}`)}
+        filters={[
+          { key: "pipeline_stage", label: "Stage",
+            options: optsFromValues(["New", "Active", "On_Hold", "Closed_Won",
+              "Closed_Lost", "Closed_Partial", "Rejected", "Archived"]) },
+          { key: "approval_status", label: "Approval",
+            options: optsFromValues(["Approved", "Pending_Sales_Head_Approval", "Rejected"]) },
+        ]}
+        emptyMessage="No opportunities for this customer yet." />
+    </div>
+  );
+}
+
+function CustomerProjectsTab({ customerId }: { customerId: number }) {
+  const cols: Column<any>[] = [
+    { key: "name", label: "Project", render: (r) => <span className="font-semibold text-primary">{r.name}</span> },
+    { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
+    { key: "billing_frequency", label: "Billing", render: (r) => String(r.billing_frequency || "—") },
+    { key: "created_at", label: "Created", align: "right", render: (r) => fmtDate(r.created_at) },
+  ];
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted">
+          Open a project for its Project Employees — and each employee&rsquo;s monthly Timesheets.
+        </p>
+        <button className={btnPrimary} onClick={() => crmNavigate("projects?create=1")}>
+          <Plus size={15} /> New Project
+        </button>
+      </div>
+      <CustomerScopedTable base={`/api/projects?customer_id=${customerId}`} columns={cols}
+        onRow={(r) => crmNavigate(`projects/${r.id}`)}
+        filters={[
+          { key: "status", label: "Status",
+            options: optsFromValues(["Active", "Completed", "On_Hold"]) },
+        ]}
+        emptyMessage="No projects for this customer yet." />
+    </div>
+  );
+}
+
+export function ProjectEmployeesScopedTab({
+  base, hint,
+}: {
+  /** e.g. /api/projects/all-employees?customer_id=7 */
+  base: string;
+  hint?: string;
+}) {
+  const cols: Column<any>[] = [
+    { key: "employee_name", label: "Employee", render: (r) => (
+      <span className="font-semibold text-primary">{r.employee_name || "—"}</span>
+    ) },
+    { key: "project_name", label: "Project", render: (r) => r.project_name || "—" },
+    { key: "role_title", label: "Role", render: (r) => r.role_title || "—" },
+    { key: "onboarding_date", label: "Onboarded", render: (r) => fmtDate(r.onboarding_date) },
+    {
+      key: "is_active", label: "Status",
+      render: (r) => <StatusBadge status={r.is_exit ? "Exited" : r.is_active ? "Active" : "Inactive"} />,
+    },
+    { key: "po_number", label: "PO", render: (r) => r.po_number || "—" },
+  ];
+  return (
+    <div>
+      {hint && <p className="mb-3 text-xs text-muted">{hint}</p>}
+      <CustomerScopedTable base={base} columns={cols}
+        onRow={(r) => crmNavigate(`project-employees/${r.id}`)}
+        filters={[
+          { key: "status", label: "Status",
+            options: [
+              { value: "active", label: "Active" },
+              { value: "exited", label: "Exited" },
+            ] },
+        ]}
+        emptyMessage="No project employees here yet." />
+    </div>
+  );
+}
+
+function CustomerPosTab({ customerId }: { customerId: number }) {
+  const canWritePo = useHasRole("Finance", "Sales_Head");
+  const cols: Column<any>[] = [
+    { key: "po_number", label: "PO Number", render: (r) => <span className="font-semibold text-primary">{r.po_number}</span> },
+    { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
+    { key: "total_value", label: "Total", align: "right", render: (r) => hubMoney(r.total_value) },
+    { key: "consumed_value", label: "Consumed", align: "right", render: (r) => hubMoney(r.consumed_value) },
+    { key: "balance_value", label: "Balance", align: "right", render: (r) => hubMoney(r.balance_value) },
+    { key: "end_date", label: "Valid till", align: "right", render: (r) => fmtDate(r.end_date) },
+  ];
+  return (
+    <div>
+      {canWritePo && (
+        <div className="mb-3 flex justify-end">
+          <button className={btnPrimary} onClick={() => crmNavigate("pos?create=1")}>
+            <Plus size={15} /> New PO
+          </button>
+        </div>
+      )}
+    <CustomerScopedTable base={`/api/purchase-orders?customer_id=${customerId}`} columns={cols}
+      onRow={(r) => crmNavigate(`pos/${r.id}`)}
+      filters={[
+        { key: "status", label: "Status",
+          options: optsFromValues(["Active", "Exhausted", "Cancelled"]) },
+      ]}
+      emptyMessage="No purchase orders for this customer yet." />
+    </div>
+  );
+}
+
+function CustomerInvoicesTab({ customerId }: { customerId: number }) {
+  const canWriteInv = useHasRole("Finance", "Sales_Head");
+  const cols: Column<any>[] = [
+    { key: "invoice_number", label: "Invoice", render: (r) => <span className="font-semibold text-primary">{r.invoice_number}</span> },
+    { key: "invoice_date", label: "Date", render: (r) => fmtDate(r.invoice_date) },
+    { key: "grand_total", label: "Grand total", align: "right", render: (r) => hubMoney(r.grand_total) },
+    { key: "balance_amount", label: "Balance", align: "right", render: (r) => hubMoney(r.balance_amount) },
+    { key: "payment_status", label: "Payment", render: (r) => <StatusBadge status={r.payment_status} /> },
+  ];
+  return (
+    <div>
+      {canWriteInv && (
+        <div className="mb-3 flex justify-end">
+          <button className={btnPrimary} onClick={() => crmNavigate("invoices?create=1")}>
+            <Plus size={15} /> New Invoice
+          </button>
+        </div>
+      )}
+    <CustomerScopedTable base={`/api/invoices?customer_id=${customerId}`} columns={cols}
+      onRow={(r) => crmNavigate(`invoices/${r.id}`)}
+      filters={[
+        { key: "payment_status", label: "Payment",
+          options: optsFromValues(["Unpaid", "Partially_Paid", "Paid"]) },
+      ]}
+      emptyMessage="No invoices for this customer yet." />
+    </div>
+  );
+}
+
+function CustomerHolidaysTab({ customerId }: { customerId: number }) {
+  const canHolidayWrite = useHasRole("HR");
+  // Branch filter options — this customer's own branches.
+  const [branchOpts, setBranchOpts] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    crmGet<any[]>(`/api/customers/${customerId}/branches`)
+      .then((r) => {
+        if (alive) setBranchOpts((r.data || []).map((b: any) => ({
+          value: String(b.id), label: b.branch_name || `Branch #${b.id}`,
+        })));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [customerId]);
+  const thisYear = new Date().getFullYear();
+  const cols: Column<any>[] = [
+    { key: "name", label: "Holiday", render: (r) => <span className="font-semibold text-primary">{r.name}</span> },
+    { key: "holiday_date", label: "Date", render: (r) => fmtDate(r.holiday_date) },
+    { key: "holiday_type", label: "Type", render: (r) => String(r.holiday_type || "—").replace(/_/g, " ") },
+    { key: "observance", label: "Observance", render: (r) => String(r.observance || "—").replace(/_/g, " ") },
+    {
+      key: "is_active", label: "Status",
+      render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} />,
+    },
+  ];
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted">
+          Holidays scoped to this customer&rsquo;s branches — these drive timesheet day
+          generation and holiday billing.
+        </p>
+        {canHolidayWrite && (
+          <button className={btnPrimary} onClick={() => crmNavigate("holidays?create=1")}>
+            <Plus size={15} /> Add Holiday
+          </button>
+        )}
+      </div>
+      <CustomerScopedTable base={`/api/holidays?customer_id=${customerId}&status=all`} columns={cols}
+        searchable={false}
+        filters={[
+          { key: "year", label: "Year",
+            options: [thisYear - 1, thisYear, thisYear + 1].map((y) => ({
+              value: String(y), label: String(y) })) },
+          { key: "branch_id", label: "Branch", options: branchOpts },
+          { key: "holiday_type", label: "Type",
+            options: optsFromValues(["Mandatory", "Optional"]) },
+        ]}
+        emptyMessage="No customer-specific holidays — the global calendar applies." />
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ detail page */
 
 export function CustomerDetailPage() {
   const params = useCrmParams();
   const customerId = Number(params.id);
-  const canWrite = useHasRole("Sales", "Sales_Head") && useCanEditTab("customers");
+  /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
+  const canWriteRole = useHasRole("Sales", "Sales_Head");
+  // Template-aware: for templated users the template alone decides.
+  const canWrite = useCanAct("customers", "edit", canWriteRole);
+  // Hub tabs (Aug 2026): each mirrors its sidebar page's visibility rules —
+  // a tab you couldn't open globally doesn't appear here either.
+  const oppRole = useHasRole("Sales", "Sales_Head", "RMG", "TA");
+  const projRole = useHasRole("Sales", "Sales_Head");
+  const finRole = useHasRole("Finance", "Sales", "Sales_Head");
+  const canSeeOpps = useCanAct("opportunities", "view", oppRole);
+  const canSeeProjects = useCanAct("projects", "view", projRole);
+  const peRole = useHasRole("Sales", "Sales_Head", "HR", "Finance");
+  const canSeePEs = useCanAct("project-employees", "view", peRole);
+  const canSeePos = useCanAct("pos", "view", finRole);
+  const canSeeInvoices = useCanAct("invoices", "view", finRole);
   const [toast, notify] = useToast();
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1413,6 +1807,13 @@ export function CustomerDetailPage() {
           { key: "billing", label: "Default Billing Policy" },
           { key: "contacts", label: "Contacts" },
           { key: "documents", label: "Documents" },
+          { key: "holidays", label: "Holidays" },
+          ...(canSeeOpps ? [{ key: "opportunities", label: "Opportunities" }] : []),
+          ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
+          ...(canSeeInvoices ? [{ key: "invoices", label: "Invoices" }] : []),
+          // Projects + Project Employees sit AFTER Invoices (14 Aug 2026).
+          ...(canSeeProjects ? [{ key: "projects", label: "Projects" }] : []),
+          ...(canSeePEs ? [{ key: "project-employees", label: "Project Employees" }] : []),
         ]}
         active={tab}
         onChange={setTab}
@@ -1422,6 +1823,24 @@ export function CustomerDetailPage() {
         {tab === "billing" && <BillingPolicyTab customerId={customerId} canWrite={canWrite} notify={notify} />}
         {tab === "contacts" && <ContactsTab customerId={customerId} canWrite={canWrite} notify={notify} />}
         {tab === "documents" && <DocumentsTab customerId={customerId} canWrite={canWrite} notify={notify} />}
+        {tab === "holidays" && <CustomerHolidaysTab customerId={customerId} />}
+        {tab === "opportunities" && canSeeOpps && <CustomerOpportunitiesTab customerId={customerId} />}
+        {tab === "projects" && canSeeProjects && <CustomerProjectsTab customerId={customerId} />}
+        {tab === "project-employees" && canSeePEs && (
+          <div>
+            <div className="mb-3 flex justify-end">
+              <button className={btnPrimary} onClick={() => crmNavigate("project-employees?create=1")}>
+                <Plus size={15} /> Map Employee
+              </button>
+            </div>
+            <ProjectEmployeesScopedTab
+              base={`/api/projects/all-employees?customer_id=${customerId}`}
+              hint="Everyone mapped to this customer's projects — open one for rates, leave and timesheets."
+            />
+          </div>
+        )}
+        {tab === "pos" && canSeePos && <CustomerPosTab customerId={customerId} />}
+        {tab === "invoices" && canSeeInvoices && <CustomerInvoicesTab customerId={customerId} />}
       </div>
 
       {showEdit && (
