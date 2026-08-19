@@ -68,7 +68,7 @@ const lockedInputCls = wizLockedCls;
 const SELECT_PLACEHOLDER = "— Select —";
 
 const CORE_FIELD_KEYS = new Set([
-  "customer_id", "branch_id", "contact_person_id", "hiring_manager_id",
+  "opp_id", "customer_id", "branch_id", "contact_person_id", "hiring_manager_id",
   "title", "rfi_received_date", "opp_type", "rfi_value",
   "onboarded_count", "onboarding_status",
 ]);
@@ -144,11 +144,17 @@ function FieldControl({
   }`;
 
   if (forceReadonlyKeys?.includes(f.key) && f.type !== "checkbox") {
+    // Locked SELECTS must show the option's label, not its raw id — a hub-
+    // locked Customer reads "HARMAN", never "12" (18 Aug 2026).
+    const lockedDisplay = f.type === "select"
+      ? (optionsFor(f, options).find((o) => String(o.value) === String(displayValue ?? ""))?.label
+         ?? String(displayValue ?? ""))
+      : String(displayValue ?? "");
     control = (
       <input
         {...common}
         readOnly
-        value={String(displayValue ?? "")}
+        value={lockedDisplay}
         placeholder={f.helperText || "Auto-calculated"}
         className={`${lockedInputCls} pl-9`}
       />
@@ -200,6 +206,46 @@ function FieldControl({
         );
       }
       break;
+    case "multiselect": {
+      /* Array of option values (18 Aug 2026): chips for chosen entries + a
+       * select that appends. Legacy single-string values render as one chip,
+       * so pre-multiselect opportunities keep working untouched. */
+      const chosen: string[] = Array.isArray(value)
+        ? value.map(String)
+        : strValue ? [strValue] : [];
+      const opts = optionsFor(f, options).filter((o) => !chosen.includes(String(o.value)));
+      control = (
+        <div>
+          {chosen.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {chosen.map((c) => (
+                <span key={c}
+                  className="inline-flex items-center gap-1 rounded-full bg-brand-600/10 px-2.5 py-0.5 text-xs font-semibold text-brand-600 dark:text-brand-300">
+                  {c}
+                  {!disabled && (
+                    <button type="button" aria-label={`Remove ${c}`}
+                      className="text-muted hover:text-danger"
+                      onClick={() => onChange(f, chosen.filter((x) => x !== c))}>
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          <select {...common} value=""
+            onChange={(e) => {
+              if (e.target.value) onChange(f, [...chosen, e.target.value]);
+            }}>
+            <option value="">{chosen.length ? "+ Add another location…" : SELECT_PLACEHOLDER}</option>
+            {opts.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+      break;
+    }
     case "textarea":
     case "richtext":
       control = (

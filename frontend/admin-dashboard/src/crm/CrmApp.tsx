@@ -7,7 +7,7 @@ import React, { Suspense, createContext, useCallback, useContext, useEffect, use
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  Bell, Menu, PanelLeftClose, PanelLeftOpen, X,
+  Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
 } from "lucide-react";
 import { crmGet, crmPost, CrmApiError } from "./api";
 import { CrmLink, CrmRouter, crmNavigate, readCrmPath } from "./routerHooks";
@@ -111,11 +111,66 @@ export function crmNavItemActive(path: string, itemPath: string): boolean {
 
 const NAV = CRM_NAV;
 
+/* ---------------- notification chime (18 Aug 2026) ----------------
+ * Synthesised with WebAudio instead of shipping an audio file: no asset to
+ * download, no format juggling, and nothing to fail silently on a LAN with a
+ * cold cache. Two soft notes, ~0.2s total, with an envelope so it never
+ * clicks. Browsers block audio until the user has interacted with the page —
+ * logging in counts, so by the time a notification lands we're allowed.
+ * Wrapped in try/catch: a browser that refuses audio must never break the
+ * notification itself. */
+const SOUND_KEY = "crm.notify.sound";
+const soundEnabled = () => {
+  try { return window.localStorage.getItem(SOUND_KEY) !== "off"; } catch { return true; }
+};
+
+let _audioCtx: AudioContext | null = null;
+function playChime(soft = false) {
+  if (!soundEnabled()) return;
+  try {
+    const Ctor = window.AudioContext
+      || (window as any).webkitAudioContext as typeof AudioContext | undefined;
+    if (!Ctor) return;
+    _audioCtx = _audioCtx || new Ctor();
+    const ctx = _audioCtx;
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    const peak = soft ? 0.05 : 0.12;
+    [[880, 0], [1174.7, 0.09]].forEach(([freq, at]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + at);
+      gain.gain.exponentialRampToValueAtTime(peak, now + at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + at);
+      osc.stop(now + at + 0.16);
+    });
+  } catch { /* audio is a nicety, never a requirement */ }
+}
+
+type Popup = { key: string; title: string; message?: string; link?: string; summary?: boolean };
+
 function NotificationsBell() {
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [unread, setUnread] = useState(0);
+  /* On-screen alerts: the badge alone is easy to miss on a second monitor. */
+  const [popups, setPopups] = useState<Popup[]>([]);
+  const [muted, setMuted] = useState(() => !soundEnabled());
+  const seenRef = useRef<Set<number>>(new Set());
+  const firstLoadRef = useRef(true);
+
+  const dismissPopup = useCallback((key: string) => {
+    setPopups((p) => p.filter((x) => x.key !== key));
+  }, []);
+  const pushPopup = useCallback((p: Popup) => {
+    setPopups((prev) => [...prev.filter((x) => x.key !== p.key), p].slice(-3));
+    window.setTimeout(() => dismissPopup(p.key), p.summary ? 12_000 : 9_000);
+  }, [dismissPopup]);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null);
@@ -127,15 +182,58 @@ function NotificationsBell() {
         (n: any) => n && n.id != null && String(n.title || "").trim() !== "",
       );
       setItems(rows);
-      setUnread((res.meta as any)?.unread_count ?? 0);
+      const unreadCount = (res.meta as any)?.unread_count ?? 0;
+      setUnread(unreadCount);
+
+      // What arrived since the last poll? Ids are remembered so a notification
+      // announces itself exactly once, even though the list is re-fetched
+      // every minute.
+      const fresh = rows.filter((n: any) => !n.is_read && !seenRef.current.has(n.id));
+      rows.forEach((n: any) => seenRef.current.add(n.id));
+
+      if (firstLoadRef.current) {
+        // Just logged in (or reloaded): one summary card, one soft chime —
+        // never a burst of one card per pending item.
+        firstLoadRef.current = false;
+        if (unreadCount > 0) {
+          pushPopup({
+            key: "summary",
+            title: `${unreadCount} unread notification${unreadCount > 1 ? "s" : ""}`,
+            message: rows.find((n: any) => !n.is_read)?.title || "Open the bell to review them.",
+            summary: true,
+          });
+          playChime(true);
+        }
+        return;
+      }
+
+      if (fresh.length) {
+        playChime();
+        // Cap the stack: three cards is a nudge, ten is a wall.
+        fresh.slice(0, 3).forEach((n: any) => pushPopup({
+          key: String(n.id),
+          title: String(n.title || "Notification"),
+          message: n.message ? String(n.message) : undefined,
+          link: n.link ? String(n.link) : undefined,
+        }));
+      }
     } catch {
       /* CRM may be unconfigured */
     }
   };
   useEffect(() => {
     load();
-    const t = window.setInterval(load, 60_000);
-    return () => window.clearInterval(t);
+    // 30s (was 60s) now that arrivals announce themselves on screen — and an
+    // immediate poll when the user comes back to the tab, so switching back
+    // from email shows what landed while they were away.
+    const t = window.setInterval(load, 30_000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const placePanel = useCallback(() => {
@@ -228,13 +326,30 @@ function NotificationsBell() {
       >
         <div className="flex shrink-0 items-center justify-between border-b border-subtle bg-surface-2 px-4 py-2.5">
           <span className="text-sm font-bold text-primary">Notifications</span>
-          <button
-            type="button"
-            className={`rounded-control text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
-            onClick={async () => { await crmPost("/api/notifications/read-all").catch(() => {}); load(); }}
-          >
-            Mark all read
-          </button>
+          <span className="flex items-center gap-3">
+            {/* A sound nobody can switch off becomes a complaint. */}
+            <button
+              type="button"
+              aria-label={muted ? "Turn notification sound on" : "Turn notification sound off"}
+              title={muted ? "Sound off" : "Sound on"}
+              className={`rounded-control p-1 text-muted hover:text-primary ${focusRing}`}
+              onClick={() => {
+                const next = !muted;
+                setMuted(next);
+                try { window.localStorage.setItem(SOUND_KEY, next ? "off" : "on"); } catch { /* ignore */ }
+                if (!next) playChime(true);   // preview when switching on
+              }}
+            >
+              {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+            </button>
+            <button
+              type="button"
+              className={`rounded-control text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
+              onClick={async () => { await crmPost("/api/notifications/read-all").catch(() => {}); load(); }}
+            >
+              Mark all read
+            </button>
+          </span>
         </div>
         <div className="max-h-80 overflow-y-auto overscroll-contain bg-surface-2">
           {items.length === 0 && (
@@ -271,6 +386,58 @@ function NotificationsBell() {
     )
     : null;
 
+  /* On-screen alert stack — portaled to body, top-right under the header.
+   * z-[90] sits above the page but below modals (z-[200]), so a dialog is
+   * never covered by a toast. Clicking one opens the record it is about. */
+  const alerts = typeof document !== "undefined" && popups.length > 0
+    ? createPortal(
+      <div className="fixed right-4 top-20 z-[90] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+        <AnimatePresence initial={false}>
+          {popups.map((p) => (
+            <motion.div
+              key={p.key}
+              role="status"
+              initial={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.97 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={reduce ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.97 }}
+              transition={{ duration: MOTION_DUR.base, ease: MOTION_EASE_OUT }}
+              className="elev-3 overflow-hidden rounded-panel border border-subtle bg-surface-1"
+            >
+              <div className="flex items-start gap-2 px-3.5 py-3">
+                <Bell size={15} className="mt-0.5 shrink-0 text-brand-600 dark:text-brand-300" />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => {
+                    dismissPopup(p.key);
+                    if (p.summary) { setOpen(true); return; }
+                    const row = items.find((n) => String(n.id) === p.key);
+                    if (row) void openNotification(row);
+                  }}
+                >
+                  <div className="text-sm font-semibold text-primary">{p.title}</div>
+                  {p.message && <div className="mt-0.5 text-xs text-muted line-clamp-2">{p.message}</div>}
+                  <div className="mt-1 text-[11px] font-semibold text-brand-600 dark:text-brand-300">
+                    {p.summary ? "Open notifications →" : "Open →"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Dismiss"
+                  className={`shrink-0 rounded-control p-1 text-muted hover:bg-surface-2 hover:text-primary ${focusRing}`}
+                  onClick={() => dismissPopup(p.key)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>,
+      document.body,
+    )
+    : null;
+
   return (
     <div className="relative" ref={rootRef}>
       <button
@@ -295,6 +462,7 @@ function NotificationsBell() {
         )}
       </button>
       {panel}
+      {alerts}
     </div>
   );
 }
@@ -427,8 +595,20 @@ export default function CrmApp() {
   }, []);
 
   useEffect(() => {
+    // Live access refresh (17 Aug 2026): when an admin changes a user's roles
+    // or Access Template, the user used to need a full re-login to see it.
+    // Now /api/me is silently refetched every 5 minutes and on window focus
+    // (throttled); state updates ONLY when the payload actually changed, so
+    // nothing re-renders in the normal case. Transient refresh failures are
+    // ignored — a background hiccup must never log anyone out.
+    let last = "";
+    let lastAt = 0;
     crmGet<Me>("/api/me")
-      .then((r) => setMe(r.data))
+      .then((r) => {
+        last = JSON.stringify(r.data);
+        lastAt = Date.now();
+        setMe(r.data);
+      })
       .catch((e) => {
         // 401 = session missing/expired — send user to login instead of a dead CRM shell.
         if (e instanceof CrmApiError && e.status === 401) {
@@ -442,6 +622,23 @@ export default function CrmApp() {
         }
         setError(msg || "Failed to load CRM profile");
       });
+    const refresh = () => {
+      if (Date.now() - lastAt < 30_000) return;
+      lastAt = Date.now();
+      crmGet<Me>("/api/me")
+        .then((r) => {
+          const next = JSON.stringify(r.data);
+          if (last && next !== last) setMe(r.data);
+          last = next;
+        })
+        .catch(() => {});
+    };
+    const iv = window.setInterval(refresh, 5 * 60_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(iv);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   // Mobile drawer: close on navigation and on Escape.

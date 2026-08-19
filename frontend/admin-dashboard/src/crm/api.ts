@@ -14,6 +14,40 @@ export class CrmApiError extends Error {
   }
 }
 
+/* Humanized validation errors (17 Aug 2026): users used to read raw pydantic
+ * text like "details.tm_billing_rate: value is not a valid decimal". Field
+ * keys become Title Case words and the common pydantic messages become plain
+ * sentences. Unknown messages pass through untouched — never hide detail. */
+const PYDANTIC_MSGS: [RegExp, string][] = [
+  [/field required|missing/i, "is required"],
+  [/value is not a valid (decimal|float|number)|invalid number|valid number/i, "must be a number"],
+  [/value is not a valid integer|valid integer/i, "must be a whole number"],
+  [/invalid datetime|valid datetime|invalid date|valid date/i, "must be a valid date"],
+  [/value is not a valid email|valid email/i, "must be a valid email address"],
+  [/string should have at least (\d+) character/i, "must be at least $1 characters"],
+  [/ensure this value is greater than or equal to (\S+)/i, "must be $1 or more"],
+  [/input should be greater than or equal to (\S+)/i, "must be $1 or more"],
+  [/ensure this value is less than or equal to (\S+)/i, "must be $1 or less"],
+  [/input should be less than or equal to (\S+)/i, "must be $1 or less"],
+  [/none is not an allowed value/i, "cannot be empty"],
+  [/value is not a valid boolean/i, "must be Yes or No"],
+];
+
+function humanizeFieldKey(loc: string): string {
+  // "details.tm_billing_rate" → "Tm Billing Rate"; drop structural prefixes.
+  const leaf = loc.split(".").filter((p) => p && p !== "details" && !/^\d+$/.test(p));
+  const label = (leaf[leaf.length - 1] || loc).replace(/_/g, " ").trim();
+  return label.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function humanizeMsg(msg: string): string {
+  for (const [re, out] of PYDANTIC_MSGS) {
+    const m = msg.match(re);
+    if (m) return out.replace(/\$(\d)/g, (_, i) => m[Number(i)] ?? "");
+  }
+  return msg;
+}
+
 /** Turn FastAPI/CRM error bodies into a single human-readable string. */
 function formatApiError(body: unknown, status: number): string {
   if (typeof body === "string" && body.trim()) return body;
@@ -29,8 +63,9 @@ function formatApiError(body: unknown, status: number): string {
       const loc = Array.isArray(row.loc)
         ? row.loc.filter((p) => p !== "body").join(".")
         : "";
-      const msg = row.msg || "Invalid value";
-      return loc ? `${loc}: ${msg}` : msg;
+      const msg = humanizeMsg(row.msg || "Invalid value");
+      // "must be…" phrasing reads as a sentence after the field label.
+      return loc ? `${humanizeFieldKey(loc)} ${msg}` : msg;
     });
     if (parts.length) return parts.join("; ");
   }

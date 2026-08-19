@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Briefcase, Database, LayoutTemplate, Sigma, Users, Terminal, Shield } from "lucide-react";
 import { PlatformTopBar } from "./components/platform-nav/PlatformTopBar";
+import { SessionKeeper } from "./components/SessionKeeper";
 import { useSpotlight } from "./crm/components/motion3d";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
 import { navButtonMotion, pageSurfaceMotion, routeSurfaceKey } from "./lib/motionPresets";
@@ -212,6 +213,39 @@ export default function App() {
     };
   }, []);
 
+  // Live access refresh (17 Aug 2026): role/tab changes used to need a
+  // re-login. Silent refetch every 5 min + on focus (throttled); state only
+  // updates when the payload changed. Failures ignored — never logs out.
+  useEffect(() => {
+    let lastAt = 0;
+    const refresh = async () => {
+      if (Date.now() - lastAt < 30_000) return;
+      lastAt = Date.now();
+      try {
+        const res = await fetch("/api/me", {
+          headers: { Authorization: `Bearer ${getAuthToken()}` },
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        const r = (body?.data?.roles ?? body?.roles ?? []) as string[];
+        const ta = (body?.data?.tab_access ?? body?.tab_access ?? null) as string[] | null;
+        setRoles((prev) =>
+          JSON.stringify(prev) === JSON.stringify(r) ? prev : (Array.isArray(r) ? r : []));
+        setTabAccess((prev) =>
+          JSON.stringify(prev) === JSON.stringify(ta) ? prev : (Array.isArray(ta) ? ta : null));
+      } catch {
+        /* ignore */
+      }
+    };
+    const iv = window.setInterval(refresh, 5 * 60_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(iv);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
   // RBAC engages only when the user has at least one CRM role assigned. Legacy
   // HR users (no CRM role) keep the full, pre-RBAC navigation so nothing breaks.
   const rbacActive = !!roles && roles.length > 0;
@@ -330,6 +364,7 @@ export default function App() {
           root) + the ONE global mouse-follow spotlight (useSpotlight above). */}
       <div aria-hidden className="fx-aurora" />
       <div aria-hidden className="fx-spotlight" />
+      <SessionKeeper />
       <PlatformTopBar
         navItems={navItems}
         view={view}

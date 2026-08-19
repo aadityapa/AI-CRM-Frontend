@@ -142,6 +142,10 @@ export function Modal({
   footerClassName,
   /** Accessible name when `title` is not a plain string. */
   ariaLabel,
+  /** Unsaved-changes guard (17 Aug 2026): when true, Esc / backdrop / the X
+   * button confirm before discarding. Explicit Cancel/Save buttons inside the
+   * modal call onClose directly and are NOT affected. */
+  dirty,
 }: {
   title: React.ReactNode;
   onClose: () => void;
@@ -163,8 +167,13 @@ export function Modal({
   headerClassName?: string;
   footerClassName?: string;
   ariaLabel?: string;
+  dirty?: boolean;
 }) {
   const reduce = useReducedMotion();
+  const guardedClose = React.useCallback(() => {
+    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+    onClose();
+  }, [dirty, onClose]);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const returnFocusRef = React.useRef<Element | null>(null);
   /** Full viewport takeover — used for create/edit forms (`fullScreen` or legacy `wide`). */
@@ -184,7 +193,7 @@ export function Modal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") guardedClose();
       // Basic focus trap: keep Tab within the panel.
       if (e.key === "Tab" && panelRef.current) {
         const f = panelRef.current.querySelectorAll<HTMLElement>(
@@ -199,7 +208,7 @@ export function Modal({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [guardedClose]);
 
   // Remember the trigger and restore focus to it on close (a11y).
   useEffect(() => {
@@ -229,7 +238,7 @@ export function Modal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: reduce ? 0 : DUR.base }}
-      onMouseDown={(e) => !isFullPage && e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => !isFullPage && e.target === e.currentTarget && guardedClose()}
     >
       <motion.div
         ref={panelRef}
@@ -248,7 +257,7 @@ export function Modal({
         ].filter(Boolean).join(" ")}>
           <div className="min-w-0 flex-1 text-base font-bold text-primary">{title}</div>
           <button
-            onClick={onClose}
+            onClick={guardedClose}
             className={`ml-3 shrink-0 rounded-control p-1 text-muted transition-all duration-fast ease-smooth hover:bg-surface-2 hover:text-primary active:scale-90 ${focusRing}`}
             aria-label="Close"
           >

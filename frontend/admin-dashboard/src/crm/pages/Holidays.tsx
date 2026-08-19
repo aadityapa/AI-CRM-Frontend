@@ -10,6 +10,9 @@ import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
 import {
   ConfirmModal, EmptyState, ErrorBox, Modal, Spinner, StatusBadge,
+} from "../components/ui";
+import { TeachingEmpty } from "../components/TeachingEmpty";
+import {
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
@@ -546,7 +549,9 @@ export function HolidaysPage() {
             message={
               hasExtraFilters || search.trim()
                 ? "No holidays match your filters"
-                : `No ${status === "inactive" ? "deactivated " : ""}holidays for ${year}`
+                : status === "inactive"
+                  ? `No deactivated holidays for ${year}`
+                  : <TeachingEmpty page="holidays" />
             }
             actionLabel={canWrite && status === "active" && !hasExtraFilters ? "Add Holiday" : undefined}
             onAction={canWrite && status === "active" && !hasExtraFilters ? () => setModal({}) : undefined}

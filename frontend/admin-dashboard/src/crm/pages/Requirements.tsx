@@ -30,6 +30,9 @@ import {
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
+// Same DB-scan component the opportunity page uses — one implementation, so
+// TA and Sales always see identical matching logic (18 Aug 2026).
+import { CollapsibleCard, SuggestedCandidatesTab } from "./Opportunities";
 import {
   SectionHeaderBanner, FieldLabel, WizardField, InfoChip, lockedInputCls,
 } from "../components/wizard";
@@ -69,9 +72,55 @@ type JdAttachment = {
   kind?: string | null;
 };
 
+/** Applicants on THIS opportunity — the same pipeline Sales/Admin see, shown
+ * where TA sources (18 Aug 2026). Read-only list; stage moves stay on the
+ * Candidate Profiles page, which owns the transition rules. */
+function RequirementApplicantsTab({ oppId }: { oppId: number }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    crmGet<any[]>(`/api/candidate-profiles?opportunity_id=${oppId}&limit=100`)
+      .then((r) => { if (alive) { setRows(r.data || []); setError(""); } })
+      .catch((e: any) => { if (alive) setError(e?.message || "Failed to load applicants"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [oppId]);
+
+  const cols: Column<any>[] = [
+    { key: "candidate_name", label: "Candidate",
+      render: (r) => <span className="font-semibold text-primary">{r.candidate_name || "—"}</span> },
+    { key: "pipeline_status", label: "Stage",
+      render: (r) => <StatusBadge status={r.pipeline_status} /> },
+    { key: "experience_years", label: "Exp (yrs)", align: "right",
+      render: (r) => (r.experience_years ?? "—") },
+    { key: "notice_period", label: "Notice", render: (r) => r.notice_period || "—" },
+    { key: "created_by_name", label: "Submitted by", render: (r) => r.created_by_name || "—" },
+    { key: "applied_on", label: "Applied", align: "right", render: (r) => fmtDate(r.applied_on) },
+  ];
+  return (
+    <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
+      {error ? <ErrorBox error={error} /> : (
+        <DataTable columns={cols} rows={rows} loading={loading}
+          emptyMessage="Nobody has applied to this opportunity yet — check Suggested Candidates for people who already fit."
+          onRowClick={(r: any) => crmNavigate(`profiles/${r.id}`)} />
+      )}
+    </div>
+  );
+}
+
+/** ONE id from Sales to TA (18 Aug 2026): show the opportunity's id, never
+ * REQ-xxxx. req_number stays the internal key, so nothing in the DB moved. */
+const reqLabel = (r: { opportunity_opp_id?: string | null; req_number: string }) =>
+  String(r.opportunity_opp_id || r.req_number);
+
 type Req = {
   id: number;
   req_number: string;
+  /** The id every role tracks — the parent opportunity's (18 Aug 2026). */
+  opportunity_opp_id?: string | null;
   opportunity_id: number;
   customer_id: number | null;
   title: string;
@@ -454,14 +503,14 @@ function DecisionModal({
 
   return (
     <Modal
-      title={<span className="sr-only">{`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number} — ${stageLabel}`}</span>}
+      title={<span className="sr-only">{`${kind === "approve" ? "Approve" : "Reject"} ${reqLabel(req)} — ${stageLabel}`}</span>}
       onClose={onClose}
       fullScreen
       scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
-        title={`${kind === "approve" ? "Approve" : "Reject"} ${req.req_number}`}
+        title={`${kind === "approve" ? "Approve" : "Reject"} ${reqLabel(req)}`}
         subtitle={kind === "approve"
           ? `Approve this requirement at the ${stageLabel} stage.`
           : `Reject this requirement at the ${stageLabel} stage — a reason is required.`}
@@ -763,14 +812,14 @@ function RequirementFormModal({
 
   return (
     <Modal
-      title={<span className="sr-only">{editing ? `Edit ${initial!.req_number}` : "New Requirement"}</span>}
+      title={<span className="sr-only">{editing ? `Edit ${reqLabel(initial!)}` : "New Requirement"}</span>}
       onClose={onClose}
       fullScreen
       scopeClassName="crm-wizard wiz-noise"
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
-        title={editing ? `Edit ${initial!.req_number}` : "New Requirement"}
+        title={editing ? `Edit ${reqLabel(initial!)}` : "New Requirement"}
         subtitle="Capture the role, experience band, budget, and required skills for this hiring requirement."
         icon={<ClipboardList size={20} aria-hidden />}
       >
@@ -1006,7 +1055,10 @@ export function RequirementsListPage() {
   useEffect(() => { setPage(1); }, [tab, dq, statusFilter]);
 
   const columns: Column<Req>[] = [
-    { key: "req_number", label: "Req #", render: (r) => <span className="font-semibold text-primary">{r.req_number}</span> },
+    { key: "req_number", label: "Opportunity ID",
+      /* ONE id for every role (18 Aug 2026): the number Sales quoted IS the
+         number RMG/TA see, search and quote back. REQ-xxxx is internal now. */
+      render: (r) => <span className="font-semibold text-primary">{reqLabel(r)}</span> },
     { key: "title", label: "Title" },
     {
       key: "customer", label: "Customer",
@@ -1038,7 +1090,7 @@ export function RequirementsListPage() {
     <div className="space-y-4">
       {toastNode}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Requirements</h1>
+        <h1 className="text-display text-xl font-bold text-primary">Opportunities</h1>
         {canCreate && (
           <button className={btnPrimary} onClick={() => setShowCreate(true)}>
             <Plus size={16} /> New Requirement
@@ -2971,6 +3023,9 @@ export function RequirementDetailPage() {
   const [confirmTerminal, setConfirmTerminal] = useState<"close" | "cancel" | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [activityKey, setActivityKey] = useState(0); // bump to force activity reload
+  // Bumped after a bulk/one-click apply so the Applicants tab re-fetches.
+  const [applicantsKey, setApplicantsKey] = useState(0);
+  const canApplyHere = useHasRole("TA", "Sales", "RMG");
   const [linkedTemplate, setLinkedTemplate] = useState<{
     template_name?: string | null;
     template_job_id?: string | null;
@@ -3086,6 +3141,11 @@ export function RequirementDetailPage() {
           { key: "slots", label: "Interview Slots" },
         ]
       : []),
+    // TA works the same opportunity from here (18 Aug 2026): who already
+    // applied, and who in the database still could — the two tabs Admin/CEO
+    // had on the opportunity page, now where sourcing actually happens.
+    { key: "applicants", label: "Applicants" },
+    { key: "suggested", label: "Suggested Candidates" },
     { key: "activity", label: "Activity Log" },
   ];
 
@@ -3100,11 +3160,11 @@ export function RequirementDetailPage() {
             to="requirements"
             className="mb-1 inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-sky-600"
           >
-            <ArrowLeft size={13} /> Requirements
+            <ArrowLeft size={13} /> Opportunities
           </CrmLink>
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-display text-xl font-bold text-primary">
-              {req.req_number} — {req.title}
+              {reqLabel(req)} — {req.title}
             </h1>
             <StatusBadge status={req.status} />
           </div>
@@ -3200,72 +3260,115 @@ export function RequirementDetailPage() {
         </div>
       )}
 
-      {/* details + skills */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm lg:col-span-2">
-          <h2 className="fx-hairline-b mb-3 pb-1.5 text-sm font-bold uppercase tracking-wide text-muted">Details</h2>
-          {req.description && (
-            <p className="mb-4 whitespace-pre-wrap text-sm text-primary">{req.description}</p>
-          )}
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Experience</dt>
-              <dd className="font-semibold text-primary">{fmtRange(req.experience_min, req.experience_max, "yrs")}</dd>
+      {/* Overview strip + collapsible detail (18 Aug 2026 redesign): the page
+          opens as a one-line answer to "what is this position?", and every
+          block below is a headline you expand when you actually need it —
+          the same pattern as the Sales-side opportunity page. */}
+      <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+          {([
+            ["Experience", fmtRange(req.experience_min, req.experience_max, "yrs")],
+            ["Budget CTC", fmtRange(req.budget_ctc_min, req.budget_ctc_max, "")],
+            ["Positions", String(req.no_of_positions ?? "—")],
+            ["Work mode", req.work_mode || "—"],
+            ["Location", locationName || "—"],
+            ["Target closure", fmtDate(req.target_closure_date)],
+          ] as [string, string][]).map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</dt>
+              <dd className="mt-0.5 text-sm font-semibold text-primary">{value}</dd>
             </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Budget CTC</dt>
-              <dd className="font-semibold text-primary">{fmtRange(req.budget_ctc_min, req.budget_ctc_max, "")}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Work mode</dt>
-              <dd className="font-semibold text-primary">{req.work_mode || "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Location</dt>
-              <dd className="font-semibold text-primary">{locationName || "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Target closure</dt>
-              <dd className="font-semibold text-primary">{fmtDate(req.target_closure_date)}</dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted">Created</dt>
-              <dd className="font-semibold text-primary">{fmtDate(req.created_at)}</dd>
-            </div>
-          </dl>
-        </div>
-        <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
-          <h2 className="fx-hairline-b mb-3 pb-1.5 text-sm font-bold uppercase tracking-wide text-muted">Skills</h2>
-          {req.skills.length === 0 ? (
-            <p className="text-sm text-muted">No skills defined</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {req.skills.map((s) => (
-                <span
-                  key={s.skill_id}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    s.is_mandatory
-                      ? "bg-sky-600 text-white"
-                      : "border border-strong text-secondary"
-                  }`}
-                  title={s.is_mandatory ? "Mandatory skill" : "Optional skill"}
-                >
-                  {s.is_mandatory && <Star size={11} className="fill-current" />}
-                  {s.name || `Skill #${s.skill_id}`}
-                  {s.min_rating != null && <span className="opacity-75">· {s.min_rating}+/5</span>}
-                </span>
-              ))}
-            </div>
-          )}
-          <p className="mt-3 text-xs text-muted">
-            <Star size={10} className="mr-0.5 inline fill-current" /> filled = mandatory (drives the ATS score)
-          </p>
-        </div>
+          ))}
+        </dl>
       </div>
 
-      {/* Job descriptions */}
-      <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
-        <h2 className="fx-hairline-b mb-3 pb-1.5 text-sm font-bold uppercase tracking-wide text-muted">JD</h2>
+      <CollapsibleCard title="Requirement Details">
+        {req.description
+          ? <p className="mb-4 whitespace-pre-wrap text-sm text-primary">{req.description}</p>
+          : <p className="mb-4 text-sm text-muted">No description provided.</p>}
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-2.5 text-sm sm:grid-cols-2">
+          {([
+            ["Experience", fmtRange(req.experience_min, req.experience_max, "yrs")],
+            ["Budget CTC", fmtRange(req.budget_ctc_min, req.budget_ctc_max, "")],
+            ["Work mode", req.work_mode || "—"],
+            ["Location", locationName || "—"],
+            ["Positions", String(req.no_of_positions ?? "—")],
+            ["Target closure", fmtDate(req.target_closure_date)],
+            ["Created", fmtDate(req.created_at)],
+          ] as [string, string][]).map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-2">
+              <dt className="text-muted">{label}</dt>
+              <dd className="font-semibold text-primary">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </CollapsibleCard>
+
+      {(req as any).ctc_bands?.length > 0 && (
+        <CollapsibleCard title="Budget by Experience">
+          {/* The slab's sourcing columns. Rate, monthly/annual revenue,
+              management cost %, hike % and appraisal cycles are withheld by
+              the SERVER (routers/crm/requirements.py::_safe_ctc_bands) — they
+              reveal the margin and belong to Sales. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  <th className="py-1 pr-4">Exp Min</th>
+                  <th className="py-1 pr-4">Exp Max</th>
+                  <th className="py-1 pr-4">Target Exp</th>
+                  <th className="py-1 pr-4 text-right">Engineering Budget</th>
+                  <th className="py-1 text-right">Approved CTC [Lac]</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(req as any).ctc_bands.map((b: any, i: number) => {
+                  const num = (v: any) => (v === null || v === undefined
+                    ? "—"
+                    : `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`);
+                  const yrs = (v: any) => (v === null || v === undefined ? "—" : `${Number(v)}`);
+                  return (
+                    <tr key={i} className="border-t border-subtle">
+                      <td className="py-1.5 pr-4 text-primary">{yrs(b.exp_min)}</td>
+                      <td className="py-1.5 pr-4 text-primary">{yrs(b.exp_max)}</td>
+                      <td className="py-1.5 pr-4 text-primary">{yrs(b.target_exp)}</td>
+                      <td className="py-1.5 pr-4 text-right text-primary">{num(b.engineering_budget)}</td>
+                      <td className="py-1.5 text-right font-semibold text-primary">{num(b.approved_ctc_lac)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CollapsibleCard>
+      )}
+
+      <CollapsibleCard title={`Skills (${req.skills.length})`}>
+        {req.skills.length === 0 ? (
+          <p className="text-sm text-muted">No skills defined</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {req.skills.map((s) => (
+              <span
+                key={s.skill_id}
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  s.is_mandatory ? "bg-sky-600 text-white" : "border border-strong text-secondary"
+                }`}
+                title={s.is_mandatory ? "Mandatory skill" : "Optional skill"}
+              >
+                {s.is_mandatory && <Star size={11} className="fill-current" />}
+                {s.name || `Skill #${s.skill_id}`}
+                {s.min_rating != null && <span className="opacity-75">· {s.min_rating}+/5</span>}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-muted">
+          <Star size={10} className="mr-0.5 inline fill-current" /> filled = mandatory (drives the ATS score)
+        </p>
+      </CollapsibleCard>
+
+      <CollapsibleCard title="Job Description">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Customer JD</div>
@@ -3295,7 +3398,7 @@ export function RequirementDetailPage() {
             )}
           </div>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* tabs */}
       <Tabs tabs={detailTabs} active={tab} onChange={setTab} />
@@ -3304,6 +3407,19 @@ export function RequirementDetailPage() {
         <ResumesTab req={req} toast={toast} onRequirementChanged={() => onChanged()} />
       )}
       {tab === "slots" && canSeeResumes && <SlotsTab req={req} toast={toast} />}
+      {tab === "applicants" && (
+        <RequirementApplicantsTab key={applicantsKey} oppId={req.opportunity_id} />
+      )}
+      {tab === "suggested" && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-sm">
+          <SuggestedCandidatesTab
+            oppId={req.opportunity_id}
+            canApply={canApplyHere}
+            onApplied={() => setApplicantsKey((k) => k + 1)}
+            showToast={(m: string) => toast(m)}
+          />
+        </div>
+      )}
       {tab === "activity" && <ActivityTab key={activityKey} reqId={req.id} />}
 
       {/* modals */}
@@ -3320,7 +3436,7 @@ export function RequirementDetailPage() {
           title="Submit for approval"
           message={
             <>
-              Submit <span className="font-semibold">{req.req_number} — “{req.title}”</span> for Sales Head approval?
+              Submit <span className="font-semibold">{reqLabel(req)} — “{req.title}”</span> for Sales Head approval?
               {req.status !== "Draft" && " This resubmits the previously rejected requirement."}
             </>
           }
@@ -3346,7 +3462,7 @@ export function RequirementDetailPage() {
           message={
             <>
               {confirmTerminal === "close" ? "Close" : "Cancel"}{" "}
-              <span className="font-semibold">{req.req_number} — “{req.title}”</span>? This is a terminal state and
+              <span className="font-semibold">{reqLabel(req)} — “{req.title}”</span>? This is a terminal state and
               cannot be undone.
             </>
           }
