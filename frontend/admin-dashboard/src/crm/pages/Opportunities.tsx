@@ -133,13 +133,19 @@ export function pipelineStageLabel(stage: string): string {
 }
 
 /** Backend accepts ONE ?pipeline_stage= value, so multi-stage tabs expose a
- * stage sub-select (first stage selected by default) to keep server-side
- * pagination correct. */
+ * stage sub-select. Default is "All stages" (18 Aug 2026, user request) — the
+ * Active tab used to open pre-narrowed to "Active", which hid brand-new deals
+ * sitting in "New". Single-stage tabs have no select and stay pinned to their
+ * one stage so server-side pagination stays correct. */
+/* Filter model (18 Aug 2026): each opportunity lives in EXACTLY ONE tab —
+ * pending-approval deals appear ONLY under "Pending Approval" (never inside
+ * Active/New), rejected ones ONLY under "Rejected" (approval rejections),
+ * and the stage tabs show approved deals alone. The old "All approvals"
+ * dropdown is gone — the tab IS the approval filter. */
 const TAB_STAGES: Record<string, string[]> = {
   Active: ["Active", "New"],
   On_Hold: ["On_Hold"],
   Closed: ["Closed_Won", "Closed_Lost", "Closed_Partial"],
-  Rejected: ["Rejected"],
   Archived: ["Archived"],
 };
 
@@ -170,8 +176,8 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   // Roles allowed to create a Candidate Profile.
   const canApply = useHasRole("TA", "Sales", "RMG");
   const [tab, setTab] = useState("Active");
-  const [stage, setStage] = useState<string>(TAB_STAGES.Active[0]);
-  const [approval, setApproval] = useState("");  // "" = all approval states
+  // "" = All stages (the tab's whole stage set) — see TAB_STAGES note above.
+  const [stage, setStage] = useState<string>("");
   const [rows, setRows] = useState<Opportunity[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -202,7 +208,12 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
       const query =
         tab === "Pending"
           ? { approval_status: PENDING_APPROVAL_STATUS, ...base }
-          : { pipeline_stage: stage, ...(approval ? { approval_status: approval } : {}), ...base };
+          : tab === "Rejected"
+            ? { approval_status: "Rejected", ...base }
+            // "" (All stages) → send the tab's stages as CSV so the tab still
+            // owns exactly its own deals; the backend `in_`s them in one query.
+            : { pipeline_stage: stage || (TAB_STAGES[tab] || []).join(","),
+                approval_status: "Approved", ...base };
       const res = await crmGet<Opportunity[]>(`/api/opportunities${qs(query)}`);
       setRows(res.data || []);
       setMeta(res.meta);
@@ -211,7 +222,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
     } finally {
       setLoading(false);
     }
-  }, [tab, stage, approval, page, debounced, sort, typeFilter]);
+  }, [tab, stage, page, debounced, sort, typeFilter]);
 
   useEffect(() => {
     load();
@@ -219,8 +230,9 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
 
   const switchTab = (key: string) => {
     setTab(key);
-    const st = TAB_STAGES[key];
-    setStage(st ? st[0] : "");
+    // Always back to "All stages" — single-stage tabs resolve to their one
+    // stage via the CSV fallback, so no select is needed there.
+    setStage("");
     setPage(1);
   };
 
@@ -289,19 +301,8 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
                   ))}
                 </select>
               )}
-              {tab !== "Pending" && (
-                <select
-                  className={`${inputCls} !w-44`}
-                  value={approval}
-                  aria-label="Filter by approval status"
-                  onChange={(e) => { setApproval(e.target.value); setPage(1); }}
-                >
-                  <option value="">All approvals</option>
-                  <option value="Approved">Approved</option>
-                  <option value="Pending_Sales_Head_Approval">Pending Approval</option>
-                  <option value="Rejected">Rejected</option>
-                </select>
-              )}
+              {/* "All approvals" dropdown removed (18 Aug 2026): the tab IS
+                  the approval filter — Pending Approval / Rejected / stages. */}
             </span>
           }
           emptyMessage={<TeachingEmpty page="opportunities" />}
@@ -399,7 +400,7 @@ type Suggestion = {
 
 /** DB scan for this position: scored skills/experience/history matches with
  * the WHY spelled out per candidate, and one-click Apply. */
-function SuggestedCandidatesTab({
+export function SuggestedCandidatesTab({
   oppId, canApply, onApplied, showToast,
 }: {
   oppId: number;
@@ -713,7 +714,7 @@ const APPLICANT_STAGE_FILTERS: { key: string; label: string; statuses: string[] 
 /** Detail blocks collapse by default (14 Aug 2026): the page had grown into
  * a wall of every field ever filled — now each block is a headline you
  * expand when you actually need its contents. */
-function CollapsibleCard({
+export function CollapsibleCard({
   title, children, defaultOpen = false,
 }: {
   title: React.ReactNode;
@@ -888,6 +889,19 @@ export function OpportunityDetailPage() {
       .then((r) => setLog(r.data || []))
       .catch(() => {});
   }, [id]);
+
+  // Attachments — above all the Customer JD (18 Aug 2026): Sales uploads it,
+  // and Sales Head must SEE it before approving. Shown in the details tab and
+  // called out inside the pending-approval banner.
+  const [attachments, setAttachments] = useState<any[]>([]);
+  useEffect(() => {
+    let alive = true;
+    crmGet<any[]>(`/api/opportunities/${id}/attachments`)
+      .then((r) => { if (alive) setAttachments(r.data || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
+  const jdFiles = attachments.filter((a) => a.kind === "customer_jd");
 
   // Server-paged: a busy opportunity can carry hundreds of applicants, so never
   // fetch "the first 100 and hope" — page + search against the API instead.
@@ -1094,11 +1108,10 @@ export function OpportunityDetailPage() {
               {opp.approval_status && opp.approval_status !== "Approved" && <StatusBadge status={opp.approval_status} />}
             </h1>
           </div>
-          {canWrite && allowedStages.length > 0 && opp.approval_status === "Approved" && (
-            <button className={btnPrimary} onClick={() => setShowStage(true)}>
-              <ArrowRightLeft size={15} /> Stage transition
-            </button>
-          )}
+          {/* Stage-transition button removed (18 Aug 2026, user request) —
+              stages now move through the workflow (approval, bidding,
+              onboarding), not a manual jump. The modal + API endpoint stay,
+              so restoring the button is a five-line change if ever needed. */}
         </div>
 
         {opp.approval_status === "Pending_Sales_Head_Approval" && (
@@ -1106,6 +1119,15 @@ export function OpportunityDetailPage() {
             <span className="text-sm font-semibold text-warning">
               Pending Sales Head approval{canApprove ? "" : " — awaiting review"}
             </span>
+            {/* The JD Sales uploaded, right where the decision is made. */}
+            {jdFiles.length > 0 && (
+              <span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-secondary">
+                Customer JD:
+                {jdFiles.map((a) => (
+                  <FileLink key={a.id} url={a.file_url} label={a.file_name || "JD file"} />
+                ))}
+              </span>
+            )}
             {canApprove && (
               <div className="ml-auto flex gap-2">
                 <button className={btnPrimary} disabled={approvalBusy} onClick={() => setReviewing(true)}>
@@ -1225,6 +1247,28 @@ export function OpportunityDetailPage() {
               </div>
             )}
           </CollapsibleCard>
+          {attachments.length > 0 && (
+            <CollapsibleCard
+              title={`Attachments (${attachments.length})`}
+              defaultOpen={opp.approval_status === "Pending_Sales_Head_Approval"}
+            >
+              <ul className="m-0 list-none space-y-2 p-0">
+                {attachments.map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center gap-2 text-sm">
+                    <FileLink url={a.file_url} label={a.file_name || `File #${a.id}`} />
+                    {a.kind === "customer_jd" && (
+                      <span className="rounded-full bg-brand-600/10 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:text-brand-300">
+                        Customer JD
+                      </span>
+                    )}
+                    {a.uploaded_at && (
+                      <span className="text-xs text-muted">{fmtDate(a.uploaded_at)}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleCard>
+          )}
           <OpportunityAllDetails opp={opp} />
         </div>
       )}

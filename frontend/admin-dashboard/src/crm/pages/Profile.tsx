@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, KeyRound, Loader2, Trash2, Upload } from "lucide-react";
 import { crmDelete, crmGet, crmPatch, crmPost, crmUpload } from "../api";
 import { Avatar } from "../components/Avatar";
+import { useMe } from "../CrmApp";
+import { isSuperAdmin } from "../../lib/rbac";
 import {
   ErrorBox, Field, Spinner, StatusBadge,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
@@ -51,6 +53,66 @@ function fmtDate(v?: string | null): string {
 
 function notifyProfileChanged(patch: { full_name?: string; avatar_url?: string | null }) {
   window.dispatchEvent(new CustomEvent("karnex:profile-updated", { detail: patch }));
+}
+
+/* ---------- Your access (17 Aug 2026) ----------
+ * "Why can't I see the Projects tab?" used to be a support question. This
+ * card answers it: exactly which tabs the user's Access Template grants and
+ * at what level, straight from /api/me — the same data every gate reads.
+ * Untemplated users see their role defaults line instead. Read-only. */
+const MODE_LABEL: Record<string, string> = { view: "View", edit: "Edit", create: "Create" };
+
+function AccessCard() {
+  const me = useMe();
+  const access = me.access;
+  const full = isSuperAdmin(me.roles) || !!access?.full;
+  const templated = !full && access?.visible_tabs != null;
+  const tabs = Object.entries(access?.tabs || {}).sort(([a], [b]) => a.localeCompare(b));
+  const fields = access?.fields || {};
+  return (
+    <section className="mt-6 rounded-card border border-subtle bg-surface-1 p-6 shadow-raised">
+      <h2 className="fx-hairline-b mb-4 pb-2 text-base font-bold text-primary">Your access</h2>
+      {full ? (
+        <p className="text-sm text-secondary">
+          Full access — Admin/CEO bypasses every gate.
+        </p>
+      ) : !templated ? (
+        <p className="text-sm text-secondary">
+          Standard access for your role{me.roles.length > 1 ? "s" : ""} ({me.roles.join(", ") || "none"}).
+          No Access Template is assigned, so the role defaults apply everywhere.
+        </p>
+      ) : (
+        <>
+          <p className="mb-3 text-sm text-secondary">
+            An Access Template controls what you can see and do. If a page or
+            button you need is missing here, ask your Admin to adjust the template.
+          </p>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+            {tabs.map(([tab, mode]) => (
+              <div key={tab} className="flex items-baseline justify-between gap-2 text-sm">
+                <span className="text-primary">{tab.replace(/^crm:/, "").replace(/-/g, " ")}</span>
+                <span className="font-semibold text-muted">{MODE_LABEL[String(mode)] || String(mode)}</span>
+              </div>
+            ))}
+            {tabs.length === 0 && (
+              <span className="text-sm text-danger">
+                Your template grants no tabs — contact your Admin.
+              </span>
+            )}
+          </div>
+          {Object.keys(fields).length > 0 && (
+            <div className="mt-3 border-t border-subtle pt-2 text-xs text-muted">
+              Field exceptions:{" "}
+              {Object.entries(fields).map(([tab, fs]) =>
+                Object.entries(fs || {}).map(([f, m]) =>
+                  `${tab.replace(/^crm:/, "")}.${f} → ${MODE_LABEL[String(m)] || m}`).join(", "),
+              ).join("; ")}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function ProfilePage() {
@@ -200,6 +262,8 @@ export function ProfilePage() {
           </div>
         </dl>
       </section>
+
+      <AccessCard />
 
       <ChangePasswordCard toast={showToast} />
 

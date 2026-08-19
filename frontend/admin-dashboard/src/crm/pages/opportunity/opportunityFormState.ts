@@ -54,7 +54,7 @@ export interface OpportunityFormState {
 
 /** The set of DETAIL field keys (type-specific) — everything not a core field. */
 const CORE_KEYS = new Set<string>([
-  "customer_id", "branch_id", "contact_person_id", "hiring_manager_id",
+  "opp_id", "customer_id", "branch_id", "contact_person_id", "hiring_manager_id",
   "title", "rfi_received_date", "opp_type", "rfi_value",
   "onboarded_count", "onboarding_status",
 ]);
@@ -205,7 +205,12 @@ function sanitizeCore(core: Record<string, unknown>): Record<string, unknown> {
   if ("title" in out && typeof out.title === "string") out.title = out.title.trim();
   // Create schema has no `version`; omit so FastAPI doesn't see an unknown field noise.
   delete out.version;
-  delete out.opp_id;
+  // Editable opportunity ID (18 Aug 2026): a typed value travels to the
+  // server (uniqueness enforced there); blank means "auto-number for me".
+  if ("opp_id" in out) {
+    const oid = String(out.opp_id ?? "").trim();
+    if (oid) out.opp_id = oid; else delete out.opp_id;
+  }
   return out;
 }
 

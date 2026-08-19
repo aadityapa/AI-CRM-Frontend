@@ -167,8 +167,17 @@ export function BranchRateCardEditor({
             )}
             {v.current.length > 0 && (
               <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                  Current slab{v.currentKey ? ` — effective from ${fmtSlabDate(v.currentKey)}` : ""}
+                {/* The start date is ALWAYS shown (17 Aug 2026) — the reader
+                    must know since when these rates apply. Legacy ladders
+                    saved before versioning have no date; say so plainly
+                    instead of hiding the fact. */}
+                <p className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                  Current slab
+                  <span className="rounded-full bg-brand-600/10 px-2 py-0.5 font-bold normal-case tracking-normal text-brand-600 dark:text-brand-300">
+                    {v.currentKey
+                      ? `Effective from ${fmtSlabDate(v.currentKey)}`
+                      : "Effective from the beginning (no start date recorded — rebuild the ladder to set one)"}
+                  </span>
                 </p>
                 <RateTable rows={v.current} canEdit={canEdit} unitCol={unitCol}
                   onEdit={setEditing} onDelete={setConfirmDelete} />

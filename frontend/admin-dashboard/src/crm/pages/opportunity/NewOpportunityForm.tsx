@@ -84,6 +84,9 @@ const CTC_TRIGGER_KEYS = new Set([
   "tm_duration_months", "tm_positions_count",
   "holidays", "weekoff", "leave",
   "holidays_billable", "weekoff_billable", "leave_billable",
+  // Paid leaves + the branch hours cap feed calculateBillingBases too — a
+  // change must recompute Actual Billing Days/Hours live (18 Aug 2026).
+  "paid_leaves", "max_billable_hours_month",
 ]);
 
 /** Build the single input shape consumed by all CTC/base recalculation triggers. */
@@ -164,6 +167,7 @@ export function NewOpportunityForm({
   opportunityId,
   approvalMode = false,
   initialCustomerId,
+  initialBranchId,
 }: {
   onClose: () => void;
   onCreated?: () => void;
@@ -174,6 +178,9 @@ export function NewOpportunityForm({
   approvalMode?: boolean;
   /** Customer-hub "New Opportunity": the customer is already chosen there. */
   initialCustomerId?: number;
+  /** Branch-hub "New Opportunity": customer AND branch are already chosen.
+   * Both stay fully editable — this is a head start, not a lock. */
+  initialBranchId?: number;
 }) {
   const reduce = useReducedMotion();
   const [toast, notify] = useToast();
@@ -204,6 +211,10 @@ export function NewOpportunityForm({
   const [policyBranchId, setPolicyBranchId] = useState("");
   // Whether that branch's effective policy actually defines a leave allotment.
   const [branchHasLeavePolicy, setBranchHasLeavePolicy] = useState(false);
+  /* Per-type paid-leave breakup from the branch policy (18 Aug 2026) —
+   * "Earned 12 · Sick 6 · Casual 6" shown under Commercial Details so the
+   * paid_leaves number is explainable at a glance. Display-only. */
+  const [leaveBreakup, setLeaveBreakup] = useState<{ name: string; annual: number }[]>([]);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveState>("idle");
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -251,12 +262,17 @@ export function NewOpportunityForm({
     (async () => {
       try {
         const [c, s] = await Promise.all([
-          crmGet<any[]>("/api/customers?limit=100"),
-          // Page through — the server clamps limit to 100, which truncated the list.
+          // Page through — the server clamps limit to 100, which truncated the
+          // list. That truncation was invisible until the customer hub started
+          // pre-selecting a customer (18 Aug 2026): a customer beyond row 100
+          // was absent from `customers`, so the locked field showed a raw id
+          // and Customer Type (required, derived from the customer) never
+          // filled — the form could not be submitted at all.
+          fetchAllMaster<any>("/api/customers"),
           fetchAllMaster<any>("/api/skills", { is_active: true }),
         ]);
         if (!alive) return;
-        setCustomers(c.data || []);
+        setCustomers(c);
         setSkills(s);
 
         if (opportunityId != null) {
@@ -277,7 +293,19 @@ export function NewOpportunityForm({
         try {
           localStorage.removeItem(DRAFT_KEY);
         } catch { /* ignore */ }
-        if (alive) setState(recalculateOpportunityState({ ...emptyState(), isLoaded: true }));
+        // Seed the hub customer HERE (18 Aug 2026). This blank-state reset
+        // lands AFTER the awaits above, so a customer set by the hub effect
+        // alone would be wiped a moment later. Everything else about the form
+        // is unchanged: the Customer dropdown stays fully editable, and
+        // branch/contact are chosen by the user as before.
+        const fresh = emptyState();
+        if (initialCustomerId) {
+          fresh.core = { ...fresh.core, customer_id: String(initialCustomerId) };
+        }
+        if (initialBranchId) {
+          fresh.core = { ...fresh.core, branch_id: String(initialBranchId) };
+        }
+        if (alive) setState(recalculateOpportunityState({ ...fresh, isLoaded: true }));
       } catch (e: any) {
         if (alive) setError(e?.message || "Failed to load form data");
         // Still mark loaded on create so the empty form is usable after a soft failure.
@@ -289,19 +317,91 @@ export function NewOpportunityForm({
     return () => { alive = false; };
   }, [opportunityId]);
 
-  // Customer-hub launch: pre-select the customer the button was pressed on.
-  // Once, create-mode only, and never overriding a choice already made.
+  // Customer-hub launch: pre-select (only) the customer the button was
+  // pressed on — it stays editable, exactly like a manual pick. Create-mode
+  // only, never overriding a choice already made. Re-runs once `isLoaded`
+  // flips so it also repairs the state after the async init reset above.
   useEffect(() => {
     if (opportunityId || !initialCustomerId) return;
-    setState((s) => (s.core.customer_id
-      ? s
-      : { ...s, core: { ...s.core, customer_id: String(initialCustomerId) } }));
+    setState((s) => {
+      let core = s.core;
+      if (!core.customer_id) core = { ...core, customer_id: String(initialCustomerId) };
+      // Branch hub: seed the branch too (it triggers the usual branch
+      // policy + contact autofill effects, exactly as a manual pick would).
+      if (initialBranchId && !core.branch_id) core = { ...core, branch_id: String(initialBranchId) };
+      return core === s.core ? s : { ...s, core };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCustomerId, opportunityId]);
+  }, [initialCustomerId, initialBranchId, opportunityId, state.isLoaded]);
 
   // Dependent dropdowns when the customer or branch changes.
   const customerId = state.core.customer_id;
   const branchId = state.core.branch_id;
+
+  /* Belt-and-braces live recalculation (18 Aug 2026): instead of trusting
+   * every event handler to remember recalculateOpportunityState, this effect
+   * watches the VALUES the billing bases depend on and re-derives whenever
+   * any of them changes — checkbox, number, prefill, draft-restore, anything.
+   * Loop-safe: the recalc writes only DERIVED outputs (actual_billing_days/
+   * hours, slab auto columns, RFI), none of which appear in the dep list. */
+  const tmDeps = state.detailsByType["T&M"] || {};
+  const recalcDeps = JSON.stringify([
+    state.activeType,
+    tmDeps.holidays, tmDeps.weekoff, tmDeps.leave, tmDeps.paid_leaves,
+    tmDeps.holidays_billable, tmDeps.weekoff_billable, tmDeps.leave_billable,
+    tmDeps.hours_per_day, tmDeps.billing_type, tmDeps.max_billable_hours_month,
+    tmDeps.tm_positions_count, tmDeps.tm_duration_months,
+    tmDeps.project_duration_months,
+  ]);
+  useEffect(() => {
+    if (!state.isLoaded || state.activeType !== "T&M") return;
+    setState((s) => recalculateOpportunityState(s));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recalcDeps, state.isLoaded]);
+
+  /* Opportunity ID preview (18 Aug 2026): show the auto number the record
+   * would get instead of an empty box — still fully editable. Create mode
+   * only; a failure just leaves the field blank (the server auto-numbers). */
+  const autoOppIdRef = useRef<string>("");
+  useEffect(() => {
+    if (opportunityId || !state.isLoaded) return;
+    let alive = true;
+    crmGet<{ opp_id?: string }>("/api/opportunities/next-id")
+      .then((r) => {
+        const next = String(r.data?.opp_id || "").trim();
+        if (!alive || !next) return;
+        autoOppIdRef.current = next;
+        setState((s) => (String(s.core.opp_id ?? "").trim()
+          ? s
+          : { ...s, core: { ...s.core, opp_id: next } }));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opportunityId, state.isLoaded]);
+
+  /* Closing Date auto-derives (18 Aug 2026): RFI Received Date + Notice
+   * Period days. Fills only while the field is empty or still holding the
+   * previous auto value — the moment the user types their own date, the
+   * derivation backs off for good. */
+  const autoClosingRef = useRef<string>("");
+  const tmDetails = state.detailsByType["T&M"] || {};
+  useEffect(() => {
+    if (state.activeType !== "T&M") return;
+    const recv = String(state.core.rfi_received_date || "");
+    const notice = Number(tmDetails.tm_notice_period);
+    if (!recv || !Number.isFinite(notice) || notice <= 0) return;
+    const d = new Date(`${recv}T00:00:00`);
+    if (isNaN(d.getTime())) return;
+    d.setDate(d.getDate() + notice);
+    const iso = d.toISOString().slice(0, 10);
+    const cur = String(tmDetails.tm_closing_date || "");
+    if (cur && cur !== autoClosingRef.current) return; // user's own date wins
+    if (cur === iso) { autoClosingRef.current = iso; return; }
+    autoClosingRef.current = iso;
+    setState((s) => setDetail(s, "tm_closing_date", iso));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [String(state.core.rfi_received_date ?? ""), String(tmDetails.tm_notice_period ?? "")]);
 
   // Customer Rate Card (experience-band pricing) — feeds the CTC Slab rate
   // auto-fill. 403/404 simply means no auto-fill (e.g. a role outside
@@ -561,6 +661,7 @@ export function NewOpportunityForm({
     if (!branchId) {
       setPolicyBranchId("");
       setBranchHasLeavePolicy(false);
+      setLeaveBreakup([]);
       setPolicyLockedKeys([]);
       setState((s) => {
         const tm = { ...(s.detailsByType["T&M"] || {}) };
@@ -607,6 +708,7 @@ export function NewOpportunityForm({
         // a future weekoff_count is sent.
         const linked = p.has_branch_leave_policy === true;
         setBranchHasLeavePolicy(linked);
+        setLeaveBreakup(Array.isArray(p.leave_breakup) ? p.leave_breakup : []);
         setState((s) => {
           if (String(s.core.branch_id) !== String(branchId)) return s;
           let next = s;
@@ -982,7 +1084,8 @@ export function NewOpportunityForm({
 
   const validateField = (f: FieldDef): string => {
     const v = isCoreKey(f.key) ? state.core[f.key] : details[f.key];
-    if (f.required && (v === "" || v === null || v === undefined)) return `${f.label} is required`;
+    if (f.required && (v === "" || v === null || v === undefined
+        || (Array.isArray(v) && v.length === 0))) return `${f.label} is required`;
     if (f.type === "email" && v && !/^\S+@\S+\.\S+$/.test(String(v))) return "Enter a valid email";
     if ((f.type === "number" || f.type === "currency" || f.type === "percent")
       && v !== "" && v !== null && v !== undefined) {
@@ -1095,6 +1198,7 @@ export function NewOpportunityForm({
     if (!reqd.length) return "complete";
     const filled = reqd.filter((f) => {
       const v = isCoreKey(f.key) ? state.core[f.key] : details[f.key];
+      if (Array.isArray(v)) return v.length > 0;
       return v !== "" && v !== null && v !== undefined;
     });
     if (filled.length === 0) return "empty";
@@ -1207,6 +1311,14 @@ export function NewOpportunityForm({
     setBusy(true); setError("");
     try {
       const payload = buildSubmitPayload(state);
+      // The Opportunity ID box shows the next auto number so the user can SEE
+      // what they'll get. If they left that preview untouched, drop it: the
+      // server numbers the record at save time, so two people creating at
+      // once can't collide on the same previewed value. A typed ID is sent.
+      if (!isEdit && autoOppIdRef.current
+        && String(payload.opp_id ?? "").trim() === autoOppIdRef.current) {
+        delete payload.opp_id;
+      }
       // PUT schema has no skills — send them on the dedicated replace endpoint.
       const { skills: skillsPayload = [], ...body } = payload;
 
@@ -1447,14 +1559,15 @@ export function NewOpportunityForm({
 
   /** Sub-heading inside the merged Commercials card. */
   const subHead = (title: string, desc?: string) => (
-    <div className="mb-3">
+    <div className="mb-2">
       <h3 className="text-sm font-bold tracking-wide text-primary">{title}</h3>
-      {desc && <p className="mt-0.5 text-xs leading-relaxed text-muted">{desc}</p>}
+      {desc && <p className="mt-0.5 text-[11px] leading-snug text-muted">{desc}</p>}
     </div>
   );
   /** Bordered mini-panel — the merged step lays these out in a 2-up grid so
-   * the whole step fits one viewport without scrolling (Aug 2026 redesign). */
-  const subPanel = "rounded-card border border-subtle bg-surface-0/60 p-4";
+   * the whole step fits one viewport without scrolling (Aug 2026 redesign;
+   * tightened 18 Aug 2026 — p-3/gap-3/leaner headings). */
+  const subPanel = "rounded-card border border-subtle bg-surface-0/60 p-3";
 
   const renderStepBody = (s: (typeof visibleSections)[number]) => {
     // ---- Merged step: Leave & Holiday + Commercial + CTC Slab + RFI ------
@@ -1468,43 +1581,109 @@ export function NewOpportunityForm({
         (f) => f.key !== "rfi_value" && fieldVisible(commSec, f, type),
       );
       const rfiField = (commSec.fields || []).find((f) => f.key === "rfi_value");
-      const showLeave = (leaveSec.fields || []).some((f) => fieldVisible(leaveSec, f, type));
-      // One-viewport layout: Leave & Holiday and Commercial Details sit side
-      // by side (each an internal 2-col grid), the slab table spans the full
-      // width below, and RFI Value is a slim horizontal strip at the bottom.
+      // Paid-leave inputs live in their OWN panel under Commercial Details
+      // (18 Aug 2026) — they are billing add-backs, not leave costing.
+      const PAID_LEAVE_KEYS = new Set(["leave_policy", "paid_leaves"]);
+      const leaveFields = (leaveSec.fields || []).filter(
+        (f) => !PAID_LEAVE_KEYS.has(f.key) && fieldVisible(leaveSec, f, type),
+      );
+      const paidLeaveFields = (leaveSec.fields || []).filter(
+        (f) => PAID_LEAVE_KEYS.has(f.key) && fieldVisible(leaveSec, f, type),
+      );
+      const showLeave = leaveFields.length > 0;
+      // One-viewport layout (18 Aug 2026): THREE panels in one row —
+      // Leave & Holiday | Commercial | Paid Leaves — the slab spans the full
+      // width below and RFI is a slim strip. Long explanations became title
+      // tooltips so the row stays short enough for the slab to be visible.
+      const prefillNote = type === "T&M" && !!policyBranchId
+        && String(state.core.branch_id) === policyBranchId
+        ? (branchHasLeavePolicy
+          ? `Prefilled from ${branches.find((b) => String(b.id) === policyBranchId)?.branch_name || "the branch"}'s billing policy — every value stays editable.`
+          : "No branch leave policy — standard defaults (24 leave, 104 weekoff); all editable.")
+        : "";
       return (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-3">
             {showLeave && (
-              <div className={subPanel}>
-                {subHead("Leave & Holiday Details",
-                  "Costing basis, prefilled from the branch policy — every value stays editable for this opportunity.")}
-                {type === "T&M" && !!policyBranchId
-                  && String(state.core.branch_id) === policyBranchId && (
-                  branchHasLeavePolicy ? (
-                    <p className="-mt-1 mb-3 text-xs leading-relaxed text-muted">
-                      Prefilled from {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
-                        || "the selected branch"}&rsquo;s billing policy — the leave policy&rsquo;s
-                      paid allowance lands in Paid Leave and adds back to billing days; the
-                      standard 24 leave deduction stays. Adjust any value for this deal.
-                    </p>
-                  ) : (
-                    <p className="-mt-1 mb-3 text-xs leading-relaxed text-muted">
-                      No leave policy linked to {branches.find((b) => String(b.id) === policyBranchId)?.branch_name
-                        || "this branch"}. Leave defaults to the standard 24/year; Holidays reflect this branch&rsquo;s holiday calendar and Weekoff is the standard 104 (52 weekends). Every value is editable for costing.
-                    </p>
-                  )
-                )}
-                {renderFields(leaveSec, true)}
+              <div className={subPanel} title={prefillNote || undefined}>
+                {subHead("Leave & Holiday Details", prefillNote
+                  || "Costing basis — every value editable for this opportunity.")}
+                {renderFields({ ...leaveSec, fields: leaveFields }, true)}
               </div>
             )}
-            {commFields.length > 0 && (
-              <div className={subPanel}>
-                {subHead("Commercial Details",
-                  "Billing type and hours — the basis every slab rate is annualised on.")}
-                {renderFields({ ...commSec, fields: commFields }, true)}
-              </div>
-            )}
+            <>
+              {commFields.length > 0 && (
+                <div className={subPanel}>
+                  {subHead("Commercial Details",
+                    "Billing type and hours — the basis every slab rate is annualised on.")}
+                  {renderFields({ ...commSec, fields: commFields }, true)}
+                  {/* LIVE formula (18 Aug 2026): shows exactly how Actual
+                      Billing Days derive — a BILLABLE holiday/weekoff is
+                      billed, so it deducts 0; only unticked ones subtract.
+                      Updates on every keystroke, so "why didn't the number
+                      move?" answers itself. */}
+                  {type === "T&M" && (() => {
+                    const n = (v: unknown) =>
+                      v === "" || v == null || !Number.isFinite(Number(v)) ? 0 : Number(v);
+                    const hb = details.holidays_billable === true;
+                    const wb = details.weekoff_billable === true;
+                    const lb = details.leave_billable === true;
+                    const leaveDed = lb ? 0 : n(details.leave);
+                    const paid = Math.min(n(details.paid_leaves), leaveDed);
+                    const days = Math.max(0, 365
+                      - (hb ? 0 : n(details.holidays))
+                      - (wb ? 0 : n(details.weekoff))
+                      - leaveDed + paid);
+                    // Billable = customer pays that day = stays in the base.
+                    const parts = [
+                      ...(hb ? [] : [`− ${n(details.holidays)} holidays`]),
+                      ...(wb ? [] : [`− ${n(details.weekoff)} weekoff`]),
+                      ...(lb ? [] : [`− ${n(details.leave)} leave`]),
+                      ...(paid > 0 ? [`+ ${paid} paid`] : []),
+                    ];
+                    return (
+                      <p className="mt-1.5 text-[11px] leading-snug text-muted">
+                        365 {parts.join(" ")} ={" "}
+                        <span className="font-bold text-primary">{days} billing days</span>
+                        {(hb || wb || lb) && (
+                          <span> ({[hb && "holidays", wb && "weekoff", lb && "leave"]
+                            .filter(Boolean).join(", ")} billable — customer pays, so not deducted)</span>
+                        )}
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
+              {(paidLeaveFields.length > 0 || (type === "T&M" && leaveBreakup.length > 0)) && (
+                <div className={subPanel}>
+                  {subHead("Paid Leaves",
+                    "Leave days the customer pays for — added back to Actual Billing Days.")}
+                  {paidLeaveFields.length > 0
+                    && renderFields({ ...leaveSec, fields: paidLeaveFields }, true)}
+                  {/* WHERE the number comes from: the branch leave policy's
+                      per-type accruals (Earned / Sick / Casual …). */}
+                  {type === "T&M" && leaveBreakup.length > 0 && (
+                    <div className="mt-3 rounded-card border border-subtle bg-surface-2/50 px-3 py-2.5">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                        From branch leave policy
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {leaveBreakup.map((b) => (
+                          <span key={b.name}
+                            className="rounded-full bg-brand-600/10 px-2.5 py-0.5 text-xs font-semibold text-brand-600 dark:text-brand-300">
+                            {b.name}: {Number(b.annual).toLocaleString("en-IN", { maximumFractionDigits: 2 })}/yr
+                          </span>
+                        ))}
+                        <span className="text-xs font-bold text-primary">
+                          = {leaveBreakup.reduce((s, b) => s + Number(b.annual || 0), 0)
+                            .toLocaleString("en-IN", { maximumFractionDigits: 2 })} days billed by customer
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           </div>
           <div className={subPanel}>
             {subHead("Candidate CTC Slab",
@@ -1726,7 +1905,6 @@ function OpportunityContactModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [designation, setDesignation] = useState("");
   const [role, setRole] = useState("");
   // Contact roles come from the master (/api/contact-roles), merged with the
   // built-in seeds so the list is never empty if the master fetch fails.
@@ -1762,8 +1940,6 @@ function OpportunityContactModal({
     }
   };
   const [priority, setPriority] = useState("");
-  const [notification, setNotification] = useState("");
-  const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -1777,12 +1953,12 @@ function OpportunityContactModal({
         branch_id: branchId ? Number(branchId) : null,
         email: email.trim() || null,
         phone: phone.trim() || null,
-        designation: designation.trim() || null,
         role: role || null,
         contact_priority: priority || null,
-        notification: notification || null,
+        // Department / Notification / Status are no longer asked here:
+        // a contact created mid-deal is Active, with routing left to Settings.
         is_hiring_manager: isHiringManager,
-        is_active: isActive,
+        is_active: true,
       });
       onCreated(res.data);
     } catch (e: any) {
@@ -1821,10 +1997,9 @@ function OpportunityContactModal({
           <span className={lbl}>Phone</span>
           <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 …" />
         </div>
-        <div className={row}>
-          <span className={lbl}>Department</span>
-          <input className={inputCls} value={designation} onChange={(e) => setDesignation(e.target.value)} />
-        </div>
+        {/* Department removed (18 Aug 2026, user request) — the `designation`
+            column stays in the DB and existing values are untouched; new
+            contacts simply don't ask for it. */}
         <div className={row}>
           <span className={lbl}>Role</span>
           {/* Master-backed with inline add, mirroring the customer form — a
@@ -1854,20 +2029,10 @@ function OpportunityContactModal({
             <option value="Secondary">Secondary</option>
           </select>
         </div>
-        <div className={row}>
-          <span className={lbl}>Notification</span>
-          <select className={inputCls} value={notification} onChange={(e) => setNotification(e.target.value)}>
-            <option value="">-Select-</option>
-            {["Email", "SMS", "Both", "None"].map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </div>
-        <div className={row}>
-          <span className={lbl}>Status</span>
-          <select className={inputCls} value={isActive ? "Active" : "Inactive"} onChange={(e) => setIsActive(e.target.value === "Active")}>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-          </select>
-        </div>
+        {/* Notification + Status removed (18 Aug 2026, user request): a
+            contact created here is always Active, and notification routing is
+            an admin concern (Settings → notification routes), not something
+            to decide while filling a deal. Both still POST their defaults. */}
         <label className="flex items-center gap-2 text-sm font-medium text-primary sm:col-span-2">
           <input type="checkbox" className="h-4 w-4" checked={isHiringManager} readOnly />
           {isHiringManager ? "Saved as Hiring Manager" : "Contact person"}
@@ -2094,7 +2259,7 @@ function TableSection({ section, type, rows, options, rowErrors, onRows }: {
      not five tall cards. Computed columns are flagged "(auto)" in the header. */
   const slab = section.key === "ctcSlab";
   const cellInput = slab
-    ? "input-recessed w-full min-w-20 rounded-control px-2 py-1 text-sm"
+    ? "input-recessed w-full min-w-16 rounded-control px-1.5 py-1 text-xs"
     : "input-recessed min-w-28 w-full rounded-control px-2 py-1 text-sm";
 
   return (

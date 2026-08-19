@@ -82,6 +82,7 @@ export const DEFAULT_PROFILE_COLUMNS = [
   "notice_period",
   "applied_on",
   "ta_owner_name",
+  "created_by_name",
 ];
 
 /**
@@ -230,6 +231,21 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
           <span className="flex items-center gap-2">
             <Avatar name={r.ta_owner_name} size={22} />
             <span className="truncate text-secondary">{r.ta_owner_name.split(" ")[0]}</span>
+          </span>
+        ) : (
+          dash
+        ),
+    },
+    {
+      // Who filed this profile (18 Aug 2026): a wrong/missing detail goes to
+      // the person who SUBMITTED it, not to the whole TA team.
+      key: "created_by_name",
+      label: "Submitted by",
+      render: (r) =>
+        (r as any).created_by_name ? (
+          <span className="flex items-center gap-2">
+            <Avatar name={(r as any).created_by_name} size={22} />
+            <span className="truncate text-secondary">{(r as any).created_by_name}</span>
           </span>
         ) : (
           dash

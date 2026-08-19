@@ -3,7 +3,7 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Banknote, Building2, Eye, Lock, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
+import { Banknote, Building2, Eye, Lock, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
@@ -1424,7 +1424,7 @@ type HubFilter = {
 };
 
 export function CustomerScopedTable<T extends { id: number }>({
-  base, columns, onRow, emptyMessage, searchable = true, filters,
+  base, columns, onRow, emptyMessage, searchable = true, filters, rowActions,
 }: {
   base: string;                       // e.g. /api/opportunities?customer_id=7
   columns: Column<T>[];
@@ -1433,6 +1433,8 @@ export function CustomerScopedTable<T extends { id: number }>({
   searchable?: boolean;
   /** Server-side filters rendered as a select bar above the table. */
   filters?: HubFilter[];
+  /** Per-row actions; `reload` refetches the current page after a mutation. */
+  rowActions?: (r: T, reload: () => void) => React.ReactNode;
 }) {
   const [rows, setRows] = useState<T[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>(undefined);
@@ -1448,6 +1450,9 @@ export function CustomerScopedTable<T extends { id: number }>({
   // New scope or filter → page 1, or a stale page number returns nothing.
   useEffect(() => { setPage(1); }, [base, filterQuery]);
 
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -1458,7 +1463,7 @@ export function CustomerScopedTable<T extends { id: number }>({
       .catch((e: any) => { if (alive) setError(e?.message || "Failed to load"); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [base, page, search, searchable, filterQuery]);
+  }, [base, page, search, searchable, filterQuery, reloadKey]);
 
   if (error) return <ErrorBox error={error} />;
   return (
@@ -1493,6 +1498,7 @@ export function CustomerScopedTable<T extends { id: number }>({
           {...(searchable ? { search, onSearch: (q: string) => { setSearch(q); setPage(1); } } : {})}
           onRowClick={onRow}
           emptyMessage={emptyMessage}
+          rowActions={rowActions ? (r) => rowActions(r, reload) : undefined}
         />
       )}
     </div>
@@ -1678,8 +1684,68 @@ function CustomerInvoicesTab({ customerId }: { customerId: number }) {
   );
 }
 
+/** Inline edit for one holiday (18 Aug 2026) — name, date, observance.
+ * Deactivate follows the app-wide soft-delete rule for calendar data. */
+function HolidayQuickEditModal({ holiday, onClose, onSaved }: {
+  holiday: any; onClose: () => void; onSaved: (msg: string) => void;
+}) {
+  const [name, setName] = useState(String(holiday.name || ""));
+  const [date, setDate] = useState(String(holiday.holiday_date || "").slice(0, 10));
+  const [observance, setObservance] = useState(String(holiday.observance || "Mandatory"));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  return (
+    <Modal title={`Edit holiday — ${holiday.name}`} onClose={onClose}
+      dirty={name !== String(holiday.name || "")
+        || date !== String(holiday.holiday_date || "").slice(0, 10)
+        || observance !== String(holiday.observance || "Mandatory")}>
+      {err && <p className="mb-2 text-sm text-danger">{err}</p>}
+      <Field label="Holiday name" required>
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Date" required>
+          <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <Field label="Observance">
+          <select className={inputCls} value={observance} onChange={(e) => setObservance(e.target.value)}>
+            <option value="Mandatory">Mandatory</option>
+            <option value="Optional">Optional</option>
+          </select>
+        </Field>
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button className={btnSecondary} onClick={onClose}>Cancel</button>
+        <button className={btnPrimary} disabled={busy || !name.trim() || !date}
+          onClick={async () => {
+            setBusy(true);
+            setErr("");
+            try {
+              await crmPut(`/api/holidays/${holiday.id}`, {
+                name: name.trim(), holiday_date: date, observance,
+              });
+              onSaved("Holiday updated");
+            } catch (e: any) {
+              setErr(e?.message || "Save failed");
+            } finally {
+              setBusy(false);
+            }
+          }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function CustomerHolidaysTab({ customerId }: { customerId: number }) {
   const canHolidayWrite = useHasRole("HR");
+  const [editing, setEditing] = useState<any | null>(null);
+  const [deactivating, setDeactivating] = useState<any | null>(null);
+  const [toast, notify] = useToast();
+  // Reload handle from the scoped table's rowActions — captured so the modals
+  // (rendered OUTSIDE the table) can refresh the list after a mutation.
+  const reloadRef = React.useRef<() => void>(() => {});
   // Branch filter options — this customer's own branches.
   const [branchOpts, setBranchOpts] = useState<{ value: string; label: string }[]>([]);
   useEffect(() => {
@@ -1727,7 +1793,51 @@ function CustomerHolidaysTab({ customerId }: { customerId: number }) {
           { key: "holiday_type", label: "Type",
             options: optsFromValues(["Mandatory", "Optional"]) },
         ]}
+        rowActions={canHolidayWrite ? (r: any, reload) => {
+          reloadRef.current = reload;
+          return (
+            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <button type="button" title="Edit holiday"
+                className="rounded-control p-1.5 text-muted hover:bg-surface-2 hover:text-primary"
+                onClick={() => setEditing(r)}>
+                <Pencil size={14} />
+              </button>
+              {r.is_active && (
+                <button type="button" title="Deactivate holiday"
+                  className="rounded-control p-1.5 text-muted hover:bg-danger-soft hover:text-danger"
+                  onClick={() => setDeactivating(r)}>
+                  <Power size={14} />
+                </button>
+              )}
+            </span>
+          );
+        } : undefined}
         emptyMessage="No customer-specific holidays — the global calendar applies." />
+      {editing && (
+        <HolidayQuickEditModal holiday={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(msg) => { setEditing(null); notify(msg); reloadRef.current(); }} />
+      )}
+      {deactivating && (
+        <ConfirmModal
+          title={`Deactivate ${deactivating.name}?`}
+          message="The holiday stops driving timesheets and billing but stays in history (soft delete, app-wide rule for calendar data)."
+          confirmLabel="Deactivate"
+          danger
+          onClose={() => setDeactivating(null)}
+          onConfirm={async () => {
+            try {
+              await crmPost(`/api/holidays/${deactivating.id}/deactivate`);
+              notify("Holiday deactivated");
+            } catch (e: any) {
+              notify(e?.message || "Deactivate failed");
+            }
+            setDeactivating(null);
+            reloadRef.current();
+          }}
+        />
+      )}
+      {toast}
     </div>
   );
 }

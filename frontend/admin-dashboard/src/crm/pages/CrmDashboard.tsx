@@ -749,6 +749,118 @@ function MyWorkPanel() {
   );
 }
 
+/* ---------- Start Here (17 Aug 2026) ----------
+ * A new user's first minute: 12 sidebar entries and no idea of order. This
+ * card shows the person's OWN workflow as numbered links, once, and goes away
+ * forever on Dismiss (localStorage). First matching role wins. */
+const START_HERE: { match: string[]; steps: { label: string; to: string; desc: string }[] }[] = [
+  {
+    match: ["Admin", "CEO"],
+    steps: [
+      { label: "Users", to: "users", desc: "create logins and assign CRM roles" },
+      { label: "Access Templates", to: "access-templates", desc: "control what each role sees and edits" },
+      { label: "Settings", to: "settings", desc: "organisation, billing, background jobs and UI text" },
+    ],
+  },
+  {
+    match: ["Sales_Head"],
+    steps: [
+      { label: "Opportunities", to: "opportunities", desc: "review and approve deals Sales created" },
+      { label: "Customers", to: "customers", desc: "branches, policies and CTC slabs live here" },
+      { label: "Projects", to: "projects", desc: "delivery: employees, timesheets, POs and invoices" },
+    ],
+  },
+  {
+    match: ["Sales"],
+    steps: [
+      { label: "Customers", to: "customers", desc: "create the customer, its branches and contacts" },
+      { label: "CTC Slab", to: "customers", desc: "open a branch → CTC Slab tab → build the rate ladder" },
+      { label: "Opportunities", to: "opportunities", desc: "create the deal — Sales Head approves it" },
+      { label: "Timesheets", to: "projects", desc: "approve submitted sheets from the Projects hub" },
+    ],
+  },
+  {
+    match: ["RMG"],
+    steps: [
+      { label: "Opportunities", to: "opportunities", desc: "engineering review — attach the JD and approve" },
+      { label: "Candidate Profiles", to: "profiles", desc: "move candidates through your review stages" },
+      { label: "Projects", to: "projects", desc: "approve timesheets from the Timesheets tab" },
+    ],
+  },
+  {
+    match: ["TA"],
+    steps: [
+      { label: "Candidates", to: "candidates", desc: "the master list — add or import people" },
+      { label: "Opportunities", to: "opportunities", desc: "open one → Suggested Candidates → bulk apply" },
+      { label: "Template Requests", to: "template-requests", desc: "request AI interviews and schedule them" },
+    ],
+  },
+  {
+    match: ["Finance"],
+    steps: [
+      { label: "Purchase Orders", to: "pos", desc: "record the customer's PO first — invoices draw it down" },
+      { label: "Invoices", to: "invoices", desc: "generate from approved timesheets, record payments" },
+      { label: "TDS", to: "tds", desc: "track deductions against invoices" },
+    ],
+  },
+  {
+    match: ["HR"],
+    steps: [
+      { label: "Employees", to: "employees", desc: "the HR master — personal, CTC and bank details" },
+      { label: "Leave Applications", to: "leave-applications", desc: "approve or reject employee leave" },
+      { label: "Holidays", to: "holidays", desc: "holidays drive timesheet pre-marking and billing" },
+    ],
+  },
+];
+
+const START_HERE_KEY = "crm.startHere.dismissed";
+
+function StartHereCard() {
+  const me = useMe();
+  const [hidden, setHidden] = useState(() => {
+    try { return window.localStorage.getItem(START_HERE_KEY) === "1"; } catch { return false; }
+  });
+  if (hidden) return null;
+  const roles = me.roles || [];
+  const plan = START_HERE.find((p) => p.match.some((r) => roles.includes(r)));
+  if (!plan) return null;
+  return (
+    <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-raised">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-primary">Start here — your workflow</h2>
+          <ol className="mt-2 space-y-1.5">
+            {plan.steps.map((s, i) => (
+              <li key={s.to + i} className="text-sm text-secondary">
+                <span className="mr-1.5 font-bold text-muted">{i + 1}.</span>
+                <CrmLink to={s.to} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                  {s.label}
+                </CrmLink>
+                <span className="text-muted"> — {s.desc}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2 text-xs text-muted">
+            Tip: press <kbd className="rounded border border-subtle px-1">Ctrl</kbd>+<kbd className="rounded border border-subtle px-1">K</kbd> to
+            jump anywhere, and <kbd className="rounded border border-subtle px-1">Ctrl</kbd>+<kbd className="rounded border border-subtle px-1">/</kbd> to
+            ask the built-in AI how anything works.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="shrink-0 text-xs font-semibold text-muted hover:text-primary"
+          onClick={() => {
+            try { window.localStorage.setItem(START_HERE_KEY, "1"); } catch { /* ignore */ }
+            setHidden(true);
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CrmDashboardPage() {
   const me = useMe();
   const showExecutive = useHasRole("Sales_Head");
@@ -776,6 +888,7 @@ export function CrmDashboardPage() {
           Welcome back, {me.full_name || me.username}
         </p>
       </FadeInUp>
+      <StartHereCard />
       <MyWorkPanel />
       {showPoExpiry && <PoExpiryWarnings />}
       {showBench && <BenchCard />}

@@ -65,6 +65,11 @@ function isTrue(value: unknown): boolean {
  */
 export function calculateBillingBases(inputs: BillingInputs): BillingBases {
   const leaveDeducted = isTrue(inputs.leaveBillable) ? 0 : zeroWhenBlank(inputs.leave);
+  // BILLABLE means the customer pays for that day, so it stays IN the base
+  // (user-confirmed 18 Aug 2026): Holidays+Weekoff billable, 24 leave, 12
+  // paid → 365−24+12 = 353; nothing billable → 365−10−104−24 = 227 (+12 paid
+  // = 239); everything billable → 365. Mirror of
+  // services/opportunity_ctc.py::calculate_billing_bases — change BOTH.
   const deductions =
     (isTrue(inputs.weekoffBillable) ? 0 : zeroWhenBlank(inputs.weekoff)) +
     (isTrue(inputs.holidaysBillable) ? 0 : zeroWhenBlank(inputs.holidays)) +

@@ -171,14 +171,8 @@ export function ContactPersonFormModal({
                 />
               </WizardField>
             </div>
-            <WizardField label="Department" icon="user" filled={!!form.designation.trim()}>
-              <input
-                className={inputCls}
-                value={form.designation}
-                onChange={(e) => set("designation", e.target.value)}
-                placeholder="Designation / department"
-              />
-            </WizardField>
+            {/* Department field removed (18 Aug 2026, user request) — the
+                designation column stays in the DB; existing values persist. */}
             <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
               <WizardField label="Role" icon="user" filled={!!form.role}>
                 <select className={inputCls} value={form.role} onChange={(e) => set("role", e.target.value)}>

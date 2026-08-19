@@ -37,6 +37,7 @@ export type FieldType =
   | "percent"
   | "date"
   | "select"
+  | "multiselect" // array of option values (e.g. Work Location, 18 Aug 2026)
   | "file" // Customer JD / local file pickers (uploaded with opportunity)
   | "textarea"
   | "richtext" // Project Scope
@@ -200,7 +201,8 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
     title: "Customer Details",
     kind: "fields",
     fields: [
-      { key: "opp_id", label: "Opportunity ID", type: "readonly", helperText: "Auto-generated on save." },
+      { key: "opp_id", label: "Opportunity ID", type: "text",
+        helperText: "Auto-generated — type your own to override (must be unique)." },
       { key: "customer_id", label: "Customer", type: "select", required: true, optionsSource: "customers",
         addNew: "customer", searchable: true, next: "branch_id" },
       { key: "branch_id", label: "Branch", type: "select", required: true, optionsSource: "branches",
@@ -262,8 +264,9 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
         helperText: "Upload the customer job description (PDF/DOC). Also available under Attachments for all types.", next: "tm_role" },
       { key: "tm_role", label: "Role", type: "select", options: ROLE_OPTIONS, optionsSource: "role",
         addNew: "role", next: "tm_work_location" },
-      { key: "tm_work_location", label: "Work Location", type: "select", required: true,
-        options: WORK_LOCATION_OPTIONS, optionsSource: "workLocation", searchable: true,
+      { key: "tm_work_location", label: "Work Location(s)", type: "multiselect", required: true,
+        options: WORK_LOCATION_OPTIONS, optionsSource: "workLocation",
+        helperText: "Pick every city this position can sit in.",
         next: "tm_wfo_remote" },
       { key: "tm_wfo_remote", label: "WFO/Remote", type: "select",
         options: WFO_REMOTE_OPTIONS, optionsSource: "wfoRemote", visibleFor: ["T&M"] },
@@ -282,7 +285,8 @@ export const OPPORTUNITY_SCHEMA: SectionDef[] = [
       { key: "weekoff_billable", label: "Weekoff Billable", type: "checkbox", visibleFor: ["T&M"] },
       { key: "leave_billable", label: "Leave Billable", type: "checkbox", visibleFor: ["T&M"] },
       { key: "credit_leave_monthly", label: "Credit Leave Monthly", type: "number", visibleFor: ["T&M"] },
-      { key: "leave_policy", label: "Leave Policy", type: "select", optionsSource: "leavePolicy", visibleFor: ["T&M"] },
+      /* leave_policy field REMOVED from the form (18 Aug 2026, user request).
+       * The detail key stays valid server-side so old drafts/records load. */
       { key: "holidays", label: "Holidays", type: "number", visibleFor: ["T&M"] },
       { key: "weekoff", label: "Weekoff", type: "number", default: 104.0, visibleFor: ["T&M"] },
       // 24 = the standard yearly leave (agreed Aug 2026). Branch leave policy

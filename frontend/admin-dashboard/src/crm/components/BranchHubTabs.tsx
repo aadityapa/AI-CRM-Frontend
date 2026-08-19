@@ -14,11 +14,17 @@
  *  - Purchase Orders load customer-wide and filter client-side on
  *    billing_branch_id / delivery_branch_id when the payload carries them.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import { crmGet, qs } from "../api";
 import { crmNavigate } from "../routerHooks";
 import { DataTable, type Column } from "./DataTable";
-import { EmptyState, ErrorBox, Field, StatusBadge, inputCls } from "./ui";
+import { EmptyState, ErrorBox, Field, Spinner, StatusBadge, btnPrimary, inputCls } from "./ui";
+
+/** Lazy so the branch page never pulls the 1,900-line wizard into its bundle. */
+const LazyNewOpportunityForm = React.lazy(() =>
+  import("../pages/opportunity/NewOpportunityForm")
+    .then((m) => ({ default: m.NewOpportunityForm })));
 
 export type BranchProject = { id: number; name: string; status?: string | null };
 
@@ -276,6 +282,93 @@ export function BranchPosTab({ customerId, branchId }: { customerId: number; bra
         : <DataTable columns={cols} rows={list} loading={loading}
             emptyMessage="No purchase orders for this branch match the current filters."
             onRowClick={(r) => crmNavigate(`pos/${r.id}`)} />}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------- Opportunities */
+
+/** Deals belonging to THIS branch (18 Aug 2026) — server-filtered through the
+ * new `branch_id` parameter, so paging and counts stay honest (no client-side
+ * slicing of a customer-wide page). "New Opportunity" opens the same wizard
+ * as everywhere else, pre-filled with this customer AND branch; both remain
+ * editable, exactly like the customer hub's button. */
+export function BranchOpportunitiesTab({
+  customerId, branchId, branchName, canCreate,
+}: {
+  customerId: number; branchId: number; branchName?: string | null; canCreate: boolean;
+}) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [stage, setStage] = useState("");
+  const [approval, setApproval] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await crmGet<any[]>(`/api/opportunities${qs({
+        branch_id: branchId, pipeline_stage: stage || undefined,
+        approval_status: approval || undefined, limit: 100,
+      })}`);
+      setRows(r.data || []);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load opportunities");
+    } finally {
+      setLoading(false);
+    }
+  }, [branchId, stage, approval]);
+  useEffect(() => { load(); }, [load]);
+
+  const cols: Column<any>[] = [
+    { key: "opp_id", label: "Opportunity ID",
+      render: (r) => <span className="font-semibold text-primary">{r.opp_id}</span> },
+    { key: "title", label: "Title", render: (r) => r.title || "—" },
+    { key: "opp_type", label: "Type", render: (r) => String(r.opp_type || "—").replace(/_/g, " ") },
+    { key: "pipeline_stage", label: "Stage", render: (r) => <StatusBadge status={r.pipeline_stage} /> },
+    { key: "approval_status", label: "Approval",
+      render: (r) => (r.approval_status ? <StatusBadge status={r.approval_status} /> : "—") },
+    { key: "rfi_value", label: "RFI Value", align: "right", render: (r) => money(r.rfi_value) },
+    { key: "created_at", label: "Created", align: "right", render: (r) => fmtDate(r.created_at) },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted">
+          Opportunities raised for {branchName || "this branch"} — open one for its
+          applicants, skills and CTC slab.
+        </p>
+        {canCreate && (
+          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
+            <Plus size={15} /> New Opportunity
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <SelectFilter label="Stage" value={stage} onChange={setStage}
+          options={opts(["New", "Active", "On_Hold", "Closed_Won", "Closed_Lost",
+            "Closed_Partial", "Rejected", "Archived"])} />
+        <SelectFilter label="Approval" value={approval} onChange={setApproval}
+          options={opts(["Pending_Sales_Head_Approval", "Approved", "Rejected"])} />
+      </div>
+      {showCreate && (
+        <Suspense fallback={<Spinner label="Opening the opportunity wizard…" />}>
+          <LazyNewOpportunityForm
+            initialCustomerId={customerId}
+            initialBranchId={branchId}
+            onClose={() => setShowCreate(false)}
+            onCreated={() => { setShowCreate(false); load(); }}
+          />
+        </Suspense>
+      )}
+      {error
+        ? <ErrorBox error={error} onRetry={load} />
+        : <DataTable columns={cols} rows={rows} loading={loading}
+            emptyMessage={`No opportunities for ${branchName || "this branch"} yet.`}
+            onRowClick={(r) => crmNavigate(`opportunities/${r.id}`)} />}
     </div>
   );
 }

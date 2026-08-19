@@ -18,7 +18,8 @@ import {
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import {
-  BranchEmployeesTab, BranchInvoicesTab, BranchPosTab, BranchProjectsTab, BranchTimesheetsTab,
+  BranchEmployeesTab, BranchInvoicesTab, BranchOpportunitiesTab, BranchPosTab,
+  BranchProjectsTab, BranchTimesheetsTab,
 } from "../components/BranchHubTabs";
 import { BranchRateCardEditor } from "./RateCards";
 
@@ -117,6 +118,11 @@ export function BranchPolicyPage() {
   // on every mount, so switching to this tab always shows the latest slab.
   const rcRole = useHasRole("Sales", "Sales_Head");
   const canSeeCtcSlab = useCanAct("rate-cards", "view", rcRole);
+  // Opportunities tab (18 Aug 2026): same role/template rules as the sidebar
+  // page and the customer hub's Opportunities tab.
+  const oppRole = useHasRole("Sales", "Sales_Head", "RMG", "TA");
+  const canSeeOpps = useCanAct("opportunities", "view", oppRole);
+  const canCreateOpps = useCanAct("opportunities", "create", useHasRole("Sales", "Sales_Head"));
 
   const load = useCallback(async () => {
     try {
@@ -248,6 +254,7 @@ export function BranchPolicyPage() {
       <Tabs
         tabs={[
           { key: "policy", label: "Policy & Billing" },
+          ...(canSeeOpps ? [{ key: "opportunities", label: "Opportunities" }] : []),
           ...(canSeeProjects
             ? [{ key: "projects", label: "Projects", count: data.linked_projects.length }]
             : []),
@@ -261,6 +268,16 @@ export function BranchPolicyPage() {
         onChange={setTab}
       />
 
+      {tab === "opportunities" && canSeeOpps && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <BranchOpportunitiesTab
+            customerId={data.customer_id}
+            branchId={data.id}
+            branchName={data.branch_name}
+            canCreate={canCreateOpps}
+          />
+        </div>
+      )}
       {tab === "projects" && canSeeProjects && (
         <div className="rounded-card border border-subtle bg-surface-1 p-4">
           <BranchProjectsTab projects={data.linked_projects} />
