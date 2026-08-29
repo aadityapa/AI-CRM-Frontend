@@ -8,7 +8,7 @@ import { BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, History, 
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { crmTabVisibleFromMe } from "../useAccess";
+import { crmTabVisibleFromMe, useCanAct } from "../useAccess";
 import { PayrollPage } from "./Payroll";
 import { MyLeavePage } from "./MyLeave";
 import { LeaveApplicationsPage } from "./LeaveApplications";
@@ -172,6 +172,10 @@ type InvoiceLineItem = {
   /** "Harman rule": LOP day-fractions made up by worked week-off/holiday days
       (credit mode). Net loss_of_pay_days above already excludes these. */
   lop_covered_days?: number | null;
+  /** Initial no-billing period (26 Aug 2026): days of this sheet inside the
+      employee's free ramp-up window — they bill zero, this says how many. */
+  no_billing_days_excluded?: number | null;
+  no_billing_until?: string | null;
   /** Rate basis, from the Project Employee record: Hourly|Daily|Monthly|Yearly.
       For Yearly, rate_per_unit is already the monthly equivalent (annual ÷ 12). */
   billing_unit?: string | null;
@@ -485,23 +489,23 @@ const REPORT_TABS = [
 type ReportTab = typeof REPORT_TABS[number]["key"];
 
 export function TimesheetsListPage() {
-  const isStaff = useHasRole("HR", "Finance", "RMG");
+  const isStaff = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG"));
   // Inner tabs mirror their old sidebar entries' gating (roles + Access
   // Templates), so nobody gains or loses access in the move (Aug 2026):
   //  - core timesheet tabs: the page's original roles (TA never had them)
   //  - Payroll: Admin/HR/Finance   - My Leave: every CRM role
   //  - Leave Applications: Admin/HR
   const me = useMe();
-  const tsRoleOk = useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head");
-  const payrollRoleOk = useHasRole("HR", "Finance");
-  const myLeaveRoleOk = useHasRole("Sales", "Sales_Head", "RMG", "TA", "HR", "Finance");
-  const leaveAppsRoleOk = useHasRole("HR");
+  const tsRoleOk = useCanAct("timesheets", "view", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
+  const payrollRoleOk = useCanAct("payroll", "view", useHasRole("HR", "Finance"));
+  const myLeaveRoleOk = useCanAct("my-leave", "view", useHasRole("Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"));
+  const leaveAppsRoleOk = useCanAct("leave-applications", "view", useHasRole("HR"));
   const showPayroll = crmTabVisibleFromMe(me, "payroll", payrollRoleOk, false);
   const showMyLeave = crmTabVisibleFromMe(me, "my-leave", myLeaveRoleOk, false);
   const showLeaveApps = crmTabVisibleFromMe(me, "leave-applications", leaveAppsRoleOk, false);
-  const canManage = useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head");
+  const canManage = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
   // Force delete (also removes the linked invoice) — Sales/Sales_Head/RMG + Admin/CEO.
-  const canForceDelete = useHasRole("Sales", "Sales_Head", "RMG", "Admin", "CEO");
+  const canForceDelete = useCanAct("timesheets", "create", useHasRole("Sales", "Sales_Head", "RMG", "Admin", "CEO"));
   const [tab, setTab] = useState<ReportTab>(() =>
     isStaff ? "due" : tsRoleOk ? "all" : "myleave",
   );
@@ -518,6 +522,7 @@ export function TimesheetsListPage() {
   const [projects, setProjects] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [prefill, setPrefill] = useState<{
     project_id?: number; employee_id?: number; project_employee_id?: number;
     month?: number; year?: number;
@@ -595,11 +600,18 @@ export function TimesheetsListPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-display text-xl font-bold text-primary">Timesheets</h1>
-        {canManage && (
-          <button className={btnPrimary} onClick={() => openNew()}>
-            <Plus size={15} /> New Timesheet
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canManage && (
+            <button className={btnSecondary} onClick={() => setShowImport(true)}>
+              Import Excel
+            </button>
+          )}
+          {canManage && (
+            <button className={btnPrimary} onClick={() => openNew()}>
+              <Plus size={15} /> New Timesheet
+            </button>
+          )}
+        </div>
       </div>
 
       {visibleTabs.length > 1 && (
@@ -647,6 +659,7 @@ export function TimesheetsListPage() {
               columns={columns}
               rows={rows}
               meta={meta}
+              headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "timesheet" : "timesheets"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
               loading={loading}
               onPage={setPage}
               onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)}
@@ -695,7 +708,7 @@ export function TimesheetsListPage() {
                       await crmDelete(`/api/timesheets/${r.id}?force=true`);
                     },
                   } : {})}
-                />
+                colored />
               ) : undefined}
             />
           )}
@@ -712,8 +725,200 @@ export function TimesheetsListPage() {
           onError={(m) => showToast(m, "err")}
         />
       )}
+      {showImport && (
+        <TimesheetImportModal
+          projects={projects}
+          onClose={() => setShowImport(false)}
+          onDone={() => load()}
+          notify={showToast}
+        />
+      )}
       {toast}
     </div>
+  );
+}
+
+/* =====================================================================
+ * Bulk Excel import — pick project + employee, upload day rows
+ * =================================================================== */
+
+type TsImportResult = {
+  months: { period: string; timesheet_id: number | null; applied: number; skipped: string | null
+    counts?: Record<string, number>;
+  }[];
+  failed_rows: { row: number; error: string }[];
+  summary: string;
+};
+
+export function TimesheetImportModal({ projects, initialProjectId, onClose, onDone, notify }: {
+  projects: any[];
+  /** Pre-scope to one project (the project-detail Timesheet tab). */
+  initialProjectId?: string;
+  onClose: () => void;
+  onDone: () => void;
+  notify: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [projectId, setProjectId] = useState(initialProjectId || "");
+  const [pes, setPes] = useState<any[]>([]);
+  const [employeeId, setEmployeeId] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<TsImportResult | null>(null);
+
+  // Employees mapped to the CHOSEN project — historic data belongs to a
+  // (project, employee) assignment, never to a free-floating person.
+  useEffect(() => {
+    setPes([]); setEmployeeId("");
+    if (!projectId) return;
+    crmGet<any[]>(`/api/projects/all-employees${qs({ project_id: projectId, limit: 100 })}`)
+      .then((r) => setPes(r.data || []))
+      .catch(() => setPes([]));
+  }, [projectId]);
+
+  const downloadTemplate = async () => {
+    try {
+      const { authFetch } = await import("../../api/client");
+      const res = await authFetch("/api/timesheets/import-template");
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = "timesheet-import-template.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } catch (e: any) {
+      notify(e?.message || "Template download failed", "err");
+    }
+  };
+
+  const upload = async () => {
+    if (!file || !projectId || !employeeId) return;
+    setBusy(true);
+    try {
+      const { crmUpload } = await import("../api");
+      const res = await crmUpload<TsImportResult>(
+        `/api/timesheets/bulk-import${qs({ project_id: projectId, employee_id: employeeId })}`,
+        file,
+      );
+      setResult(res.data);
+      const anyBad = (res.data?.failed_rows?.length ?? 0) > 0
+        || (res.data?.months || []).some((m) => m.skipped);
+      notify(res.message || res.data?.summary || "Import complete", anyBad ? "err" : "ok");
+      onDone();
+    } catch (e: any) {
+      notify(e?.message || "Import failed", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Import timesheets from Excel" onClose={onClose} wide>
+      {!result ? (
+        <div className="space-y-4">
+          <div className="rounded-card border border-subtle bg-surface-2/40 p-4 text-sm text-secondary">
+            <div className="font-semibold text-primary">How it works</div>
+            <ol className="mt-1 list-decimal space-y-1 pl-5">
+              <li>
+                <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                  onClick={downloadTemplate}>
+                  Download the Excel template
+                </button>{" "}
+                — one row per day: date, hours, status, leave type. Rows may span several months.
+              </li>
+              <li>Pick the project and the employee the data belongs to.</li>
+              <li>Upload — each month becomes (or updates) a Draft sheet with billables computed
+                by the normal rules. Submitted/Approved months are never touched.</li>
+            </ol>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-muted">Project</span>
+              <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">Select project…</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-muted">Employee</span>
+              <select className={inputCls} value={employeeId} disabled={!projectId}
+                onChange={(e) => setEmployeeId(e.target.value)}>
+                <option value="">{projectId ? "Select employee…" : "Select a project first"}</option>
+                {pes.map((pe) => (
+                  <option key={pe.id} value={pe.employee_id}>
+                    {pe.employee_name || pe.full_name || `#${pe.employee_id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <input
+            type="file"
+            accept=".xlsx"
+            className="block w-full text-sm text-secondary file:mr-3 file:rounded-control file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-700"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+          <div className="flex justify-end gap-2">
+            <button className={btnSecondary} onClick={onClose}>Cancel</button>
+            <button className={btnPrimary} onClick={upload} disabled={!file || !projectId || !employeeId || busy}>
+              {busy ? "Importing…" : "Upload & import"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="text-sm font-bold text-primary">{result.summary}</div>
+          <div className="space-y-1">
+            {result.months.map((m) => (
+              <div key={m.period} className="flex flex-wrap items-center gap-2 text-sm">
+                {m.timesheet_id ? (
+                  <CrmLink to={`timesheets/${m.timesheet_id}`}
+                    className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                    {m.period}
+                  </CrmLink>
+                ) : (
+                  <span className="font-semibold text-primary">{m.period}</span>
+                )}
+                {m.applied > 0 && <span className="text-success">{m.applied} day(s) applied</span>}
+                {m.counts && Object.keys(m.counts).length > 0 && (
+                  <span className="text-xs text-muted">
+                    ({Object.entries(m.counts)
+                      .map(([k, v]) => `${String(k).replace(/_/g, " ")} ${v}`)
+                      .join(" · ")})
+                  </span>
+                )}
+                {m.timesheet_id ? (
+                  <CrmLink to={`timesheets/${m.timesheet_id}`}
+                    className="ml-auto text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                    Open &amp; verify →
+                  </CrmLink>
+                ) : null}
+                {m.skipped && (
+                  <span className={m.applied > 0 ? "text-warning" : "text-danger"}>{m.skipped}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          {result.failed_rows.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase text-danger">Rows not imported ({result.failed_rows.length})</div>
+              <ul className="mt-1 space-y-0.5 text-sm text-secondary">
+                {result.failed_rows.map((r) => <li key={r.row} className="text-danger">{r.error}</li>)}
+              </ul>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button className={btnSecondary} onClick={() => { setResult(null); setFile(null); }}>
+              Import another file
+            </button>
+            <button className={btnPrimary} onClick={onClose}>Done</button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1188,7 +1393,7 @@ export function TimesheetDetailPage() {
   /* HR reviews timesheets but does not decide them — approval sits with RMG,
      Sales and (via isSuperAdmin) Admin/CEO. Anyone who can reach this page can
      still read every entry; only the decision is gated. */
-  const canApprove = useHasRole("RMG", "Sales");
+  const canApprove = useCanAct("timesheets", "edit", useHasRole("RMG", "Sales"));
   const [ts, setTs] = useState<TimesheetDetail | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [entries, setEntries] = useState<EntryRow[]>([]);
@@ -1702,6 +1907,25 @@ export function TimesheetDetailPage() {
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
           <StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />
+          {editable && (
+            /* Weekend/holiday repair (27 Aug 2026): sheets generated before the
+               policy existed show Sat/Sun as working → Absent + LOP. */
+            <button
+              type="button"
+              className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
+              onClick={async () => {
+                try {
+                  const r = await crmPost<{ fixed: number }>(`/api/timesheets/${ts.id}/reclassify-days`);
+                  showToast(r.message || "Day types corrected");
+                  await load();
+                } catch (e: any) {
+                  showToast(e?.message || "Failed to fix day types", "err");
+                }
+              }}
+            >
+              Fix week-offs / holidays
+            </button>
+          )}
           {editable && (
             /* Save/Submit live at the FOOT of the page, after every day of the
                period — same pattern as the approval decision. You check the
@@ -2244,11 +2468,16 @@ type PoOption = {
   selectable?: boolean;
   project_allocated?: number | null;
   project_used?: number | null;
+  employee_id?: number | null;
+  employee_name?: string | null;
+  employee_match?: boolean;
 };
 
 type PoOptionsPayload = {
   pos: PoOption[];
   selected_po_id: number | null;
+  suggested_po_id?: number | null;
+  timesheet_employee_name?: string | null;
   rate: {
     month: string;
     billing_unit: string;
@@ -2313,7 +2542,10 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
     try {
       const res = await crmGet<PoOptionsPayload>(`/api/timesheets/${timesheetId}/po-options`);
       setData(res.data);
-      if (res.data?.selected_po_id != null) setPoId(String(res.data.selected_po_id));
+      // Preselect the one obvious PO (tagged to this employee, live, covering
+      // this month) so Finance just confirms; else the project's funding PO.
+      const pre = res.data?.suggested_po_id ?? res.data?.selected_po_id;
+      if (pre != null) setPoId(String(pre));
       crmGet<InvoicePreview>(`/api/timesheets/${timesheetId}/invoice-preview`)
         .then((r) => {
           setCalc(r.data);
@@ -2335,6 +2567,31 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   const selected = pos.find((p) => String(p.id) === poId);
   const noPos = !loading && !error && pos.length === 0;
   const canGenerate = noPos || (!!selected && selected.selectable !== false);
+
+  /* Grouped picker (28 Aug 2026): with per-employee POs, "find the right PO"
+     was a hunt through the customer's whole PO book. Order: this employee's
+     POs → POs already funding this project → the rest; live before expired
+     within each group. Pure presentation — every PO stays selectable. */
+  const byLiveness = (a: PoOption, b: PoOption) =>
+    Number(!!a.expired) - Number(!!b.expired) ||
+    String(b.start_date || "").localeCompare(String(a.start_date || ""));
+  const poGroups = [
+    { label: data?.timesheet_employee_name
+        ? `${data.timesheet_employee_name}'s POs` : "This employee's POs",
+      items: pos.filter((p) => p.employee_match).sort(byLiveness) },
+    { label: "Allocated to this project",
+      items: pos.filter((p) => !p.employee_match && p.project_allocated != null).sort(byLiveness) },
+    { label: "Other customer POs",
+      items: pos.filter((p) => !p.employee_match && p.project_allocated == null).sort(byLiveness) },
+  ].filter((g) => g.items.length > 0);
+  const poLabel = (p: PoOption) =>
+    `${p.po_number}${p.employee_name ? ` — ${p.employee_name}` : ""}` +
+    ` — balance ${inr(p.balance_value)} of ${inr(p.total_value)}` +
+    (p.expired ? " (expired)" : p.selectable === false ? ` (${p.status.toLowerCase()})` : "");
+  // Soft cross-check, never a block: a PO tagged to a DIFFERENT employee is
+  // usually the expensive mistake here, but shared POs are legitimate.
+  const mismatch = selected && selected.employee_id != null && !selected.employee_match;
+  const isSuggested = selected && data?.suggested_po_id != null && selected.id === data.suggested_po_id;
 
   /* Toasts render BEHIND this modal, so a failure ("PO balance insufficient")
      was invisible to the user. The error must live inside the dialog, right
@@ -2507,20 +2764,42 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
                   {/* Expired POs stay selectable (labelled) — billing often
                       continues while a renewal is signed. Only cancelled POs
                       are disabled. */}
-                  {pos.map((p) => (
-                    <option key={p.id} value={p.id} disabled={p.selectable === false}>
-                      {p.po_number} — balance {inr(p.balance_value)} of {inr(p.total_value)}
-                      {p.expired ? " (expired)" : p.selectable === false ? ` (${p.status.toLowerCase()})` : ""}
-                    </option>
+                  {poGroups.map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.items.map((p) => (
+                        <option key={p.id} value={p.id} disabled={p.selectable === false}>
+                          {poLabel(p)}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </Field>
+              {isSuggested && (
+                <div className="rounded-card border border-success/30 bg-success-soft px-3 py-2 text-xs font-semibold text-success">
+                  Suggested automatically — this PO is raised for{" "}
+                  {data?.timesheet_employee_name || "this employee"} and covers this month. Just verify and generate.
+                </div>
+              )}
+              {mismatch && (
+                <div className="rounded-card border border-warning/30 bg-warning-soft px-3 py-2 text-xs font-semibold text-warning">
+                  Heads up: this PO is raised for <b>{selected!.employee_name}</b>, not{" "}
+                  <b>{data?.timesheet_employee_name || "this timesheet's employee"}</b>. You can still
+                  use it (shared POs are fine) — just make sure it's the PO you mean to draw down.
+                </div>
+              )}
               {selected && (
                 <div className="space-y-1.5 rounded-card border border-subtle px-4 py-3">
                   <div className={row}>
                     <span className={lbl}>PO</span>
                     <span className={val}>{selected.po_number}{selected.po_type ? ` · ${selected.po_type}` : ""}</span>
                   </div>
+                  {selected.employee_name && (
+                    <div className={row}>
+                      <span className={lbl}>Raised for</span>
+                      <span className={val}>{selected.employee_name}</span>
+                    </div>
+                  )}
                   <div className={row}><span className={lbl}>Total PO amount</span><span className={val}>{inr(selected.total_value)}</span></div>
                   <div className={row}><span className={lbl}>Used amount</span><span className={val}>{inr(selected.used_value)}</span></div>
                   <div className={row}>
@@ -2581,6 +2860,13 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
                       <div className="pb-1 text-xs text-secondary">
                         {Number(li.loss_of_pay_days || 0) > 0 && (
                           <span className="mr-4 text-danger">LOP {li.loss_of_pay_days}</span>
+                        )}
+                        {Number(li.no_billing_days_excluded || 0) > 0 && (
+                          <span className="mr-4 text-warning" title={li.no_billing_until
+                            ? `Initial no-billing period runs until ${li.no_billing_until}`
+                            : undefined}>
+                            No-billing period: {li.no_billing_days_excluded} day{Number(li.no_billing_days_excluded) === 1 ? "" : "s"} excluded
+                          </span>
                         )}
                         <span className="font-semibold text-primary">Amount {inr(liveAmount)}</span>
                       </div>
@@ -2666,7 +2952,7 @@ function InvoiceDetailsSection({
   summary?: Summary | null;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const canInvoice = useHasRole("Finance", "RMG");
+  const canInvoice = useCanAct("invoices", "create", useHasRole("Finance", "RMG"));
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -3426,8 +3712,8 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
   /* Who may decide, not who may look. HR keeps full visibility of this tab —
      they just get "Open" instead of "Review", because the decision is RMG's,
      Sales's or (via isSuperAdmin) Admin/CEO's. */
-  const canAct = useHasRole("RMG", "Sales");
-  const canInvoice = useHasRole("Finance", "RMG");
+  const canAct = useCanAct("timesheets", "edit", useHasRole("RMG", "Sales"));
+  const canInvoice = useCanAct("invoices", "create", useHasRole("Finance", "RMG"));
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3640,8 +3926,8 @@ type DueRow = {
  * lacking a Submitted/Approved timesheet for a month/year, with an on-demand
  * "Send Reminders" action (HR/Admin) that bell-notifies the employees. */
 function TimesheetDuePanel({ showToast }: { showToast: (msg: string, kind?: "ok" | "err") => void }) {
-  const canView = useHasRole("HR", "Finance", "RMG");
-  const canRemind = useHasRole("HR");
+  const canView = useCanAct("timesheets", "view", useHasRole("HR", "Finance", "RMG"));
+  const canRemind = useCanAct("timesheets", "edit", useHasRole("HR"));
   const reduce = useReducedMotion();
   const now = new Date();
   const [open, setOpen] = useState(false);

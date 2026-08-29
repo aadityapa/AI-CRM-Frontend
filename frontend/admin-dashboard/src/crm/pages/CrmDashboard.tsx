@@ -36,13 +36,23 @@ type RequirementsData = {
 type RmgData = {
   pipeline: {
     req_number: string;
+    /** ONE id rule (18 Aug 2026): the parent opportunity's OPP-xxxx is what humans see. */
+    opp_id?: string | null;
     title: string;
     customer: string;
     no_of_positions: number;
     resumes_count: number;
     profiles_by_status: Record<string, number>;
   }[];
-  totals: { pending_engineering_reviews: number };
+  /** RMG screening queue (25 Aug 2026): applicants waiting on Shortlist/Reject. */
+  pending_screening?: {
+    profile_id: number;
+    candidate_name: string;
+    opportunity_title: string;
+    applied_on: string | null;
+    ta_owner_name: string | null;
+  }[];
+  totals: { pending_engineering_reviews: number; pending_screening?: number };
 };
 
 type TaData = {
@@ -51,7 +61,9 @@ type TaData = {
   interview_pending_queue: {
     id: number;
     candidate_name: string;
+    /** The human-visible id (OPP-xxxx; server falls back to req_number for legacy rows). */
     requirement: string;
+    requirement_id?: number | null;
     scheduled_at: string | null;
   }[];
   recruiter_productivity: {
@@ -278,7 +290,7 @@ type BenchRow = {
 };
 
 type BenchMatch = {
-  requirement_id: number; req_number: string; title: string; status: string;
+  requirement_id: number; req_number: string; opp_id?: string | null; title: string; status: string;
   match_score: number | null; skills_matched: string[]; mandatory_total: number;
 };
 
@@ -343,7 +355,7 @@ function BenchCard() {
                 <li key={m.requirement_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                   <span className="min-w-0">
                     <CrmLink to={`requirements/${m.requirement_id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
-                      {m.req_number} — {m.title}
+                      {m.opp_id || m.req_number} — {m.title}
                     </CrmLink>
                     {m.skills_matched.length > 0 && (
                       <span className="block text-xs text-muted">Matched: {m.skills_matched.join(", ")}</span>
@@ -460,7 +472,36 @@ function RmgSection() {
           value={data.totals.pending_engineering_reviews}
           sub="Requirements awaiting review"
         />
+        <KpiCard
+          label="Pending Screening"
+          value={data.totals.pending_screening ?? 0}
+          sub="Applicants awaiting your Shortlist / Reject"
+        />
       </Stagger>
+      {(data.pending_screening?.length ?? 0) > 0 && (
+        <Card title="Applicants awaiting RMG screening">
+          <p className="mb-2 text-xs text-muted">
+            Oldest first — the AI L1 interview stays locked for these candidates until you decide.
+            Click through to Shortlist or Reject on the profile.
+          </p>
+          <ul className="divide-y divide-subtle">
+            {data.pending_screening!.map((p) => (
+              <li key={p.profile_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div className="min-w-0">
+                  <CrmLink to={`profiles/${p.profile_id}`} className="font-semibold text-primary hover:underline">
+                    {p.candidate_name}
+                  </CrmLink>
+                  <span className="ml-2 text-xs text-muted">{p.opportunity_title}</span>
+                </div>
+                <div className="text-xs text-muted">
+                  {p.ta_owner_name ? <>by {p.ta_owner_name} · </> : null}
+                  {p.applied_on ? new Date(p.applied_on).toLocaleDateString() : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       <Card title="Open Requirements — Sourcing Pipeline">
         <div className="overflow-x-auto">
           <table className="w-full min-w-max lg:min-w-0">
@@ -484,7 +525,7 @@ function RmgSection() {
               {data.pipeline.map((r) => (
                 <tr key={r.req_number} className={trCls}>
                   <td className={tdCls}>
-                    <div className="font-semibold text-primary">{r.req_number}</div>
+                    <div className="font-semibold text-primary">{r.opp_id || r.req_number}</div>
                     <div className="text-xs text-muted">{r.title}</div>
                   </td>
                   <td className={tdCls}>{r.customer}</td>
@@ -584,10 +625,9 @@ function TaSection() {
                   <tr key={q.id} className={trCls}>
                     <td className={`${tdCls} font-semibold text-primary`}>{q.candidate_name}</td>
                     <td className={tdCls}>
-                      {/* Backend supplies req_number only (no id) — deep-link to the requirements list. */}
                       <CrmLink
-                        to="requirements"
-                        title="Open requirements"
+                        to={q.requirement_id ? `requirements/${q.requirement_id}` : "requirements"}
+                        title="Open requirement"
                         className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
                       >
                         {q.requirement}
@@ -861,12 +901,85 @@ function StartHereCard() {
   );
 }
 
+type TaTrackRow = {
+  user_id: number; name: string; applied: number; active: number;
+  shortlisted: number; joined: number; rejected: number; interviews_scheduled: number;
+};
+type TaTrackData = {
+  rows: TaTrackRow[];
+  totals: { tas: number; applied: number; interviews_scheduled: number; shortlisted: number; joined: number };
+};
+
+/** Per-TA recruiting scorecard. `mine` = a TA viewing only their own record;
+ * otherwise Admin/CEO see every recruiter. Attribution is ta_owner_id, stamped
+ * when a candidate is applied to an opportunity. */
+function TaTrackingSection({ mine }: { mine: boolean }) {
+  const { data, loading, error, retry } = useDashData<TaTrackData>("/api/dashboard/ta-tracking");
+  const title = mine ? "My Recruiting Scorecard" : "TA Tracking";
+  if (loading) return <Section title={title}><SectionLoading /></Section>;
+  if (error || !data)
+    return <Section title={title}><ErrorBox error={error || "No data"} onRetry={retry} /></Section>;
+  return (
+    <Section title={title}>
+      {!mine && (
+        <Stagger className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <KpiCard label="Active TAs" value={data.totals.tas} />
+          <KpiCard label="Candidates Applied" value={data.totals.applied} sub="attributed to a TA" />
+          <KpiCard label="Interviews Scheduled" value={data.totals.interviews_scheduled} />
+          <KpiCard label="Joined" value={data.totals.joined} />
+        </Stagger>
+      )}
+      <Card title={mine ? "Your numbers" : "By recruiter"}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max lg:min-w-0">
+            <thead className={theadCls}>
+              <tr className="border-b border-subtle">
+                <th className={thCls}>Recruiter</th>
+                <th className={`${thCls} text-right`}>Applied</th>
+                <th className={`${thCls} text-right`}>Active</th>
+                <th className={`${thCls} text-right`}>Interviews</th>
+                <th className={`${thCls} text-right`}>Shortlisted</th>
+                <th className={`${thCls} text-right`}>Joined</th>
+                <th className={`${thCls} text-right`}>Rejected</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.length === 0 && (
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState message={mine
+                      ? "You haven't applied any candidates yet — apply from Suggested Candidates or a candidate's profile."
+                      : "No TA activity yet."} />
+                  </td>
+                </tr>
+              )}
+              {data.rows.map((r) => (
+                <tr key={r.user_id} className={trCls}>
+                  <td className={`${tdCls} font-semibold text-primary`}>{r.name}</td>
+                  <td className={tdNum}>{r.applied}</td>
+                  <td className={tdNum}>{r.active}</td>
+                  <td className={tdNum}>{r.interviews_scheduled}</td>
+                  <td className={tdNum}>{r.shortlisted}</td>
+                  <td className={tdNum}>{r.joined}</td>
+                  <td className={tdNum}>{r.rejected}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </Section>
+  );
+}
+
 export function CrmDashboardPage() {
   const me = useMe();
+  const isAdmin = me.roles.includes("Admin") || me.roles.includes("CEO");
   const showExecutive = useHasRole("Sales_Head");
   const showRequirements = useHasRole("Sales", "Sales_Head", "RMG");
   const showRmg = useHasRole("RMG");
   const showTa = useHasRole("TA");
+  const showTaTracking = isAdmin || showTa;
   const showFinance = useHasRole("Finance");
   // PO expiry warnings: Finance/Admin plus Sales & Sales Head (they own the
   // customer relationship and drive PO renewals before billing breaks).
@@ -876,7 +989,7 @@ export function CrmDashboardPage() {
   // rather than a flat 30-day list. Sales and Sales_Head lost it entirely —
   // scheduling and running interviews is not their workflow.
   const showBench = useHasRole("RMG", "Sales_Head");
-  const nothing = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance;
+  const nothing = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking;
 
   return (
     <div className="space-y-6 xl:space-y-8">
@@ -896,6 +1009,7 @@ export function CrmDashboardPage() {
       {showRequirements && <RequirementsSection />}
       {showRmg && <RmgSection />}
       {showTa && <TaSection />}
+      {showTaTracking && <TaTrackingSection mine={!isAdmin} />}
       {showFinance && <FinanceSection />}
       {nothing && (
         <div className="rounded-card border border-subtle bg-surface-1 shadow-raised">

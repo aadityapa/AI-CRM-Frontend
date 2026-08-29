@@ -25,6 +25,9 @@ export function ProfileToolbar({
   opportunityId,
   onOpportunity,
   opportunities,
+  taOwners,
+  taOwnerId,
+  onTaOwner,
   view,
   onView,
   extra,
@@ -37,6 +40,9 @@ export function ProfileToolbar({
   opportunityId: string;
   onOpportunity: (id: string) => void;
   opportunities: { id: number; opp_id?: string | null; title?: string | null; customer_name?: string | null }[];
+  taOwners: { id: number; name: string }[];
+  taOwnerId: string;
+  onTaOwner: (v: string) => void;
   view: ViewMode;
   onView: (v: ViewMode) => void;
   /** Column customiser button and anything else the page wants to append. */
@@ -77,18 +83,31 @@ export function ProfileToolbar({
         onChange={(next) => onStatus(next.join(","))}
       />
 
-      <label className="sr-only" htmlFor="profile-opportunity-filter">Opportunity</label>
+      {/* Multi-select + searchable (Aug 2026): recruiters compare across several
+          roles at once, and the opportunity list is far too long for a native
+          <select>. opportunityId travels as a CSV of ids. */}
+      <MultiSelectFilter
+        label="Opportunities"
+        allLabel="All opportunities"
+        searchable
+        options={opportunities.map((o) => ({
+          value: String(o.id),
+          label: `${o.opp_id || `#${o.id}`}${o.customer_name ? ` · ${o.customer_name}` : ""}${o.title ? ` — ${o.title}` : ""}`,
+        }))}
+        selected={opportunityId ? opportunityId.split(",").filter(Boolean) : []}
+        onChange={(next) => onOpportunity(next.join(","))}
+      />
+
+      <label className="sr-only" htmlFor="profile-ta-owner-filter">TA owner</label>
       <select
-        id="profile-opportunity-filter"
-        className={`${inputCls} !w-auto max-w-[220px]`}
-        value={opportunityId}
-        onChange={(e) => onOpportunity(e.target.value)}
+        id="profile-ta-owner-filter"
+        className={`${inputCls} !w-auto max-w-[190px]`}
+        value={taOwnerId}
+        onChange={(e) => onTaOwner(e.target.value)}
       >
-        <option value="">All opportunities</option>
-        {opportunities.map((o) => (
-          <option key={o.id} value={String(o.id)}>
-            {o.opp_id || `#${o.id}`}{o.customer_name ? ` · ${o.customer_name}` : ""}
-          </option>
+        <option value="">All TA owners</option>
+        {taOwners.map((o) => (
+          <option key={o.id} value={String(o.id)}>{o.name}</option>
         ))}
       </select>
 

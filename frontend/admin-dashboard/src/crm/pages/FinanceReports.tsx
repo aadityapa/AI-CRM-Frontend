@@ -56,7 +56,7 @@ function CustomerLedgerTab() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    crmGet<{ id: number; name: string }[]>("/api/customers?limit=100")
+    crmGet<{ id: number; name: string }[]>("/api/customers/names")
       .then((r) => setCustomers(r.data || [])).catch(() => {});
   }, []);
 

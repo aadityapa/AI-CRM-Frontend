@@ -12,7 +12,7 @@
  * Branch → form caps: max_billable_hours_per_day → max_billable_hours_day (etc.)
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CircleDot, Clock3, FolderKanban, GitBranch, Timer } from "lucide-react";
+import { CircleDot, Clock3, FolderKanban, GitBranch, Plus, Timer, Trash2, Users } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { ConfirmModal, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
@@ -80,7 +80,7 @@ type CustomerOption = { id: number; name: string };
 type BranchOption = { id: number; branch_name: string };
 
 type SectionDef = {
-  key: PolicySectionKey | "projectDetails";
+  key: PolicySectionKey | "projectDetails" | "mapEmployees";
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -133,6 +133,34 @@ const CREATE_DETAILS_SECTION: SectionDef = {
   description: "Name, customer, and branch for the new project.",
   icon: <FolderKanban size={18} />,
 };
+
+/** One form, two operations (26 Aug 2026, user decision): the New Project
+ * wizard ends with an OPTIONAL employee-mapping step, so project + team land
+ * in one pass instead of a follow-up visit to Project Employees. */
+const MAP_EMPLOYEES_SECTION: SectionDef = {
+  key: "mapEmployees",
+  title: "Map Employees (optional)",
+  description: "Deploy employees onto this project with rate, unit and location. Leave empty to skip.",
+  icon: <Users size={18} />,
+};
+
+/* Values mirror ProjectEmployees.tsx (LOCATIONS / UNITS) — same enum values
+ * the mapping endpoint stores. */
+const MAP_UNITS = [
+  { value: "Hourly", label: "Per Hour" },
+  { value: "Daily", label: "Per Day" },
+  { value: "Monthly", label: "Per Month" },
+  { value: "Yearly", label: "Per Year" },
+] as const;
+const MAP_LOCATIONS = [
+  { value: "Onsite", label: "On Site" },
+  { value: "Off-Shore", label: "Off-Shore" },
+  { value: "Remote", label: "Remote" },
+] as const;
+
+type EmpMapRow = { employeeId: string; onboarding: string; rate: string; unit: string; location: string };
+const emptyEmpRow = (): EmpMapRow =>
+  ({ employeeId: "", onboarding: "", rate: "", unit: "Monthly", location: "Onsite" });
 
 function polFromInitial(initial: ProjectWizardInitial): PolicyFormState {
   return {
@@ -295,12 +323,42 @@ function ProjectWizard({
   const isCreate = mode === "create";
   const projectId = initial?.id;
   const sections = useMemo(
-    () => (isCreate ? [CREATE_DETAILS_SECTION, ...POLICY_SECTION_DEFS] : POLICY_SECTION_DEFS),
+    () => (isCreate
+      ? [CREATE_DETAILS_SECTION, ...POLICY_SECTION_DEFS, MAP_EMPLOYEES_SECTION]
+      : POLICY_SECTION_DEFS),
     [isCreate],
   );
 
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const [stepIndex, setStepIndex] = useState(0);
+  /* Map-Employees step (create only). */
+  const [empOptions, setEmpOptions] = useState<{ id: number; label: string; email: string; active: boolean }[]>([]);
+  const [empRows, setEmpRows] = useState<EmpMapRow[]>([emptyEmpRow()]);
+  useEffect(() => {
+    if (!isCreate) return;
+    // EVERY page (fix, 27 Aug 2026): "?limit=1000" was silently clamped to
+    // 100 by the server, so anyone past the first hundred — like an employee
+    // hired years ago in an id-desc list — searched as "No matches" here
+    // while showing fine on the Employees tab. Active names sort first;
+    // relieved ones are labelled so a mapping to them is a conscious choice.
+    import("../lib/fetchAllMaster").then(({ fetchAllMaster }) =>
+      fetchAllMaster<any>("/api/employees")
+        .then((rows) => setEmpOptions(
+          rows
+            .sort((a: any, b: any) => Number(b.is_active) - Number(a.is_active))
+            .map((e: any) => ({
+              id: e.id,
+              label: `${[e.first_name, e.last_name].filter(Boolean).join(" ") || e.full_name || e.email || `Employee #${e.id}`}${e.is_active ? "" : " (Relieved)"}`,
+              email: e.email || "",
+              active: !!e.is_active,
+            })),
+        ))
+        .catch(() => { /* the step degrades to an empty picker */ }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCreate]);
+  const setEmpRow = (i: number, patch: Partial<EmpMapRow>) =>
+    setEmpRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const filledEmpRows = empRows.filter((r) => r.employeeId || r.rate || r.onboarding);
   const [maxReached, setMaxReached] = useState(sections.length - 1);
   const [stepDir, setStepDir] = useState(1);
   const [saving, setSaving] = useState(false);
@@ -422,6 +480,10 @@ function ProjectWizard({
       case "billingProps":
         if (errors.start || errors.end || errors.freq) return "error";
         return pol.billing_frequency ? "complete" : "empty";
+      case "mapEmployees":
+        if (Object.keys(errors).some((k) => k.startsWith("emp_"))) return "error";
+        if (filledEmpRows.length === 0) return "empty";
+        return filledEmpRows.every((r) => r.employeeId && Number(r.rate) > 0) ? "complete" : "partial";
       default:
         return "empty";
     }
@@ -436,7 +498,7 @@ function ProjectWizard({
         status: sectionStatus(s.key),
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [name, status, customerId, branchId, branches, pol, leaveRows, errors, sections],
+    [name, status, customerId, branchId, branches, pol, leaveRows, errors, sections, empRows],
   );
 
   const stepCompletePct = (() => {
@@ -491,6 +553,18 @@ function ProjectWizard({
       if (!(sd >= 1 && sd <= 31)) errs.start = "Must be 1–31";
       if (!(ed >= 1 && ed <= 31)) errs.end = "Must be 1–31";
       if (!pol.billing_frequency) errs.freq = "Billing Frequency is required";
+    }
+    if (key === "mapEmployees") {
+      // Optional step: a fully-empty row is fine; a PARTLY-filled row is not.
+      const seen = new Set<string>();
+      empRows.forEach((r, i) => {
+        const touched = r.employeeId || r.rate || r.onboarding;
+        if (!touched) return;
+        if (!r.employeeId) errs[`emp_who_${i}`] = "Select the employee";
+        else if (seen.has(r.employeeId)) errs[`emp_who_${i}`] = "Already added above";
+        seen.add(r.employeeId);
+        if (!(Number(r.rate) > 0)) errs[`emp_rate_${i}`] = "Rate above zero required";
+      });
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -571,7 +645,36 @@ function ProjectWizard({
         const res = await crmPost<{ id: number }>("/api/projects", body);
         const created = res.data;
         await createLeavePolicies(created.id);
-        notify("Project created");
+        // Map Employees step (best-effort per row): the project EXISTS now, so
+        // a failed mapping must not roll anything back — it is reported and
+        // repeatable from Project Employees.
+        const toMap = empRows.filter((r) => r.employeeId && Number(r.rate) > 0);
+        let mapped = 0;
+        const mapErrors: string[] = [];
+        for (const r of toMap) {
+          const effFrom = r.onboarding || new Date().toISOString().slice(0, 10);
+          try {
+            await crmPost(`/api/projects/${created.id}/employees`, {
+              employee_id: Number(r.employeeId),
+              billing_rate: Number(r.rate),
+              billing_unit: r.unit,
+              work_mode: r.location,
+              onboarding_date: r.onboarding || null,
+              rates: [{ effective_from: effFrom, rate: Number(r.rate) }],
+            });
+            mapped += 1;
+          } catch (e: any) {
+            const who = empOptions.find((o) => String(o.id) === r.employeeId)?.label || `#${r.employeeId}`;
+            mapErrors.push(`${who}: ${e?.message || "failed"}`);
+          }
+        }
+        if (mapErrors.length) {
+          notify(`Project created · ${mapped} employee${mapped === 1 ? "" : "s"} mapped · failed: ${mapErrors.join("; ")}`, "err");
+        } else if (mapped > 0) {
+          notify(`Project created · ${mapped} employee${mapped === 1 ? "" : "s"} mapped`);
+        } else {
+          notify("Project created");
+        }
         onSaved(created);
       } else {
         if (projectId == null) throw new Error("Missing project id");
@@ -816,6 +919,86 @@ function ProjectWizard({
 
   const renderStepBody = () => {
     switch (currentSection.key) {
+      case "mapEmployees":
+        return (
+          <div className="space-y-4">
+            <p className="text-xs text-muted">
+              Optional — map the team now, or skip and use Project Employees → Map employee later.
+              Each row needs the employee and a billing rate; the rate takes effect from the
+              onboarding date (today when blank).
+            </p>
+            {empRows.map((r, i) => {
+              const picked = empOptions.find((e) => String(e.id) === r.employeeId);
+              return (
+                <div key={i} className="rounded-card border border-[color:var(--wiz-border)] bg-surface-1/40 shadow-raised">
+                  <div className="flex items-center justify-between gap-2 border-b border-[color:var(--wiz-border)] px-4 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600/15 text-[11px] font-bold text-brand-600 dark:text-brand-300">
+                        {i + 1}
+                      </span>
+                      <span className="truncate text-sm font-bold text-primary">
+                        {picked ? picked.label : `Employee ${i + 1}`}
+                      </span>
+                      {picked?.email && (
+                        <span className="hidden truncate text-xs text-muted sm:inline">· {picked.email}</span>
+                      )}
+                    </div>
+                    {empRows.length > 1 && (
+                      <button
+                        type="button"
+                        aria-label="Remove this employee row"
+                        className="shrink-0 rounded-control p-1.5 text-muted transition-colors duration-micro hover:bg-surface-2 hover:text-danger"
+                        onClick={() => setEmpRows((rows) => rows.filter((_, idx) => idx !== i))}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-x-5 gap-y-4 p-4 sm:grid-cols-2 lg:grid-cols-6">
+                    <div className="sm:col-span-2">
+                      <WizardField label="Employee" required={!!(r.rate || r.onboarding)} error={errors[`emp_who_${i}`]} filled={!!r.employeeId}>
+                        <SearchableSelect
+                          value={r.employeeId}
+                          onChange={(v) => setEmpRow(i, { employeeId: v })}
+                          options={empOptions.map((e) => ({ value: String(e.id), label: e.label }))}
+                          searchable
+                          placeholder="Search employee by name…"
+                          err={errors[`emp_who_${i}`]}
+                        />
+                      </WizardField>
+                    </div>
+                    <WizardField label="Onboarding date" filled={!!r.onboarding}>
+                      <input type="date" className={inputCls} value={r.onboarding}
+                        onChange={(e) => setEmpRow(i, { onboarding: e.target.value })} />
+                    </WizardField>
+                    <WizardField label="Billing rate (₹)" required={!!r.employeeId} error={errors[`emp_rate_${i}`]} filled={Number(r.rate) > 0}>
+                      <input type="number" min={0} step="0.01" className={inputCls} value={r.rate}
+                        placeholder="e.g. 85000"
+                        onChange={(e) => setEmpRow(i, { rate: e.target.value })} />
+                    </WizardField>
+                    <WizardField label="Billing unit" filled>
+                      <select className={inputCls} value={r.unit} onChange={(e) => setEmpRow(i, { unit: e.target.value })}>
+                        {MAP_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                      </select>
+                    </WizardField>
+                    <WizardField label="Location" filled>
+                      <select className={inputCls} value={r.location} onChange={(e) => setEmpRow(i, { location: e.target.value })}>
+                        {MAP_LOCATIONS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                      </select>
+                    </WizardField>
+                  </div>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-control border border-[color:var(--wiz-border)] px-3 py-2 text-sm font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
+              onClick={() => setEmpRows((rows) => [...rows, emptyEmpRow()])}
+            >
+              <Plus size={14} /> Add another employee
+            </button>
+          </div>
+        );
       case "projectDetails":
         return (
           <div className="space-y-5">

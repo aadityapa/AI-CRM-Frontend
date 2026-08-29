@@ -11,6 +11,7 @@ import {
   btnDanger, btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
 import { crmNavigate } from "../router";
+import { useHasRole } from "../CrmApp";
 
 type RegField = { key: string; label: string };
 type RegTab = { key: string; label: string; fields: RegField[] };
@@ -24,6 +25,58 @@ type User = { id: number; full_name?: string; email?: string; username?: string 
 type Dept = { id: number; name: string };
 
 const ROLES = ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"];
+
+/** Module grouping (25 Aug 2026) — the flat 25-tab list read as a wall; this
+ * mirrors how people think about the app. Unknown keys fall into "Other" so a
+ * future registry tab can never silently disappear from the editor. */
+const TAB_MODULES: Record<string, string> = {
+  dashboard: "General", calendar: "General", reports: "General",
+  customers: "Sales", opportunities: "Sales", "rate-cards": "Sales", "branch-policy": "Sales",
+  requirements: "Recruitment", candidates: "Recruitment", profiles: "Recruitment",
+  "template-requests": "Recruitment",
+  projects: "Projects & Finance", "project-employees": "Projects & Finance",
+  timesheets: "Projects & Finance", pos: "Projects & Finance", invoices: "Projects & Finance",
+  tds: "Projects & Finance", "finance-reports": "Projects & Finance",
+  employees: "HR", holidays: "HR", "my-leave": "HR", "leave-applications": "HR", payroll: "HR",
+  users: "Administration", settings: "Administration",
+};
+const MODULE_ORDER = ["General", "Sales", "Recruitment", "Projects & Finance", "HR", "Administration", "Other"];
+
+/** Segmented mode picker — a permission matrix reads faster than 25 dropdowns. */
+function ModeSegments({ value, onChange, compact }: {
+  value: string; onChange: (m: string) => void; compact?: boolean;
+}) {
+  const opts = [
+    { value: "", label: "None" },
+    { value: "view", label: "View" },
+    { value: "edit", label: "Edit" },
+    { value: "create", label: "Create" },
+  ];
+  return (
+    <div className="inline-flex overflow-hidden rounded-control border border-subtle" role="radiogroup">
+      {opts.map((o, i) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          title={o.value === "" ? "No access"
+            : o.value === "view" ? "View only"
+              : o.value === "edit" ? "View + Edit"
+                : "View + Edit + Create"}
+          className={`px-2.5 ${compact ? "py-0.5 text-[11px]" : "py-1 text-xs"} font-semibold transition-colors duration-micro ${
+            i > 0 ? "border-l border-subtle" : ""
+          } ${value === o.value
+            ? o.value === "" ? "bg-surface-2 text-muted" : "bg-brand-600 text-white"
+            : "bg-surface-1 text-secondary hover:bg-surface-2"}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 /** Tab modes are a ladder: each level includes everything below it. */
 const MODE_OPTS = [
   { value: "", label: "No access" },
@@ -31,9 +84,12 @@ const MODE_OPTS = [
   { value: "edit", label: "View + Edit" },
   { value: "create", label: "View + Edit + Create" },
 ];
-/** Field grants stop at edit — creating happens at record level, not per field. */
+/** Field grants stop at edit — creating happens at record level, not per field.
+ * "Hidden" (25 Aug 2026) removes the field — or, for `tab:*` entries, the whole
+ * SUB-TAB — from the templated user's view. */
 const FIELD_MODE_OPTS = [
   { value: "", label: "Tab default" },
+  { value: "hidden", label: "Hidden" },
   { value: "view", label: "View only" },
   { value: "edit", label: "Edit" },
 ];
@@ -50,6 +106,10 @@ const emptyForm = (): Form => ({
 });
 
 export function AccessTemplatesPage() {
+  // Admin/CEO only — this page EDITS access. The server already 403s every
+  // mutation; this stops the page rendering at all for anyone else (it was the
+  // one CRM page with no gate of its own).
+  const isAdminUser = useHasRole();
   const [toast, notify] = useToast();
   const [registry, setRegistry] = useState<Registry | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -58,6 +118,7 @@ export function AccessTemplatesPage() {
   const [form, setForm] = useState<Form>(emptyForm());
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [tabSearch, setTabSearch] = useState("");
   const [assignUser, setAssignUser] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -169,6 +230,9 @@ export function AccessTemplatesPage() {
   const tabs = registry?.tabs || [];
   const tabCount = Object.keys(form.tabAccess).length;
 
+  if (!isAdminUser) {
+    return <EmptyState message="Access Templates are managed by Admin/CEO only." />;
+  }
   if (err && !registry) return <ErrorBox error={err} />;
   if (!registry) return <div className="rounded-card border border-subtle bg-surface-1 p-6"><Spinner /></div>;
 
@@ -253,46 +317,113 @@ export function AccessTemplatesPage() {
             </div>
 
             <div>
-              <div className="fx-hairline-b mb-2 flex items-center justify-between pb-2">
-                <h2 className="text-sm font-semibold text-primary">Tab & field access</h2>
-                <span className="text-xs text-muted">{tabCount} tab{tabCount === 1 ? "" : "s"} granted</span>
+              <div className="fx-hairline-b mb-2 flex flex-wrap items-center justify-between gap-2 pb-2">
+                <h2 className="text-sm font-semibold text-primary">Permissions</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-secondary">
+                    {tabCount} tab{tabCount === 1 ? "" : "s"} granted
+                  </span>
+                  <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-secondary">
+                    {Object.values(form.fieldAccess).reduce((n, m) => n + Object.keys(m).length, 0)} field override(s)
+                  </span>
+                  <input
+                    className={`${inputCls} !h-8 !w-48 !py-1 text-xs`}
+                    placeholder="Find a tab or field…"
+                    value={tabSearch}
+                    onChange={(e) => setTabSearch(e.target.value)}
+                  />
+                </div>
               </div>
-              <div className="divide-y divide-subtle rounded-card border border-subtle">
-                {tabs.map((tab) => {
-                  const open = !!expanded[tab.key];
-                  const tabMode = form.tabAccess[tab.key] || "";
+              <div className="space-y-3">
+                {MODULE_ORDER.map((mod) => {
+                  const q = tabSearch.trim().toLowerCase();
+                  const modTabs = tabs.filter((t) => (TAB_MODULES[t.key] || "Other") === mod)
+                    .filter((t) => !q
+                      || t.label.toLowerCase().includes(q)
+                      || t.fields.some((f) => f.label.toLowerCase().includes(q)));
+                  if (!modTabs.length) return null;
+                  const grantedInMod = modTabs.filter((t) => form.tabAccess[t.key]).length;
                   return (
-                    <div key={tab.key}>
-                      <div className="flex items-center justify-between gap-2 px-3 py-2">
-                        <button type="button" className={`inline-flex items-center gap-1 text-sm font-medium text-primary ${focusRing}`}
-                          onClick={() => setExpanded((e) => ({ ...e, [tab.key]: !open }))} disabled={!tab.fields.length}>
-                          {tab.fields.length ? (open ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="w-3.5" />}
-                          {tab.label}
-                        </button>
-                        <select className={`${inputCls} max-w-40`} value={tabMode} onChange={(e) => setTabMode(tab.key, e.target.value)}>
-                          {MODE_OPTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                        </select>
+                    <div key={mod} className="overflow-hidden rounded-card border border-subtle">
+                      <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-2 px-3 py-2">
+                        <span className="text-xs font-bold uppercase tracking-wide text-secondary">
+                          {mod}
+                          <span className="ml-2 font-semibold normal-case text-muted">
+                            {grantedInMod}/{modTabs.length} granted
+                          </span>
+                        </span>
+                        <span className="flex gap-1.5">
+                          <button type="button" className="text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                            onClick={() => setForm((f) => {
+                              const tabAccess = { ...f.tabAccess };
+                              modTabs.forEach((t) => { tabAccess[t.key] = "view"; });
+                              return { ...f, tabAccess };
+                            })}>
+                            All view
+                          </button>
+                          <button type="button" className="text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                            onClick={() => setForm((f) => {
+                              const tabAccess = { ...f.tabAccess };
+                              modTabs.forEach((t) => { tabAccess[t.key] = "edit"; });
+                              return { ...f, tabAccess };
+                            })}>
+                            All edit
+                          </button>
+                          <button type="button" className="text-[11px] font-semibold text-muted hover:underline"
+                            onClick={() => setForm((f) => {
+                              const tabAccess = { ...f.tabAccess };
+                              modTabs.forEach((t) => { delete tabAccess[t.key]; });
+                              return { ...f, tabAccess };
+                            })}>
+                            Clear
+                          </button>
+                        </span>
                       </div>
-                      {open && tab.fields.length > 0 && (
-                        <div className="bg-surface-2 px-6 py-2">
-                          <p className="mb-1.5 text-[11px] text-muted">
-                            Fields inherit the tab mode unless set here. A view-only field stays
-                            locked even when the tab allows edit.
-                          </p>
-                          <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                            {tab.fields.map((fld) => (
-                              <div key={fld.key} className="flex items-center justify-between gap-2">
-                                <span className="text-sm text-secondary">{fld.label}</span>
-                                <select className={`${inputCls} max-w-36`}
-                                  value={form.fieldAccess[tab.key]?.[fld.key] || ""}
-                                  onChange={(e) => setFieldMode(tab.key, fld.key, e.target.value)}>
-                                  {FIELD_MODE_OPTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                                </select>
+                      <div className="divide-y divide-subtle">
+                        {modTabs.map((tab) => {
+                          const open = !!expanded[tab.key];
+                          const tabMode = form.tabAccess[tab.key] || "";
+                          const overrides = Object.keys(form.fieldAccess[tab.key] || {}).length;
+                          return (
+                            <div key={tab.key}>
+                              <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                                <button type="button" className={`inline-flex items-center gap-1 text-sm font-medium text-primary ${focusRing}`}
+                                  onClick={() => setExpanded((e) => ({ ...e, [tab.key]: !open }))} disabled={!tab.fields.length}>
+                                  {tab.fields.length ? (open ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span className="w-3.5" />}
+                                  {tab.label}
+                                  {overrides > 0 && (
+                                    <span className="ml-1 rounded-full bg-brand-600/10 px-1.5 text-[10px] font-bold text-brand-600 dark:text-brand-300"
+                                      title={`${overrides} field override(s)`}>
+                                      {overrides}
+                                    </span>
+                                  )}
+                                </button>
+                                <ModeSegments value={tabMode} onChange={(m) => setTabMode(tab.key, m)} />
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                              {open && tab.fields.length > 0 && (
+                                <div className="bg-surface-2 px-6 py-2">
+                                  <p className="mb-1.5 text-[11px] text-muted">
+                                    Fields inherit the tab mode unless set here. A view-only field stays
+                                    locked even when the tab allows edit.
+                                  </p>
+                                  <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                                    {tab.fields.map((fld) => (
+                                      <div key={fld.key} className="flex items-center justify-between gap-2">
+                                        <span className="text-sm text-secondary">{fld.label}</span>
+                                        <select className={`${inputCls} max-w-36`}
+                                          value={form.fieldAccess[tab.key]?.[fld.key] || ""}
+                                          onChange={(e) => setFieldMode(tab.key, fld.key, e.target.value)}>
+                                          {FIELD_MODE_OPTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                        </select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}

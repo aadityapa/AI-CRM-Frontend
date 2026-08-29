@@ -67,6 +67,21 @@ describe("OpportunitiesWorkspace sub-tabs", () => {
     expect(visibleOpportunitySubTabs(["RMG"])).toEqual([]);
   });
 
+  it("gives Admin the Template Requests sub-tab (their sidebar entry is hidden)", () => {
+    expect(visibleOpportunitySubTabs(["Admin"])).toEqual([
+      "pipeline",
+      "sow",
+      "applicants",
+      "template-requests",
+    ]);
+    expect(visibleOpportunitySubTabs(["CEO"])).toEqual([
+      "pipeline",
+      "sow",
+      "applicants",
+      "template-requests",
+    ]);
+  });
+
   it("mounts Pipeline T&M by default for Sales", () => {
     render(
       <CrmMeProvider value={me(["Sales"])}>

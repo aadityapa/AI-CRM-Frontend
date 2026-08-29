@@ -14,7 +14,7 @@ import { AlertTriangle } from "lucide-react";
 
 import type { Column } from "../../components/DataTable";
 import { FileLink } from "../../components/FileUpload";
-import { StatusBadge } from "../../components/ui";
+import { StatusBadge, selfWithdrewLabel } from "../../components/ui";
 import { Avatar } from "../../components/Avatar";
 import { ScoreIndicator } from "../../components/ScoreIndicator";
 import { AiInterviewCell } from "../../components/AiInterviewCell";
@@ -190,7 +190,7 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
       key: "pipeline_status",
       label: "Status",
       sortable: true,
-      render: (r) => <StatusBadge status={r.pipeline_status} />,
+      render: (r) => <StatusBadge status={r.pipeline_status} label={selfWithdrewLabel(r.pipeline_status, (r as any).withdrawn_from_status)} />,
     },
     {
       key: "interview_round",

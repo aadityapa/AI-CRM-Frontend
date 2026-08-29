@@ -42,6 +42,7 @@ export function RowActions({
   onDeactivate,
   deactivateLabel = "Deactivate",
   deactivateSuccessMessage,
+  colored = false,
 }: {
   /** Human entity name for the confirm title, e.g. "project". */
   entity: string;
@@ -62,6 +63,9 @@ export function RowActions({
   onDeactivate?: () => Promise<void>;
   deactivateLabel?: string;
   deactivateSuccessMessage?: string;
+  /** Opt-in tinted icons (view=brand, edit=violet, delete=rose) — the 28 Aug
+   *  2026 list-redesign look. Off by default so existing tables are unchanged. */
+  colored?: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -124,7 +128,7 @@ export function RowActions({
         {onView && (
           <button
             type="button"
-            className={iconBtn}
+            className={`${iconBtn} ${colored ? "!text-brand-600 hover:!bg-brand-600/10 dark:!text-brand-300" : ""}`}
             title={`View ${entity}`}
             aria-label={`View ${entity}`}
             onClick={(e) => {
@@ -138,7 +142,7 @@ export function RowActions({
         {canEdit && onEdit && (
           <button
             type="button"
-            className={iconBtn}
+            className={`${iconBtn} ${colored ? "!text-violet-600 hover:!bg-violet-600/10 dark:!text-violet-300" : ""}`}
             title={`Edit ${entity}`}
             aria-label={`Edit ${entity}`}
             onClick={(e) => {
@@ -152,7 +156,7 @@ export function RowActions({
         {canDelete && (
           <button
             type="button"
-            className={`${iconBtn} hover:!text-rose-600`}
+            className={`${iconBtn} hover:!text-rose-600 ${colored ? "!text-rose-600 hover:!bg-rose-600/10 dark:!text-rose-400" : ""}`}
             title={`Delete ${entity}`}
             aria-label={`Delete ${entity}`}
             onClick={(e) => {

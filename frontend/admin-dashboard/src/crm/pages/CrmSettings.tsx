@@ -12,6 +12,7 @@ import {
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
+import { ActivityLogPage } from "./ActivityLog";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -286,6 +287,7 @@ function MasterTab({
         columns={allColumns}
         rows={rows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "record" : "records"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={setSearch}
@@ -590,6 +592,194 @@ const agoText = (hours?: number | null) => {
   return `${Math.round(hours / 24)} days ago`;
 };
 
+/* ------------------------------------------------ email outbox (delivery) */
+
+type OutboxRow = {
+  id: number; event: string; to_email: string; to_name?: string | null;
+  subject: string; status: string; attempts: number;
+  last_error?: string | null; sent_at?: string | null; created_at?: string | null;
+};
+type OutboxStats = {
+  by_status: Record<string, number>;
+  top_failing_events: { event: string; count: number }[];
+  oldest_pending_at?: string | null;
+  smtp_configured: boolean;
+  notifications_enabled: boolean;
+  max_attempts: number;
+};
+
+const OUTBOX_STATUSES = ["All", "Queued", "Failed", "Skipped", "Sent"] as const;
+
+/** Every notification and candidate email goes through the outbox; until this
+ * panel existed a drain failure was invisible — the sender saw "sent", the
+ * recipient got nothing, and the error sat in a table nobody could read. */
+function EmailOutboxPanel({ notify }: { notify: Notify }) {
+  const [stats, setStats] = useState<OutboxStats | null>(null);
+  const [rows, setRows] = useState<OutboxRow[]>([]);
+  const [status, setStatus] = useState<(typeof OUTBOX_STATUSES)[number]>("All");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const s = await crmGet<OutboxStats>("/api/email-outbox/stats");
+      setStats(s.data);
+    } catch { setStats(null); }
+    try {
+      const r = await crmGet<OutboxRow[]>(
+        `/api/email-outbox${status !== "All" ? `?status=${status}&limit=20` : "?limit=20"}`);
+      setRows(r.data || []);
+    } catch { setRows([]); }
+  }, [status]);
+  useEffect(() => { load(); }, [load]);
+
+  const drain = async () => {
+    setBusy("drain");
+    try {
+      const res = await crmPost<{ sent?: number; failed?: number; error?: string }>(
+        "/api/email-outbox/drain?limit=50");
+      const d = res.data || {};
+      notify(d.error ? `Drain: ${d.error}` : `Drained — sent ${d.sent ?? 0}, failed ${d.failed ?? 0}`,
+             d.error || d.failed ? "err" : "ok");
+      await load();
+    } catch (e: any) {
+      notify(e?.message || "Drain failed", "err");
+    } finally { setBusy(null); }
+  };
+
+  const retry = async (id: number) => {
+    setBusy(`retry-${id}`);
+    try {
+      await crmPost(`/api/email-outbox/${id}/retry`);
+      notify("Queued for retry — it sends on the next drain");
+      await load();
+    } catch (e: any) {
+      notify(e?.message || "Retry failed", "err");
+    } finally { setBusy(null); }
+  };
+
+  /** Login-only check against the SMTP server — shows its exact answer, so a
+   * revoked token reads "535 Authentication Failed" here instead of silently
+   * stranding every mail at Queued. */
+  const testSmtp = async () => {
+    setBusy("test");
+    try {
+      const res = await crmPost<{ ok: boolean; error?: string; detail?: string }>(
+        "/api/email-outbox/test-smtp");
+      notify(res.message || (res.data?.ok ? "SMTP login OK" : "SMTP login failed"),
+             res.data?.ok ? "ok" : "err");
+    } catch (e: any) {
+      notify(e?.message || "SMTP test failed", "err");
+    } finally { setBusy(null); }
+  };
+
+  const retryAllFailed = async () => {
+    setBusy("retry-all");
+    try {
+      const res = await crmPost<{ requeued: number; sent?: number; failed?: number }>(
+        "/api/email-outbox/retry-failed");
+      notify(res.message || "Requeued failed mails",
+             (res.data?.failed ?? 0) > 0 ? "err" : "ok");
+      await load();
+    } catch (e: any) {
+      notify(e?.message || "Retry-all failed", "err");
+    } finally { setBusy(null); }
+  };
+
+  const smtpBad = stats != null && !stats.smtp_configured;
+  const failed = stats?.by_status?.Failed ?? 0;
+  const queued = stats?.by_status?.Queued ?? 0;
+  const statusBadge = (s: string) => {
+    const cls = s === "Sent" ? "bg-success-soft text-success"
+      : s === "Failed" ? "bg-danger text-white"
+      : s === "Skipped" ? "bg-warning-soft text-warning"
+      : "bg-surface-2 text-secondary";
+    return <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${cls}`}>{s}</span>;
+  };
+
+  return (
+    <div className={`rounded-card border shadow-raised ${
+      smtpBad || failed ? "border-danger/40" : "border-subtle"} bg-surface-1`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-4 py-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-primary">Email delivery (outbox)</span>
+            {smtpBad && (
+              <span className="rounded-full bg-danger px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                SMTP not configured
+              </span>
+            )}
+            {stats != null && !stats.notifications_enabled && (
+              <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[10px] font-bold uppercase text-warning">
+                Notifications off
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-muted">
+            {stats
+              ? `Queued ${queued} · Failed ${failed} · Skipped ${stats.by_status?.Skipped ?? 0} · Sent ${stats.by_status?.Sent ?? 0}`
+              : "Loading…"}
+            {smtpBad && " — nothing can send until SMTP_HOST / SMTP_USER / SMTP_PASSWORD are set."}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className={`${btnSecondary} !px-3 !py-1.5 text-xs`} disabled={busy !== null} onClick={testSmtp}>
+            {busy === "test" ? "Testing…" : "Test SMTP"}
+          </button>
+          {failed > 0 && (
+            <button className={`${btnSecondary} !px-3 !py-1.5 text-xs`} disabled={busy !== null} onClick={retryAllFailed}>
+              {busy === "retry-all" ? "Requeuing…" : `Retry all failed (${failed})`}
+            </button>
+          )}
+          <button className={btnSecondary} disabled={busy !== null} onClick={drain}>
+            {busy === "drain" ? "Sending…" : "Send queued now"}
+          </button>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1 px-4 pt-3">
+        {OUTBOX_STATUSES.map((s) => (
+          <button key={s}
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold transition-colors duration-micro ${
+              status === s ? "bg-brand-600 text-white" : "bg-surface-2 text-secondary hover:text-primary"}`}
+            onClick={() => setStatus(s)}>
+            {s}
+          </button>
+        ))}
+      </div>
+      <div className="divide-y divide-[color:var(--border-subtle)] px-1 pb-1 pt-2">
+        {rows.length === 0 && (
+          <div className="px-4 py-5 text-center text-sm text-muted">No emails{status !== "All" ? ` with status ${status}` : " yet"}.</div>
+        )}
+        {rows.map((r) => (
+          <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+            <div className="min-w-56 flex-1">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold text-primary">{r.to_email}</span>
+                {statusBadge(r.status)}
+                <span className="text-[11px] text-muted">{r.event}</span>
+              </div>
+              <div className="truncate text-xs text-secondary" title={r.subject}>{r.subject}</div>
+              <div className="text-[11px] text-muted">
+                {r.sent_at ? `Sent ${new Date(r.sent_at).toLocaleString()}`
+                  : r.created_at ? `Queued ${new Date(r.created_at).toLocaleString()}` : ""}
+                {r.attempts ? ` · ${r.attempts} attempt${r.attempts === 1 ? "" : "s"}` : ""}
+              </div>
+              {r.last_error && (
+                <div className="mt-0.5 text-xs font-semibold text-danger">{r.last_error}</div>
+              )}
+            </div>
+            {(r.status === "Failed" || r.status === "Skipped") && (
+              <button className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
+                disabled={busy !== null} onClick={() => retry(r.id)}>
+                {busy === `retry-${r.id}` ? "Queuing…" : "Retry"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Proof that the automation is alive. Background jobs and backups fail in the
  * same silent way — everything looks fine until the day it matters — so this
  * panel states plainly when each last ran and goes red when it stops. */
@@ -729,6 +919,8 @@ function OperationsTab({ notify }: { notify: Notify }) {
           sent can be sent twice.
         </div>
       </div>
+
+      <EmailOutboxPanel notify={notify} />
     </div>
   );
 }
@@ -885,6 +1077,7 @@ export function CrmSettingsPage() {
           { key: "operations", label: "Operations" },
           { key: "app-settings", label: "App Settings" },
           { key: "ui-text", label: "UI Text" },
+          { key: "activity-log", label: "Activity Log" },
         ]}
         active={tab}
         onChange={setTab}
@@ -989,6 +1182,7 @@ export function CrmSettingsPage() {
         {tab === "operations" && <OperationsTab notify={notify} />}
         {tab === "app-settings" && <AppSettingsTab notify={notify} />}
         {tab === "ui-text" && <UiTextTab notify={notify} />}
+        {tab === "activity-log" && <ActivityLogPage />}
       </div>
     </div>
   );

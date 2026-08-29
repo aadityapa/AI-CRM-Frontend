@@ -61,13 +61,16 @@ export async function deleteInterviewRecord(interviewId: string): Promise<boolea
 
 export async function getCandidateInterviewHistory(
   candidateId: string,
-  opts: { limit?: number; offset?: number } = {}
+  opts: { limit?: number; offset?: number; iid?: string } = {}
 ): Promise<CandidateInterviewHistory | null> {
   const id = String(candidateId || "").trim();
   if (!id) return null;
   const params = new URLSearchParams();
   if (opts.limit) params.set("limit", String(opts.limit));
   if (opts.offset) params.set("offset", String(opts.offset));
+  // Interview-id hint: lets the server self-heal a link whose candidate email
+  // doesn't match the one the interview was scheduled under.
+  if (opts.iid) params.set("iid", String(opts.iid).trim());
   const qs = params.toString();
   const path = `/hr/candidates/${encodeURIComponent(id)}/interviews${qs ? `?${qs}` : ""}`;
   const data = await apiGet<CandidateInterviewHistory>(path);

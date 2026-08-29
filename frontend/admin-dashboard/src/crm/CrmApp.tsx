@@ -291,6 +291,12 @@ function NotificationsBell() {
    * Only same-origin CRM links are followed. `link` is server-generated today,
    * but treating a stored string as a navigation target without checking is how
    * an open-redirect appears later.
+   *
+   * `tab` alone is carried through, so a link can point at a specific tab
+   * ("…&p=profiles/42&tab=ai"). Everything else in the stored string is
+   * dropped, and `p` is truncated at any "?" it decodes to — otherwise a `p`
+   * value could smuggle its own query suffix through crmUrl and set arbitrary
+   * sibling params (view, cid, iid) on the way past.
    */
   const openNotification = async (n: any) => {
     const link = String(n?.link || "").trim();
@@ -300,7 +306,30 @@ function NotificationsBell() {
 
     const crmPath = link.match(/[?&]p=([^&]+)/);
     if (crmPath && link.includes("view=crm")) {
-      crmNavigate(decodeURIComponent(crmPath[1]));
+      let path: string;
+      try {
+        // A malformed % sequence in a stored link throws URIError. Falling back
+        // to the raw match keeps the click doing something instead of silently
+        // dying inside an async handler.
+        path = decodeURIComponent(crmPath[1]);
+      } catch {
+        path = crmPath[1];
+      }
+      path = path.split("?")[0].split("#")[0];
+      const tab = (link.match(/[?&]tab=([a-zA-Z0-9_-]+)(?:&|$)/) || [])[1];
+      if (tab) path += `?tab=${tab}`;
+      crmNavigate(path);
+      return;
+    }
+    // Bare CRM paths ("/requirements/19", "timesheets/7") — many backend
+    // notifications store links in this short form. Navigate in-place when the
+    // first segment is a real CRM route; a full-page assign on these hit the
+    // backend directly and 404'd for every role (seen live 25 Aug 2026).
+    const bare = link.replace(/^\/+/, "").split("?")[0].split("#")[0];
+    const bareHead = bare.split("/")[0];
+    if (!link.startsWith("//") && bareHead
+        && CRM_ROUTES.some((r) => r.pattern === bareHead || r.pattern.startsWith(`${bareHead}/`))) {
+      crmNavigate(bare);
       return;
     }
     // Other in-app links (e.g. the interview report) are relative paths on this
@@ -693,6 +722,10 @@ export default function CrmApp() {
     const roleOk = isSuperAdmin(me.roles) || n.roles.some((r) => me.roles.includes(r));
     const mandatory = n.path === "";
     if (hasCustomersAccess && HUB_COVERED.has(n.path)) return false;
+    // Admin/CEO reach Template Requests inside Opportunities (sub-tab after
+    // Applicants, 26 Aug 2026) — their sidebar entry hides. TA/RMG keep it:
+    // for them it is a primary work queue, not an oversight view.
+    if (n.path === "template-requests" && isSuperAdmin(me.roles)) return false;
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (

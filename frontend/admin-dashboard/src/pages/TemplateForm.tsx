@@ -9,7 +9,9 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Database,
+  Hash,
   Info,
   RotateCcw,
   Save,
@@ -166,7 +168,8 @@ export function TemplateFormPage({
   );
 
   const [jobTitle, setJobTitle] = useState("");
-  const [domain, setDomain] = useState("");
+  // Domain has no UI anymore — every template here is Automotive (Aug 2026).
+  const [domain, setDomain] = useState("Automotive");
   const [opportunityId, setOpportunityId] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [requiredSkills, setRequiredSkills] = useState("");
@@ -185,7 +188,40 @@ export function TemplateFormPage({
   const [warn30Sec, setWarn30Sec] = useState(30);
   const [micAlwaysOn, setMicAlwaysOn] = useState(false);
   const [showSpokenText, setShowSpokenText] = useState(false);
-  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(true);
+  // OFF by default (Aug 2026): manual Send / Skip is the safer starting point;
+  // RMG opts INTO the voice-driven flow per template. Saved templates keep
+  // whatever they stored (hydration default stays true for legacy rows).
+  const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
+  // JD upload (Aug 2026): dynamic templates generate questions from the
+  // uploaded JD; /extract-skills parses the file and returns the raw text.
+  const [jdUploadBusy, setJdUploadBusy] = useState(false);
+  const [jdFileName, setJdFileName] = useState("");
+  const [jdExtractErr, setJdExtractErr] = useState("");
+
+  const uploadJdFile = async (file: File) => {
+    setJdUploadBusy(true);
+    setJdExtractErr("");
+    try {
+      const fd = new FormData();
+      fd.append("jd_file", file);
+      const res = await authFetch("/extract-skills", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok || data?.error) throw new Error(data?.error || "Could not read the JD file");
+      const text = String(data?.jd_text_extracted || "").trim();
+      if (!text) throw new Error("No readable text found in the JD file");
+      setJdText(text);
+      setJdFileName(file.name);
+      // Convenience: prefill required skills from the JD when the field is empty.
+      const detected: string[] = Array.isArray(data?.jd_skills_detected) ? data.jd_skills_detected : [];
+      if (!requiredSkills.trim() && detected.length) {
+        setRequiredSkills(detected.slice(0, 10).join(", "));
+      }
+    } catch (e: any) {
+      setJdExtractErr(e?.message || "Could not read the JD file");
+    } finally {
+      setJdUploadBusy(false);
+    }
+  };
   const [initialResponseWaitSec, setInitialResponseWaitSec] = useState(5);
   const [noResponseExtraWaitSec, setNoResponseExtraWaitSec] = useState(2.5);
   const [silenceDetectionSec, setSilenceDetectionSec] = useState(2.5);
@@ -326,27 +362,61 @@ export function TemplateFormPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Assessment Domains UI was removed (Aug 2026); dynamic preview generation
+  // still expects categories, so select them ALL silently.
+  useEffect(() => {
+    if (questionType === "dynamic" && selectedCategoryIds.length === 0) {
+      setSelectedCategoryIds(INTELLIGENCE_SUITE_CATEGORIES.map((c) => c.id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionType]);
+
   useEffect(() => {
     const prev = prevHydratedJobIdRef.current;
 
     if (jobId == null) {
+      // Rich prefill from a CRM Template Request (Aug 2026): role, skills,
+      // experience band and customer arrive alongside the Opportunity ID so
+      // RMG types nothing twice. Read on EVERY create-mode pass — the form can
+      // arrive here freshly mounted (Create template jumps straight in), where
+      // `prev` is still undefined and the full reset below doesn't run.
+      let prefillOpp = "";
+      let rich: { jobTitle?: string; requiredSkills?: string; customerName?: string;
+                  expMin?: number; expMax?: number; opportunityId?: string } = {};
+      try {
+        prefillOpp = sessionStorage.getItem("crm_prefill_opportunityId") || "";
+        if (prefillOpp) sessionStorage.removeItem("crm_prefill_opportunityId");
+        const raw = sessionStorage.getItem("crm_prefill_template");
+        if (raw) {
+          sessionStorage.removeItem("crm_prefill_template");
+          rich = JSON.parse(raw) || {};
+        }
+      } catch { /* ignore */ }
+      const hasPrefill = !!(rich.opportunityId || prefillOpp || rich.jobTitle);
+
+      if (prev == null && hasPrefill) {
+        // Fresh mount straight into create mode: states are already at their
+        // defaults, so only the prefilled fields need setting.
+        setOpportunityId(rich.opportunityId || prefillOpp);
+        if (rich.jobTitle) setJobTitle(rich.jobTitle);
+        if (rich.customerName) setCustomerName(rich.customerName);
+        if (rich.requiredSkills) setRequiredSkills(rich.requiredSkills);
+        if (rich.expMin) setExpMin(Number(rich.expMin) || 0);
+        if (rich.expMax) setExpMax(Number(rich.expMax) || 0);
+      }
       if (prev != null) {
         setEditingJob(null);
         setTimingMode("");
         setStep(1);
         setJobTitle("");
-        setDomain("");
-        let prefillOpp = "";
-        try {
-          prefillOpp = sessionStorage.getItem("crm_prefill_opportunityId") || "";
-          if (prefillOpp) sessionStorage.removeItem("crm_prefill_opportunityId");
-        } catch { /* ignore */ }
-        setOpportunityId(prefillOpp);
-        setCustomerName("");
-        setRequiredSkills("");
+        setDomain("Automotive");
+        setOpportunityId(rich.opportunityId || prefillOpp);
+        if (rich.jobTitle) setJobTitle(rich.jobTitle);
+        setCustomerName(rich.customerName || "");
+        setRequiredSkills(rich.requiredSkills || "");
         setOptionalSkills("");
-        setExpMin(0);
-        setExpMax(0);
+        setExpMin(Number(rich.expMin) || 0);
+        setExpMax(Number(rich.expMax) || 0);
         setDifficulty("medium");
         setNumQ(5);
         setInterviewMode("technical");
@@ -374,7 +444,7 @@ export function TemplateFormPage({
         setPromptVersion(1);
         setPromptHistory([]);
         setPromptTestQuestions([]);
-        setAutoAdvanceEnabled(true);
+        setAutoAdvanceEnabled(false);
         promptDraftTouchedRef.current = false;
         lastAutoGeneratedPromptRef.current = "";
       }
@@ -895,6 +965,11 @@ export function TemplateFormPage({
   };
 
   useEffect(() => {
+    // AI Prompt Configuration panel removed from Review (Aug 2026): the prompt
+    // is generated server-side at save, so there is nothing to live-preview.
+    // Effect kept (disabled) so re-enabling the panel is a one-line change.
+    return;
+    // eslint-disable-next-line no-unreachable
     if (step !== 3 || questionType === "manual" || questionType === "question_bank") return;
     const t = window.setTimeout(() => {
       refreshPromptPreview({ silent: true });
@@ -1074,7 +1149,7 @@ export function TemplateFormPage({
   };
 
   return (
-    <div className="platform-form-shell mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8">
+    <div className="platform-form-shell mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-5">
       <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
         <div>
           <div className="flex items-center gap-2">
@@ -1188,32 +1263,20 @@ export function TemplateFormPage({
         </div>
 
           {step === 1 ? (
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <SectionBanner
-                icon={<Info className="w-5 h-5" />}
-                title="Template Basics"
-                description="Name the role, set difficulty and interview mode, and define how the interview ends."
-              />
-            </div>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Job title</label>
               <input
                 value={jobTitle}
                 onChange={(e) => setJobTitle(e.target.value)}
-                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
+                className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-primary"
                 placeholder="e.g. Python Developer"
               />
             </div>
-            <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Domain (optional)</label>
-              <input
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
-                placeholder="e.g. Automotive / FinTech / Enterprise"
-              />
-            </div>
+            {/* Domain input removed (Aug 2026): every template here is Automotive,
+                so the field was one more thing to type. The state still defaults
+                to "Automotive" and is submitted unchanged. Difficulty likewise
+                removed from the UI — "medium" is sent for everyone. */}
             <CreatableMasterCombobox
               kind="opportunity"
               label="Opportunity ID"
@@ -1228,49 +1291,73 @@ export function TemplateFormPage({
               onChange={setCustomerName}
               placeholder="Search or create customer"
             />
-            <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Difficulty</label>
-              <select
-                value={difficulty}
-                onChange={(e) => setDifficulty((e.target.value as any) || "medium")}
-                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
-              >
-                <option value="easy">Easy</option>
-                <option value="medium">Medium</option>
-                <option value="hard">Hard</option>
-              </select>
-            </div>
-            <div className="md:col-span-2">
+            <div className="md:col-span-3 flex flex-wrap items-center gap-3">
               <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Interview mode</label>
-              <select
-                value={interviewMode}
-                onChange={(e) => setInterviewMode((e.target.value as "technical" | "hr") || "technical")}
-                className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
-              >
-                <option value="technical">Technical Interview</option>
-                <option value="hr">HR Interview</option>
-              </select>
+              <div className="inline-flex rounded-control border border-subtle bg-surface-2 p-1 gap-1">
+                {([["technical", "Technical Interview"], ["hr", "HR Interview"]] as const).map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setInterviewMode(v)}
+                    aria-pressed={interviewMode === v}
+                    className={`h-9 px-4 rounded-control text-sm font-semibold transition-colors duration-micro ease-smooth ${
+                      interviewMode === v
+                        ? "bg-brand-600 text-white shadow-raised"
+                        : "text-secondary hover:text-primary"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="rounded-card border border-subtle p-4 md:col-span-2">
-              <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Timing</div>
-              <div className="mt-3">
-                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Mode</label>
-                <select
-                  value={timingMode}
-                  onChange={(e) => {
-                    const v = e.target.value as "" | "count" | "time";
-                    setTimingMode(v === "count" || v === "time" ? v : "");
-                  }}
-                  className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
-                >
-                  <option value="">Select timing mode…</option>
-                  <option value="count">Ask by question count (fixed)</option>
-                  <option value="time">Ask by time limit</option>
-                </select>
+            <div className="rounded-card border border-subtle p-3 md:col-span-3">
+              <div className="text-xs font-extrabold tracking-widest uppercase text-muted">
+                Timing — how does the interview end?
               </div>
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
-                <div>
+              {/* Two explicit choices instead of a dropdown + two half-disabled
+                  inputs: pick one and ONLY its field appears. */}
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setTimingMode("count")}
+                  aria-pressed={timingMode === "count"}
+                  className={`rounded-card border p-3 text-left transition-colors duration-micro ease-smooth ${
+                    timingMode === "count"
+                      ? "border-strong bg-brand-600/10 ring-1 ring-inset ring-brand-600/40"
+                      : "border-subtle bg-surface-2 hover:border-strong"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Hash size={16} className={timingMode === "count" ? "text-brand-600 dark:text-brand-300" : "text-muted"} />
+                    <span className="text-sm font-bold text-primary">Question count</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted">
+                    Ends after a fixed number of questions.
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimingMode("time")}
+                  aria-pressed={timingMode === "time"}
+                  className={`rounded-card border p-3 text-left transition-colors duration-micro ease-smooth ${
+                    timingMode === "time"
+                      ? "border-strong bg-brand-600/10 ring-1 ring-inset ring-brand-600/40"
+                      : "border-subtle bg-surface-2 hover:border-strong"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Clock size={16} className={timingMode === "time" ? "text-brand-600 dark:text-brand-300" : "text-muted"} />
+                    <span className="text-sm font-bold text-primary">Time limit</span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted">
+                    Ends when the clock runs out — whichever comes first.
+                  </div>
+                </button>
+              </div>
+              {timingMode === "count" && (
+                <div className="mt-3 max-w-xs">
                   <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Questions count</label>
                   <input
                     type="number"
@@ -1278,11 +1365,12 @@ export function TemplateFormPage({
                     max={MAX_COUNT_MODE_QUESTIONS}
                     value={numQ}
                     onChange={(e) => setNumQ(clampCountModeQuestions(e.target.value, numQ))}
-                    disabled={timingMode !== "count"}
                     className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                   />
                 </div>
-                <div>
+              )}
+              {timingMode === "time" && (
+                <div className="mt-3 max-w-xs">
                   <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Time limit (min)</label>
                   <input
                     type="number"
@@ -1290,11 +1378,10 @@ export function TemplateFormPage({
                     max={360}
                     value={timeLimitMin}
                     onChange={(e) => setTimeLimitMin(clampInt(e.target.value, 1, 360))}
-                    disabled={timingMode !== "time"}
                     className="mt-2 w-full h-11 px-4 input-recessed rounded-control text-primary"
                   />
                 </div>
-              </div>
+              )}
               <div className="mt-2 text-xs text-muted">
                 {!timingMode
                   ? "Choose how the interview ends: fixed number of questions, or a time limit."
@@ -1391,7 +1478,7 @@ export function TemplateFormPage({
               to the backend so legacy DB columns and API contracts remain valid.
             */}
 
-            <div className="rounded-card border border-subtle p-4 md:col-span-2 bg-surface-2">
+            <div className="rounded-card border border-subtle p-3 md:col-span-1 bg-surface-2">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Enable Transcript Input</div>
@@ -1409,15 +1496,15 @@ export function TemplateFormPage({
                   Toggle
                 </button>
               </div>
-              <div className="mt-2 text-xs text-muted">
-                When ON, the candidate sees the live transcript panel. Turn OFF to hide the transcript section entirely.
+              <div className="mt-1.5 text-[11px] leading-snug text-muted line-clamp-2">
+                When ON, the candidate sees the live transcript panel. OFF hides it entirely.
               </div>
             </div>
 
             {/* Communication assessment — for roles where RMG has judged that
                 spoken communication is not a genuine requirement, the report
                 should cover technical substance only. */}
-            <div className="rounded-card border border-subtle p-4 md:col-span-2 bg-surface-2">
+            <div className="rounded-card border border-subtle p-3 md:col-span-1 bg-surface-2">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <div className="text-xs font-extrabold tracking-widest uppercase text-muted">
@@ -1459,7 +1546,7 @@ export function TemplateFormPage({
               </div>
             </div>
 
-            <div className="fx-gradient-border rounded-card border border-subtle p-4 md:col-span-2 bg-surface-1">
+            <div className={`fx-gradient-border rounded-card border border-subtle p-3 bg-surface-1 ${autoAdvanceEnabled ? "md:col-span-3" : "md:col-span-1"}`}>
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <div className="text-xs font-extrabold tracking-widest uppercase text-brand-600 dark:text-brand-300">Smart Auto-Advance</div>
@@ -1487,12 +1574,13 @@ export function TemplateFormPage({
                       onChange={(e) => setInitialResponseWaitSec(clampInt(e.target.value, 2, 30))}
                       className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
-                  <div>
-                    <label className="text-xs font-bold uppercase text-muted">Extra skip wait (sec)</label>
-                    <input type="number" min={1} max={15} step={0.5} value={noResponseExtraWaitSec}
-                      onChange={(e) => setNoResponseExtraWaitSec(Math.max(1, Math.min(15, Number(e.target.value) || 2.5)))}
-                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
-                  </div>
+                  {/* "Extra skip wait", "Min answer words" and "Min speech (sec)"
+                      removed (Aug 2026): the candidate runtime never reads those
+                      config keys, so the fields were dead knobs — RMG tuned them
+                      and nothing changed in the interview. The values still save
+                      with safe defaults for backward compatibility. Re-add a
+                      field ONLY once interview_auto_advance.js actually consumes
+                      its key. */}
                   <div>
                     <label className="text-xs font-bold uppercase text-muted">Silence detect (sec)</label>
                     <input type="number" min={1} max={15} step={0.5} value={silenceDetectionSec}
@@ -1503,18 +1591,6 @@ export function TemplateFormPage({
                     <label className="text-xs font-bold uppercase text-muted">Post-complete silence (sec)</label>
                     <input type="number" min={0} max={10} step={0.5} value={confirmationBeforeNextSec}
                       onChange={(e) => setConfirmationBeforeNextSec(Math.max(0, Math.min(10, Number(e.target.value) || 2.5)))}
-                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold uppercase text-muted">Min answer words</label>
-                    <input type="number" min={1} max={30} value={minimumAnswerWords}
-                      onChange={(e) => setMinimumAnswerWords(clampInt(e.target.value, 1, 30))}
-                      className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold uppercase text-muted">Min speech (sec)</label>
-                    <input type="number" min={1} max={30} value={minimumSpeechDurationSec}
-                      onChange={(e) => setMinimumSpeechDurationSec(clampInt(e.target.value, 1, 30))}
                       className="mt-1 w-full h-10 px-3 input-recessed rounded-control text-primary" />
                   </div>
                   <div>
@@ -1551,16 +1627,9 @@ export function TemplateFormPage({
 
           </div>
         ) : step === 2 ? (
-          <div className="mt-6 space-y-5">
-            <SectionBanner
-              icon={<Zap className="w-5 h-5" />}
-              title="Skills, JD & Question Source"
-              description="Set experience, skills and JD, then choose how questions are generated — dynamic AI, manual, or Question Bank."
-            />
+          <div className="mt-4 space-y-4">
             <div>
-              <div className="text-xs font-extrabold tracking-widest uppercase text-muted">Years of experience</div>
-              <p className="text-xs text-muted mt-1 mb-2">Used for question generation and saved on the template.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Experience min</label>
                   <input
@@ -1597,15 +1666,9 @@ export function TemplateFormPage({
                   placeholder="e.g. python, fastapi, sql"
                 />
               </div>
-              <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Optional skills</label>
-                <input
-                  value={optionalSkills}
-                  onChange={(e) => setOptionalSkills(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
-                  placeholder="e.g. docker, aws"
-                />
-              </div>
+              {/* Optional skills / Target role / Seniority / Tech stack removed
+                  (Aug 2026): required skills + the uploaded JD are what actually
+                  drive generation and ATS scoring — the rest was ceremony. */}
             </div>
 
             <div>
@@ -1640,112 +1703,74 @@ export function TemplateFormPage({
               </p>
             </div>
 
-            {/* Row 2: Target Role / Seniority / Tech Stack */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Target role</label>
-                <input
-                  value={suiteTargetRole}
-                  onChange={(e) => setSuiteTargetRole(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
-                  placeholder="e.g. Python Developer"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Seniority level</label>
-                <select
-                  value={suiteSeniority}
-                  onChange={(e) => setSuiteSeniority(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
-                >
-                  <option value="">Select…</option>
-                  <option value="Junior">Junior</option>
-                  <option value="Mid">Mid</option>
-                  <option value="Senior">Senior</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-extrabold tracking-widest uppercase text-muted">Tech stack (optional)</label>
-                <input
-                  value={suiteTechStack}
-                  onChange={(e) => setSuiteTechStack(e.target.value)}
-                  className="mt-1.5 w-full h-10 px-4 input-recessed rounded-control text-sm text-primary"
-                  placeholder="e.g. React, Node.js, AWS"
-                />
-              </div>
-            </div>
-
             {questionType === "dynamic" ? (
               <>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <h3 className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-brand-600 dark:text-brand-300" />
-                  Assessment Domains
-                  {selectedCategoryIds.length > 0 && (
-                    <span className="ml-1 text-xs font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full dark:bg-brand-900 dark:text-brand-200">
-                      {selectedCategoryIds.length} selected
-                    </span>
-                  )}
-                </h3>
-                <p className="text-xs text-muted mt-0.5">Select domains to shape question generation alongside your skills.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllSuiteCategories}
-                  className="px-3 py-1.5 text-xs font-bold text-secondary rounded-control border border-subtle bg-surface-1 transition-colors duration-micro ease-smooth hover:bg-surface-2 hover:text-brand-600 dark:hover:text-brand-300"
-                >
-                  {selectedCategoryIds.length === INTELLIGENCE_SUITE_CATEGORIES.length ? "Clear all" : "Select all"}
-                </button>
+            {/* JD upload (Aug 2026) — the JD is what the AI generates questions
+                from. Assessment Domains UI removed; all domains are selected
+                under the hood so preview generation keeps working. */}
+            <div className="fx-gradient-border rounded-card border border-subtle bg-surface-1 p-5">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-brand-600 dark:text-brand-300" />
+                    Job Description
+                  </h3>
+                  <p className="text-xs text-muted mt-0.5">
+                    Upload the JD (PDF / Word / text) — questions are generated from it plus the required skills.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={runIntelligenceQuestionnaire}
-                  disabled={selectedCategoryIds.length === 0 || !requiredSkills.trim() || sampleBusy}
+                  disabled={!requiredSkills.trim() || sampleBusy}
                   className={`flex items-center gap-1.5 px-4 py-1.5 rounded-control font-bold text-xs transition-colors duration-micro ease-smooth ${
-                    selectedCategoryIds.length > 0 && requiredSkills.trim() && !sampleBusy
+                    requiredSkills.trim() && !sampleBusy
                       ? "btn-depth btn-gradient bg-brand-600 text-white"
                       : "bg-surface-2 text-muted cursor-not-allowed"
                   }`}
                 >
-                  {sampleBusy ? "Generating…" : "Generate Questions"}
+                  {sampleBusy ? "Generating…" : "Preview Questions"}
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </div>
-
-            {/* Row 4: Compact domain grid — 4 cols */}
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {INTELLIGENCE_SUITE_CATEGORIES.map((cat) => {
-                const isSelected = selectedCategoryIds.includes(cat.id);
-                const Icon = cat.icon;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => toggleSuiteCategory(cat.id)}
-                    className={`group flex items-center gap-2.5 text-left px-3 py-2.5 rounded-card border transition-colors duration-micro ease-smooth ${
-                      isSelected
-                        ? "fx-gradient-border border-transparent bg-brand-50 shadow-raised dark:bg-brand-900"
-                        : "border-subtle bg-surface-1 hover:border-strong hover:shadow-raised"
-                    }`}
-                  >
-                    <div
-                      className={`shrink-0 p-1.5 rounded-control transition-colors duration-micro ease-smooth ${
-                        isSelected ? "bg-brand-600 text-white" : `${cat.bgColor} ${cat.color}`
-                      }`}
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <label className={`inline-flex items-center gap-2 h-10 px-4 rounded-control border text-sm font-semibold cursor-pointer transition-colors duration-micro ease-smooth ${
+                  jdUploadBusy ? "bg-surface-2 border-subtle text-muted cursor-wait" : "bg-surface-2 border-subtle text-secondary hover:border-strong hover:text-primary"
+                }`}>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.rtf"
+                    className="hidden"
+                    disabled={jdUploadBusy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void uploadJdFile(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  {jdUploadBusy ? "Extracting…" : jdFileName ? "Replace JD file" : "Upload JD file"}
+                </label>
+                {jdFileName && !jdUploadBusy && (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-secondary">
+                    <CheckCircle2 className="w-4 h-4 text-success" />
+                    <span className="font-semibold text-primary">{jdFileName}</span>
+                    <span className="text-muted">· {jdText.length.toLocaleString()} characters read</span>
+                    <button
+                      type="button"
+                      className="ml-1 text-xs font-semibold text-danger hover:underline"
+                      onClick={() => { setJdText(""); setJdFileName(""); }}
                     >
-                      <Icon className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0 flex-1 flex items-center gap-1.5">
-                      <span className={`text-xs font-bold leading-tight truncate ${isSelected ? "text-brand-700 dark:text-brand-200" : "text-primary"}`}>
-                        {cat.title}
-                      </span>
-                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-brand-500" />}
-                    </div>
-                  </button>
-                );
-              })}
+                      Clear
+                    </button>
+                  </span>
+                )}
+                {jdExtractErr && <span className="text-sm text-danger">{jdExtractErr}</span>}
+              </div>
+              {jdText && (
+                <p className="mt-3 rounded-card bg-surface-2 p-3 text-xs text-muted leading-relaxed line-clamp-3">
+                  {jdText.slice(0, 320)}{jdText.length > 320 ? "…" : ""}
+                </p>
+              )}
             </div>
 
               </>
@@ -1884,9 +1909,9 @@ export function TemplateFormPage({
                 <textarea
                   value={manualQuestionsText}
                   onChange={(e) => setManualQuestionsText(e.target.value)}
-                  rows={16}
+                  rows={8}
                   spellCheck={false}
-                  className="mt-1.5 w-full min-h-56 max-h-96 overflow-y-auto p-3 input-recessed rounded-control text-sm leading-relaxed text-primary resize-y whitespace-pre-wrap"
+                  className="mt-1.5 w-full min-h-40 max-h-64 overflow-y-auto p-3 input-recessed rounded-control text-sm leading-relaxed text-primary resize-y whitespace-pre-wrap"
                   placeholder={"Paste interview questions here.\nOne question per line."}
                 />
                 <p className="text-xs text-muted mt-1.5">
@@ -1953,17 +1978,6 @@ export function TemplateFormPage({
               </div>
             )}
 
-            {/* Row 5: JD text (moved up, before Generated Preview) */}
-            <div>
-              <label className="text-xs font-extrabold tracking-widest uppercase text-muted">JD text (optional)</label>
-              <textarea
-                value={jdText}
-                onChange={(e) => setJdText(e.target.value)}
-                rows={4}
-                className="mt-1.5 w-full p-3 input-recessed rounded-control text-sm text-primary resize-y"
-                placeholder="Paste job description here…"
-              />
-            </div>
 
             {/* Row 6: AI-Generated Interview Questions (API Response) */}
             {(questionType === "dynamic" || questionType === "question_bank") && sampleQuestions.length > 0 && (
@@ -2063,7 +2077,7 @@ export function TemplateFormPage({
             )}
           </div>
         ) : step === 3 && questionType === "question_bank" ? (
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
             <div className="fx-gradient-border lg:col-span-7 rounded-card border border-subtle p-6 bg-surface-1">
               <div className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
                 <Database className="w-4 h-4 text-violet-600 dark:text-violet-300" />
@@ -2074,8 +2088,8 @@ export function TemplateFormPage({
               </p>
               <dl className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
-                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Target role</dt>
-                  <dd className="mt-0.5 font-semibold text-primary">{suiteTargetRole || jobTitle || "—"}</dd>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Template name</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{jobTitle || "—"}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-widest text-muted">Categories</dt>
@@ -2119,7 +2133,7 @@ export function TemplateFormPage({
             </div>
           </div>
         ) : step === 3 && questionType === "manual" ? (
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
             <div className="lg:col-span-7 rounded-card border border-subtle p-6 bg-surface-1 shadow-raised">
               <div className="text-sm font-extrabold tracking-tight text-primary">Manual template review</div>
               <p className="mt-1 text-xs text-muted">Recruiter-friendly summary — no AI prompt configuration.</p>
@@ -2127,14 +2141,6 @@ export function TemplateFormPage({
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-widest text-muted">Template name</dt>
                   <dd className="mt-0.5 font-semibold text-primary">{jobTitle || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Target role</dt>
-                  <dd className="mt-0.5 font-semibold text-primary">{suiteTargetRole || jobTitle || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Seniority</dt>
-                  <dd className="mt-0.5 font-semibold text-primary">{suiteSeniority || "—"}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-widest text-muted">Opportunity ID</dt>
@@ -2162,12 +2168,6 @@ export function TemplateFormPage({
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-widest text-muted">Interview duration</dt>
                   <dd className="mt-0.5 font-semibold text-primary">{interviewDurationLabel}</dd>
-                </div>
-                <div className="sm:col-span-2">
-                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Assessment domains</dt>
-                  <dd className="mt-0.5 font-semibold text-primary">
-                    {assessmentDomainLabels.length ? assessmentDomainLabels.join(", ") : "—"}
-                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-widest text-muted">Created date</dt>
@@ -2210,196 +2210,104 @@ export function TemplateFormPage({
             </div>
           </div>
         ) : step === 3 ? (
-          <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 rounded-card border border-subtle p-5 bg-surface-2">
-              <div className="text-sm font-extrabold tracking-tight text-primary">Summary</div>
-              <div className="mt-3 space-y-2 text-sm text-secondary">
-                <div><span className="font-semibold text-primary">Title:</span> {jobTitle || "—"}</div>
-                <div><span className="font-semibold text-primary">Domain:</span> {domain || "—"}</div>
-                <div><span className="font-semibold text-primary">Opportunity ID:</span> {opportunityId || "—"}</div>
-                <div><span className="font-semibold text-primary">Customer:</span> {customerName || "—"}</div>
-                <div className="pt-1">
-                  <label className="block text-sm font-semibold text-primary mb-1.5">Template Instructions</label>
-                  <textarea
-                    value={templateInstructions}
-                    onChange={(e) => setTemplateInstructions(e.target.value)}
-                    rows={4}
-                    spellCheck={false}
-                    className="w-full input-recessed rounded-control p-3 text-sm leading-relaxed text-primary resize-y min-h-24"
-                    placeholder="e.g. Focus on CAN/LIN and UDS diagnostics; use practical embedded scenarios; avoid generic theory."
-                  />
-                  <p className="mt-1.5 text-xs text-muted">
-                    Shown in the AI prompt as <span className="font-mono">Template Instructions</span>. Updates the live prompt preview below when you edit.
-                  </p>
-                </div>
-                <div><span className="font-semibold text-primary">Difficulty:</span> {difficulty}</div>
-                <div><span className="font-semibold text-primary">Questions:</span> {numQ}</div>
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div className="fx-gradient-border lg:col-span-7 rounded-card border border-subtle p-6 bg-surface-1">
+              <div className="text-sm font-extrabold tracking-tight text-primary flex items-center gap-2">
+                <Zap className="w-4 h-4 text-brand-600 dark:text-brand-300" />
+                Dynamic template review
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Questions are generated live from the uploaded JD and required skills — check the
+                essentials, then save.
+              </p>
+              <dl className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
-                  <span className="font-semibold text-primary">Timing:</span>{" "}
-                  {!timingMode
-                    ? "—"
-                    : timingMode === "time"
-                      ? `${timeLimitMin} min limit`
-                      : `Fixed question count (${numQ})`}
-                </div>
-                <div><span className="font-semibold text-primary">Mic:</span> Auto-activated after each question</div>
-                <div><span className="font-semibold text-primary">Transcript input:</span> {showSpokenText ? "Enabled" : "Hidden"}</div>
-                <div><span className="font-semibold text-primary">Interview mode:</span> {interviewMode === "hr" ? "HR Interview" : "Technical Interview"}</div>
-                <div><span className="font-semibold text-primary">Required skills:</span> {requiredSkills || "—"}</div>
-                <div><span className="font-semibold text-primary">Optional skills:</span> {optionalSkills || "—"}</div>
-                <div>
-                  <span className="font-semibold text-primary">Experience range:</span>{" "}
-                  {expMax > 0 ? `${expMin}–${expMax} years` : expMin > 0 ? `${expMin}+ years` : "Any / not set"}
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Template name</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{jobTitle || "—"}</dd>
                 </div>
                 <div>
-                  <span className="font-semibold text-primary">Question type:</span>{" "}
-                  {questionType === "manual"
-                    ? "Manual Questions"
-                    : questionType === "question_bank"
-                      ? "Question Bank"
-                      : "Dynamic Questions"}
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Interview mode</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
+                    {interviewMode === "hr" ? "HR Interview" : "Technical Interview"}
+                  </dd>
                 </div>
                 <div>
-                  <span className="font-semibold text-primary">Intelligence suite:</span>{" "}
-                  {selectedCategoryIds.length
-                    ? `${selectedCategoryIds.length} domain(s) — ${suiteTargetRole || jobTitle || "—"}`
-                    : "—"}
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Opportunity ID</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{opportunityId || "—"}</dd>
                 </div>
                 <div>
-                  <span className="font-semibold text-primary">Adaptive next question:</span>{" "}
-                  {adaptiveNextQuestion ? "Enabled" : "Disabled"}
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Customer</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{customerName || "—"}</dd>
                 </div>
-                {suiteSeniority ? (
-                  <div>
-                    <span className="font-semibold text-primary">Seniority:</span> {suiteSeniority}
-                  </div>
-                ) : null}
-                {suiteTechStack ? (
-                  <div>
-                    <span className="font-semibold text-primary">Stack emphasis:</span> {suiteTechStack}
-                  </div>
-                ) : null}
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Timing</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
+                    {!timingMode
+                      ? "—"
+                      : timingMode === "time"
+                        ? `${timeLimitMin} min limit`
+                        : `${numQ} questions (fixed)`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Experience range</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
+                    {expMax > 0 ? `${expMin}–${expMax} years` : expMin > 0 ? `${expMin}+ years` : "Any"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Required skills</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{requiredSkills || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Job description</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">
+                    {jdText
+                      ? <span className="inline-flex items-center gap-1.5 text-success"><CheckCircle2 className="w-4 h-4" /> Uploaded · {jdText.length.toLocaleString()} chars</span>
+                      : <span className="text-warning">Not uploaded — questions use skills only</span>}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-widest text-muted">Transcript input</dt>
+                  <dd className="mt-0.5 font-semibold text-primary">{showSpokenText ? "Enabled" : "Hidden"}</dd>
+                </div>
+              </dl>
+              <div className="mt-5">
+                <label className="text-xs font-bold uppercase tracking-widest text-muted">
+                  Extra instructions for the AI (optional)
+                </label>
+                <textarea
+                  value={templateInstructions}
+                  onChange={(e) => setTemplateInstructions(e.target.value)}
+                  rows={3}
+                  spellCheck={false}
+                  className="mt-1.5 w-full input-recessed rounded-control p-3 text-sm leading-relaxed text-primary resize-y"
+                  placeholder="e.g. Focus on CAN/LIN and UDS diagnostics; use practical embedded scenarios; avoid generic theory."
+                />
               </div>
             </div>
-            <div className="lg:col-span-5 rounded-card border border-subtle p-5">
-              <div className="text-sm font-extrabold tracking-tight text-primary">What gets saved</div>
-              <div className="mt-2 text-sm text-muted">
-                This template stores interview setup fields, template instructions for AI prompts, opportunity/customer references, and interview configuration.
+            <div className="lg:col-span-5 space-y-4">
+              <div className="rounded-card border border-subtle p-5 bg-surface-1">
+                <div className="text-sm font-extrabold tracking-tight text-primary">What gets saved</div>
+                <p className="mt-2 text-sm text-secondary leading-relaxed">
+                  The role, skills, JD and settings above. At interview time the AI generates a
+                  fresh, unique question set for every candidate from this template — nothing is
+                  hard-coded, and the AI prompt itself is managed automatically.
+                </p>
               </div>
-            </div>
-
-            <div className="fx-gradient-border-animated lg:col-span-12 rounded-card bg-surface-1 text-primary p-5 shadow-raised">
-              <button
-                type="button"
-                onClick={() => setPromptExpanded((v) => !v)}
-                className="w-full flex items-center justify-between gap-3 text-left"
-              >
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-extrabold tracking-tight text-primary">
-                    AI Prompt Configuration
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-accent-600 ring-1 ring-inset ring-subtle dark:text-accent-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
-                      AI
-                    </span>
+              {sampleQuestions.length > 0 && (
+                <div className="rounded-card border border-subtle p-5 bg-surface-1">
+                  <div className="text-sm font-extrabold tracking-tight text-primary">
+                    Preview sample ({sampleQuestions.length})
                   </div>
-                  <div className="text-xs text-muted mt-1">
-                    Review and customize the exact prompt used for AI question generation.
-                  </div>
+                  <ol className="mt-3 space-y-2 text-sm text-secondary list-decimal list-inside max-h-72 overflow-y-auto">
+                    {sampleQuestions.map((q, idx) => (
+                      <li key={idx} className="leading-relaxed">{q}</li>
+                    ))}
+                  </ol>
+                  <p className="mt-2 text-xs text-muted">Preview only — candidates get a fresh set.</p>
                 </div>
-                <div className="text-muted">{promptExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</div>
-              </button>
-
-              {promptExpanded ? (
-                <div className="mt-4 space-y-4">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="text-xs text-muted">
-                      Characters: <span className="font-semibold tabular-nums text-secondary">{promptCharCount}</span> | Tokens (est):{" "}
-                      <span className="font-semibold tabular-nums text-secondary">{promptTokenEstimate}</span> | Version:{" "}
-                      <span className="font-semibold tabular-nums text-secondary">{promptVersion}</span>
-                    </div>
-                    <label className="inline-flex items-center gap-2 text-xs text-secondary">
-                      <input
-                        type="checkbox"
-                        checked={adaptiveNextQuestion}
-                        onChange={(e) => setAdaptiveNextQuestion(e.target.checked)}
-                        disabled={questionType === "question_bank"}
-                        className="rounded border-strong text-brand-500 disabled:opacity-40"
-                      />
-                      Adaptive next-question mode
-                      {questionType === "question_bank" ? (
-                        <span className="text-muted">(disabled for Question Bank)</span>
-                      ) : null}
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => navigator.clipboard.writeText((promptPreview || editedPrompt || generatedPrompt || "").trim())}
-                        className="h-8 px-3 rounded-control border border-subtle bg-surface-2 text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-3 hover:text-primary text-xs font-semibold inline-flex items-center gap-1.5"
-                      >
-                        <Copy className="w-3.5 h-3.5" /> Copy Prompt
-                      </button>
-                      <button
-                        type="button"
-                        onClick={resetPromptToDefault}
-                        className="h-8 px-3 rounded-control border border-subtle bg-surface-2 text-secondary transition-colors duration-micro ease-smooth hover:bg-surface-3 hover:text-primary text-xs font-semibold inline-flex items-center gap-1.5"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" /> Reset to Default
-                      </button>
-                      <button
-                        type="button"
-                        onClick={testPrompt}
-                        disabled={promptTestBusy}
-                        className="h-8 px-3 rounded-control border border-subtle bg-brand-50 text-brand-700 transition-colors duration-micro ease-smooth hover:bg-brand-100 text-xs font-semibold dark:bg-brand-900 dark:text-brand-200 dark:hover:bg-brand-800"
-                      >
-                        {promptTestBusy ? "Generating 15–20…" : "Test Prompt (15–20)"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs uppercase tracking-widest font-bold text-muted mb-1.5">Editable Prompt</div>
-                    <textarea
-                      value={editedPrompt}
-                      onChange={(e) => {
-                        promptDraftTouchedRef.current = true;
-                        setEditedPrompt(e.target.value);
-                      }}
-                      rows={12}
-                      spellCheck={false}
-                      className="input-recessed w-full rounded-control p-3 text-sm leading-6 font-mono text-primary resize-y min-h-56 max-h-screen overflow-auto"
-                      placeholder={generatedPrompt || "Generating default prompt..."}
-                    />
-                    <div className="mt-1.5 text-xs text-muted">
-                      Leave blank to use the generated default prompt. Custom prompt is sanitized and size-limited before save.
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs uppercase tracking-widest font-bold text-muted mb-1.5">Live Prompt Preview</div>
-                    <pre className="w-full rounded-card border border-subtle bg-surface-2 p-3 text-xs leading-6 font-mono text-secondary overflow-auto max-h-80 whitespace-pre-wrap">
-                      {promptBusy ? "Refreshing prompt preview..." : promptPreview || generatedPrompt || "No prompt yet."}
-                    </pre>
-                  </div>
-
-                  {promptTestQuestions.length > 0 ? (
-                    <div className="rounded-card border border-subtle bg-success-soft p-3">
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="text-xs uppercase tracking-widest font-bold text-success">
-                          Sample Output ({promptTestQuestions.length} questions)
-                        </div>
-                        <div className="text-xs text-success">Preview only — not saved to the template</div>
-                      </div>
-                      <ol className="space-y-2 text-sm text-secondary list-decimal list-inside max-h-96 overflow-auto">
-                        {promptTestQuestions.map((q, idx) => (
-                          <li key={`${idx}-${q.slice(0, 24)}`} className="leading-relaxed">
-                            {q}
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              )}
             </div>
           </div>
         ) : null}

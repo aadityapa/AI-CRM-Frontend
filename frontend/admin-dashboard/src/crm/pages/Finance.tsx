@@ -2,8 +2,8 @@
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Ban, ClipboardCheck, DollarSign, FileDown, FileText, IndianRupee, Layers, MapPin, Pencil, Plus,
-  Receipt, RefreshCw,
+  Ban, Building2, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileDown, FileText,
+  IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search,
 } from "lucide-react";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
@@ -22,6 +22,8 @@ import {
   WizardTopBar, type WizardStep,
 } from "../components/wizard";
 import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
+import { SearchableSelect, type SearchableOption } from "../components/SearchableSelect";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
 /* ---------------------------------------------------------------- helpers */
 
@@ -335,9 +337,7 @@ export function PurchaseOrdersPage() {
   const canWrite = useCanAct("pos", "edit", canWriteRole);
   const [tab, setTab] = useState("Active");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
   const [rows, setRows] = useState<any[]>([]);
-  const [meta, setMeta] = useState<Meta | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
@@ -354,32 +354,63 @@ export function PurchaseOrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [editPoId, setEditPoId] = useState<number | null>(null);
+  /** Allocate straight from the LIST (26 Aug 2026): the full PO is fetched
+   * first because the modal needs its allocations for the remaining-balance
+   * maths — the list rows carry only the totals. */
+  const [allocPo, setAllocPo] = useState<any | null>(null);
+  const [allocLoadingId, setAllocLoadingId] = useState<number | null>(null);
+  const openAllocate = (r: any) => {
+    setAllocLoadingId(r.id);
+    crmGet<any>(`/api/purchase-orders/${r.id}`)
+      .then((res) => setAllocPo(res.data))
+      .catch((e: any) => showToast(e?.message || "Failed to load PO", "err"))
+      .finally(() => setAllocLoadingId(null));
+  };
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
-  const customers = useNameMap("/api/customers?limit=100");
+  const customers = useNameMap("/api/customers/names");
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
+    // CUSTOMER-GROUPED VIEW (user decision, 26 Aug 2026): every page is
+    // fetched so the grouping covers the whole tab, not one page of it.
     let alive = true;
     setLoading(true);
-    const t = window.setTimeout(() => {
-      crmGet<any[]>(`/api/purchase-orders${qs({ status: tab, search, page, limit: 20 })}`)
-        .then((r) => { if (alive) { setRows(r.data || []); setMeta(r.meta); setError(""); } })
-        .catch((e) => { if (alive) setError(e?.message || "Failed to load purchase orders"); })
-        .finally(() => { if (alive) setLoading(false); });
-    }, search ? 300 : 0);
-    return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page, reloadKey]);
+    fetchAllMaster<any>("/api/purchase-orders", { status: tab })
+      .then((all) => { if (alive) { setRows(all); setError(""); } })
+      .catch((e) => { if (alive) setError(e?.message || "Failed to load purchase orders"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [tab, reloadKey]);
 
-  const columns: Column<any>[] = [
-    { key: "po_number", label: "PO Number", render: (r) => <span className="font-semibold">{r.po_number}</span> },
-    { key: "customer", label: "Customer", render: (r) => customers[r.customer_id] || `#${r.customer_id}` },
-    { key: "po_type", label: "Type" },
-    { key: "total_value", label: "Total", render: (r) => inr(r.total_value) },
-    { key: "consumed_value", label: "Consumed", render: (r) => inr(r.consumed_value) },
-    { key: "balance_value", label: "Balance", render: (r) => inr(r.balance_value) },
-    { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
-  ];
+  /** Customers first, their POs beneath (user decision, 26 Aug 2026): one
+   * expandable section per customer, on all three status tabs. Search is
+   * client-side over the full tab — PO number OR customer name. */
+  const groups = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const visible = !needle ? rows : rows.filter((r) =>
+      String(r.po_number || "").toLowerCase().includes(needle)
+      || (customers[r.customer_id] || "").toLowerCase().includes(needle));
+    const byCust = new Map<number, any[]>();
+    for (const r of visible) {
+      const list = byCust.get(r.customer_id) || [];
+      list.push(r);
+      byCust.set(r.customer_id, list);
+    }
+    return [...byCust.entries()]
+      .map(([cid, pos]) => ({
+        customer_id: cid,
+        name: customers[cid] || `Customer #${cid}`,
+        pos,
+        total: pos.reduce((s, p) => s + Number(p.total_value || 0), 0),
+        balance: pos.reduce((s, p) => s + Number(p.balance_value || 0), 0),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, customers, search]);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const toggle = (cid: number) => setExpanded((prev) => ({ ...prev, [cid]: !prev[cid] }));
+  // A search means "find that PO" — auto-open every matching section.
+  const isOpen = (cid: number) => (search ? expanded[cid] !== false : !!expanded[cid]);
 
   const closeForm = () => { setShowNew(false); setEditPoId(null); };
 
@@ -393,32 +424,99 @@ export function PurchaseOrdersPage() {
           </button>
         )}
       </div>
-      <Tabs tabs={PO_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+      <Tabs tabs={PO_TABS} active={tab} onChange={setTab} />
       {error && <ErrorBox error={error} />}
-      <DataTable
-        columns={columns}
-        rows={rows}
-        meta={meta}
-        loading={loading}
-        search={search}
-        onSearch={(q) => { setSearch(q); setPage(1); }}
-        onPage={setPage}
-        onRowClick={(r) => crmNavigate(`pos/${r.id}`)}
-        emptyMessage={<TeachingEmpty page="pos" />}
-        rowActions={canWrite ? (r) => (
-          <RowActions
-            entity="purchase order"
-            itemLabel={r.po_number}
-            onView={() => crmNavigate(`pos/${r.id}`)}
-            onEdit={() => { setShowNew(false); setEditPoId(r.id); }}
-            deleteUrl={`/api/purchase-orders/${r.id}`}
-            onDeleted={() => afterListDelete(r.id, setRows, load)}
-            notify={showToast}
-            canEdit={r.status !== "Cancelled"}
-            canDelete
-          />
-        ) : undefined}
-      />
+      <div className="flex min-w-[220px] max-w-sm items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3">
+        <Search size={14} className="shrink-0 text-muted" />
+        <input
+          className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
+          placeholder="Search PO number or customer…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+      {loading && <Spinner label="Loading purchase orders…" />}
+      {!loading && groups.length === 0 && <TeachingEmpty page="pos" />}
+      {!loading && groups.map((g) => (
+        <div key={g.customer_id} className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+          <button
+            type="button"
+            onClick={() => toggle(g.customer_id)}
+            className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors duration-micro hover:bg-surface-2"
+            aria-expanded={isOpen(g.customer_id)}
+          >
+            {isOpen(g.customer_id)
+              ? <ChevronDown size={16} className="shrink-0 text-muted" />
+              : <ChevronRight size={16} className="shrink-0 text-muted" />}
+            <Building2 size={16} className="shrink-0 text-brand-600 dark:text-brand-300" />
+            <span className="text-sm font-bold text-primary">{g.name}</span>
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-secondary">
+              {g.pos.length} PO{g.pos.length === 1 ? "" : "s"}
+            </span>
+            <span className="ml-auto flex flex-wrap gap-x-5 text-xs text-muted">
+              <span>Total <span className="font-semibold text-primary tnum">{inr(g.total)}</span></span>
+              <span>Balance <span className="font-semibold text-primary tnum">{inr(g.balance)}</span></span>
+            </span>
+          </button>
+          {isOpen(g.customer_id) && (
+            <table className="w-full border-t border-subtle text-sm">
+              <thead>
+                <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-muted">
+                  <th className="px-4 py-2">PO Number</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Total</th>
+                  <th className="px-3 py-2">Consumed</th>
+                  <th className="px-3 py-2">Balance</th>
+                  <th className="px-3 py-2">Status</th>
+                  {canWrite && <th className="px-3 py-2" />}
+                </tr>
+              </thead>
+              <tbody>
+                {g.pos.map((r) => (
+                  <tr key={r.id} className="row-hover cursor-pointer border-t border-subtle"
+                    onClick={() => crmNavigate(`pos/${r.id}`)}>
+                    <td className="px-4 py-2.5 font-semibold text-primary">{r.po_number}</td>
+                    <td className="px-3 py-2.5 text-secondary">{r.po_type}</td>
+                    <td className="px-3 py-2.5 tnum">{inr(r.total_value)}</td>
+                    <td className="px-3 py-2.5 tnum">{inr(r.consumed_value)}</td>
+                    <td className="px-3 py-2.5 tnum">{inr(r.balance_value)}</td>
+                    <td className="px-3 py-2.5"><StatusBadge status={r.status} /></td>
+                    {canWrite && (
+                      <td className="px-3 py-2.5">
+                        <span className="inline-flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                          {r.status === "Active" && (
+                            <button
+                              type="button"
+                              title={`Allocate ${r.po_number} to a project`}
+                              aria-label={`Allocate ${r.po_number} to a project`}
+                              disabled={allocLoadingId === r.id}
+                              onClick={() => openAllocate(r)}
+                              className="rounded-control p-1.5 text-muted transition-colors duration-micro hover:bg-surface-2 hover:text-brand-600 disabled:opacity-50 dark:hover:text-brand-300"
+                            >
+                              <Layers size={15} />
+                            </button>
+                          )}
+                          <RowActions
+                            entity="purchase order"
+                            itemLabel={r.po_number}
+                            onView={() => crmNavigate(`pos/${r.id}`)}
+                            onEdit={() => { setShowNew(false); setEditPoId(r.id); }}
+                            deleteUrl={`/api/purchase-orders/${r.id}`}
+                            onDeleted={() => afterListDelete(r.id, setRows, load)}
+                            notify={showToast}
+                            canEdit={r.status !== "Cancelled"}
+                            canDelete
+                          colored />
+                        </span>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ))}
       {(showNew || editPoId != null) && (
         <POFormModal
           customers={customers}
@@ -433,6 +531,19 @@ export function PurchaseOrdersPage() {
           }}
           onError={(m) => showToast(m, "err")}
           notify={showToast}
+        />
+      )}
+      {allocPo && (
+        <AllocateModal
+          po={allocPo}
+          customerName={customers[allocPo.customer_id]}
+          onClose={() => setAllocPo(null)}
+          onSaved={() => {
+            setAllocPo(null);
+            showToast("Project allocation saved");
+            load();
+          }}
+          onError={(m) => showToast(m, "err")}
         />
       )}
       {toast}
@@ -466,7 +577,33 @@ function POFormModal({
   const [billingAddr, setBillingAddr] = useState<AddrForm>(emptyAddr);
   const [deliveryAddr, setDeliveryAddr] = useState<AddrForm>(emptyAddr);
   const [contactId, setContactId] = useState("");
+  // Which employee this PO funds (26 Aug 2026) — searched from the Employees master.
+  const [employeeId, setEmployeeId] = useState("");
+  const [employees, setEmployees] = useState<SearchableOption[]>([]);
   const [poNumber, setPoNumber] = useState("");
+  /** Live duplicate check (26 Aug 2026): the server refuses duplicate PO
+   * numbers at save — on the LAST step, as a missable toast. Warn while
+   * typing instead, and block Next/Create while the number is taken. */
+  const [poNumberTaken, setPoNumberTaken] = useState("");
+  useEffect(() => {
+    const typed = poNumber.trim();
+    if (!typed) { setPoNumberTaken(""); return; }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      crmGet<{ available: boolean; existing?: { po_number: string; customer_name?: string | null } }>(
+        `/api/purchase-orders/check-number${qs({ po_number: typed, exclude_id: editPoId || undefined })}`,
+      )
+        .then((r) => {
+          if (!alive) return;
+          setPoNumberTaken(r.data?.available === false
+            ? `PO number '${typed}' already exists${r.data?.existing?.customer_name ? ` (${r.data.existing.customer_name})` : ""}. Use a different number.`
+            : "");
+        })
+        .catch(() => { /* check failure must not block typing; save still validates */ });
+    }, 450);
+    return () => { alive = false; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poNumber, editPoId]);
   const [receivedDate, setReceivedDate] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -546,6 +683,7 @@ function POFormModal({
             : (delId ? addrFromBranch(br.find((x: any) => String(x.id) === delId), "delivery") : emptyAddr()),
         );
         setContactId(po.contact_person_id != null ? String(po.contact_person_id) : "");
+        setEmployeeId(po.employee_id != null ? String(po.employee_id) : "");
         const firstAlloc = Array.isArray(po.allocations) && po.allocations.length > 0 ? po.allocations[0] : null;
         if (firstAlloc?.project_id != null) {
           setAllocProjectId(String(firstAlloc.project_id));
@@ -567,6 +705,36 @@ function POFormModal({
     })();
     return () => { alive = false; };
   }, [editPoId, isEdit]);
+
+  // AUTO IGST (user decision, 26 Aug 2026): Karnex bills from Maharashtra, so
+  // a billing address in any OTHER state is an inter-state supply → IGST on;
+  // a Maharashtra billing address stays CGST+SGST. Recomputed whenever the
+  // billing STATE changes (including on edit-open, so a wrongly saved split
+  // self-corrects); the checkbox stays manually overridable afterwards.
+  useEffect(() => {
+    if (isEdit && !hydrated) return;
+    const st = (billingAddr.state || "").trim().toLowerCase();
+    if (!st) return;
+    setInterState(!st.includes("maharashtra"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [billingAddr.state, hydrated]);
+
+  useEffect(() => {
+    // ALL employees, including Relieved (26 Aug 2026, user decision): POs are
+    // being backfilled from April 2026, and many belong to people who have
+    // since left. Relieved names are suffixed so Finance picks them knowingly;
+    // active names sort first. Every page is fetched — the API caps at
+    // 100/request and the directory holds ~290 people.
+    fetchAllMaster<any>("/api/employees")
+      .then((rows) => setEmployees(
+        rows
+          .sort((a: any, b: any) => Number(b.is_active) - Number(a.is_active))
+          .map((e: any) => ({
+            value: String(e.id),
+            label: `${e.full_name || `${e.first_name} ${e.last_name || ""}`.trim()}${e.is_active ? "" : " (Relieved)"}`,
+          }))))
+      .catch(() => setEmployees([]));
+  }, []);
 
   useEffect(() => {
     // Edit hydrate owns branches/contacts; customer is locked so skip reset.
@@ -627,6 +795,7 @@ function POFormModal({
     const total = num(totalValue);
     if (!customerId) { setErr("Customer is required"); return; }
     if (!poNumber.trim()) { setErr("PO No is required"); return; }
+    if (poNumberTaken) { setErr(poNumberTaken); return; }
     if (startDate && endDate && endDate < startDate) {
       setErr("PO End Date cannot be before PO Start Date");
       return;
@@ -646,8 +815,9 @@ function POFormModal({
       else if (isEdit) payload.billing_branch_id = null;
       if (deliveryId) payload.delivery_branch_id = Number(deliveryId);
       else if (isEdit) payload.delivery_branch_id = null;
-      if (contactId) payload.contact_person_id = Number(contactId);
-      else if (isEdit) payload.contact_person_id = null;
+      if (isEdit && customerId) payload.customer_id = Number(customerId);
+      if (employeeId) payload.employee_id = Number(employeeId);
+      else if (isEdit) payload.employee_id = null;
       if (receivedDate) payload.received_date = receivedDate;
       else if (isEdit) payload.received_date = null;
       if (startDate) payload.start_date = startDate;
@@ -677,6 +847,7 @@ function POFormModal({
           await crmPost(`/api/purchase-orders/${po.id}/allocate-project`, {
             project_id: Number(allocProjectId),
             allocated_amount: alloc,
+            contact_person_id: contactId ? Number(contactId) : null,
           });
         } catch (e: any) {
           notify(
@@ -687,7 +858,9 @@ function POFormModal({
       }
       onSaved(po);
     } catch (e: any) {
-      onError(e?.message || (isEdit ? "Failed to update purchase order" : "Failed to create purchase order"));
+      const msg = e?.message || (isEdit ? "Failed to update purchase order" : "Failed to create purchase order");
+      setErr(msg);  // visible on the Review step — a toast alone was missed
+      onError(msg);
       setBusy(false);
     }
   };
@@ -698,10 +871,10 @@ function POFormModal({
     { key: "commercial", title: "Commercial Details", subtitle: "PO type, value, GST slab, and tax split.", icon: <DollarSign size={20} aria-hidden /> },
     {
       key: "allocate",
-      title: "Allocate to Project",
+      title: "Allocate to Project (optional)",
       subtitle: isEdit && hadExistingAlloc
         ? "Existing allocation shown. Add more from the PO detail page."
-        : "Projects for the selected customer and billing branch.",
+        : "Skip freely — you can allocate any time from the PO page after creating it.",
       icon: <Layers size={20} aria-hidden />,
     },
     {
@@ -733,6 +906,7 @@ function POFormModal({
     if (idx === 0) {
       if (!customerId) { setErr("Customer is required"); return false; }
       if (!poNumber.trim()) { setErr("PO No is required"); return false; }
+      if (poNumberTaken) { setErr(poNumberTaken); return false; }
       if (startDate && endDate && endDate < startDate) {
         setErr("PO End Date cannot be before PO Start Date");
         return false;
@@ -808,8 +982,23 @@ function POFormModal({
             <select
               className={inputCls}
               value={customerId}
-              disabled={isEdit}
-              onChange={(e) => setCustomerId(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCustomerId(v);
+                // Editable on EDIT too (user request, 26 Aug 2026) — a wrong
+                // pick must be fixable. Everything customer-scoped resets;
+                // the server refuses the save if invoices/allocations exist.
+                if (isEdit) {
+                  setBillingId(""); setDeliveryId(""); setContactId("");
+                  setBillingAddr(emptyAddr()); setDeliveryAddr(emptyAddr());
+                  setAllocProjectId(""); setAllocAmount("");
+                  setBranches([]); setContacts([]);
+                  if (v) {
+                    crmGet<any[]>(`/api/customers/${v}/branches`).then((r) => setBranches(r.data || [])).catch(() => {});
+                    crmGet<any[]>(`/api/customers/${v}/contacts`).then((r) => setContacts(r.data || [])).catch(() => {});
+                  }
+                }
+              }}
             >
               <option value="">Select customer…</option>
               {Object.entries(customers).map(([id, name]) => (
@@ -817,7 +1006,8 @@ function POFormModal({
               ))}
             </select>
           </WizardField>
-          <WizardField label="PO No" required icon="hash" filled={!!poNumber.trim()}>
+          <WizardField label="PO No" required icon="hash" filled={!!poNumber.trim() && !poNumberTaken}
+            error={poNumberTaken || undefined}>
             <input
               className={inputCls}
               value={poNumber}
@@ -825,7 +1015,16 @@ function POFormModal({
               placeholder="e.g. PO-2026-001"
             />
           </WizardField>
-          <WizardField label="PO Received Date" icon="calendar" filled={!!receivedDate}>
+          <WizardField label="Employee" icon="user" filled={!!employeeId}>
+            <SearchableSelect
+              value={employeeId}
+              options={employees}
+              searchable
+              placeholder="Search employee…"
+              onChange={setEmployeeId}
+            />
+          </WizardField>
+          <WizardField label="PO Date" icon="calendar" filled={!!receivedDate}>
             <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
           </WizardField>
           <WizardField label="PO Start Date" icon="calendar" filled={!!startDate}>
@@ -845,28 +1044,10 @@ function POFormModal({
               onChange={(e) => setEndDate(e.target.value)}
             />
           </WizardField>
-          <WizardField label="Contact person" icon="user" filled={!!contactId}>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                className={`${inputCls} min-w-0 flex-1`}
-                value={contactId}
-                onChange={(e) => setContactId(e.target.value)}
-                disabled={!customerId}
-              >
-                <option value="">—</option>
-                {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <button
-                type="button"
-                className={`${btnSecondary} !px-2.5 !py-2 shrink-0`}
-                disabled={!customerId}
-                title={!customerId ? "Select a customer first" : "Create new contact person"}
-                onClick={() => setShowNewContact(true)}
-              >
-                <Plus size={15} /> New Contact
-              </button>
-            </div>
-          </WizardField>
+          {/* Contact person removed from the header (26 Aug 2026, user decision):
+              a contact only means something once a project is chosen, so the
+              field now lives on the Allocate step / Allocate modal. Legacy POs
+              keep their stored header contact untouched. */}
         </div>
       );
     }
@@ -967,6 +1148,30 @@ function POFormModal({
               placeholder={allocProjectId ? "Defaults to full PO value" : "Select a project first"}
               onChange={(e) => setAllocAmount(e.target.value)}
             />
+          </WizardField>
+          {/* Contact person moved HERE from the PO header (26 Aug 2026): it is
+              recorded on the allocation, where it actually means something. */}
+          <WizardField label="Contact person" icon="user" filled={!!contactId}>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className={`${inputCls} min-w-0 flex-1`}
+                value={contactId}
+                onChange={(e) => setContactId(e.target.value)}
+                disabled={!allocProjectId || allocLocked}
+              >
+                <option value="">—</option>
+                {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button
+                type="button"
+                className={`${btnSecondary} !px-2.5 !py-2 shrink-0`}
+                disabled={!customerId}
+                title={!customerId ? "Select a customer first" : "Create new contact person"}
+                onClick={() => setShowNewContact(true)}
+              >
+                <Plus size={15} /> New Contact
+              </button>
+            </div>
           </WizardField>
           {allocProjectId && (
             <p className="sm:col-span-2 text-xs text-muted">
@@ -1072,7 +1277,8 @@ function POFormModal({
         <div className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 md:grid-cols-3">
           <InfoItem label="Customer">{customers[Number(customerId)] || "—"}</InfoItem>
           <InfoItem label="PO No">{poNumber.trim() || "—"}</InfoItem>
-          <InfoItem label="PO Received Date">{receivedDate ? fmtDate(receivedDate) : "—"}</InfoItem>
+          <InfoItem label="Employee">{employees.find((e) => e.value === employeeId)?.label || "—"}</InfoItem>
+          <InfoItem label="PO Date">{receivedDate ? fmtDate(receivedDate) : "—"}</InfoItem>
           <InfoItem label="PO Start Date">{startDate ? fmtDate(startDate) : "—"}</InfoItem>
           <InfoItem label="PO End Date">{endDate ? fmtDate(endDate) : "—"}</InfoItem>
           <InfoItem label="PO type">{poType}</InfoItem>
@@ -1195,7 +1401,7 @@ export function PODetailPage() {
   const [cancelBusy, setCancelBusy] = useState(false);
   const [showRenew, setShowRenew] = useState(false);
   const [toast, showToast] = useToast();
-  const customers = useNameMap("/api/customers?limit=100");
+  const customers = useNameMap("/api/customers/names");
 
   const load = () => {
     crmGet<any>(`/api/purchase-orders/${id}`)
@@ -1250,6 +1456,8 @@ export function PODetailPage() {
     { key: "project_name", label: "Project", render: (r) => r.project_name || `#${r.project_id}` },
     { key: "allocated_amount", label: "Allocated", render: (r) => inr(r.allocated_amount) },
     { key: "consumed_amount", label: "Consumed", render: (r) => inr(r.consumed_amount) },
+    // Recorded at allocation time (26 Aug 2026) — replaced the PO-header field.
+    { key: "contact_person_name", label: "Contact person", render: (r) => r.contact_person_name || "—" },
     { key: "hsn_sac", label: "HSN/SAC", render: (r) => r.hsn_sac || "—" },
   ];
 
@@ -1321,7 +1529,7 @@ export function PODetailPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <InfoItem label="Customer">{customerName || `#${po.customer_id}`}</InfoItem>
           <InfoItem label="Type">{po.po_type || "—"}</InfoItem>
-          <InfoItem label="PO Received Date">{fmtDate(po.received_date)}</InfoItem>
+          <InfoItem label="PO Date">{fmtDate(po.received_date)}</InfoItem>
           <InfoItem label="PO Start Date">{fmtDate(po.start_date)}</InfoItem>
           <InfoItem label="PO End Date">{fmtDate(po.end_date)}</InfoItem>
           <InfoItem label="Tax slab">{po.tax_slab != null ? `${po.tax_slab}%` : "—"}</InfoItem>
@@ -1415,6 +1623,7 @@ export function PODetailPage() {
       {showAllocate && (
         <AllocateModal
           po={po}
+          customerName={customers[po.customer_id]}
           onClose={() => setShowAllocate(false)}
           onSaved={() => { setShowAllocate(false); showToast("Project allocation saved"); load(); }}
           onError={(m) => showToast(m, "err")}
@@ -1461,11 +1670,13 @@ export function PODetailPage() {
 
 function AllocateModal({
   po,
+  customerName,
   onClose,
   onSaved,
   onError,
 }: {
   po: any;
+  customerName?: string;
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -1474,13 +1685,42 @@ function AllocateModal({
   const [projectId, setProjectId] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  // Contact captured at allocation time (26 Aug 2026) — the customer's contacts.
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [contactId, setContactId] = useState("");
+  /** Detail row (26 Aug 2026): the LIST row has no allocations, so opening
+   * from the list showed "already allocated ₹0" even on a part-allocated PO
+   * and could prefill more than remains. The detail is authoritative. */
+  const [detail, setDetail] = useState<any | null>(null);
+  const eff = detail || po;
 
   useEffect(() => {
-    crmGet<any[]>("/api/projects?limit=100").then((r) => setProjects(r.data || [])).catch(() => {});
-  }, []);
+    // Only THIS customer's projects (26 Aug 2026): a HARMAN PO must not offer
+    // Magna Steyr projects — an allocation across customers is always a mistake.
+    crmGet<any[]>(`/api/projects${qs({ customer_id: po?.customer_id || undefined, limit: 100 })}`)
+      .then((r) => setProjects(r.data || []))
+      .catch(() => {});
+    if (po?.customer_id) {
+      crmGet<any[]>(`/api/customers/${po.customer_id}/contacts`)
+        .then((r) => setContacts(r.data || []))
+        .catch(() => { /* select degrades to empty — allocation still saves */ });
+    }
+    crmGet<any>(`/api/purchase-orders/${po.id}`)
+      .then((r) => setDetail(r.data))
+      .catch(() => setDetail(null));
+  }, [po?.customer_id, po?.id]);
 
-  const allocatedSum = (po.allocations || []).reduce((s: number, a: any) => s + Number(a.allocated_amount || 0), 0);
-  const remaining = Number(po.total_value || 0) - allocatedSum;
+  const allocatedSum = (eff.allocations || []).reduce((s: number, a: any) => s + Number(a.allocated_amount || 0), 0);
+  const remaining = Number(eff.total_value || 0) - allocatedSum;
+
+  // Auto-fill (user decision, 26 Aug 2026): the amount defaults to the PO's
+  // unallocated value — most allocations are the whole PO. Editable after.
+  const prefilledRef = React.useRef(false);
+  useEffect(() => {
+    if (detail === null || prefilledRef.current) return;
+    prefilledRef.current = true;
+    if (remaining > 0) setAmount(String(remaining));
+  }, [detail, remaining]);
   const amtN = num(amount);
   const amountErr =
     amount === "" ? "" :
@@ -1494,6 +1734,7 @@ function AllocateModal({
       await crmPost(`/api/purchase-orders/${po.id}/allocate-project`, {
         project_id: Number(projectId),
         allocated_amount: amtN,
+        contact_person_id: contactId ? Number(contactId) : null,
       });
       onSaved();
     } catch (e: any) {
@@ -1514,17 +1755,41 @@ function AllocateModal({
       submitBusyLabel="Saving…"
       submitDisabled={busy || !projectId || !!amountErr || amount === ""}
     >
+      {/* The PO's key facts, right where the decision is made (user request,
+          26 Aug 2026): value, customer and the received/start/end dates. */}
+      <div className="mb-1 grid grid-cols-2 gap-x-6 gap-y-2 rounded-card border border-subtle bg-surface-2/40 p-3 text-sm sm:grid-cols-3">
+        <div><div className="text-[11px] font-bold uppercase text-muted">PO Value</div>
+          <div className="font-semibold text-primary">{inr(eff.total_value)}</div></div>
+        <div><div className="text-[11px] font-bold uppercase text-muted">Customer</div>
+          <div className="font-semibold text-primary">{customerName || "—"}</div></div>
+        <div><div className="text-[11px] font-bold uppercase text-muted">PO Date</div>
+          <div className="font-semibold text-primary">{eff.received_date ? fmtDate(eff.received_date) : "—"}</div></div>
+        <div><div className="text-[11px] font-bold uppercase text-muted">PO Start Date</div>
+          <div className="font-semibold text-primary">{eff.start_date ? fmtDate(eff.start_date) : "—"}</div></div>
+        <div><div className="text-[11px] font-bold uppercase text-muted">PO End Date</div>
+          <div className="font-semibold text-primary">{eff.end_date ? fmtDate(eff.end_date) : "—"}</div></div>
+      </div>
       <InfoChip>
-        PO total {inr(po.total_value)} · already allocated {inr(allocatedSum)} · unallocated {inr(remaining)}
+        PO total {inr(eff.total_value)} · already allocated {inr(allocatedSum)} · unallocated {inr(remaining)}
       </InfoChip>
       <WizardField label="Project" required icon="building">
         <select className={inputCls} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">Select project…</option>
+          <option value="">
+            {projects.length === 0
+              ? `No projects for ${customerName || "this customer"} yet — create one first`
+              : "Select project…"}
+          </option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </WizardField>
       <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
         <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </WizardField>
+      <WizardField label="Contact person" icon="user" filled={!!contactId}>
+        <select className={inputCls} value={contactId} onChange={(e) => setContactId(e.target.value)}>
+          <option value="">—</option>
+          {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
       </WizardField>
     </FinanceModalShell>
   );
@@ -1677,18 +1942,27 @@ export function InvoicesPage() {
   const projects = useNameMap("/api/projects?limit=100");
   const pos = useNameMap("/api/purchase-orders?limit=100", "po_number");
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
+  /* Customer + project filters (25 Aug 2026): server-side — paginated list. */
+  const [customerFilter, setCustomerFilter] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const customerNames = useNameMap("/api/customers/names");
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     const t = window.setTimeout(() => {
-      crmGet<any[]>(`/api/invoices${qs({ payment_status: tab, search, page, limit: 20 })}`)
+      crmGet<any[]>(`/api/invoices${qs({
+        payment_status: tab, search, page, limit: 20,
+        customer_id: customerFilter || undefined,
+        project_id: projectFilter || undefined,
+      })}`)
         .then((r) => { if (alive) { setRows(r.data || []); setMeta(r.meta); setError(""); } })
         .catch((e) => { if (alive) setError(e?.message || "Failed to load invoices"); })
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page, reloadKey]);
+  }, [tab, search, page, reloadKey, customerFilter, projectFilter]);
+  useEffect(() => { setPage(1); }, [customerFilter, projectFilter]);
 
   const columns: Column<any>[] = [
     { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number}</span> },
@@ -1723,11 +1997,30 @@ export function InvoicesPage() {
         columns={columns}
         rows={rows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "invoice" : "invoices"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
         onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
+        filters={
+          <>
+            <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
+              value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
+              title="Filter by customer">
+              <option value="">All customers</option>
+              {Object.entries(customerNames).sort((a, b) => a[1].localeCompare(b[1]))
+                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
+              value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+              title="Filter by project">
+              <option value="">All projects</option>
+              {Object.entries(projects).sort((a, b) => a[1].localeCompare(b[1]))
+                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </>
+        }
         emptyMessage={<TeachingEmpty page="invoices" />}
         rowActions={(r) => (
           <RowActions
@@ -1740,7 +2033,7 @@ export function InvoicesPage() {
             notify={showToast}
             canEdit={canWrite}
             canDelete={canWrite}
-          />
+          colored />
         )}
       />
       {showNew && (
@@ -2501,6 +2794,7 @@ export function TdsPage() {
         columns={columns}
         rows={rows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "record" : "records"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
@@ -2516,7 +2810,7 @@ export function TdsPage() {
             notify={showToast}
             canEdit={false}
             canDelete
-          />
+          colored />
         ) : undefined}
       />
     </div>

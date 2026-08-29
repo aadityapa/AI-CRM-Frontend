@@ -5,6 +5,7 @@ import { apiGet } from "../../api/client";
 import { crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -14,6 +15,16 @@ import {
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
+
+/** Same debounce as the Requirements list — one fetch per pause, not per key. */
+function useDebounced(value: string, ms = 350): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -72,9 +83,35 @@ const TABS = [
 const PREFILL_OPP_KEY = "crm_prefill_opportunityId";
 
 /** Leave CRM and open Templates; optionally prefill Opportunity ID on the form. */
-function goToTemplatesTab(opportunityOppId?: string | null) {
+const PREFILL_TEMPLATE_KEY = "crm_prefill_template";
+
+/** Parse "3-7 yrs" / "3-+" style experience_level into [min, max]. */
+function parseExpLevel(level?: string | null): [number, number] {
+  const m = /([\d.]+)\s*-\s*([\d.]+)?/.exec(String(level || ""));
+  const lo = m ? Math.round(Number(m[1]) || 0) : 0;
+  const hi = m && m[2] ? Math.round(Number(m[2]) || 0) : 0;
+  return [lo, hi];
+}
+
+function goToTemplatesTab(row?: TR | null) {
+  // Rich prefill (Aug 2026): carry the request's role / skills / experience /
+  // customer into the new-template form so RMG types nothing twice. The old
+  // opp-id-only key stays for back-compat.
   try {
-    if (opportunityOppId) sessionStorage.setItem(PREFILL_OPP_KEY, opportunityOppId);
+    if (row?.opportunity_opp_id) sessionStorage.setItem(PREFILL_OPP_KEY, row.opportunity_opp_id);
+    if (row) {
+      const [expMin, expMax] = parseExpLevel(row.experience_level);
+      sessionStorage.setItem(PREFILL_TEMPLATE_KEY, JSON.stringify({
+        opportunityId: row.opportunity_opp_id || "",
+        jobTitle: row.role_title || row.requirement_title || "",
+        requiredSkills: row.skills || "",
+        customerName: (row as any).customer_name || "",
+        expMin, expMax,
+      }));
+    }
+    // Ask the shell to open the CREATE form directly — landing on the list and
+    // clicking "Create Template" again was a pointless extra hop for RMG.
+    sessionStorage.setItem("crm_open_template_form", "1");
   } catch { /* ignore */ }
   const params = new URLSearchParams(window.location.search);
   params.set("view", "templates");
@@ -86,7 +123,7 @@ function goToTemplatesTab(opportunityOppId?: string | null) {
 export function TemplateRequestsPage() {
   const isRMG = useHasRole("RMG");
   const isTA = useHasRole("TA");
-  const canWrite = isRMG || isTA;
+  const canWrite = useCanAct("template-requests", "edit", isRMG || isTA);
   const [tab, setTab] = useState("Pending_RMG");
   const [rows, setRows] = useState<TR[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -99,11 +136,20 @@ export function TemplateRequestsPage() {
   const [cancelRow, setCancelRow] = useState<TR | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
+  /* Filters (25 Aug 2026): search by role/TR number — server-side, the list
+   * is paginated. */
+  const [search, setSearch] = useState("");
+  const dq = useDebounced(search);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const query = tab === "all" ? { page, limit: 20 } : { status: tab, page, limit: 20 };
+      const query = {
+        page, limit: 20,
+        status: tab === "all" ? undefined : tab,
+        search: dq || undefined,
+      };
       const res = await crmGet<TR[]>(`/api/template-requests${qs(query)}`);
       setRows(res.data || []);
       setMeta(res.meta);
@@ -112,8 +158,9 @@ export function TemplateRequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page]);
+  }, [tab, page, dq]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [tab, dq]);
 
   const confirmCancel = async () => {
     if (!cancelRow) return;
@@ -138,18 +185,17 @@ export function TemplateRequestsPage() {
       render: (r) => (
         <div>
           <div className="font-semibold text-primary">{r.role_title}</div>
-          {r.requirement_number && (
+          {/* ONE id everywhere (18 Aug 2026 rule): the opportunity's opp_id is
+              the number every role quotes — REQ-xxxx is internal and never
+              shown. The link still lands on the requirement detail page. */}
+          {r.requirement_id != null && (
             <button
               className="text-xs text-brand-600 hover:underline dark:text-brand-300"
               onClick={(e) => { e.stopPropagation(); crmNavigate(`requirements/${r.requirement_id}`); }}
             >
-              {r.requirement_number}
+              {r.opportunity_opp_id || "Open requirement"}
+              {r.opportunity_title ? ` — ${r.opportunity_title}` : ""}
             </button>
-          )}
-          {r.opportunity_opp_id && (
-            <div className="text-xs text-muted">
-              Opp {r.opportunity_opp_id}{r.opportunity_title ? ` — ${r.opportunity_title}` : ""}
-            </div>
           )}
         </div>
       ),
@@ -191,7 +237,7 @@ export function TemplateRequestsPage() {
               <button
                 className={btnSecondary}
                 title="Open the Templates tab to build this interview template"
-                onClick={() => goToTemplatesTab(r.opportunity_opp_id)}
+                onClick={() => goToTemplatesTab(r)}
                 disabled={busyId === r.id}
               >
                 <LayoutTemplate size={13} /> Create template
@@ -236,7 +282,10 @@ export function TemplateRequestsPage() {
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "request" : "requests"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           loading={loading}
+          search={search}
+          onSearch={setSearch}
           onPage={setPage}
           emptyMessage="No template requests in this view"
           rowActions={canWrite ? (r) => (
@@ -248,7 +297,7 @@ export function TemplateRequestsPage() {
               notify={showToast}
               canEdit={false}
               canDelete
-            />
+            colored />
           ) : undefined}
         />
       )}
@@ -339,7 +388,7 @@ function FulfillModal({ row, onClose, onDone, toast }: {
           <button
             type="button"
             className={btnSecondary}
-            onClick={() => goToTemplatesTab(row.opportunity_opp_id)}
+            onClick={() => goToTemplatesTab(row)}
             title="Opens Templates — Opportunity ID is prefilled when you create a new template"
           >
             <LayoutTemplate size={14} /> Create template in Templates tab →

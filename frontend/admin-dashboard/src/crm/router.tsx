@@ -7,9 +7,13 @@
  * search params — never part of `p` — so matchRoute keeps working. */
 import React, { createContext, useContext, useEffect, useState } from "react";
 
-/** List-filter keys that may be set via `crmNavigate("page?…")`. Cleared on
- * every navigation so stale filters do not leak across CRM pages. */
-const CRM_FILTER_KEYS = ["project_id", "employee_id"] as const;
+/** Per-page keys that may be set via `crmNavigate("page?…")`. Cleared on every
+ * navigation so stale filters do not leak across CRM pages.
+ *
+ * `tab` is here for the same reason as the filters: it is meaningful only to
+ * the page that reads it, so carrying it onto the next page would land the
+ * reader on an arbitrary tab (or none) after following any other link. */
+const CRM_FILTER_KEYS = ["project_id", "employee_id", "tab"] as const;
 
 function splitPathQuery(path: string): { pathPart: string; queryPart: string } {
   const raw = path.replace(/^\/+/, "");
@@ -95,6 +99,23 @@ export function CrmRouter({ routes, fallback }: { routes: CrmRoute[]; fallback: 
           <El />
         </Ctx.Provider>
       );
+    }
+  }
+  /* Deep-link salvage (25 Aug 2026): a link like "template-requests/14" has no
+   * detail route, but its PARENT list does — landing there beats a dead "Page
+   * not found" for every notification/email that targets a list-only page. */
+  const head = path.split("/")[0];
+  if (head && head !== path) {
+    for (const r of routes) {
+      const params = matchRoute(r.pattern, head);
+      if (params) {
+        const El = r.element;
+        return (
+          <Ctx.Provider value={{ path: head, params }}>
+            <El />
+          </Ctx.Provider>
+        );
+      }
     }
   }
   return <>{fallback}</>;

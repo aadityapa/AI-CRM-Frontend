@@ -14,7 +14,9 @@ import type { Me } from "./CrmApp";
 import { useMe } from "./CrmApp";
 import { crmTabKey, isSuperAdmin, tabVisible } from "../lib/rbac";
 
-export type AccessMode = "view" | "edit" | "create";
+/** "hidden" (25 Aug 2026) is FIELD-only: it removes a field or a `tab:*`
+ *  sub-tab from a templated user's view. Tab grants stay view/edit/create. */
+export type AccessMode = "hidden" | "view" | "edit" | "create";
 
 const MODE_RANK: Record<string, number> = { view: 1, edit: 2, create: 3 };
 
@@ -105,8 +107,27 @@ export function canViewField(
   if (isSuperAdmin(roles) || access?.full || access?.visible_tabs == null) return true;
   const bare = bareTabKey(tab);
   const fmode = access?.fields?.[bare]?.[field] ?? access?.fields?.[`crm:${bare}`]?.[field];
-  if (fmode) return true;
+  // "hidden" (25 Aug 2026): a template can remove a sub-tab/field from view
+  // entirely — the only field mode that answers false here.
+  if (fmode) return fmode !== "hidden";
   return tabMode(access, tab) != null;
+}
+
+/** Sub-tab visibility (25 Aug 2026): hidden ONLY when the template explicitly
+ * says "hidden". A template that never mentions the tab (or the sub-tab) must
+ * not erase anything — page reachability is decided by roles, and the first
+ * cut of this check (canViewField) blanked every detail tab for templated
+ * users whose template predated the sub-tab entries (seen live). */
+export function subTabVisible(
+  access: EffectiveAccess | undefined,
+  roles: string[],
+  tab: string,
+  field: string,
+): boolean {
+  if (isSuperAdmin(roles) || access?.full || access?.visible_tabs == null) return true;
+  const bare = bareTabKey(tab);
+  const fmode = access?.fields?.[bare]?.[field] ?? access?.fields?.[`crm:${bare}`]?.[field];
+  return fmode !== "hidden";
 }
 
 export function canEditField(
@@ -118,7 +139,7 @@ export function canEditField(
   if (isSuperAdmin(roles) || access?.full || access?.visible_tabs == null) return true;
   const bare = bareTabKey(tab);
   const fmode = access?.fields?.[bare]?.[field] ?? access?.fields?.[`crm:${bare}`]?.[field];
-  if (fmode) return modeSatisfies(fmode, "edit");
+  if (fmode) return fmode !== "hidden" && modeSatisfies(fmode, "edit");
   return modeSatisfies(tabMode(access, tab), "edit");
 }
 
@@ -139,6 +160,7 @@ export function useCrmAccess(tabPath: string) {
         tabMode(me.access, tab) === "view",
       canEditField: (field: string) => canEditField(me.access, me.roles, tab, field),
       canViewField: (field: string) => canViewField(me.access, me.roles, tab, field),
+      subTabVisible: (field: string) => subTabVisible(me.access, me.roles, tab, field),
     }),
     [me, tab],
   );

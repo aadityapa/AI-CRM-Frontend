@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Wallet } from "lucide-react";
 import { crmGet } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import { ErrorBox, Field, Spinner, btnPrimary, btnSecondary, inputCls, useToast } from "../components/ui";
 
 type PayrollRow = {
@@ -79,7 +80,7 @@ function csvEscape(v: unknown) {
 /** `embedded` — rendered as an inner tab (Timesheets → Payroll): the host page
  * owns the h1, so we show only the description line. */
 export function PayrollPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const canView = useHasRole("HR", "Finance");
+  const canView = useCanAct("payroll", "view", useHasRole("HR", "Finance"));
   const [toast, notify] = useToast();
   const now = new Date();
   // Default to the month that just ended — payroll is always run in arrears.

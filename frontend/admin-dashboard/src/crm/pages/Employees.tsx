@@ -9,7 +9,7 @@ import {
   Briefcase, Building2, CalendarDays, ClipboardCheck, GraduationCap, LogOut, Mail,
   Pencil, Plus, Save, Trash2, User, X,
 } from "lucide-react";
-import { crmDelete, crmGet, crmPost, crmPut, qs, type Meta } from "../api";
+import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs, type Meta } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
 import { useCanAct, useCrmAccess } from "../useAccess";
@@ -512,16 +512,20 @@ function EmployeeFormModal({
  * Employees — list
  * =================================================================== */
 
+/** "All" first and default (26 Aug 2026, user decision): after the directory
+ * import, 191 of 288 people are Relieved — hiding them behind a second tab
+ * made the directory look two-thirds empty. */
 const EMP_TABS = [
-  { key: "Active", label: "Active" },
-  { key: "Inactive", label: "Inactive" },
+  { key: "All", label: "All" },
+  { key: "Active", label: "Working" },
+  { key: "Inactive", label: "Relieved / Inactive" },
 ];
 
 export function EmployeesListPage() {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("HR");
   const canWrite = useCanAct("employees", "edit", canWriteRole);
-  const [tab, setTab] = useState("Active");
+  const [tab, setTab] = useState("All");
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -531,18 +535,49 @@ export function EmployeesListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, showToast] = useToast();
   const departments = useNameMap("/api/departments?limit=100");
   const designations = useNameMap("/api/designations?limit=100");
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
 
+  /** Authenticated xlsx download (Export / template) — same blob pattern as
+   * the report CSVs; a plain <a href> would miss the bearer token. */
+  const downloadXlsx = async (url: string, filename: string) => {
+    const { authFetch } = await import("../../api/client");
+    const res = await authFetch(url);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+  };
+
+  const exportEmployees = async () => {
+    setExporting(true);
+    try {
+      await downloadXlsx("/api/employees/export", "employees.xlsx");
+      showToast("Employees exported");
+    } catch (e: any) {
+      showToast(e?.message || "Export failed", "err");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
     const t = window.setTimeout(() => {
       crmGet<any[]>(`/api/employees${qs({
-        is_active: tab === "Active",
+        is_active: tab === "All" ? undefined : tab === "Active",
         department_id: deptFilter || undefined,
         profile_type: typeFilter || undefined,
         search,
@@ -584,11 +619,21 @@ export function EmployeesListPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-display text-lg font-bold text-primary">Employees</h1>
-        {canWrite && (
-          <button className={btnPrimary} onClick={() => setShowNew(true)}>
-            <Plus size={15} /> New Employee
+        <div className="flex flex-wrap items-center gap-2">
+          <button className={btnSecondary} onClick={exportEmployees} disabled={exporting}>
+            {exporting ? "Exporting…" : "Export"}
           </button>
-        )}
+          {canWrite && (
+            <button className={btnSecondary} onClick={() => setShowBulk(true)}>
+              Bulk upload
+            </button>
+          )}
+          {canWrite && (
+            <button className={btnPrimary} onClick={() => setShowNew(true)}>
+              <Plus size={15} /> New Employee
+            </button>
+          )}
+        </div>
       </div>
       <Tabs tabs={EMP_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
       {error && <ErrorBox error={error} />}
@@ -596,6 +641,7 @@ export function EmployeesListPage() {
         columns={columns}
         rows={rows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "employee" : "employees"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
@@ -622,7 +668,7 @@ export function EmployeesListPage() {
                 : undefined
             }
             deactivateSuccessMessage="Employee deactivated"
-          />
+          colored />
         ) : undefined}
       />
       {showNew && (
@@ -632,8 +678,132 @@ export function EmployeesListPage() {
           onError={(m) => showToast(m, "err")}
         />
       )}
+      {showBulk && (
+        <BulkEmployeeUploadModal
+          onClose={() => setShowBulk(false)}
+          onDone={() => load()}
+          onTemplate={() => downloadXlsx("/api/employees/import-template", "employee-import-template.xlsx")}
+          notify={showToast}
+        />
+      )}
       {toast}
     </div>
+  );
+}
+
+/* =====================================================================
+ * Bulk upload (Excel) — download template, fill, upload, review results
+ * =================================================================== */
+
+type BulkResult = {
+  created: { row: number; id: number; label: string }[];
+  skipped: { row: number; label: string; reason: string }[];
+  failed: { row: number; label: string; error: string }[];
+  summary: string;
+};
+
+function BulkEmployeeUploadModal({ onClose, onDone, onTemplate, notify }: {
+  onClose: () => void;
+  onDone: () => void;
+  onTemplate: () => Promise<void>;
+  notify: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<BulkResult | null>(null);
+
+  const upload = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const res = await crmUpload<BulkResult>("/api/employees/bulk-import", file);
+      setResult(res.data);
+      notify(res.message || res.data?.summary || "Import complete",
+             (res.data?.failed?.length ?? 0) > 0 ? "err" : "ok");
+      onDone();
+    } catch (e: any) {
+      notify(e?.message || "Import failed", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Bulk upload employees" onClose={onClose} wide>
+      {!result ? (
+        <div className="space-y-4">
+          <div className="rounded-card border border-subtle bg-surface-2/40 p-4 text-sm text-secondary">
+            <div className="font-semibold text-primary">How it works</div>
+            <ol className="mt-1 list-decimal space-y-1 pl-5">
+              <li>
+                <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                  onClick={() => onTemplate().catch((e: any) => notify(e?.message || "Download failed", "err"))}>
+                  Download the Excel template
+                </button>{" "}
+                — every employee field, plus a Reference sheet listing valid
+                departments, designations and manager codes.
+              </li>
+              <li>Fill one row per employee. Only First Name and Email are required.</li>
+              <li>Upload the file here. Existing emails are skipped, never overwritten;
+                a bad row fails alone with the reason.</li>
+            </ol>
+          </div>
+          <input
+            type="file"
+            accept=".xlsx"
+            className="block w-full text-sm text-secondary file:mr-3 file:rounded-control file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-700"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+          <div className="flex justify-end gap-2">
+            <button className={btnSecondary} onClick={onClose}>Cancel</button>
+            <button className={btnPrimary} onClick={upload} disabled={!file || busy}>
+              {busy ? "Importing…" : "Upload & import"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="text-sm font-bold text-primary">{result.summary}</div>
+          {result.created.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase text-success">Created ({result.created.length})</div>
+              <ul className="mt-1 space-y-0.5 text-sm text-secondary">
+                {result.created.map((r) => (
+                  <li key={r.row}>
+                    Row {r.row}:{" "}
+                    <CrmLink to={`employees/${r.id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                      {r.label}
+                    </CrmLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result.skipped.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase text-warning">Skipped ({result.skipped.length})</div>
+              <ul className="mt-1 space-y-0.5 text-sm text-secondary">
+                {result.skipped.map((r) => <li key={r.row}>Row {r.row}: {r.label} — {r.reason}</li>)}
+              </ul>
+            </div>
+          )}
+          {result.failed.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase text-danger">Failed ({result.failed.length})</div>
+              <ul className="mt-1 space-y-0.5 text-sm text-secondary">
+                {result.failed.map((r) => <li key={r.row}>Row {r.row}: {r.label} — <span className="text-danger">{r.error}</span></li>)}
+              </ul>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button className={btnSecondary} onClick={() => { setResult(null); setFile(null); }}>
+              Upload another file
+            </button>
+            <button className={btnPrimary} onClick={onClose}>Done</button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

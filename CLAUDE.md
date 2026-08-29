@@ -1,15 +1,21 @@
 # CLAUDE.md — Karnex frontend (AI-Interview-Model-F-V2)
 
-Working notes for AI assistants. **Rewritten 18 Aug 2026** from a full mechanical scan of both repos
-(route extraction, per-page API-call inventory, gate-hook census, token-layer diff, prefix three-way
-diff, typecheck run). Numbers below were measured.
+Working notes for AI assistants. **Rewritten 18 Aug 2026**, **re-verified 20 Aug 2026** from a full
+mechanical scan of both repos (route extraction, per-page API-call inventory, gate-hook census,
+token-layer diff, prefix three-way diff, typecheck run). Numbers below were measured.
 
 Companion file: `F:\AI-Interview-Model-B-V2\CLAUDE.md` (backend, FastAPI).
 
 > **Corrections to the previous edition** — `MANAGEABLE_TABS` has **28** entries, not 24. The design
 > tokens moved to **v4 royal blue** (`--brand-600 #2563eb`); the old "indigo `#4f46e5`" note and both
 > `DESIGN-DECISIONS.md` and `DEPTH_SYSTEM.md` are behind. `frontend/admin/` is no longer a committed
-> build. `HUB_COVERED` is 4 entries, not 6. `Timesheets.tsx` is 3,854 lines, `Requirements.tsx` 3,478.
+> build. `HUB_COVERED` is 4 entries, not 6.
+>
+> **Changes since, verified 20 Aug 2026** — `SessionKeeper.tsx` **is now committed**, so a fresh clone
+> compiles (old §9-20 closed ✅). `Requirements.tsx` is **3,513** lines, `Opportunities.tsx` **1,800**,
+> total **78,898**. `tsc --noEmit` is **still green**. The 39 CRM routes, 17 sidebar entries, 28
+> `MANAGEABLE_TABS` keys, 4-entry `HUB_COVERED` and the route-ordering invariant all re-checked and
+> unchanged. **The §10 highest-value fix #2 (dead scheduled-wait retry) has been fixed** — see §10.
 
 ---
 
@@ -17,15 +23,55 @@ Companion file: `F:\AI-Interview-Model-B-V2\CLAUDE.md` (backend, FastAPI).
 
 | App | Path | Served at | Stack |
 | --- | --- | --- | --- |
-| **Admin dashboard** — HR reporting + the whole Karnex CRM | `frontend/admin-dashboard/` | `/admin/` | React 18 + Vite 5 + TS 5 + Tailwind 3 — **78,585 lines / 200 files** (133 tsx + 60 ts + 7 css) |
+| **Admin dashboard** — HR reporting + the whole Karnex CRM | `frontend/admin-dashboard/` | `/admin/` | React 18 + Vite 5 + TS 5 + Tailwind 3 — **78,898 lines / 200 files** (133 tsx + 60 ts + 7 css) |
 | **Candidate/HR runtime** — the live interview | `frontend/index.html` + `frontend/js/` | `/` | vanilla ES modules — **27 JS files / 10,200 lines** + a 7,875-line HTML file |
 
 Both call the backend over **relative paths on the same origin**. There is no configurable API base URL
 in app code — origin resolution happens in the Vite proxy (dev) or Vercel rewrites (prod). Both share
 the same `localStorage` auth keys: `authUser`, `authToken`, `authTokenExpiryIst`.
 
-**Working tree, 18 Aug 2026:** branch `wip/profiles-users-admin`, head `648afad`, **89 changed/untracked
-paths**. Nothing merged to `main`.
+**Working tree, 20 Aug 2026:** branch `wip/profiles-users-admin`, head **`f807e80`**
+("Improve opportunity costing UI, requirements, session keep-alive, and CRM polish").
+Nothing merged to `main`.
+
+⚠️ **`git status` reports ~90 modified paths but only 7 have real changes.** The rest is pure CRLF
+line-ending churn — `git diff --numstat` shows identical add/delete counts for whole files.
+**Always review this repo with `git diff --ignore-all-space`.** A `.gitattributes` with
+`* text=auto` would end this permanently; the backend repo has the same problem, worse (170 vs 6).
+
+### In-flight work (uncommitted, 20 Aug 2026) — 7 files, +415/−54
+
+(The 7th is the regenerated `admin-dashboard/dist/index.html`, which is build output — see §9-21.)
+
+| File | What it adds |
+| --- | --- |
+| `crm/pages/Opportunities.tsx` (+217) | The Suggested Candidates **"Email selected"** flow — multi-select, search/filter, a no-email pre-count, and `POST /api/opportunities/{id}/email-candidates`. Uses `realEmail()` from `crm/lib/candidateEmail.ts` so `@import.karnex.in` placeholders are never mailed. |
+| `crm/pages/CrmDashboard.tsx` (+76) | The **TA tracking** widget over the new `GET /api/dashboards/ta-tracking`. |
+| `crm/pages/Requirements.tsx` (+89) · `ScheduleAiInterviewModal.tsx` | Surface the backend's new specific "no interview template" 400 instead of a generic failure. |
+| `frontend/js/app.js` (+14) · `frontend/index.html` (+64) | Candidate-runtime: the scheduled-wait countdown and startup status now also write `#inviteWelcomeSubtitle`, the hero the candidate actually sees — **and `startInviteCountdown`'s `onDone` was changed from `() => { proceedWithInviteLogin(); }` to `() => proceedWithInviteLogin()`, which fixes §10 highest-value fix #2** (the retry was unreachable because the arrow returned `undefined`). |
+
+**Added 20 Aug 2026 (same working tree)** — the editable candidate email and tab deep-linking:
+
+| File | What it adds |
+| --- | --- |
+| `crm/pages/Opportunities.tsx` | The per-row **Email** button was a raw `mailto:` link — it handed the recruiter off to whatever the OS had registered (nothing, on the reporting machine) and left no outbox record. It now opens the **same composer as "Email selected"**, scoped to one candidate via `emailTargets` (deliberately *not* the checkbox `selected` set, so a row send can't disturb a bulk selection in progress). Both paths prefill from `GET /api/opportunities/{id}/candidate-email-template`, offer clickable `{{placeholder}}` chips, and preview against the first recipient. The modal opens only **after** the template resolves — opening first and filling in later silently overwrites anything typed in the gap. Bulk sends list every recipient by name (selections survive a filter change, so the count alone is not checkable) and untick who was mailed on success. |
+| `crm/pages/Profiles.tsx` | `ProfileDetailPage` gains **`?tab=` deep linking** — `initialProfileTab()` on mount, a `popstate` listener for in-place navigation, `selectTab()` writing back with **`replaceState`** (five tab clicks should not cost five Backs). `PROFILE_TAB_LABELS` is now the single source for both the `<Tabs>` bar and the deep-link allow-list. `load()` also names the profile and distinguishes a 404 from a 500, and clears `detail` on id change so 42 → 99 doesn't render 42's header while 99 loads. |
+| `crm/CrmApp.tsx` | `openNotification` forwards **only** `tab`, and truncates the decoded `p` at any `?`/`#` — otherwise a `p` value could smuggle its own query suffix through `crmUrl` and set arbitrary sibling params (`view`, `cid`, `iid`). `decodeURIComponent` is now guarded: a malformed `%` in a stored link used to throw `URIError` inside an async handler, so the click did nothing and the failure was invisible. |
+| `crm/router.tsx` | `tab` added to `CRM_FILTER_KEYS`, so it is cleared on every navigation for the same reason the list filters are — it means nothing to the next page. |
+
+Also 20 Aug: `Requirements.tsx` hides the four reference cards (Requirement Details · Budget by
+Experience · Skills · Job Description) **on the Applicants tab only** (user decision — that tab is a
+candidate list; the other tabs keep them because Resumes needs the JD at hand). The matching backend
+change (B-V2 §1) makes every uploaded/applied resume create a Sourcing profile, so the Applicants tab
+now shows everyone, not just candidates with a scheduled AI interview.
+
+**The preview in the composer mirrors the server renderer exactly** (one pass, all five tokens,
+case- and space-insensitive, unknown tokens left intact). A preview that substitutes a *subset* of
+what the server does is worse than none: the recruiter "fixes" a token that was working.
+
+Its backend half is the uncommitted files in `B-V2` (§1 there). The **email path now has 28 tests**
+on this repo's server side; the CRM UI and the two dashboards still have none, and the new endpoints
+bypass Access Templates — see the B-V2 note before committing.
 
 ---
 
@@ -41,7 +87,7 @@ lib/
   rbac.ts            ★ single source of truth for roles, views, tab keys, field access (275 L)
   authSession.ts, adminLogout.ts, motionPresets.ts
 components/
-  SessionKeeper.tsx  ⚠️ UNTRACKED IN GIT but imported by App.tsx:6 — a fresh clone will not compile
+  SessionKeeper.tsx  session keep-alive; committed as of f807e80 (was untracked — clones now compile)
   platform-nav/      PlatformTopBar (⌘K palette, ⌘/ Ask AI), AccountMenu, CommandPalette, fuzzyMatch
   ask-ai/            AskAiPanel (805 L) + askAiStore + askAiApi + markdownLite
   candidate-report/, interview-status/, pdf/
@@ -152,6 +198,12 @@ settings (`[]`).
 `CrmApp.tsx:700` all call `crmTabVisibleFromMe` for three of them. Those keys can only ever arrive from
 a server template, never from the Users-admin modal.
 
+🟠 **And the reverse, found 20 Aug 2026: `crm:calendar` is offered here but does not exist on the
+server.** `services/access_registry.TABS` has 21 keys and `calendar` is not one of them. Since
+`access_templates._strip_removed_keys` deliberately drops registry-unknown keys so old templates stay
+saveable, granting Calendar in the Users-admin modal returns **success and saves nothing** — no 400,
+no warning, no log line. The 22 CRM keys here vs 21 there is the whole discrepancy. See B-V2 §10 · P6.
+
 **`TAB_FIELDS` (`:175-204`) — 3 tabs only**: `crm:opportunities` (9 fields), `crm:customers` (6),
 `crm:candidates` (7). `fieldAllowed` returns **true for any tab absent from the map**.
 
@@ -211,14 +263,14 @@ The heavy ones and what they own:
 | File | Ln | Owns | Gating |
 | --- | --- | --- | --- |
 | `Timesheets.tsx` | 3,854 | Attendance hub. Report tabs (Due · Submit for Approval · Approvals · All) + hub tabs (Payroll · My Leave · Leave Applications, rendered as `embedded` children). Entry grid, `computeBillables` client mirror, paid-vs-LOP split, four report panels, invoice preview, rate editor. | `useHasRole` only |
-| `Requirements.tsx` | 3,478 | Requirement workflow + resume/ATS pipeline; `StatusStepper`; role-dependent tabs incl. Sales_Head Approval Queue and RMG Engineering Review Queue; slots/bookings; Applicants + Suggested Candidates. Fans out `Promise.all` over statuses because the API takes one `status`. | `useHasRole` only — **no `useCanAct` anywhere** |
+| `Requirements.tsx` | 3,513 | Requirement workflow + resume/ATS pipeline; `StatusStepper`; role-dependent tabs incl. Sales_Head Approval Queue and RMG Engineering Review Queue; slots/bookings; Applicants + Suggested Candidates. Fans out `Promise.all` over statuses because the API takes one `status`. | `useHasRole` only — **no `useCanAct` anywhere** |
 | `Profiles.tsx` | 2,768 | Candidate × opportunity pipeline. Detail tabs: Overview · Interviews · Skill Evaluation · Offers · Activity Log · AI Interview. Renders **only** `detail.allowed_next_statuses`; every transition needs a ≥5-char comment. | mixed — `useCanAct("profiles","edit")` + per-field `fld()` + `useHasRole` |
 | `Finance.tsx` | 2,524 | **Five routed components in one file**: POs (`:332`), PO detail (`:1183`), Invoices (`:1651`), Invoice detail (`:1981`), TDS (`:2458`). PO wizard, renewal, GST slabs, payments. | `useCanAct("pos"\|"invoices","edit", useHasRole("Finance"))` |
 | `Employees.tsx` | 2,412 | HR directory, per-section edit/save with dirty tracking, education/experience subforms, leave matrix. | `useCanAct("employees")` + **field-level** `canEditField("current_ctc")` |
 | `opportunity/NewOpportunityForm.tsx` | 2,359 | Schema-driven wizard. Merged "Commercials & CTC Slab" step, rate-card prefill, branch-policy prefill, attachments. **10 suppressed `exhaustive-deps`.** | `useHasRole` only |
 | `Customers.tsx` | 1,966 | The customer hub. Detail tabs: Opportunities · Projects · Project Employees · POs · Invoices · Holidays · Branches · Contacts · Documents · Billing Policy — each `useCanAct(...,"view",…)`-gated, each linking into the *same* detail pages. Exports `CustomerScopedTable`, `hubMoney`. | `useCanAct("customers")` + `isReadOnly` |
 | `CrmCandidates.tsx` | 1,705 | Candidate master + outreach + education/experience/skills. Strips locked fields from the payload before save (`:532`). | `useHasRole` + `useCrmAccess("candidates").locked()` |
-| `Opportunities.tsx` | 1,599 | Opportunity detail (tabbed: Details from `OPPORTUNITY_SCHEMA` · Applicants · Skill Evaluation · Activity Log). Exports **`SuggestedCandidatesTab`** — also imported by Requirements, so TA and Sales share one matcher. | `useCanAct("opportunities")` + Sales_Head checks |
+| `Opportunities.tsx` | 1,800 | Opportunity detail (tabbed: Details from `OPPORTUNITY_SCHEMA` · Applicants · Skill Evaluation · Activity Log). Exports **`SuggestedCandidatesTab`** — also imported by Requirements, so TA and Sales share one matcher. | `useCanAct("opportunities")` + Sales_Head checks |
 | `UsersAdmin.tsx` | 1,445 | Users, roles, tab access, access-template assign, email flows, action permissions, portal login control. | `useHasRole()` (admin-only) |
 | `CrmSettings.tsx` | 1,345 | Masters · Organisation · Operations (scheduler/backup status) · Settings KV · **Customer Policies matrix**. | `useHasRole()` |
 | `Projects.tsx` | 1,300 | The project hub: Projects · Project Employees · Timesheets · POs · Invoices. Detail: Overview · Team · Timesheet · PO & Invoices · Communication Matrix. | 8 × `useCanAct` |
@@ -332,7 +384,7 @@ npm run dev            # :5173/admin/, proxies 24 prefixes to VITE_BACKEND_URL |
 npm run build          # vite build → dist/
 npm run typecheck      # tsc --noEmit   ← currently GREEN, zero errors
 npm run lint
-npm run test:run       # vitest — 10 files, ~92 cases
+npm run test:run       # vitest — 10 files, 87 it() blocks
 node scripts/check-contrast.mjs   # WCAG gate; exits 1 on failure. Not in CI.
 
 cd ..\..                # repo root
@@ -363,13 +415,13 @@ safe only because the backend generates it from its own `request.base_url`.
 **Adding an API prefix means editing three files**: `vite.config.ts::API_PROXY_PREFIXES`,
 `scripts/vercel-build.mjs::apiPrefixes`, and the backend router registration.
 
-### Tests — 10 files, ~92 cases
+### Tests — 10 files, 87 `it()` blocks (more at runtime; several use `it.each`)
 
 | File | Pins |
 | --- | --- |
 | `lib/rbac.test.ts` | `defaultLanding` = "crm" for all roles; per-role interview nav; Integrity excludes RMG; AI Logs admin-only |
-| `crm/pages/opportunity/ctcSlab.test.ts` | 13 cases — billing bases, `max_billable_hours_month` replacing the calendar derivation, Per-Month not prorated, blank ≠ NaN, Exp Max midpoint, RFI formula, Fixed_Price period |
-| `crm/pages/TimesheetApprovals.test.tsx` | 12 cases — no row-level approve, "Review" vs "Open" labels, HR sees no decision buttons, Admin/CEO via `isSuperAdmin`, PO gate before Generate Invoice, rate editing |
+| `crm/pages/opportunity/ctcSlab.test.ts` | 12 blocks / **19 at runtime** — billing bases, `max_billable_hours_month` replacing the calendar derivation, Per-Month not prorated, blank ≠ NaN, Exp Max midpoint, RFI formula, Fixed_Price period |
+| `crm/pages/TimesheetApprovals.test.tsx` | **13 cases** — no row-level approve, "Review" vs "Open" labels, HR sees no decision buttons, Admin/CEO via `isSuperAdmin`, PO gate before Generate Invoice, rate editing |
 | `crm/pages/opportunity/opportunityFormState.test.ts` | shared-key mirroring, `applyBranchContactDetails`, payload coercion |
 | `crm/pages/opportunity/opportunitySchema.test.ts` | option lists, section order, CTC Slab present per type, conditional fields |
 | `crm/pages/OpportunitiesWorkspace.test.tsx` | one sidebar entry, requirement deep links highlight it, per-role sub-tabs, RMG sees none |
@@ -378,22 +430,39 @@ safe only because the backend generates it from its own `request.base_url`.
 | `crm/lib/phone.test.ts` | India parsing, display→E.164 on save, contact autofill |
 | `crm/pages/pipelineStageLabels.test.ts` | 4 literals. ⚠️ its second test is **tautological** (iterates the same map it asserts against) |
 
-⚠️ **`vitest` cannot run against a Linux mount of a Windows checkout** — `node_modules` was installed on
-Windows, so `@rollup/rollup-linux-x64-gnu` is missing and Vite fails at startup. A clean `npm ci` on the
-target platform is required first. `tsc --noEmit` runs fine either way and is currently green.
+⚠️ **`vitest` does not run out of the box against a Linux mount of a Windows checkout** —
+`node_modules` was installed on Windows, so the two native binaries Vite needs are the wrong platform.
+It fails first on `@rollup/rollup-linux-x64-gnu`, then on `@esbuild/linux-x64`. Both can be supplied
+without touching the checkout (verified 20 Aug 2026):
+
+```bash
+mkdir -p /tmp/rl && cd /tmp/rl
+npm i @rollup/rollup-linux-x64-gnu @esbuild/linux-x64@0.21.5   # match esbuild's version exactly
+cd <repo>/frontend/admin-dashboard
+NODE_PATH=/tmp/rl/node_modules \
+ESBUILD_BINARY_PATH=/tmp/rl/node_modules/@esbuild/linux-x64/bin/esbuild \
+  node node_modules/vitest/vitest.mjs run --pool=forks
+```
+
+That gets the suite running — `TimesheetApprovals` (13) and `ctcSlab` (19) both pass — but the
+remaining files crawl, because every module resolution is a round trip over the mounted Windows
+filesystem. **For a real run, do `npm ci` on the target platform.** `tsc --noEmit` runs fine either
+way over the mount and is **currently green (verified 20 Aug 2026)**.
 
 ---
 
 ## 8. Parity twins — the client engines that mirror the server
 
 **Nothing in either repo cross-checks a client engine against its server counterpart.** Both sides have
-tests that pass against their own assumptions. Measured divergences as of 18 Aug 2026:
+tests that pass against their own assumptions. Measured divergences as of 18 Aug 2026 — **the two
+engine-level ones (the hours cap and the appraisal-cycle rounding) were re-confirmed unfixed on
+20 Aug 2026; the arithmetic scenarios were not re-run**:
 
 | Twin | State |
 | --- | --- |
 | `ctcSlab.ts::calculateBillingBases` ↔ `services/opportunity_ctc.py` | ✅ **agree exactly** on all four user-confirmed scenarios: nothing billable 227 (+12 paid = 239); holidays+weekoff billable with 24 leave and 12 paid = 353; everything billable = 365. Same `min(paid_leaves, leave_deducted)` cap. |
 | `ctcSlab.ts` appraisal-cycles power rule | ✅ agree on the pinned figures (5→7 = 130009.09, 6→7 = 143010, 7→10 = 118190.08). ⚠️ **Diverge on fractional bands**: backend `int(target − exp_min) − 1`, frontend `Math.round(...) − 1`. exp_min 5 → target 7.5 gives 1 cycle server-side, 2 client-side (₹90,909 vs ₹82,645). Legacy non-digit `appraisal_cycle` strings ("2.6") also diverge. |
-| **`ctcSlab.ts:85-91` branch hours cap** | 🔴 **Client-only.** `max_billable_hours_month × 12` exists in `ctcSlab.ts` and has **no server equivalent**; the server overwrites the slab on both create and update. With cap 180 the form shows 2,160 h / ₹2.16 M and the DB stores 1,816 h / ₹1.816 M — a **19 % silent understatement**. The field is not even in the schema, so it is stripped from the payload. Pinned client-side by `ctcSlab.test.ts:33-60`; the backend suite never mentions it. |
+| **`ctcSlab.ts:85-91` branch hours cap** | 🔴 **Client-only.** `max_billable_hours_month × 12` exists in `ctcSlab.ts` and has **no server equivalent**; the server overwrites the slab on both create and update. With cap 180 the form shows 2,160 h / ₹2.16 M and the DB stores 1,816 h / ₹1.816 M — the stored value is **≈16 % below what the user was shown** (equivalently, the form is 19 % above the DB). The field is not even in the schema, so it is stripped from the payload. Pinned client-side by `ctcSlab.test.ts:33-60`; the backend suite never mentions it. |
 | `Timesheets.tsx::computeBillables` ↔ `services/timesheets.py` | ✅ precedence ladder, comp-off gating and `day_type` authority all match. ⚠️ **Day figure differs**: server returns `ONE` for an unworked billable week-off/holiday; client uses `hours / 8` (1.13 at `min_hours_full_day = 9`). ⚠️ **Attendance derivation differs**: `crm/lib/timesheetAttendance.ts:10-14` hardcodes 8/4-hour thresholds; the server uses policy values. ⚠️ Hour-cap ordering differs (server caps hours but derives the day fraction from uncapped hours). The client also does **not** implement the Harman "weekend work covers LOP" rule or comp-off-adds-to-Monthly — those are invoice-preview-only. |
 | `opportunitySchema.ts` ↔ `services/opportunity_form_schema.py` | ⚠️ **Four drifts.** `project_scope` is server-allowed for Work_Package / Fixed_Price / Retainer but **has no UI field** — those types submit no type-specific data. `project_duration_months` has no field, so Fixed_Price annualisation never gets a duration. `sales_stage` is computed by the form but has no schema field, so `stripHiddenFields` drops it and **it is never persisted** (it lives only in the localStorage draft). `max_billable_hours_month` is prefilled and used in the maths but stripped before submit. `test_opportunity_form_schema.py` only introspects the server's own key sets and cannot catch any of this. |
 | GST — **three implementations** | 🔴 `crm/taxInvoice/math.ts:100 computeTotals` **hardcodes 18 %** and ignores the customer's GST slab entirely (and `types.ts:67` hardcodes `DEFAULT_INVOICE_NO = "KRSW26-27-65-VS"`). `crm/components/invoice/utils.ts:99 gstSplit` splits a **server-supplied** `taxAmount` and short-circuits to `opts.stored`. The backend `karnex_gst_tax_and_grand` is the third. Two of the three can disagree with the invoice that was actually generated. |
@@ -402,6 +471,12 @@ tests that pass against their own assumptions. Measured divergences as of 18 Aug
 ---
 
 ## 9. Bugs, gaps and hygiene
+
+> **Re-verified 20 Aug 2026.** Everything below is still live except **#20 (SessionKeeper) and #22
+> (`frontend/admin/`), both now closed**. Spot-checked and confirmed unchanged at their stated file:line: the 8 fail-open RBAC
+> paths in §4, `defaultLanding` still ignoring its argument, `HUB_COVERED` still 4 entries,
+> `rbacActive = roles.length > 0`, and the 3 still-tracked `dist/` files. `/apply` and `/book` are
+> **still missing from both prefix lists** (§7 · P0) — the highest-severity item on this side.
 
 ### Access / correctness
 
@@ -434,7 +509,7 @@ tests that pass against their own assumptions. Measured divergences as of 18 Aug
    back into `readInitialView` on reload.
 10. **`Requirements.tsx:960` fans out `Promise.all` over statuses** — an N-request list load whose
     partial failure mode is a rejected `Promise.all` (one 500 fails the whole tab).
-11. **37 `eslint-disable react-hooks/exhaustive-deps`**, 10 in `NewOpportunityForm.tsx` alone. That
+11. **36 `eslint-disable react-hooks/exhaustive-deps`**, 10 in `NewOpportunityForm.tsx` alone. That
     2,359-line form with an 8-effect prefill chain is where stale-closure bugs will surface first.
 
 ### Half-finished refactors — finish or delete before building on them
@@ -468,8 +543,9 @@ tests that pass against their own assumptions. Measured divergences as of 18 Aug
 
 ### Repo hygiene
 
-20. 🔴 **`src/components/SessionKeeper.tsx` is untracked but imported and mounted by `App.tsx:6/367`** —
-    a fresh clone of the committed tree **will not compile**. Commit it.
+20. ✅ **CLOSED (commit `f807e80`).** `src/components/SessionKeeper.tsx` was untracked while imported and
+    mounted by `App.tsx`, so a fresh clone would not compile. It is now committed and `tsc --noEmit`
+    is green from the committed tree.
 21. `frontend/admin-dashboard/dist/` is gitignored but **3 files are still tracked**
     (`dist/index.html` — currently modified — plus two logo SVGs). `dist/index.html` is regenerated by
     every build, so it will keep producing spurious diffs.
@@ -549,10 +625,12 @@ A *second*, parallel channel goes to `POST /proctor/violation` with collapsed ty
 
 ### Highest-value fixes, in order
 
+Re-verified 20 Aug 2026: **#1, #3, #4 and #5 are all still open exactly as described. #2 is fixed.**
+
 | # | Fix |
 | --- | --- |
 | 1 | **`showScreenRef("result")` shows nothing.** `createShowScreen` (`hr.js:576`) maps only `{hr, candidate}`, so `candidate.js:1906` blanks the screen after an HR-run interview and orphans `#screenResult` and its five download buttons. One line: add `result: "screenResult"`. |
-| 2 | **The scheduled-wait retry is dead.** `app.js:810` passes `() => { proceedWithInviteLogin(); }` with no `return`, so `await onDone()` resolves immediately and the documented 5-attempt retry is unreachable. A failure at the scheduled moment freezes the candidate on "Preparing your interview session…". One word: `return`. |
+| 2 | ✅ **FIXED (uncommitted, 20 Aug 2026).** *Was:* the scheduled-wait retry was dead — `app.js:810` passed `() => { proceedWithInviteLogin(); }` with no `return`, so `await onDone()` resolved immediately and the documented 5-attempt retry was unreachable; a failure at the scheduled moment froze the candidate on "Preparing your interview session…". Now `() => proceedWithInviteLogin()`. Still uncommitted — **do not lose this in a checkout**. |
 | 3 | **Internal `submitInterview` calls bypass the teardown wrapper.** Timer expiry (`candidate.js:1988`), premature completion (`:1430`) and proctor termination (`:2074`) call the module function, not `window.submitInterview` — so `stopFaceMonitoring()` and `deactivateInterviewSecurity()` never run, and a fullscreen exit during finalize can re-trigger termination. |
 | 4 | **Skip double-submit window.** `candidate.js:1566` checks `_answerSubmitInFlight` but the flag is set at `:1629`, with a ≤4 s `await` in between and the button not disabled. |
 | 5 | **Two device-id implementations that disagree pre-login.** `app.js:644-668` keys off the URL token; `invite_device.js` keys off the JWT, which doesn't exist yet, so every pre-login `apiFetch` mints and persists a *different* UUID. Works today only because `/verify` and `/login` pass explicit headers. Also `app.js:665` calls `crypto.randomUUID` unguarded. |
@@ -601,7 +679,7 @@ sessions in a process-local dict. With `UVICORN_WORKERS > 1` and no sticky sessi
 
 **Fragile — touch with care**
 
-- The four mega-pages (`Timesheets` 3,854 · `Requirements` 3,478 · `Profiles` 2,768 · `Finance` 2,524).
+- The four mega-pages (`Timesheets` 3,854 · `Requirements` 3,513 · `Profiles` 2,768 · `Finance` 2,524).
   Each holds 2–5 routed components, its own fetch orchestration, and — for Timesheets — a copy of the
   server's billing maths. Only `TimesheetApprovals.test.tsx` covers any of it.
 - `NewOpportunityForm.tsx` — 10 suppressed dependency arrays and a prefill chain reading branch policy,

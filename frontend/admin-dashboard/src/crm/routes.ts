@@ -13,6 +13,8 @@ const CandidatesListPage = lazy(() => import("./pages/CrmCandidates").then((m) =
 const CandidateDetailPage = lazy(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidateDetailPage })));
 const ProfilesListPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfilesListPage })));
 const ProfileDetailPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfileDetailPage })));
+const ActivityLogPage = lazy(() => import("./pages/ActivityLog").then((m) => ({ default: m.ActivityLogPage })));
+const EmailCenterPage = lazy(() => import("./pages/EmailCenter").then((m) => ({ default: m.EmailCenterPage })));
 const CalendarPage = lazy(() => import("./pages/Calendar"));
 const ProjectsListPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsListPage })));
 const ProjectDetailPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetailPage })));
@@ -63,6 +65,8 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "profiles", element: ProfilesListPage },
   { pattern: "profiles/:id", element: ProfileDetailPage },
   { pattern: "calendar", element: CalendarPage },
+  { pattern: "emails", element: EmailCenterPage },
+  { pattern: "activity-log", element: ActivityLogPage },
   { pattern: "projects", element: ProjectsListPage },
   { pattern: "projects/:id", element: ProjectDetailPage },
   { pattern: "project-employees", element: ProjectEmployeesPage },

@@ -251,9 +251,20 @@ export default function App() {
   const rbacActive = !!roles && roles.length > 0;
   const effRoles = roles ?? [];
 
+  // A CRM Access Template contributes only `crm:` keys to me.tab_access — it
+  // says NOTHING about the Interview Platform. Consulting that list for `iv:`
+  // views locked every templated user (e.g. an RMG on a CRM template) out of
+  // Templates/Reports/ATS entirely: the membership check failed and every
+  // click bounced to the landing page. Interview views therefore only honour
+  // tab_access when it explicitly carries at least one `iv:` key (a per-user
+  // Edit Tab Access override); otherwise they fall back to role defaults.
+  const ivTabAccess = tabAccess && tabAccess.some((k) => String(k).startsWith("iv:"))
+    ? tabAccess
+    : null;
+
   const platformViews: View[] = rbacActive
     ? PLATFORM_NAV_ORDER.filter((v) =>
-        tabVisible(tabAccess, ivTabKey(v as InterviewView), canAccessInterviewView(effRoles, v)),
+        tabVisible(ivTabAccess, ivTabKey(v as InterviewView), canAccessInterviewView(effRoles, v)),
       )
     : PLATFORM_NAV_ORDER;
   const canCrm = rbacActive ? hasCrmAccess(effRoles) : true;
@@ -265,8 +276,40 @@ export default function App() {
     if (!rbacActive) return true;
     if (v === "crm") return canCrm;
     if (v === "questionBank") return isSuperAdmin; // Admin/super-admin only
-    return tabVisible(tabAccess, ivTabKey(v as InterviewView), canAccessInterviewView(effRoles, v));
+    // Detail views are NOT separately manageable tabs (they never appear in the
+    // Edit Tab Access modal). They must inherit the tab-grant of their parent —
+    // otherwise a per-user override that grants "Templates" (but can't list
+    // "templateForm") bounces the user to the landing page the moment they click
+    // Create Template. Role authority still checks the view ITSELF, so e.g.
+    // hrSetup keeps its own TA/HR role rule while riding Dashboard's tab grant.
+    const parentTab: View =
+      v === "candidateReport" || v === "candidateInterviews" ? "candidates"
+      : v === "upcomingInterviews" || v === "hrSetup" ? "dashboard"
+      : v === "templateForm" ? "templates"
+      : v;
+    return tabVisible(
+      ivTabAccess,
+      ivTabKey(parentTab as InterviewView),
+      canAccessInterviewView(effRoles, v),
+    );
   };
+
+  // "Create template" from the CRM Template Requests page asks for the CREATE
+  // form directly (sessionStorage flag) — landing on the Templates list and
+  // clicking Create again was a pointless extra hop for RMG.
+  useEffect(() => {
+    if (view !== "templates") return;
+    let wanted = false;
+    try {
+      wanted = sessionStorage.getItem("crm_open_template_form") === "1";
+      if (wanted) sessionStorage.removeItem("crm_open_template_form");
+    } catch { /* ignore */ }
+    if (wanted && isViewAllowed("templateForm")) {
+      setEditingJobId(null);
+      setView("templateForm");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   // Once roles are known, choose/validate the landing view.
   useEffect(() => {

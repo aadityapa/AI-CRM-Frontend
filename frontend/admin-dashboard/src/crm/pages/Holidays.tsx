@@ -8,6 +8,7 @@ import { FilterChips } from "../components/FilterChips";
 import type { ActiveFilter } from "../components/FilterChips";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import {
   ConfirmModal, EmptyState, ErrorBox, Modal, Spinner, StatusBadge,
 } from "../components/ui";
@@ -75,7 +76,7 @@ const filterSelect = `${inputCls} !w-auto min-w-[9.5rem] max-w-[14rem]`;
 /* ================================================================ PAGE */
 
 export function HolidaysPage() {
-  const canWrite = useHasRole("HR");
+  const canWrite = useCanAct("holidays", "edit", useHasRole("HR"));
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [month, setMonth] = useState(""); // "" = all

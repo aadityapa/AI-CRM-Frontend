@@ -16,6 +16,7 @@ export type ProfileFilters = {
   bucket: "active" | "rejected";
   status: string;
   opportunityId: string;
+  taOwnerId: string;
   search: string;
   page: number;
 };
@@ -24,6 +25,7 @@ const DEFAULTS: ProfileFilters = {
   bucket: "active",
   status: "",
   opportunityId: "",
+  taOwnerId: "",
   search: "",
   page: 1,
 };
@@ -33,6 +35,7 @@ const PARAM = {
   bucket: "f_bucket",
   status: "f_status",
   opportunityId: "f_opp",
+  taOwnerId: "f_ta",
   search: "f_q",
   page: "f_page",
 } as const;
@@ -46,6 +49,7 @@ function read(): ProfileFilters {
     bucket: bucket === "rejected" ? "rejected" : "active",
     status: p.get(PARAM.status) || "",
     opportunityId: p.get(PARAM.opportunityId) || "",
+    taOwnerId: p.get(PARAM.taOwnerId) || "",
     search: p.get(PARAM.search) || "",
     page: Number.isFinite(page) && page > 0 ? page : 1,
   };
@@ -102,6 +106,7 @@ export function useProfileFilters() {
     () =>
       filters.status !== "" ||
       filters.opportunityId !== "" ||
+      filters.taOwnerId !== "" ||
       filters.search !== "" ||
       filters.bucket !== "active",
     [filters],

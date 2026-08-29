@@ -3525,13 +3525,16 @@
     .v.bad { color: var(--bad); }
     .startup-screen {
       min-height: 100vh;
+      min-height: 100dvh;
       display: none;
       align-items: center;
-      justify-content: center;
+      justify-content: safe center;
       flex-direction: column;
       position: relative;
       z-index: 2;
       background: #0d111a;
+      overflow-y: auto;
+      padding: 24px 16px;
       transition: opacity 320ms ease, transform 360ms ease;
     }
     .startup-screen.active {
@@ -4212,79 +4215,172 @@
       #screenStartup .hero-actions .btn-primary svg { transition: none; }
     }
 
-    /* --- Candidate Welcome screen (Feature 1, May 2026) --------------------- */
-    .invite-welcome-screen { background: #0d111a; }
-    .invite-welcome-container { gap: 48px; }
-    .invite-welcome-brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      padding: 6px 12px 6px 6px;
-      border-radius: 999px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(17, 24, 38, 0.65);
-      margin-bottom: 18px;
+    /* --- Candidate Welcome screen (redesigned 27 Aug 2026) ------------------
+       Enterprise dark-navy look: full-width top bar, serif display heading,
+       icon checklist, scheduled pill above a wide pill CTA, robot in a glass
+       card over a faint circuit-board backdrop. Every id / JS hook unchanged. */
+    .invite-welcome-screen {
+      background:
+        radial-gradient(60% 50% at 78% 42%, rgba(56, 130, 170, 0.10), transparent 65%),
+        repeating-linear-gradient(0deg, rgba(148, 190, 210, 0.045) 0 1px, transparent 1px 96px),
+        repeating-linear-gradient(90deg, rgba(148, 190, 210, 0.045) 0 1px, transparent 1px 96px),
+        linear-gradient(180deg, #0b1118 0%, #0a0f16 60%, #0b1219 100%);
+      flex-direction: column;
     }
+    .invite-welcome-topbar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 32px;
+      border-bottom: 1px solid rgba(148, 190, 210, 0.12);
+      background: rgba(10, 15, 22, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 3;
+    }
+    .invite-welcome-brand { display: inline-flex; align-items: center; gap: 14px; }
     .invite-welcome-logo {
       width: auto;
-      height: 28px;
-      max-width: 120px;
+      height: 24px;
+      max-width: 110px;
       border-radius: 0;
       object-fit: contain;
       object-position: left center;
       background: transparent;
       filter: none;
     }
+    .invite-welcome-brand-divider {
+      width: 1px; height: 20px;
+      background: rgba(148, 190, 210, 0.25);
+    }
     .invite-welcome-tag {
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: #b7c6d4;
+    }
+    .invite-welcome-topbar-icons { display: inline-flex; align-items: center; gap: 10px; }
+    .invite-welcome-topbar-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px;
+      border-radius: 9px;
+      border: 1px solid rgba(148, 190, 210, 0.16);
+      background: rgba(20, 30, 42, 0.6);
+      color: #93a8b8;
+    }
+    .invite-welcome-container { gap: 56px; padding-top: 72px; }
+    .invite-welcome-screen .hero-title {
+      font-family: Georgia, "Times New Roman", "Playfair Display", serif;
+      font-weight: 600;
+      font-size: clamp(40px, 5vw, 58px);
+      letter-spacing: 0.01em;
+      line-height: 1.12;
+      color: #f2f6f9;
     }
     #inviteWelcomeName {
-      color: #4da4fc;
-      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
-      font-style: italic;
-      margin-left: 8px;
+      display: block;
+      color: #7fa8c9;
+      font-family: inherit;
+      font-style: normal;
+      margin-left: 0;
+    }
+    .invite-welcome-screen .hero-desc {
+      color: #93a3b2;
+      font-size: 15px;
+      max-width: 480px;
     }
     .invite-welcome-list {
       list-style: none;
       padding: 0;
-      margin: 4px 0 26px;
+      margin: 6px 0 24px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
       max-width: 520px;
     }
     .invite-welcome-list li {
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      color: #cbd5e1;
+      color: #aab8c5;
       font-size: 14px;
-      line-height: 1.55;
+      line-height: 1.5;
     }
-    .invite-welcome-list strong { color: #e2e8f0; font-weight: 700; }
-    .invite-welcome-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 999px;
-      margin-top: 8px;
-      background: linear-gradient(135deg, #4da4fc, #3b82f6);
-      box-shadow: 0 0 12px rgba(59, 130, 246, 0.55);
-      flex: 0 0 6px;
+    .invite-welcome-list strong { color: #dbe5ec; font-weight: 600; }
+    .invite-welcome-ico {
+      display: inline-flex;
+      color: #7f97a8;
+      flex: 0 0 auto;
+      margin-top: 1px;
+    }
+    .invite-welcome-meta {
+      max-width: 460px;
+      margin: 0 0 14px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 190, 210, 0.18);
+      background: rgba(24, 34, 46, 0.7);
+      color: #b7c6d4;
+      font-size: 13px;
+      text-align: center;
     }
     .invite-welcome-actions { gap: 14px; flex-wrap: wrap; }
-    .invite-welcome-secondary {
-      background: transparent;
-      border: 1px solid rgba(255, 255, 255, 0.22);
-      box-shadow: none;
-      color: #e2e8f0;
+    .invite-welcome-start {
+      width: 100%;
+      max-width: 460px;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 15px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #eaf3f8;
+      background: linear-gradient(135deg, #4a7d9b 0%, #33607c 55%, #2a5069 100%);
+      border: 1px solid rgba(148, 190, 210, 0.28);
+      box-shadow: 0 12px 32px rgba(24, 52, 70, 0.5);
     }
-    .invite-welcome-secondary:hover {
-      background: rgba(255, 255, 255, 0.06);
-      box-shadow: none;
+    .invite-welcome-start:hover {
+      background: linear-gradient(135deg, #558bad 0%, #3a6d8c 55%, #2f5975 100%);
+    }
+    .invite-welcome-visual {
+      position: relative;
+      /* Shrink-wrap the robot: the card hugs the image instead of stretching
+         wider and leaving dead space around it (fix, 27 Aug 2026). */
+      flex: 0 0 auto;
+      align-self: center;
+      width: fit-content;
+      margin: 0 auto;
+      overflow: visible;
+      padding: 16px;
+      border-radius: 24px;
+      border: 1px solid rgba(148, 190, 210, 0.16);
+      background:
+        radial-gradient(80% 70% at 50% 30%, rgba(96, 140, 170, 0.12), transparent 70%),
+        linear-gradient(180deg, rgba(20, 30, 42, 0.85), rgba(12, 18, 26, 0.9));
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+    }
+    .invite-welcome-visual .bot-vfx-ring,
+    .invite-welcome-visual .bot-scanline { display: none; }
+    .invite-welcome-visual img {
+      display: block;
+      width: clamp(280px, 32vw, 420px);
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border-radius: 16px;
+    }
+    .invite-welcome-spark {
+      position: absolute;
+      right: -30px;
+      bottom: 18px;
+      color: #9fb2c0;
+      font-size: 22px;
+      opacity: 0.8;
+    }
+    @media (max-width: 900px) {
+      .invite-welcome-topbar { padding: 12px 16px; }
+      .invite-welcome-topbar-icons { display: none; }
+      .invite-welcome-container { padding-top: 84px; }
+      .invite-welcome-spark { display: none; }
     }
 
     /* --- Pre-interview Device Test screen (Feature 4, May 2026) ------------ */
@@ -4295,7 +4391,10 @@
     }
     .device-test-card {
       width: 100%;
-      padding: 28px 30px 26px;
+      max-height: calc(100dvh - 40px);
+      display: flex;
+      flex-direction: column;
+      padding: 26px 30px 22px;
       border-radius: 22px;
       border: 1px solid rgba(255, 255, 255, 0.08);
       background: rgba(15, 22, 36, 0.72);
@@ -4307,93 +4406,166 @@
        sequence. Rules that END the interview are visually separated from
        rules that are merely guidance — a candidate skimming this screen
        should still catch the two that can cost them the session. */
-    .rules-container { max-width: 860px; margin: 0 auto; width: 100%; }
+    .rules-container { grid-template-columns: 1fr; max-width: 880px; margin: auto; width: 100%; }
+    /* Boxy, viewport-fitting card (Aug 2026): the card never exceeds the screen
+       height — the header (title + format) and the footer (consent + buttons)
+       stay pinned, and only the rules LIST scrolls inside. No more zooming out
+       to reach the "Continue" button. */
+    /* Redesign 27 Aug 2026: borderless layout on a constellation backdrop,
+       icon stat cards, line-icon rule cards, twin solid-blue actions. Every
+       id and the fail-open markup contract are unchanged. */
+    .rules-screen {
+      background:
+        radial-gradient(70% 60% at 20% 20%, rgba(56, 100, 150, 0.14), transparent 60%),
+        radial-gradient(60% 50% at 85% 75%, rgba(46, 90, 140, 0.12), transparent 65%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='520'%3E%3Cg stroke='%238fb4d4' stroke-opacity='0.10' fill='none'%3E%3Cpath d='M40 80L150 30L260 110L200 240M260 110L420 70L480 190M200 240L90 330L180 470M200 240L340 300L480 190M340 300L430 430'/%3E%3C/g%3E%3Cg fill='%23aecde6'%3E%3Ccircle cx='40' cy='80' r='2' fill-opacity='0.35'/%3E%3Ccircle cx='150' cy='30' r='1.5' fill-opacity='0.3'/%3E%3Ccircle cx='260' cy='110' r='2.4' fill-opacity='0.4'/%3E%3Ccircle cx='420' cy='70' r='1.6' fill-opacity='0.3'/%3E%3Ccircle cx='480' cy='190' r='2' fill-opacity='0.35'/%3E%3Ccircle cx='200' cy='240' r='2.6' fill-opacity='0.45'/%3E%3Ccircle cx='90' cy='330' r='1.8' fill-opacity='0.3'/%3E%3Ccircle cx='180' cy='470' r='2' fill-opacity='0.3'/%3E%3Ccircle cx='340' cy='300' r='1.6' fill-opacity='0.35'/%3E%3Ccircle cx='430' cy='430' r='2.2' fill-opacity='0.35'/%3E%3C/g%3E%3C/svg%3E"),
+        linear-gradient(160deg, #0a1220 0%, #0c1626 55%, #0a121e 100%);
+    }
     .rules-card {
       width: 100%;
-      padding: 30px 32px 26px;
+      max-height: calc(100dvh - 40px);
+      display: flex;
+      flex-direction: column;
+      padding: 24px 28px 20px;
       border-radius: 22px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(15, 22, 36, 0.72);
-      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      border: none;
+      background: transparent;
+      box-shadow: none;
     }
-    .rules-head { margin-bottom: 22px; }
+    .rules-head { margin-bottom: 16px; flex: 0 0 auto; }
     .rules-chip {
       display: inline-block;
-      padding: 4px 12px;
+      padding: 5px 14px;
       border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
-      color: #a5b4fc;
-      background: rgba(99, 102, 241, 0.14);
-      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #b9d2e4;
+      background: rgba(148, 190, 210, 0.12);
+      border: 1px solid rgba(148, 190, 210, 0.22);
     }
-    .rules-title { font-size: clamp(26px, 3.2vw, 38px); margin: 12px 0 8px; }
-    .rules-sub { color: #94a3b8; margin: 0; max-width: 640px; }
+    .rules-title {
+      font-size: clamp(28px, 3.4vw, 40px);
+      margin: 14px 0 8px;
+      color: #6ea6d8;
+      letter-spacing: -0.01em;
+    }
+    .rules-sub { color: #8fa2b4; margin: 0; max-width: 640px; font-size: 14.5px; }
 
     .rules-format {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 22px;
+      gap: 14px;
+      margin-bottom: 14px;
+      flex: 0 0 auto;
     }
     .rules-stat {
-      padding: 14px 16px;
+      padding: 14px 16px 13px;
       border-radius: 14px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.07);
+      background: rgba(18, 27, 39, 0.78);
+      border: 1px solid rgba(148, 190, 210, 0.14);
     }
+    .rules-stat-ico { display: block; color: #cfe0ec; margin-bottom: 8px; }
     .rules-stat-label {
       display: block;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #8b9bb4;
-      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      text-transform: none;
+      color: #94a7b8;
+      margin-bottom: 3px;
     }
-    .rules-stat-value { display: block; font-size: 19px; font-weight: 700; color: #e8eefc; }
+    .rules-stat-value { display: block; font-size: 17px; font-weight: 800; color: #f1f6fa; }
 
-    .rules-list { list-style: none; padding: 0; margin: 0 0 22px; display: grid; gap: 10px; }
+    .rules-list {
+      list-style: none;
+      padding: 0 6px 0 0;
+      margin: 0 0 16px;
+      display: grid;
+      gap: 10px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    /* Two columns on wide screens keeps the card short and boxy. */
+    @media (min-width: 900px) {
+      .rules-list { grid-template-columns: 1fr 1fr; align-content: start; }
+    }
+    /* Slim scrollbar so the internal scroll reads as intentional, not broken. */
+    .rules-list::-webkit-scrollbar { width: 8px; }
+    .rules-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.14); border-radius: 999px;
+    }
     .rules-item {
       display: flex;
-      gap: 14px;
+      gap: 12px;
       align-items: flex-start;
-      padding: 14px 16px;
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      color: #b6c2d6;
-      line-height: 1.55;
-      font-size: 14.5px;
+      padding: 13px 15px;
+      border-radius: 12px;
+      background: rgba(24, 33, 45, 0.7);
+      border: 1px solid rgba(148, 190, 210, 0.12);
+      color: #a7b6c4;
+      line-height: 1.5;
+      font-size: 13.5px;
     }
-    /* The two rules that can END the interview get a red edge, so they are not
+    /* The two rules that can END the interview get a red tint, so they are not
        lost among the merely-helpful ones. */
     .rules-item--stop {
-      background: rgba(244, 63, 94, 0.07);
-      border-color: rgba(244, 63, 94, 0.26);
+      background: rgba(120, 40, 52, 0.28);
+      border-color: rgba(220, 100, 110, 0.3);
     }
-    .rules-item strong { color: #f1f5f9; display: block; margin-bottom: 2px; font-weight: 650; }
-    .rules-icon { font-size: 19px; line-height: 1.4; flex-shrink: 0; }
+    .rules-item--stop .rules-icon { color: #e08a94; }
+    .rules-item strong { color: #eef3f7; display: block; margin-bottom: 2px; font-weight: 650; }
+    .rules-icon { display: inline-flex; color: #93a8b8; line-height: 1.4; flex-shrink: 0; margin-top: 1px; }
 
     .rules-ack {
       display: flex;
       gap: 12px;
       align-items: flex-start;
-      padding: 16px 18px;
-      border-radius: 14px;
-      background: rgba(99, 102, 241, 0.08);
-      border: 1px solid rgba(99, 102, 241, 0.28);
-      color: #dbe3f4;
-      font-size: 14px;
+      padding: 15px 18px;
+      border-radius: 12px;
+      background: rgba(20, 29, 41, 0.8);
+      border: 1px solid rgba(148, 190, 210, 0.18);
+      color: #d5dfe8;
+      font-size: 13.5px;
+      font-weight: 600;
       line-height: 1.5;
       cursor: pointer;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+      flex: 0 0 auto;
     }
-    .rules-ack input { margin-top: 3px; width: 17px; height: 17px; cursor: pointer; flex-shrink: 0; }
+    .rules-ack input { margin-top: 3px; width: 17px; height: 17px; cursor: pointer; flex-shrink: 0; accent-color: #2e6bd0; }
 
-    .rules-actions { display: flex; gap: 12px; justify-content: flex-end; align-items: center; }
+    /* Twin solid-blue actions, half-width each (reference design). */
+    .rules-actions { display: flex; gap: 14px; align-items: stretch; flex: 0 0 auto; }
+    .rules-actions button {
+      flex: 1 1 0;
+      justify-content: center;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 12px;
+      padding: 13px 20px;
+      font-size: 14.5px;
+      font-weight: 700;
+    }
+    .rules-screen .btn-ghost {
+      background: linear-gradient(180deg, #2f6fd6, #2a5fbe);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #eef4fb;
+      box-shadow: 0 10px 26px rgba(28, 70, 140, 0.4);
+    }
+    .rules-screen .btn-ghost:hover { background: linear-gradient(180deg, #3579e2, #2f68cc); }
+    .rules-screen .rules-actions .btn-primary {
+      background: linear-gradient(180deg, #2f6fd6, #2a5fbe);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 26px rgba(28, 70, 140, 0.4);
+    }
+    .rules-screen .rules-actions .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(180deg, #3579e2, #2f68cc);
+    }
     .rules-actions .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
     @media (max-width: 720px) {
@@ -4401,13 +4573,18 @@
       .rules-format { grid-template-columns: 1fr; }
       .rules-actions { flex-direction: column-reverse; align-items: stretch; }
     }
-    .device-test-head { text-align: left; margin-bottom: 20px; }
-    .device-test-title { font-size: clamp(28px, 3.4vw, 40px); margin: 0 0 8px; }
+    .device-test-head { text-align: left; margin-bottom: 16px; flex: 0 0 auto; }
+    .device-test-title { font-size: clamp(24px, 3vw, 34px); margin: 0 0 6px; }
     .device-test-sub { color: #94a3b8; max-width: 720px; }
     .device-test-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 6px;
     }
     @media (max-width: 760px) { .device-test-grid { grid-template-columns: 1fr; } }
     .device-test-tile {
@@ -4532,10 +4709,11 @@
     .device-test-footer {
       display: flex;
       gap: 12px;
-      margin-top: 18px;
+      margin-top: 16px;
       align-items: center;
       justify-content: flex-end;
       flex-wrap: wrap;
+      flex: 0 0 auto;
     }
     .device-test-footer .btn-primary { padding: 12px 30px; font-size: 15px; min-width: 220px; }
     .device-test-footer .btn-primary:disabled {
@@ -4544,6 +4722,116 @@
       box-shadow: none;
     }
     .device-test-tile-net { color: #cbd5e1; font-size: 12px; margin: 4px 0 0; }
+
+    /* --- Device check redesign (27 Aug 2026) — slate card, brand header,
+       setup-steps breadcrumb, icon tiles, twin footer buttons. All data-*
+       hooks and both footer ids untouched. -------------------------------- */
+    .device-test-screen {
+      background:
+        radial-gradient(70% 55% at 80% 15%, rgba(70, 100, 130, 0.14), transparent 60%),
+        linear-gradient(165deg, #101822 0%, #131c28 55%, #0f1720 100%);
+    }
+    .device-test-card {
+      border-radius: 20px;
+      border: 1px solid rgba(160, 180, 200, 0.14);
+      background: linear-gradient(180deg, rgba(44, 56, 70, 0.55), rgba(30, 40, 52, 0.6));
+      position: relative;
+    }
+    .device-test-brandrow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .device-test-brand-logo { height: 22px; width: auto; object-fit: contain; }
+    .device-test-brand-tag { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: #9fb0c0; }
+    .device-test-title { color: #f2f6f9; }
+    .device-test-steps {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+      margin: 4px 0 10px;
+      font-size: 12px;
+    }
+    .device-test-steps-label { color: #8ea0b0; font-weight: 600; margin-right: 2px; }
+    .dstep {
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(160, 180, 200, 0.2);
+      background: rgba(50, 62, 76, 0.6);
+      color: #b7c4d0;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .dstep--done { color: #d3dde6; }
+    .dstep--active {
+      background: linear-gradient(180deg, #2f6fd6, #2a5fbe);
+      border-color: rgba(255, 255, 255, 0.16);
+      color: #f2f7fd;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .dstep-arrow { color: #6d8095; }
+    .dstep-arrow--active { color: #5b8fd8; }
+    .device-test-screen .device-test-tile {
+      border-radius: 14px;
+      border: 1px solid rgba(160, 180, 200, 0.14);
+      background: rgba(58, 70, 84, 0.42);
+    }
+    .device-test-tile-name { display: inline-flex; align-items: center; gap: 8px; color: #e8eef4; }
+    .device-test-tile-name svg { color: #b9c8d6; flex: 0 0 auto; }
+    /* The level meter reads as a waveform strip (dashes), the moving bar on top. */
+    .device-test-screen .device-test-meter {
+      background:
+        repeating-linear-gradient(90deg, rgba(190, 205, 220, 0.35) 0 2px, transparent 2px 6px);
+      background-size: 100% 55%;
+      background-position: center;
+      background-repeat: no-repeat;
+      border-radius: 6px;
+    }
+    .device-test-screen .cand-btn.ghost {
+      background: rgba(120, 135, 152, 0.28);
+      border: 1px solid rgba(180, 195, 210, 0.22);
+      color: #e6ecf2;
+    }
+    .device-test-screen .cand-btn.ghost:hover { background: rgba(140, 155, 172, 0.36); }
+    .device-test-footer {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .device-test-footer .btn-primary {
+      min-width: 0;
+      width: 100%;
+      justify-content: center;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #2f6fd6, #2a5fbe);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 26px rgba(28, 70, 140, 0.4);
+    }
+    .device-test-footer .btn-primary:hover:not(:disabled) {
+      background: linear-gradient(180deg, #3579e2, #2f68cc);
+    }
+    .device-test-footer #deviceTestBack {
+      width: 100%;
+      justify-content: center;
+      border-radius: 12px;
+      padding: 12px 30px;
+      font-size: 15px;
+      font-weight: 700;
+      background: #dfe5eb;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      color: #1e2a38;
+    }
+    .device-test-footer #deviceTestBack:hover { background: #eaeff4; }
+    .device-test-spark {
+      position: absolute;
+      right: 18px;
+      bottom: 84px;
+      color: #9fb2c0;
+      font-size: 20px;
+      opacity: 0.7;
+      pointer-events: none;
+    }
+    @media (max-width: 720px) {
+      .device-test-steps { display: none; }
+      .device-test-footer { grid-template-columns: 1fr; }
+      .device-test-spark { display: none; }
+    }
 
     /* ================= AUTH SCREEN (July 2026 redesign) =================
        Bold glossy split-hero auth. Deep indigo -> violet aurora, glass card,
@@ -6637,6 +6925,226 @@
       .qc-end-btn { width: 100%; }
       .qc-question-card .cand-question { font-size: 20px; }
     }
+
+    /* --- Live Interview redesign (27 Aug 2026) — reference-matched polish.
+       Pure CSS overrides + three decorative spans; every id, class hook and
+       state toggle (.speaking, .listening, dataset.processing) untouched. -- */
+    .qc-chip-row {
+      gap: 18px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(148, 170, 195, 0.14);
+      margin-bottom: 6px;
+    }
+    .qc-chip-row .cand-chip {
+      background: transparent;
+      border: none;
+      padding: 4px 2px;
+      border-radius: 0;
+      font-size: 11.5px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #f1f5f9;
+      position: relative;
+    }
+    .qc-chip-row .cand-chip:first-child::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: -9px;
+      height: 2px;
+      border-radius: 2px;
+      background: #3b82f6;
+    }
+    .qc-chip-row .cand-chip.soft { color: #7e8fa8; color: #7e94a8; font-weight: 700; }
+    /* Energy-orb rings around the mic core. */
+    .qc-ai-center { position: relative; }
+    .qc-ai-center::before,
+    .qc-ai-center::after {
+      content: "";
+      position: absolute;
+      inset: -46px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(84, 190, 220, 0.35);
+      transform: scaleY(0.55) rotate(-14deg);
+      box-shadow: 0 0 30px rgba(64, 160, 210, 0.25), inset 0 0 24px rgba(64, 160, 210, 0.15);
+      pointer-events: none;
+      animation: qcOrbSpin 14s linear infinite;
+    }
+    .qc-ai-center::after {
+      inset: -66px;
+      border-color: rgba(230, 160, 90, 0.28);
+      transform: scaleY(0.5) rotate(18deg);
+      box-shadow: 0 0 34px rgba(220, 150, 80, 0.18), inset 0 0 26px rgba(220, 150, 80, 0.1);
+      animation-duration: 20s;
+      animation-direction: reverse;
+    }
+    @keyframes qcOrbSpin {
+      from { transform: scaleY(0.55) rotate(-14deg); }
+      to { transform: scaleY(0.55) rotate(346deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .qc-ai-center::before, .qc-ai-center::after { animation: none; }
+    }
+    .qc-mic-core {
+      border-radius: 18px;
+      border: 1px solid rgba(148, 190, 210, 0.3);
+      background: linear-gradient(180deg, rgba(30, 42, 58, 0.9), rgba(18, 28, 40, 0.95));
+      box-shadow: 0 0 40px rgba(70, 150, 200, 0.3);
+    }
+    .qc-stage-label {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 12px;
+      font-weight: 800;
+      color: #c7d4df;
+    }
+    .qc-controls .cand-btn.ghost {
+      width: 100%;
+      justify-content: center;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 12.5px;
+      font-weight: 800;
+      padding: 10px 18px;
+      border-radius: 10px;
+      background: rgba(64, 78, 94, 0.5);
+      border: 1px solid rgba(160, 185, 205, 0.24);
+      color: #dfe8ef;
+      box-shadow: none;
+    }
+    .qc-controls .cand-btn.ghost:hover { background: rgba(80, 96, 114, 0.6); }
+    .qc-q-k { display: flex; align-items: baseline; gap: 8px; }
+    #progressPill {
+      font-size: 11px;
+      font-weight: 700;
+      color: #8fa5b8;
+      letter-spacing: 0.02em;
+      text-transform: none;
+    }
+    #progressPill:empty { display: none; }
+    .qc-cam-overlay {
+      top: 10px; left: 12px; right: auto; bottom: auto;
+      padding: 3px 0;
+      background: transparent;
+      border: none;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #b9c8d6;
+      text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+    }
+    .qc-cam-icons {
+      position: absolute;
+      top: 10px; right: 12px;
+      display: inline-flex;
+      gap: 8px;
+      color: #cfdbe6;
+      text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+    }
+    .qc-cam-icons span {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px;
+      border-radius: 7px;
+      background: rgba(15, 22, 32, 0.6);
+      border: 1px solid rgba(160, 185, 205, 0.2);
+    }
+    .qc-transcript-h, .qc-status-tracker-k {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-size: 11px;
+      font-weight: 800;
+      color: #9db0c1;
+    }
+    .cand-spoken-box { font-family: "Consolas", "SFMono-Regular", monospace; font-size: 12.5px; color: #cfe3d8; }
+    .qc-status-tracker-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .qc-status-wave { display: inline-flex; align-items: center; gap: 2.5px; height: 16px; }
+    .qc-status-wave span {
+      width: 2.5px;
+      border-radius: 2px;
+      background: linear-gradient(180deg, #7dd3fc, #a78bfa, #f472b6);
+      height: 30%;
+      animation: qcWave 1.2s ease-in-out infinite;
+    }
+    .qc-status-wave span:nth-child(2n) { animation-delay: 0.15s; height: 65%; }
+    .qc-status-wave span:nth-child(3n) { animation-delay: 0.3s; height: 90%; }
+    .qc-status-wave span:nth-child(4n) { animation-delay: 0.45s; height: 50%; }
+    @keyframes qcWave {
+      0%, 100% { transform: scaleY(0.5); }
+      50% { transform: scaleY(1); }
+    }
+    @media (prefers-reduced-motion: reduce) { .qc-status-wave span { animation: none; } }
+    .qc-status-tracker-v { text-transform: uppercase; letter-spacing: 0.06em; font-size: 12.5px; }
+    /* Skip + Send stacked full width, reference greys; Send stays the brighter one. */
+    .qc-response-card .cand-chat-input { display: flex; flex-direction: column; gap: 10px; }
+    .qc-response-card .cand-skip,
+    .qc-response-card .cand-send {
+      width: 100%;
+      min-width: 0;
+      justify-content: center;
+      border-radius: 10px;
+      padding: 11px 16px;
+      font-size: 12.5px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .qc-response-card .cand-skip {
+      background: rgba(64, 78, 94, 0.5);
+      border: 1px solid rgba(160, 185, 205, 0.24);
+      color: #dfe8ef;
+    }
+    .qc-response-card .cand-skip:hover { background: rgba(80, 96, 114, 0.6); }
+    .qc-response-card .cand-send:not(:disabled) {
+      background: linear-gradient(180deg, #e8edf2, #d3dbe3);
+      color: #17222e;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+    }
+
+    /* Right-column layout fix (27 Aug 2026). The old grid declared TWO rows
+       (320px camera + 1fr transcript) for FOUR panels — the status tracker
+       and response card overflowed past the viewport, and a hidden transcript
+       left a huge dead row. Flex stacks all four, shares space correctly and
+       collapses hidden panels. */
+    .qc-right {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 0;
+    }
+    .qc-cam-card {
+      flex: 0 0 auto;
+      aspect-ratio: 16 / 10;
+      max-height: 300px;
+      border-radius: 18px;
+    }
+    .qc-transcript-panel {
+      flex: 1 1 auto;
+      min-height: 0;
+      margin-bottom: 0;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+    .qc-transcript-panel .cand-spoken-box {
+      min-height: 56px;
+      overflow-y: auto;
+    }
+    /* Transcript OFF (the default): let the camera take the freed space. */
+    .qc-right:has(.qc-transcript-panel[hidden]) .qc-cam-card { max-height: 340px; }
+    .qc-status-tracker { flex: 0 0 auto; margin-top: 0; }
+    .qc-response-card { flex: 0 0 auto; border-radius: 18px; }
+    /* The listen pill: flex-basis 100% meant HEIGHT in the stacked layout —
+       it inflated into a giant circle. It is a slim full-width bar now. */
+    .qc-response-card .cand-chat-input .cand-listen-status {
+      flex: 0 0 auto;
+      flex-basis: auto;
+      width: 100%;
+      align-self: stretch;
+      justify-content: flex-start;
+      border-radius: 10px;
+      padding: 8px 12px;
+    }
   </style>
 </head>
 <body>
@@ -6959,32 +7467,41 @@
     gate (Feature 4) and only then start the actual invite login flow.
   -->
   <section id="screenInviteWelcome" class="startup-screen invite-welcome-screen" aria-labelledby="inviteWelcomeTitle">
+    <header class="invite-welcome-topbar">
+      <div class="invite-welcome-brand">
+        <img src="assets/karnex-logo-light.svg" alt="KARNEX" class="invite-welcome-logo" width="120" height="28" decoding="async" draggable="false">
+        <span class="invite-welcome-brand-divider" aria-hidden="true"></span>
+        <span class="invite-welcome-tag">AI Interview Platform</span>
+      </div>
+      <div class="invite-welcome-topbar-icons" aria-hidden="true">
+        <span class="invite-welcome-topbar-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+        <span class="invite-welcome-topbar-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>
+        <span class="invite-welcome-topbar-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+      </div>
+    </header>
     <div class="startup-container invite-welcome-container">
       <div class="hero-content invite-welcome-content">
-        <div class="invite-welcome-brand">
-          <img src="assets/karnex-logo-light.svg" alt="KARNEX" class="invite-welcome-logo" width="120" height="28" decoding="async" draggable="false">
-          <span class="invite-welcome-tag">AI Interview Platform</span>
-        </div>
-        <h1 id="inviteWelcomeTitle" class="hero-title">Welcome<span id="inviteWelcomeName"></span></h1>
+        <h1 id="inviteWelcomeTitle" class="hero-title">Welcome,<span id="inviteWelcomeName"></span></h1>
         <p id="inviteWelcomeSubtitle" class="hero-desc">
-          Your secure AI interview is ready to begin. Please review the quick checklist below,
-          then click <strong>Start Interview</strong> when you are ready.
+          Your AI-powered interview experience is ready. Please review the checklist
+          to ensure optimal performance. When prepared, select <strong>Start Interview</strong>.
         </p>
         <ul class="invite-welcome-list" role="list">
-          <li><span class="invite-welcome-dot"></span> Sit in a quiet, well-lit room with a stable internet connection</li>
-          <li><span class="invite-welcome-dot"></span> Allow your browser to access the <strong>camera</strong> and <strong>microphone</strong> when prompted</li>
-          <li><span class="invite-welcome-dot"></span> Use a desktop or laptop browser (Chrome / Edge recommended)</li>
-          <li><span class="invite-welcome-dot"></span> The AI will speak each question — please answer clearly</li>
+          <li><span class="invite-welcome-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span> Quiet and well-lit space. Stable connection.</li>
+          <li><span class="invite-welcome-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span> Grant browser access to <strong>camera</strong> and <strong>microphone</strong>.</li>
+          <li><span class="invite-welcome-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M2 8h20"/></svg></span> Desktop/laptop optimized (Chrome / Edge).</li>
+          <li><span class="invite-welcome-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></span> The AI speaks each question — please answer clearly.</li>
         </ul>
+        <div id="inviteWelcomeMeta" class="invite-welcome-meta" hidden></div>
         <div class="hero-actions invite-welcome-actions">
-          <button id="inviteWelcomeStartBtn" class="btn-primary" type="button">Start Interview</button>
+          <button id="inviteWelcomeStartBtn" class="btn-primary invite-welcome-start" type="button">Start Interview</button>
         </div>
-        <div id="inviteWelcomeMeta" class="startup-login-card" hidden></div>
       </div>
-      <div class="hero-visual">
+      <div class="hero-visual invite-welcome-visual">
         <div class="bot-vfx-ring" aria-hidden="true"></div>
         <div class="bot-scanline" aria-hidden="true"></div>
         <img src="assets/3d_robot_avatar.png" alt="3D AI Robot Interviewer">
+        <span class="invite-welcome-spark" aria-hidden="true">✦</span>
       </div>
     </div>
   </section>
@@ -7015,14 +7532,17 @@
 
         <div id="interviewRulesFormat" class="rules-format" role="group" aria-label="Interview format">
           <div class="rules-stat">
+            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span>
             <span class="rules-stat-label">Duration</span>
             <span class="rules-stat-value" id="rulesDuration">—</span>
           </div>
           <div class="rules-stat">
+            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg></span>
             <span class="rules-stat-label">Questions</span>
             <span class="rules-stat-value" id="rulesQuestions">—</span>
           </div>
           <div class="rules-stat">
+            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M19 6v4M22 7v2"/></svg></span>
             <span class="rules-stat-label">Answer by</span>
             <span class="rules-stat-value">Speaking</span>
           </div>
@@ -7030,7 +7550,7 @@
 
         <ul class="rules-list" role="list">
           <li class="rules-item rules-item--stop">
-            <span class="rules-icon" aria-hidden="true">⛔</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg></span>
             <div>
               <strong>Stay on this tab, in fullscreen.</strong>
               Leaving fullscreen, switching tabs or switching windows is recorded as a
@@ -7039,7 +7559,7 @@
             </div>
           </li>
           <li class="rules-item rules-item--stop">
-            <span class="rules-icon" aria-hidden="true">⌨️</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></span>
             <div>
               <strong>The keyboard is disabled.</strong>
               You answer by speaking, so typing, copying and pasting are switched off for
@@ -7047,7 +7567,7 @@
             </div>
           </li>
           <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true">🎙️</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></span>
             <div>
               <strong>Speak your answer, then press Send Response.</strong>
               The AI reads each question aloud. Your microphone opens automatically when it
@@ -7055,7 +7575,7 @@
             </div>
           </li>
           <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true">📷</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
             <div>
               <strong>Camera and microphone stay on.</strong>
               Your session is proctored. More than one face in view is recorded as a
@@ -7063,7 +7583,7 @@
             </div>
           </li>
           <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true">⏱️</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
             <div>
               <strong>The interview ends on its own.</strong>
               <span id="rulesEndCondition">It submits automatically when the time or the
@@ -7072,7 +7592,7 @@
             </div>
           </li>
           <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true">↩️</span>
+            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span>
             <div>
               <strong>You cannot revisit a question.</strong>
               Once you send a response the interview moves on. You may skip a question, but
@@ -7090,6 +7610,7 @@
           <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
           <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
             Continue to device check
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
         </div>
       </div>
@@ -7107,40 +7628,54 @@
     <div class="startup-container device-test-container">
       <div class="device-test-card">
         <div class="device-test-head">
+          <div class="device-test-brandrow">
+            <img src="assets/karnex-logo-light.svg" alt="KARNEX" class="device-test-brand-logo" width="110" height="24" decoding="async" draggable="false">
+            <span class="device-test-brand-tag">AI HR</span>
+          </div>
           <h1 id="deviceTestTitle" class="hero-title device-test-title">Device check</h1>
+          <div class="device-test-steps" aria-label="Setup steps">
+            <span class="device-test-steps-label">Setup Steps:</span>
+            <span class="dstep dstep--done">1. Welcome</span>
+            <span class="dstep-arrow" aria-hidden="true">⟶</span>
+            <span class="dstep dstep--done">2. Rules</span>
+            <span class="dstep-arrow dstep-arrow--active" aria-hidden="true">⟶</span>
+            <span class="dstep dstep--active">3. Device Check</span>
+            <span class="dstep-arrow" aria-hidden="true">⟶</span>
+            <span class="dstep">4. Interview</span>
+          </div>
           <p class="hero-desc device-test-sub">
             Quickly verify your microphone, speaker, webcam and internet connection before the interview starts.
-            Microphone, speaker and internet checks are mandatory to continue.
+            This check is mandatory to continue.
           </p>
         </div>
 
         <div class="device-test-grid">
           <div class="device-test-tile" data-test="mic" data-status="required">
             <div class="device-test-tile-head">
-              <span class="device-test-tile-name">Microphone</span>
+              <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg>Microphone</span>
               <span class="device-test-tile-badge">Required</span>
             </div>
             <div class="device-test-tile-body">
               <div class="device-test-meter" aria-hidden="true">
                 <div class="device-test-meter-bar" data-meter-bar></div>
               </div>
-              <p class="device-test-tile-hint">Click <strong>Test mic</strong> and speak for 3 seconds. We need to detect your voice.</p>
+              <p class="device-test-tile-hint">Click to start the test and speak for 3 seconds. We need to detect your voice.</p>
             </div>
             <div class="device-test-tile-actions">
-              <button class="cand-btn ghost" type="button" data-action="mic-test">Test mic</button>
+              <button class="cand-btn ghost" type="button" data-action="mic-test">Test microphone</button>
             </div>
           </div>
 
           <div class="device-test-tile" data-test="speaker" data-status="pending">
             <div class="device-test-tile-head">
-              <span class="device-test-tile-name">Speaker</span>
+              <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>Speaker</span>
               <span class="device-test-tile-badge">Pending</span>
             </div>
             <div class="device-test-tile-body">
-              <p class="device-test-tile-hint">Click <strong>Play tone</strong>. Can you hear a soft beep?</p>
+              <p class="device-test-tile-hint">Click to play the test tone and confirm you can hear a soft beep.</p>
             </div>
             <div class="device-test-tile-actions">
-              <button class="cand-btn ghost" type="button" data-action="speaker-play">Play tone</button>
+              <button class="cand-btn ghost" type="button" data-action="speaker-play">Play test tone</button>
               <button class="cand-btn cand-media-primary" type="button" data-action="speaker-confirm" disabled>Yes, I hear it</button>
             </div>
           </div>
@@ -7154,7 +7689,7 @@
           -->
           <div class="device-test-tile" data-test="webcam" data-status="pending">
             <div class="device-test-tile-head">
-              <span class="device-test-tile-name">Webcam <span class="device-test-tile-optional">(optional)</span></span>
+              <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>Webcam <span class="device-test-tile-optional">(Optional)</span></span>
               <span class="device-test-tile-badge">Pending</span>
             </div>
             <div class="device-test-tile-body">
@@ -7170,7 +7705,7 @@
 
           <div class="device-test-tile" data-test="network" data-status="pending">
             <div class="device-test-tile-head">
-              <span class="device-test-tile-name">Internet</span>
+              <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Internet Connection</span>
               <span class="device-test-tile-badge">Pending</span>
             </div>
             <div class="device-test-tile-body">
@@ -7183,6 +7718,7 @@
           </div>
         </div>
 
+        <span class="device-test-spark" aria-hidden="true">✦</span>
         <div class="device-test-status" data-status-msg aria-live="polite"></div>
         <div class="device-test-footer">
           <button id="deviceTestContinue" class="btn-primary" type="button" disabled>Continue to interview</button>
@@ -7711,9 +8247,8 @@
               </div>
             </div>
             <div class="qc-question-card">
-              <div class="qc-q-k">Assessment Query</div>
+              <div class="qc-q-k">Assessment Query <span id="progressPill"></span></div>
               <div class="cand-question" id="candidateQuestion">Waiting for HR setup...</div>
-              <span id="progressPill" style="display:none;">Question 0/0</span>
             </div>
           </section>
 
@@ -7721,6 +8256,10 @@
             <div class="qc-cam-card">
               <video id="proctorCam" autoplay playsinline muted class="cand-cam"></video>
               <div class="qc-cam-overlay">Candidate Feed</div>
+              <div class="qc-cam-icons" aria-hidden="true">
+                <span><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
+                <span><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+              </div>
               <div class="qc-mic-ind" aria-hidden="true">
                 <span></span><span></span><span></span>
               </div>
@@ -7731,7 +8270,10 @@
               <div id="candidateSpokenAnswer" class="cand-spoken-box" aria-live="polite"></div>
             </div>
             <div class="qc-status-tracker" role="status" aria-live="polite">
-              <div class="qc-status-tracker-k">Interview Status</div>
+              <div class="qc-status-tracker-row">
+                <div class="qc-status-tracker-k">Interview Status</div>
+                <span class="qc-status-wave" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+              </div>
               <div id="interviewPhaseTracker" class="qc-status-tracker-v">Waiting For Response...</div>
             </div>
             <div class="qc-response-card">
@@ -7830,7 +8372,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=20"></script>
+  <script type="module" src="js/app.js?v=21"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

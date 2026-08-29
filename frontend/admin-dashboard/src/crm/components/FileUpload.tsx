@@ -101,7 +101,10 @@ function sniffExtFromBytes(buf: ArrayBuffer): string | null {
   if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return "pdf";
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return "jpg";
-  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return "docx";
+  // PK = a ZIP container: docx, xlsx and pptx all start with it. The real
+  // type must come from the file EXTENSION — claiming "docx" here fed Excel
+  // files into the Word renderer, which errored on every timesheet import.
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return "zip";
   return null;
 }
 
@@ -206,8 +209,8 @@ function FilePreviewModal({
         const sniffed = sniffExtFromBytes(bytes);
         let ext = extOf(url, title);
         if (sniffed === "pdf" || ext === "pdf") ext = "pdf";
-        else if (sniffed && (!ext || ext === "bin")) ext = sniffed;
-        else if (!ext && sniffed) ext = sniffed;
+        else if (sniffed && sniffed !== "zip" && (!ext || ext === "bin")) ext = sniffed;
+        else if (!ext && sniffed && sniffed !== "zip") ext = sniffed;
 
         const typed = typedBlob(new Blob([bytes]), ext || sniffed || "bin");
         blobRef.current = typed;
@@ -232,7 +235,7 @@ function FilePreviewModal({
           return;
         }
 
-        if (ext === "docx" || (sniffed === "docx" && ext !== "pdf")) {
+        if (ext === "docx" || (sniffed === "zip" && !ext)) {
           const mammoth = await import("mammoth");
           const result = await mammoth.convertToHtml({ arrayBuffer: bytes });
           if (cancelled) return;
@@ -240,6 +243,27 @@ function FilePreviewModal({
           // output unsanitised (a crafted .docx can carry a javascript: link).
           setHtml(sanitizeHtml(result.value) || "<p>(Empty document)</p>");
           setKind("html");
+        } else if (["xlsx", "xlsm"].includes(ext)) {
+          // Spreadsheets render via the SERVER (openpyxl → escaped HTML
+          // tables, 27 Aug 2026) — no client-side parser needed. Falls back
+          // to the download card if the preview endpoint can't help.
+          const previewPath = toAuthPath(url);
+          if (previewPath) {
+            try {
+              const sep = previewPath.includes("?") ? "&" : "?";
+              const res = await authFetch(`${previewPath}${sep}preview=xlsx`);
+              if (res.ok) {
+                const body = await res.json();
+                const tableHtml = String(body?.data?.html || "");
+                if (tableHtml && !cancelled) {
+                  setHtml(sanitizeHtml(tableHtml) || "<p>(Empty workbook)</p>");
+                  setKind("html");
+                  return;
+                }
+              }
+            } catch { /* fall through to the download card */ }
+          }
+          if (!cancelled) setKind("other");
         } else if (ext === "txt" || typed.type.startsWith("text/")) {
           const t = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
           if (cancelled) return;
@@ -327,7 +351,9 @@ function FilePreviewModal({
         )}
         {!loading && !error && kind === "other" && (
           <p className="py-6 text-center text-sm text-muted">
-            Preview is not available for this file type{fileExt ? ` (.${fileExt})` : ""}. Use Download to open it locally.
+            {["xlsx", "xls", "xlsm", "csv"].includes(fileExt)
+              ? "Excel files don't preview in the browser — use Download and open it in Excel."
+              : `Preview is not available for this file type${fileExt ? ` (.${fileExt})` : ""}. Use Download to open it locally.`}
           </p>
         )}
       </div>

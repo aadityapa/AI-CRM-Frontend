@@ -101,8 +101,11 @@ export function ScheduleAiInterviewModal({
 }) {
   const isEdit = !!existing;
   const defaultWhen = useMemo(() => {
+    // Default to NOW (on the minute) so "schedule → the candidate takes it now"
+    // works immediately. Picking a future time still schedules a wait; leaving
+    // this an hour ahead used to strand candidates on a countdown they couldn't see.
     const d = new Date();
-    d.setMinutes(d.getMinutes() + 60, 0, 0); // an hour from now, on the minute
+    d.setSeconds(0, 0);
     return toLocalStamp(d);
   }, []);
 

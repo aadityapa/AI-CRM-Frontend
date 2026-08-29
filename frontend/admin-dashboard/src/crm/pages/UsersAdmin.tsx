@@ -7,6 +7,7 @@ import { crmGet, crmPost, crmPut, crmDelete, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmNavigate } from "../routerHooks";
+import { AccessTemplatesPage } from "./AccessTemplates";
 import {
   allManageableTabKeys,
   manageableTabsForRoles,
@@ -20,7 +21,7 @@ import {
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import {
-  ConfirmModal, ErrorBox, Modal, StatusBadge,
+  ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, FieldLabel } from "../components/wizard";
@@ -1122,6 +1123,9 @@ function TabAccessModal({
 export function UsersAdminPage() {
   const isAdmin = useHasRole();
   const me = useMe();
+  // Access Control hub (target IA): ONE sidebar entry with Users and Access
+  // Templates as tabs inside it, instead of two sibling pages.
+  const [hubTab, setHubTab] = useState<"users" | "templates">("users");
   const [toast, notify] = useToast();
   const [rows, setRows] = useState<UserRow[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -1365,21 +1369,40 @@ export function UsersAdminPage() {
     },
   ];
 
+  if (hubTab === "templates") {
+    return (
+      <div>
+        {toast}
+        <div className="mb-4">
+          <h1 className="text-display text-xl font-bold text-primary">Access Control</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
+            Users get an Access Template (from the Users tab, or automatically from their role);
+            the template controls which tabs and fields they can see and edit.
+          </p>
+        </div>
+        <div className="mb-4">
+          <Tabs
+            tabs={[{ key: "users", label: "Users" }, { key: "templates", label: "Access Templates" }]}
+            active={hubTab}
+            onChange={(k) => setHubTab(k as "users" | "templates")}
+          />
+        </div>
+        <AccessTemplatesPage />
+      </div>
+    );
+  }
   return (
     <div>
       {toast}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-display text-xl font-bold text-primary">Users</h1>
+          <h1 className="text-display text-xl font-bold text-primary">Access Control</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted">
             Admin/CEO control who can access the application. Create an account with email and password,
-            assign roles, then the user signs in and updates their own profile details.
+            assign roles and an Access Template, then the user signs in and updates their own profile.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button className={btnSecondary} onClick={() => crmNavigate("access-templates")}>
-            <ShieldCheck size={15} /> Access Templates
-          </button>
           <button className={btnSecondary} onClick={() => setShowInvite(true)}>
             <Send size={15} /> Invite User
           </button>
@@ -1388,11 +1411,19 @@ export function UsersAdminPage() {
           </button>
         </div>
       </div>
+      <div className="mb-4">
+        <Tabs
+          tabs={[{ key: "users", label: "Users" }, { key: "templates", label: "Access Templates" }]}
+          active={hubTab}
+          onChange={(k) => setHubTab(k as "users" | "templates")}
+        />
+      </div>
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
         columns={columns}
         rows={rows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "user" : "users"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={setSearch}

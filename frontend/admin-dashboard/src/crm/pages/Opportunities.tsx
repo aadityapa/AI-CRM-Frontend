@@ -2,13 +2,13 @@
  * linked candidate profiles, server-validated stage transitions and activity log.
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * one primary action per screen, right-aligned numerics in tables. */
-import React, { useCallback, useEffect, useState } from "react";
-import { ArrowRightLeft, ChevronDown, Pencil, Plus, UserPlus } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRightLeft, ChevronDown, Mail, Pencil, Plus, UserPlus } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
 import { DataTable } from "../components/DataTable";
@@ -37,8 +37,7 @@ import {
   btnPrimary,
   btnSecondary,
   inputCls,
-  useToast,
-} from "../components/ui";
+  useToast, selfWithdrewLabel } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 
 /* ------------------------------------------------------------------ types */
@@ -279,6 +278,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "opportunity" : "opportunities"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           loading={loading}
           search={search}
           onSearch={setSearch}
@@ -328,7 +328,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
               notify={showToast}
               canEdit
               canDelete
-            />
+            colored />
             </span>
           ) : undefined}
         />
@@ -418,6 +418,129 @@ export function SuggestedCandidatesTab({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  /* TA filters (Aug 2026): the scan can return up to 50 candidates — TA asked
+   * to narrow by match %, skill/name, and quality so they don't scroll. All
+   * client-side over the already-loaded rows; nothing re-fetches. */
+  const [minScore, setMinScore] = useState(0);
+  const [q, setQ] = useState("");
+  const [hideEngaged, setHideEngaged] = useState(false);
+  const [completeOnly, setCompleteOnly] = useState(false);
+  const [contactableOnly, setContactableOnly] = useState(false);
+  /* Hiring-interest email (Aug 2026): compose → one POST queues a personalised
+   * "are you interested?" email to each recipient on the durable outbox.
+   *
+   * `emailTargets` is the recipient list, NOT the checkbox selection: the row
+   * "Email" button mails one candidate without disturbing a bulk selection the
+   * recruiter may be part-way through building. Both buttons open the same
+   * composer, prefilled from the server template so the recruiter edits real
+   * words instead of an empty box, and {{placeholders}} are rendered per
+   * candidate server-side so an edited bulk message still greets each person by
+   * name. */
+  const [emailTargets, setEmailTargets] = useState<Suggestion[] | null>(null);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailMessage, setEmailMessage] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailPlaceholders, setEmailPlaceholders] = useState<string[]>([]);
+  const [emailLoading, setEmailLoading] = useState(false);
+  /* The composer body grows to fit the whole message: this is a template the
+   * recruiter reads and rewrites, and judging tone through a 3-line porthole is
+   * the reason the default wording never gets edited. `inputCls` carries its own
+   * `min-h-[40px]`, which ties with any `min-h-[…]` utility added here on
+   * specificity — so the height is set inline, where nothing can outrank it.
+   * Capped at half the viewport so a long paste can't push Send off-screen. */
+  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = emailBodyRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const cap = Math.max(200, Math.round(window.innerHeight * 0.5));
+    // box-sizing is border-box, and scrollHeight excludes the border — without
+    // adding it back the field lands ~2px short and shows a scrollbar for the
+    // last line, which is the exact problem this is here to solve.
+    const border = el.offsetHeight - el.clientHeight;
+    const wanted = el.scrollHeight + border;
+    el.style.height = `${Math.min(wanted, cap)}px`;
+    el.style.overflowY = wanted > cap ? "auto" : "hidden";
+  }, [emailMessage, emailTargets]);
+  const emailTemplate = useRef<{
+    subject: string; message: string; placeholders: string[]; sample: Record<string, string>;
+  } | null>(null);
+
+  /** Open the composer for these candidates, prefilled from the server template.
+   *  The template is fetched once per mount and reused.
+   *
+   *  The modal opens only AFTER the template resolves. Opening first and filling
+   *  in later silently overwrites anything typed in the gap — and a fetch
+   *  started for candidate A could land on top of candidate B's edits. */
+  const openEmail = async (targets: Suggestion[]) => {
+    if (targets.length === 0) return;
+    const apply = (t: { subject: string; message: string; placeholders: string[] }) => {
+      setEmailSubject(t.subject);
+      setEmailMessage(t.message);
+      setEmailPlaceholders(t.placeholders);
+      setEmailErrs({});
+      setEmailTargets(targets);
+    };
+    if (emailTemplate.current) { apply(emailTemplate.current); return; }
+    setEmailLoading(true);
+    try {
+      const r = await crmGet<{
+        subject: string; message: string; placeholders: string[]; sample: Record<string, string>;
+      }>(`/api/opportunities/${oppId}/candidate-email-template`);
+      emailTemplate.current = {
+        subject: r.data.subject, message: r.data.message,
+        placeholders: r.data.placeholders || [], sample: r.data.sample || {},
+      };
+      apply(emailTemplate.current);
+    } catch {
+      /* Template fetch failed — open with empty fields. The server falls back to
+       * its own default for a blank subject/message, so the send still works. */
+      apply({ subject: "", message: "", placeholders: [] });
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
+  const [emailErrs, setEmailErrs] = useState<{ subject?: string; message?: string }>({});
+
+  const sendEmails = async () => {
+    const batch = (emailTargets || []).filter((r) => realEmail(r.email));
+    if (batch.length === 0) return;
+    /* Both fields are prefilled from the template, so empty means the sender
+     * DELETED them — and a blank field used to silently substitute the server
+     * default, i.e. the candidate received wording the sender never saw. */
+    const errs: { subject?: string; message?: string } = {};
+    if (!emailSubject.trim()) errs.subject = "A subject is required — candidates see this line first";
+    if (!emailMessage.trim()) errs.message = "Write the message to send (placeholders are filled in per candidate)";
+    setEmailErrs(errs);
+    if (errs.subject || errs.message) return;
+    const ids = batch.map((r) => r.candidate_id);
+    setEmailBusy(true);
+    try {
+      const res = await crmPost<{ sent: number; skipped: any[]; failed: any[] }>(
+        `/api/opportunities/${oppId}/email-candidates`,
+        {
+          candidate_ids: ids,
+          subject: emailSubject.trim(),
+          message: emailMessage.trim(),
+        },
+      );
+      showToast(res.message || `Queued ${res.data?.sent ?? 0} email(s)`);
+      setEmailTargets(null);
+      /* Untick who was just mailed. Leaving them checked with no visual change
+       * invites a second click that double-mails real candidates. Only the rows
+       * that went out are cleared, so a partial batch keeps the rest selected. */
+      setSelected((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+    } catch (e: any) {
+      showToast(e?.message || "Failed to send emails");
+    } finally {
+      setEmailBusy(false);
+    }
+  };
 
   const load = useCallback(() => {
     setRows(null);
@@ -479,6 +602,30 @@ export function SuggestedCandidatesTab({
     );
   }
 
+  // Apply the TA filters over the loaded rows (rows is already sorted by score).
+  const visible = rows.filter((r) => {
+    if (r.score < minScore) return false;
+    if (hideEngaged && r.engaged) return false;
+    if (completeOnly && r.missing_mandatory_skills.length > 0) return false;
+    if (contactableOnly && !(r.phone || realEmail(r.email))) return false;
+    if (q.trim()) {
+      const t = q.trim().toLowerCase();
+      const hay = [r.name, r.technical_domain, r.city, ...r.matched_skills]
+        .filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(t)) return false;
+    }
+    return true;
+  });
+  const visIds = visible.map((r) => r.candidate_id);
+  const allVisSelected = visible.length > 0 && visIds.every((id) => selected.has(id));
+  const selectedVisible = visIds.filter((id) => selected.has(id)).length;
+  const filtersActive =
+    minScore > 0 || q.trim() !== "" || hideEngaged || completeOnly || contactableOnly;
+  const clearFilters = () => {
+    setMinScore(0); setQ(""); setHideEngaged(false);
+    setCompleteOnly(false); setContactableOnly(false);
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
@@ -486,31 +633,123 @@ export function SuggestedCandidatesTab({
         candidate&rsquo;s pipeline history — candidates already applied here are excluded.
         Contact them directly or apply them into this pipeline.
       </p>
-      {canApply && (
+
+      {/* -------- TA filter bar -------- */}
+      <div className="space-y-2 rounded-card border border-subtle bg-surface-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-secondary">Min match</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={minScore || ""}
+              placeholder="0"
+              onChange={(e) =>
+                setMinScore(Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))))}
+              className={`${inputCls} h-8 w-20 text-sm`}
+              aria-label="Minimum match percentage"
+            />
+            <span className="text-xs text-secondary">%</span>
+            {[40, 50, 70].map((s) => (
+              <button
+                key={s}
+                onClick={() => setMinScore(s)}
+                className="rounded-full border border-subtle bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-secondary hover:bg-surface-3"
+                title={`Set minimum to ${s}%`}
+              >
+                {s}%+
+              </button>
+            ))}
+          </div>
+          <input
+            className={`${inputCls} h-8 max-w-[220px] flex-1 text-sm`}
+            placeholder="Search name, skill, domain…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-secondary">
+            <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
+              style={{ accentColor: "var(--brand-600)" }}
+              checked={completeOnly} onChange={() => setCompleteOnly((v) => !v)} />
+            All mandatory skills
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-secondary">
+            <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
+              style={{ accentColor: "var(--brand-600)" }}
+              checked={hideEngaged} onChange={() => setHideEngaged((v) => !v)} />
+            Hide engaged elsewhere
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-secondary">
+            <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
+              style={{ accentColor: "var(--brand-600)" }}
+              checked={contactableOnly} onChange={() => setContactableOnly((v) => !v)} />
+            Contactable (email/phone)
+          </label>
+          <span className="ml-auto text-xs text-muted">
+            Showing <b className="text-secondary">{visible.length}</b> of {rows.length}
+          </span>
+          {filtersActive && (
+            <button onClick={clearFilters}
+              className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      {canApply && visible.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-subtle bg-surface-2 px-3 py-2">
           <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-secondary">
             <input
               type="checkbox"
               className="h-4 w-4 cursor-pointer"
               style={{ accentColor: "var(--brand-600)" }}
-              checked={rows.length > 0 && selected.size === rows.length}
+              checked={allVisSelected}
               onChange={() =>
-                setSelected(selected.size === rows.length
-                  ? new Set()
-                  : new Set(rows.map((r) => r.candidate_id)))}
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (allVisSelected) visIds.forEach((id) => next.delete(id));
+                  else visIds.forEach((id) => next.add(id));
+                  return next;
+                })}
             />
-            Select all ({selected.size}/{rows.length})
+            Select all ({selectedVisible}/{visible.length})
           </label>
-          <button
-            className={btnPrimary}
-            disabled={selected.size === 0}
-            onClick={() => setBulkOpen(true)}
-          >
-            <UserPlus size={14} /> Apply selected ({selected.size})
+          <div className="flex items-center gap-2">
+            <button
+              className={btnSecondary}
+              disabled={selected.size === 0 || emailLoading}
+              onClick={() => void openEmail(rows ? rows.filter((r) => selected.has(r.candidate_id)) : [])}
+              title="Email the selected candidates about this role"
+            >
+              <Mail size={14} /> {emailLoading ? "Opening…" : `Email selected (${selected.size})`}
+            </button>
+            <button
+              className={btnPrimary}
+              disabled={selected.size === 0}
+              onClick={() => setBulkOpen(true)}
+            >
+              <UserPlus size={14} /> Apply selected ({selected.size})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {visible.length === 0 && (
+        <div className="rounded-card border border-subtle bg-surface-1 px-4 py-6 text-center text-sm text-muted">
+          No candidates match these filters.{" "}
+          <button onClick={clearFilters}
+            className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+            Clear filters
           </button>
         </div>
       )}
-      {rows.map((r) => (
+
+      {visible.map((r) => (
         <div key={r.candidate_id}
           className="rounded-card border border-subtle bg-surface-1 p-4 shadow-raised">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -586,11 +825,16 @@ export function SuggestedCandidatesTab({
                 </button>
               )}
               <div className="flex gap-1.5">
+                {/* Opens the same composer as "Email selected", scoped to this
+                    one candidate. It used to be a mailto: link, which handed the
+                    recruiter off to whatever (if anything) the OS had registered
+                    — and left no outbox record of what was sent. */}
                 {realEmail(r.email) && (
-                  <a className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
-                    href={`mailto:${realEmail(r.email)}`}>
+                  <button className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
+                    onClick={() => void openEmail([r])}
+                    title={`Email ${r.name} about this role`}>
                     Email
-                  </a>
+                  </button>
                 )}
                 {r.cv_url && <FileLink url={r.cv_url} label="Resume" />}
                 {r.linkedin_url && (
@@ -642,6 +886,154 @@ export function SuggestedCandidatesTab({
               </button>
               <button className={btnPrimary} disabled={busy} onClick={applySelected}>
                 {busy ? `Applying… ${bulkDone}/${batch.length}` : `Apply all ${batch.length}`}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {emailTargets && (() => {
+        const batch = emailTargets;
+        const withEmail = batch.filter((r) => realEmail(r.email));
+        const noEmail = batch.length - withEmail.length;
+        const one = batch.length === 1 ? batch[0] : null;
+        const close = () => { if (!emailBusy) setEmailTargets(null); };
+        /* Live preview against the first real recipient, so the recruiter can
+         * see what a {{placeholder}} actually becomes before sending.
+         *
+         * This mirrors the server's renderer exactly — one pass, every token,
+         * case- and space-insensitive, unknown tokens left intact. Previewing a
+         * SUBSET of what the server substitutes is worse than no preview: the
+         * recruiter "fixes" a token that was working fine. The server stays
+         * authoritative; this only has to agree with it. */
+        const previewFor = withEmail[0];
+        const previewName = (previewFor?.name || "").trim();
+        const sample = emailTemplate.current?.sample || {};
+        const previewCtx: Record<string, string> = {
+          first_name: previewName.split(" ")[0] || "there",
+          full_name: previewName || "there",
+          role: sample.role || "",
+          customer: sample.customer || "",
+          sender: sample.sender || "",
+        };
+        const render = (t: string) =>
+          (t || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key: string) => {
+            const v = previewCtx[String(key).toLowerCase()];
+            return v === undefined ? whole : v;
+          });
+        return (
+          <Modal
+            medium
+            title={one ? `Email ${one.name}` : `Email ${batch.length} candidates`}
+            onClose={close}
+            dirty={emailSubject !== (emailTemplate.current?.subject ?? "")
+              || emailMessage !== (emailTemplate.current?.message ?? "")}
+          >
+            <p className="text-sm text-secondary">
+              Send a hiring-interest email — &ldquo;we&rsquo;re hiring for this role, are you
+              interested?&rdquo; — {one ? <>to <b>{one.name}</b> ({realEmail(one.email)})</> : `to ${withEmail.length} candidate(s)`}.
+              Edit the wording below; it goes out through the Email Outbox, so there is a record
+              of every send.
+            </p>
+            {/* Name every recipient. Selections survive a filter change, so the
+                list on screen is not necessarily the list being mailed — and a
+                bare count gives the sender no way to notice. */}
+            {!one && withEmail.length > 0 && (
+              <details className="mt-2 rounded-card border border-subtle bg-surface-1 px-3 py-2" open={withEmail.length <= 8}>
+                <summary className="cursor-pointer text-xs font-semibold text-secondary">
+                  Recipients ({withEmail.length})
+                </summary>
+                <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto text-xs text-secondary">
+                  {withEmail.map((r) => (
+                    <li key={r.candidate_id}>
+                      <b className="text-primary">{r.name}</b> — {realEmail(r.email)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            <div className="mt-3 space-y-3">
+              <div>
+                <label htmlFor="cand-email-subject" className="mb-1 block text-xs font-semibold text-secondary">
+                  Subject <span className="text-danger">*</span>
+                </label>
+                <input id="cand-email-subject" className={`${inputCls}${emailErrs.subject ? " input-error" : ""}`} value={emailSubject}
+                  onChange={(e) => { setEmailSubject(e.target.value); setEmailErrs((p) => ({ ...p, subject: undefined })); }}
+                  placeholder="Exciting opportunity: {{role}}" />
+                {emailErrs.subject && <p className="mt-1 text-xs text-danger">{emailErrs.subject}</p>}
+              </div>
+              <div>
+                <label htmlFor="cand-email-body" className="mb-1 block text-xs font-semibold text-secondary">
+                  Message <span className="text-danger">*</span>
+                </label>
+                <textarea
+                  id="cand-email-body"
+                  ref={emailBodyRef}
+                  className={`${inputCls} resize-none font-mono !text-[13px] leading-relaxed${emailErrs.message ? " input-error" : ""}`}
+                  style={{ minHeight: 0 }}
+                  value={emailMessage}
+                  onChange={(e) => { setEmailMessage(e.target.value); setEmailErrs((p) => ({ ...p, message: undefined })); }}
+                />
+                {emailErrs.message && <p className="mt-1 text-xs text-danger">{emailErrs.message}</p>}
+                <p className="mt-1.5 text-xs text-muted">
+                  Filled in per candidate, so one message still greets everyone by name — click to
+                  insert at the cursor:{" "}
+                  {(emailPlaceholders.length
+                    ? emailPlaceholders
+                    : ["first_name", "full_name", "role", "customer", "sender"]
+                  ).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className="mr-1 rounded-full bg-brand-600/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-brand-600 hover:bg-brand-600/20 dark:text-brand-300"
+                      title={`Insert {{${p}}} at the cursor`}
+                      /* Insert where the caret is, not at the end. Appending to a
+                         finished template drops the token after the signature,
+                         which reads as the control being broken. */
+                      onClick={() => {
+                        const el = emailBodyRef.current;
+                        const token = `{{${p}}}`;
+                        if (!el) { setEmailMessage((m) => m + token); return; }
+                        const s = el.selectionStart ?? el.value.length;
+                        const e = el.selectionEnd ?? s;
+                        setEmailMessage(el.value.slice(0, s) + token + el.value.slice(e));
+                        requestAnimationFrame(() => {
+                          el.focus();
+                          el.setSelectionRange(s + token.length, s + token.length);
+                        });
+                      }}
+                    >
+                      {`{{${p}}}`}
+                    </button>
+                  ))}{" "}
+                  An unknown one is left in the text as-is rather than blanking the email.
+                </p>
+              </div>
+              {previewFor && (
+                <details className="rounded-card border border-subtle bg-surface-1 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-secondary">
+                    Preview as {previewName || "the first recipient"}
+                  </summary>
+                  <div className="mt-2 text-xs text-primary">
+                    <div className="font-semibold">{render(emailSubject) || <span className="text-muted">(default subject)</span>}</div>
+                    <pre className="mt-1.5 whitespace-pre-wrap font-sans text-xs text-secondary">
+                      {render(emailMessage) || "(default message)"}
+                    </pre>
+                  </div>
+                </details>
+              )}
+            </div>
+            {noEmail > 0 && (
+              <p className="mt-2 text-xs text-danger">
+                {noEmail} selected candidate(s) have no email on file and will be skipped.
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button className={btnSecondary} disabled={emailBusy}
+                onClick={close}>Cancel</button>
+              <button className={btnPrimary} disabled={emailBusy || withEmail.length === 0}
+                onClick={sendEmails}>
+                {emailBusy ? "Sending…" : one ? "Send email" : `Send to ${withEmail.length}`}
               </button>
             </div>
           </Modal>
@@ -851,6 +1243,8 @@ export function OpportunityDetailPage() {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Sales", "Sales_Head");
   const canWrite = useCanAct("opportunities", "edit", canWriteRole);
+  /* Sub-tab access (25 Aug 2026): templates hide detail tabs. */
+  const oppAcc = useCrmAccess("opportunities");
   const canArchive = useHasRole("Sales_Head");
   const canApprove = useHasRole("Sales_Head"); // Sales Head (or Admin) signs off
   const canApplyHere = useHasRole("TA", "Sales", "RMG");
@@ -1072,7 +1466,7 @@ export function OpportunityDetailPage() {
     {
       key: "pipeline_status",
       label: "Pipeline status",
-      render: (r) => <StatusBadge status={r.pipeline_status} />,
+      render: (r) => <StatusBadge status={r.pipeline_status} label={selfWithdrewLabel(r.pipeline_status, (r as any).withdrawn_from_status)} />,
     },
     // The applicants table had no AI interview column at all, so an opportunity
     // gave no sign of how its candidates had done in their L1.
@@ -1203,14 +1597,16 @@ export function OpportunityDetailPage() {
           test for (Skill Evaluation), and what happened (Activity Log). */}
       <Tabs
         tabs={[
-          { key: "details", label: "Opportunity Details" },
-          { key: "applicants", label: "Applicants", count: profileMeta?.total },
-          { key: "suggested", label: "Suggested Candidates" },
-          { key: "skills", label: "Skill Evaluation Details", count: skills.length },
-          { key: "activity", label: "Activity Log" },
-          { key: "projects", label: "Projects" },
-          { key: "pes", label: "Project Employees" },
-        ]}
+          /* Sub-tab access (25 Aug 2026): templates hide these via the
+             `tab:<key>` field entries on the opportunities tab. */
+          { key: "details", label: "Opportunity Details", gate: "tab:details" },
+          { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
+          { key: "suggested", label: "Suggested Candidates", gate: "tab:applicants" },
+          { key: "skills", label: "Skill Evaluation Details", count: skills.length, gate: "tab:skill-eval" },
+          { key: "activity", label: "Activity Log", gate: "tab:activity" },
+          { key: "projects", label: "Projects", gate: "tab:details" },
+          { key: "pes", label: "Project Employees", gate: "tab:details" },
+        ].filter((t) => oppAcc.subTabVisible(t.gate)).map(({ gate: _g, ...t }) => t)}
         active={tab}
         onChange={setTab}
       />
@@ -1356,6 +1752,7 @@ export function OpportunityDetailPage() {
             columns={applicantCols}
             rows={profiles}
             meta={profileMeta}
+            headerRight={profileMeta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{profileMeta.total} {profileMeta.total === 1 ? "applicant" : "applicants"}, page {profileMeta.page}/{Math.max(1, profileMeta.pages || 1)}</span> : undefined}
             onPage={setProfilePage}
             search={profileSearch}
             onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
@@ -1433,6 +1830,21 @@ export function OpportunityDetailPage() {
             setOpp(res.data);
             setShowStage(false);
             showToast(`Moved to ${newStage.replace(/_/g, " ")}`);
+            loadLog();
+          }}
+        />
+      )}
+      {/* "Apply a Candidate" — was a dead button (set state no modal read). */}
+      {applyHere && (
+        <ApplyToOpportunityModal
+          mode="pick-candidate"
+          opportunityId={opp.id}
+          opportunityLabel={`${opp.opp_id} — ${opp.title}`}
+          onClose={() => setApplyHere(false)}
+          onApplied={(msg) => {
+            setApplyHere(false);
+            showToast(msg || "Candidate applied");
+            loadProfiles();
             loadLog();
           }}
         />

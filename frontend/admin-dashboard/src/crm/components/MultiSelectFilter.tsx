@@ -8,8 +8,8 @@
  * Deliberately not a combobox: the option set is small and fixed, so a plain
  * checkbox list is faster to scan than something with a search box in it.
  */
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Search } from "lucide-react";
 
 export function MultiSelectFilter({
   label,
@@ -17,6 +17,7 @@ export function MultiSelectFilter({
   selected,
   onChange,
   allLabel = "All",
+  searchable = false,
 }: {
   label: string;
   options: { value: string; label: string }[];
@@ -24,8 +25,18 @@ export function MultiSelectFilter({
   onChange: (next: string[]) => void;
   /** Shown when nothing is selected — i.e. no narrowing applied. */
   allLabel?: string;
+  /** Adds a type-to-filter box in the popover — for long option lists
+   * (e.g. opportunities) where scanning checkboxes stops being faster. */
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  useEffect(() => { if (!open) setQuery(""); }, [open]);
+  const visibleOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q));
+  }, [options, query]);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Close on outside click and on Escape — a filter popover that traps you is
@@ -82,6 +93,18 @@ export function MultiSelectFilter({
           className="absolute left-0 z-40 mt-1 max-h-72 w-60 overflow-y-auto rounded-card border
                      border-subtle bg-surface-1 p-1 shadow-overlay"
         >
+          {searchable && (
+            <div className="mb-1 flex items-center gap-1.5 rounded-control border border-subtle bg-surface-2 px-2">
+              <Search size={12} className="shrink-0 text-muted" aria-hidden />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${label.toLowerCase()}…`}
+                className="h-7 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
+              />
+            </div>
+          )}
           {selected.length > 0 && (
             <button
               type="button"
@@ -92,7 +115,10 @@ export function MultiSelectFilter({
               Clear {label.toLowerCase()}
             </button>
           )}
-          {options.map((o) => {
+          {visibleOptions.length === 0 && (
+            <p className="px-2 py-2 text-xs text-muted">No matches.</p>
+          )}
+          {visibleOptions.map((o) => {
             const on = selected.includes(o.value);
             return (
               <button
