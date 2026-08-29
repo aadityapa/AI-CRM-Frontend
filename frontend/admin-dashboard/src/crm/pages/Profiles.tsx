@@ -34,8 +34,7 @@ import {
 import type { AiScheduleResult as SharedAiScheduleResult } from "../components/ScheduleAiInterviewModal";
 import {
   AiThinking, ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
-  btnPrimary, btnSecondary, inputCls, statusLabel, useToast,
-} from "../components/ui";
+  btnDanger, btnPrimary, btnSecondary, inputCls, statusLabel, useToast, selfWithdrewLabel } from "../components/ui";
 import {
   SectionHeaderBanner, FieldLabel, WizardField,
 } from "../components/wizard";
@@ -104,6 +103,10 @@ type ProfileRow = {
   stage?: string | null;
   employee_ref?: string | null;
   created_by_name?: string | null;
+  /** RMG screening gate (25 Aug 2026). NULL = legacy profile, not gated. */
+  rmg_screening_status?: "Pending" | "Shortlisted" | "Rejected" | null;
+  rmg_screening_note?: string | null;
+  rmg_screening_at?: string | null;
   comments_text?: string | null;
   // latest interview round, for the list columns
   interview_round?: string | null;
@@ -275,7 +278,13 @@ const ACTIVE_STATUSES = [
   "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval",
   "Preboarding", "Joined",
 ];
-const REJECTED_STATUSES = ["Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Rejected"];
+const REJECTED_STATUSES = [
+  "Sales_Rejected", "RMG_Rejected", "Customer_Rejected",
+  // Round-specific customer rejections (Aug 2026) — must be listed here or the
+  // status modal demands a note without rendering the note box.
+  "Customer_Screen_Rejected", "Customer_L1_Rejected", "Customer_L2_Rejected",
+  "Self_Withdrawn", "Rejected",
+];
 const REJECTION_LIKE = new Set(REJECTED_STATUSES);
 
 const OFFER_STATUSES = ["Pending", "Accepted", "Expired", "Rejected"];
@@ -468,14 +477,107 @@ function NewProfileModal({ onClose, onCreated }: { onClose: () => void; onCreate
 /* DETAIL PAGE                                                         */
 /* ------------------------------------------------------------------ */
 
+/** RMG screening gate banner (25 Aug 2026): a freshly applied candidate waits
+ * here until RMG clears them for the AI L1. RMG gets the decision buttons;
+ * everyone else sees why the AI-L1 actions are locked. */
+function RmgScreeningBanner({
+  profile, isRmg, onDone, showToast,
+}: {
+  profile: ProfileDetail;
+  isRmg: boolean;
+  onDone: () => void;
+  showToast: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [modal, setModal] = useState<"shortlist" | "reject" | null>(null);
+  const [note, setNote] = useState("");
+  const [noteErr, setNoteErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const decide = async () => {
+    if (modal === "reject" && note.trim().length < 5) {
+      setNoteErr("A rejection note of at least 5 characters is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await crmPost(`/api/candidate-profiles/${profile.id}/rmg-screening`, {
+        decision: modal === "shortlist" ? "Shortlisted" : "Rejected",
+        note: note.trim() || undefined,
+      });
+      showToast(res.message || "Screening decision recorded");
+      setModal(null);
+      onDone();
+    } catch (e: any) {
+      showToast(e?.message || "Decision failed", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-card border border-amber-300/60 bg-amber-50/70 px-5 py-3 dark:border-amber-800/50 dark:bg-amber-950/25">
+      <div className="text-sm text-amber-800 dark:text-amber-300">
+        <b>Awaiting RMG screening</b>
+        {profile.ta_owner_name ? <> — applied by {profile.ta_owner_name}</> : null}.
+        {isRmg
+          ? " Review the candidate's details and decide: Shortlist to enable the AI L1 interview, or Reject with a note."
+          : " AI L1 actions (slot invite / schedule) unlock once RMG shortlists this candidate."}
+      </div>
+      {isRmg && (
+        <div className="flex gap-2">
+          <button className={btnPrimary} onClick={() => { setModal("shortlist"); setNote(""); setNoteErr(""); }}>
+            Shortlist for AI L1
+          </button>
+          <button className={btnDanger} onClick={() => { setModal("reject"); setNote(""); setNoteErr(""); }}>
+            Reject
+          </button>
+        </div>
+      )}
+      {modal && (
+        <Modal
+          title={modal === "shortlist" ? "Shortlist for AI L1" : "Reject at RMG screening"}
+          onClose={() => { if (!busy) setModal(null); }}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-secondary">
+              {modal === "shortlist"
+                ? "The TA who applied this candidate will be notified to proceed: contact the candidate, agree an AI L1 slot, and send the invitation link."
+                : "The TA will be notified with your note. The AI L1 interview stays locked for this candidate."}
+            </p>
+            <Field label={modal === "shortlist" ? "Note (optional)" : "Reason"} required={modal === "reject"} error={noteErr}>
+              <textarea
+                className={`${inputCls}${noteErr ? " input-error" : ""}`}
+                rows={3}
+                value={note}
+                onChange={(e) => { setNote(e.target.value); setNoteErr(""); }}
+                placeholder={modal === "reject" ? "Why is this candidate not suitable? (min 5 characters)" : "Anything the TA should know"}
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <button className={btnSecondary} onClick={() => setModal(null)} disabled={busy}>Cancel</button>
+              <button className={modal === "shortlist" ? btnPrimary : btnDanger} onClick={() => void decide()} disabled={busy}>
+                {busy ? "Working…" : modal === "shortlist" ? "Shortlist & notify TA" : "Reject & notify TA"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 /** RMG hand-off card: shown while a profile sits in RMG_Review. Surfaces the
  * passed AI L1 result and guides the decision — request an L2 AI round, or
  * submit the candidate to the Sales team (or reject). */
 function RmgDecisionBanner({
-  profileId, aiLinks, onViewReport, onDone, showToast,
+  profileId, aiLinks, skillEvaluations, onViewReport, onDone, showToast,
 }: {
   profileId: number;
   aiLinks: AiInterviewLink[] | null;
+  /** For the un-scored warning on Submit to Sales (nothing blocks — RMG may
+   *  deliberately forward without ratings — but it must be a choice, not an
+   *  oversight the Sales team discovers). */
+  skillEvaluations?: { reviewer_rated?: number | null }[];
   onViewReport: () => void;
   onDone: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
@@ -485,28 +587,44 @@ function RmgDecisionBanner({
   const [f2fWhen, setF2fWhen] = useState("");
   const [f2fLink, setF2fLink] = useState("");
   const [f2fNote, setF2fNote] = useState("");
+  const [f2fErrs, setF2fErrs] = useState<{ when?: string; link?: string }>({});
+  /* Decision modal (was window.prompt — a native prompt can't show a
+   * field-level error and some browsers let users suppress it entirely,
+   * which made Submit/Reject silently dead). */
+  const [decision, setDecision] = useState<"sales" | "reject" | null>(null);
+  const [decisionComment, setDecisionComment] = useState("");
+  const [decisionErr, setDecisionErr] = useState("");
   const completed = (aiLinks || []).filter((l) => !l.pending && l.overall_score_percent != null);
   const latest = completed.length
     ? completed.reduce((a, b) => ((a.completed_at || "") > (b.completed_at || "") ? a : b))
     : null;
+  const unrated = (skillEvaluations || []).filter((s) => s.reviewer_rated == null).length;
 
-  const transition = async (kind: "sales" | "reject") => {
-    const isSales = kind === "sales";
-    const comment = window.prompt(
-      isSales
-        ? "Comment for the activity log (why is this candidate being submitted to Sales?)"
-        : "Rejection reason (mandatory)",
-      isSales ? "AI L1 passed — RMG review complete, forwarding to Sales team" : "",
-    );
-    if (comment == null) return;
-    if (comment.trim().length < 5) { showToast("A comment of at least 5 characters is required", "err"); return; }
-    setBusy(kind);
+  const openDecision = (kind: "sales" | "reject") => {
+    setDecision(kind);
+    setDecisionErr("");
+    setDecisionComment(kind === "sales"
+      ? "AI L1 passed — RMG review complete, forwarding to Sales team"
+      : "");
+  };
+
+  const submitDecision = async () => {
+    if (decision == null) return;
+    const isSales = decision === "sales";
+    if (decisionComment.trim().length < 5) {
+      setDecisionErr(isSales
+        ? "A comment of at least 5 characters is required"
+        : "A rejection reason of at least 5 characters is required");
+      return;
+    }
+    setBusy(decision);
     try {
       const res = await crmPost(`/api/candidate-profiles/${profileId}/status-transition`, {
         new_status: isSales ? "Sales_Screening" : "RMG_Rejected",
-        comment: comment.trim(),
+        comment: decisionComment.trim(),
       });
       showToast(res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected"));
+      setDecision(null);
       onDone();
     } catch (e: any) {
       showToast(e?.message || "Transition failed", "err");
@@ -516,11 +634,20 @@ function RmgDecisionBanner({
   };
 
   const scheduleF2f = async () => {
+    /* Empty fields used to POST {null,null,null}: the server accepted it,
+     * logged an "L2 scheduled" event with no date, and emailed the candidate
+     * an invite with no time and no link. Both fields are required now. */
+    const errs: { when?: string; link?: string } = {};
+    if (!f2fWhen.trim()) errs.when = "Pick the date and time of the call";
+    if (!f2fLink.trim()) errs.link = "Paste the meeting link the candidate should join";
+    else if (!/^https?:\/\/\S+$/i.test(f2fLink.trim())) errs.link = "Enter a full link starting with https://";
+    setF2fErrs(errs);
+    if (errs.when || errs.link) return;
     setBusy("f2f");
     try {
       const res = await crmPost<any>(`/api/candidate-profiles/${profileId}/l2-face-to-face`, {
-        scheduled_at: f2fWhen.trim() || null,
-        meeting_link: f2fLink.trim() || null,
+        scheduled_at: f2fWhen.trim(),
+        meeting_link: f2fLink.trim(),
         note: f2fNote.trim() || null,
       });
       showToast(res.message || "L2 face-to-face recorded — TA notified");
@@ -559,12 +686,12 @@ function RmgDecisionBanner({
           <button className={btnSecondary} onClick={() => setF2fOpen(true)} disabled={busy != null}>
             <UsersRound size={15} /> L2 — Face-to-face
           </button>
-          <button className={btnPrimary} onClick={() => void transition("sales")} disabled={busy != null}>
+          <button className={btnPrimary} onClick={() => openDecision("sales")} disabled={busy != null}>
             <ArrowRightLeft size={15} /> {busy === "sales" ? "Submitting…" : "Submit to Sales team"}
           </button>
           <button
             className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-rose-300/60 bg-rose-50 px-3 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800/50 dark:bg-rose-950/30 dark:text-rose-300"
-            onClick={() => void transition("reject")}
+            onClick={() => openDecision("reject")}
             disabled={busy != null}
           >
             <X size={15} /> {busy === "reject" ? "Rejecting…" : "Reject"}
@@ -579,20 +706,20 @@ function RmgDecisionBanner({
               to coordinate, and emails the candidate the details when an email is on file. The profile
               stays in RMG Review — decide after the call.
             </p>
-            <Field label="Date & time">
+            <Field label="Date & time" required error={f2fErrs.when}>
               <input
                 type="datetime-local"
-                className={inputCls}
+                className={`${inputCls}${f2fErrs.when ? " input-error" : ""}`}
                 value={f2fWhen}
-                onChange={(e) => setF2fWhen(e.target.value)}
+                onChange={(e) => { setF2fWhen(e.target.value); setF2fErrs((p) => ({ ...p, when: undefined })); }}
               />
             </Field>
-            <Field label="Meeting link (Teams / Meet)">
+            <Field label="Meeting link (Teams / Meet)" required error={f2fErrs.link}>
               <input
-                className={inputCls}
+                className={`${inputCls}${f2fErrs.link ? " input-error" : ""}`}
                 placeholder="https://teams.microsoft.com/…"
                 value={f2fLink}
-                onChange={(e) => setF2fLink(e.target.value)}
+                onChange={(e) => { setF2fLink(e.target.value); setF2fErrs((p) => ({ ...p, link: undefined })); }}
               />
             </Field>
             <Field label="Note for the candidate / TA (optional)">
@@ -615,8 +742,81 @@ function RmgDecisionBanner({
           </div>
         </Modal>
       )}
+      {decision && (
+        <Modal
+          title={decision === "sales" ? "Submit to Sales team" : "Reject candidate"}
+          onClose={() => { if (busy == null) setDecision(null); }}
+          dirty={decisionComment.trim().length > 0 && decision === "reject"}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-secondary">
+              {decision === "sales"
+                ? "Move this candidate from RMG Review to Sales Screening. The comment goes on the activity log."
+                : "Reject this candidate at the RMG stage. The reason goes on the activity log and cannot be blank."}
+            </p>
+            {decision === "sales" && unrated > 0 && (
+              <p className="rounded-control border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+                {unrated} skill{unrated === 1 ? " has" : "s have"} no reviewer rating on the Skill
+                Evaluation tab — the Sales team will see an unscored candidate. You can still submit,
+                but consider rating them first.
+              </p>
+            )}
+            <Field
+              label={decision === "sales" ? "Comment for the activity log" : "Rejection reason"}
+              required
+              error={decisionErr}
+            >
+              <textarea
+                className={`${inputCls}${decisionErr ? " input-error" : ""}`}
+                rows={3}
+                value={decisionComment}
+                onChange={(e) => { setDecisionComment(e.target.value); setDecisionErr(""); }}
+                placeholder={decision === "sales"
+                  ? "Why is this candidate being submitted to Sales?"
+                  : "Why is this candidate being rejected? (min 5 characters)"}
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <button className={btnSecondary} onClick={() => setDecision(null)} disabled={busy != null}>
+                Cancel
+              </button>
+              <button
+                className={decision === "sales" ? btnPrimary : btnDanger}
+                onClick={() => void submitDecision()}
+                disabled={busy != null}
+              >
+                {busy != null ? "Working…" : decision === "sales" ? "Submit to Sales team" : "Reject candidate"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
+}
+
+/** Detail tabs: key → label, in render order. Single source of truth for both
+ *  the <Tabs> bar and the `?tab=` deep-link allow-list — a tab added to only one
+ *  of those would silently deep-link to Overview with no error anywhere. */
+const PROFILE_TAB_LABELS: Record<string, string> = {
+  overview: "Overview",
+  interviews: "Interviews",
+  skills: "Skill Evaluation",
+  offers: "Offers",
+  activity: "Activity Log",
+  ai: "AI Interview",
+};
+const PROFILE_TABS = Object.keys(PROFILE_TAB_LABELS);
+
+/** The tab a `?tab=` deep link asks for, or "overview". Unknown values are
+ *  ignored rather than rendering an empty page. */
+function initialProfileTab(): string {
+  try {
+    const t = new URLSearchParams(window.location.search).get("tab") || "";
+    return PROFILE_TABS.includes(t) ? t : "overview";
+  } catch {
+    return "overview";
+  }
 }
 
 export function ProfileDetailPage() {
@@ -624,9 +824,41 @@ export function ProfileDetailPage() {
   const [toast, showToast] = useToast();
   const [detail, setDetail] = useState<ProfileDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(initialProfileTab);
   const isRmg = useHasRole("RMG");
   const isSalesHead = useHasRole("Sales_Head");
+  /* Sub-tab access (25 Aug 2026): a template can hide detail tabs. */
+  const profileAcc = useCrmAccess("profiles");
+  useEffect(() => {
+    if (!profileAcc.subTabVisible(`tab:${tab}`)) {
+      const first = PROFILE_TABS.find((k) => profileAcc.subTabVisible(`tab:${k}`));
+      if (first) setTab(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  /* Keep ?tab= in step with the visible tab so the URL is copy-pasteable and a
+   * reload stays put. replaceState, not pushState: clicking through five tabs
+   * should not cost five presses of Back to leave the profile. */
+  const selectTab = (key: string) => {
+    setTab(key);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (key === "overview") params.delete("tab");
+      else params.set("tab", key);
+      const qs = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    } catch { /* URL sync is a convenience; never block the tab switch */ }
+  };
+
+  /* A deep link that arrives while this page is already mounted (the
+   * notification bell navigates in-place) changes only the query string, so
+   * re-read it on every popstate — including crmNavigate's synthetic one. */
+  useEffect(() => {
+    const onPop = () => setTab(initialProfileTab());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   /** Newest offer, shown to Sales Head as the terms they are approving. */
   const latestOffer = useMemo(() => {
@@ -653,9 +885,24 @@ export function ProfileDetailPage() {
     setError("");
     crmGet<ProfileDetail>(`/api/candidate-profiles/${id}`)
       .then((r) => setDetail(r.data))
-      .catch((e: any) => setError(e?.message || "Failed to load profile"));
+      /* Say WHICH profile and WHY. A bare "Failed to load profile" is
+       * indistinguishable between a deleted record (the common case when
+       * arriving from an old notification), a permission problem and a 500 —
+       * and the reader has no way to tell us which one they hit.
+       * The status is appended only for real HTTP errors: crm/api.ts also
+       * throws on a 200 carrying success:false, and "HTTP 200" reads as
+       * nonsense next to an error message. */
+      .catch((e: any) => setError(
+        e?.status === 404
+          ? `Candidate profile #${id} no longer exists. It was probably deleted after the notification that linked here was sent.`
+          : `${e?.message || "Failed to load profile"} (profile #${id}${e?.status >= 400 ? `, HTTP ${e.status}` : ""})`,
+      ));
   };
-  useEffect(load, [id]);
+  /* Drop the old record first: without this, navigating 42 → 99 in place (the
+   * notification bell does exactly that) keeps rendering profile 42's header,
+   * banners and tabs until the new fetch resolves. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load is stable per id
+  useEffect(() => { setDetail(null); load(); }, [id]);
 
   const loadAi = () => {
     setAiError("");
@@ -760,7 +1007,7 @@ export function ProfileDetailPage() {
                 aiScore={aiLatest?.overall_score_percent}
                 aiResult={aiLatest?.effective_result || aiLatest?.result}
                 fmtDateTime={fmtDateTime}
-                onOpen={() => setTab("interviews")}
+                onOpen={() => selectTab("interviews")}
               />
             </div>
             <div className="mt-2 text-sm text-secondary">
@@ -782,7 +1029,7 @@ export function ProfileDetailPage() {
             </div>
           </div>
           <div className="flex flex-col items-end gap-2">
-            <StatusBadge status={detail.pipeline_status} />
+            <StatusBadge status={detail.pipeline_status} label={selfWithdrewLabel(detail.pipeline_status, (detail as any).withdrawn_from_status)} />
             <span
               className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ring-subtle ${
                 detail.commercial_approved ? "bg-success-soft text-success" : "bg-surface-2 text-muted"
@@ -806,11 +1053,35 @@ export function ProfileDetailPage() {
         </div>
       </div>
 
+      {/* RMG screening gate (25 Aug 2026): TA applied → RMG clears for AI L1. */}
+      {detail.rmg_screening_status === "Pending" && (
+        <RmgScreeningBanner
+          profile={detail}
+          isRmg={isRmg}
+          onDone={load}
+          showToast={showToast}
+        />
+      )}
+      {detail.rmg_screening_status === "Rejected" && (
+        <div className="mb-6 rounded-card border border-rose-300/60 bg-rose-50/70 px-5 py-3 text-sm text-rose-800 dark:border-rose-800/50 dark:bg-rose-950/25 dark:text-rose-300">
+          <b>Rejected at RMG screening</b>
+          {detail.rmg_screening_note ? <> — {detail.rmg_screening_note}</> : null}
+          {detail.rmg_screening_at ? <> ({fmtDate(detail.rmg_screening_at)})</> : null}.
+          The AI L1 interview cannot be scheduled for this candidate.
+        </div>
+      )}
+      {detail.rmg_screening_status === "Shortlisted" && detail.pipeline_status === "Sourcing" && (
+        <div className="mb-6 rounded-card border border-emerald-300/60 bg-emerald-50/70 px-5 py-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/25 dark:text-emerald-300">
+          <b>Shortlisted by RMG</b> — proceed with the candidate: agree an AI L1 slot and send the invitation link.
+        </div>
+      )}
+
       {isRmg && detail.pipeline_status === "RMG_Review" && (
         <RmgDecisionBanner
           profileId={detail.id}
           aiLinks={aiLinks}
-          onViewReport={() => setTab("ai")}
+          skillEvaluations={detail.skill_evaluations || []}
+          onViewReport={() => selectTab("ai")}
           onDone={() => { load(); loadAi(); }}
           showToast={showToast}
         />
@@ -833,16 +1104,20 @@ export function ProfileDetailPage() {
 
       <div className="mb-4">
         <Tabs
-          tabs={[
-            { key: "overview", label: "Overview" },
-            { key: "interviews", label: "Interviews", count: detail.interview_events?.length },
-            { key: "skills", label: "Skill Evaluation", count: detail.skill_evaluations?.length },
-            { key: "offers", label: "Offers", count: detail.offers?.length },
-            { key: "activity", label: "Activity Log" },
-            { key: "ai", label: "AI Interview" },
-          ]}
+          tabs={PROFILE_TABS
+            /* Sub-tab access (25 Aug 2026): templates hide tabs via the
+             * `tab:<key>` field entries on the profiles tab. */
+            .filter((key) => profileAcc.subTabVisible(`tab:${key}`))
+            .map((key) => ({
+              key,
+              label: PROFILE_TAB_LABELS[key],
+              count: key === "interviews" ? detail.interview_events?.length
+                : key === "skills" ? detail.skill_evaluations?.length
+                  : key === "offers" ? detail.offers?.length
+                    : undefined,
+            }))}
           active={tab}
-          onChange={setTab}
+          onChange={selectTab}
         />
       </div>
 
@@ -857,6 +1132,7 @@ export function ProfileDetailPage() {
         <InterviewsTab
           profileId={detail.id}
           events={detail.interview_events || []}
+          aiLinks={aiLinks}
           onReload={load}
           showToast={showToast}
         />
@@ -1273,7 +1549,8 @@ function TransitionModal({
   const arrivingAtFeedback = ["L1_Feedback", "L2_Feedback"].includes(newStatus);
   const closingTheLadder =
     CUSTOMER_LADDER.includes(currentStatus) &&
-    ["Shortlisted", "Customer_Approval", "Customer_Rejected"].includes(newStatus);
+    ["Shortlisted", "Customer_Approval", "Customer_Rejected",
+     "Customer_L1_Rejected", "Customer_L2_Rejected"].includes(newStatus);
   const leavingCustomerInterview = arrivingAtFeedback || closingTheLadder;
   const feedbackRoundLabel =
     newStatus === "L1_Feedback" ? "L1" : newStatus === "L2_Feedback" ? "L2" : null;
@@ -1902,7 +2179,8 @@ const ROUND_LABEL: Record<string, string> = {
   L3_Interview: "L3 — Interview",
   L4_Interview: "L4 — Interview",
   HR_Interview: "HR round",
-  Customer_Interview: "Customer interview",
+  Customer_Interview: "Customer L1 — Interview",
+  Customer_L2: "Customer L2 — Interview",
   Other: "Interview",
 };
 
@@ -1951,11 +2229,13 @@ function noteWorthShowing(e: InterviewEventRow): string | null {
 function InterviewsTab({
   profileId,
   events,
+  aiLinks,
   onReload,
   showToast,
 }: {
   profileId: number;
   events: InterviewEventRow[];
+  aiLinks?: AiInterviewLink[] | null;
   onReload: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
@@ -1971,11 +2251,52 @@ function InterviewsTab({
    * is the authority and rejects anything wrong with a 403; this only decides
    * what to render, so a user is never shown a control that would fail.
    */
-  const canWriteTechnical = useHasRole("RMG");
-  const canWriteCustomer = useHasRole("Sales", "Sales_Head");
+  // TA coordinates interviews, so TA can record any round alongside the round's
+  // owner (RMG for internal, Sales for customer). Mirrors ROUND_WRITE_ROLES.
+  const canWriteTechnical = useHasRole("RMG", "TA");
+  const canWriteCustomer = useHasRole("Sales", "Sales_Head", "TA");
+  const isCustomerRound = (kind?: string | null) =>
+    kind === "Customer_Interview" || kind === "Customer_L2";
   const canEditRound = (kind?: string | null) =>
-    kind === "Customer_Interview" ? canWriteCustomer : canWriteTechnical;
+    isCustomerRound(kind) ? canWriteCustomer : canWriteTechnical;
   const canEdit = canWriteTechnical || canWriteCustomer;
+
+  // The AI L1 result is surfaced here as a read-only round so the interview
+  // timeline is complete the moment the AI interview finishes.
+  const aiRounds = (aiLinks || []).filter(
+    (l) => l.completed_at || l.interview_record_id || l.result !== "Pending",
+  );
+  const aiCards = aiRounds.map((l) => (
+    <div key={`ai-${l.id}`} className={`${cardCls} p-5`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">AI {l.level || "L1"} — Interview</span>
+            <span className="rounded-full bg-brand-600/10 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:text-brand-300">
+              AI
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+            <span>{fmtDateTime(l.completed_at) || "In progress"}</span>
+          </div>
+        </div>
+        <div className="text-right">
+          {l.result && (
+            <div className={`text-sm font-semibold ${resultTone(l.result)}`}>{l.result}</div>
+          )}
+          {l.overall_score_percent != null && (
+            <div className="text-xs text-muted">{l.overall_score_percent}%</div>
+          )}
+          {l.report_link && (
+            <a href={l.report_link} target="_blank" rel="noopener noreferrer"
+              className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
+              Full report
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  ));
 
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<InterviewEventRow | null>(null);
@@ -2042,7 +2363,7 @@ function InterviewsTab({
     </>
   );
 
-  if (!events.length) {
+  if (!events.length && aiRounds.length === 0) {
     return (
       <div className="space-y-3">
         {header}
@@ -2067,6 +2388,7 @@ function InterviewsTab({
   return (
     <div className="space-y-3">
       {header}
+      {aiCards}
       {events.map((e) => {
         const when = fmtDateTime(e.scheduled_at) || e.raw_when;
         const note = noteWorthShowing(e);
@@ -2152,6 +2474,7 @@ function InterviewsTab({
           </div>
         );
       })}
+      {modals}
     </div>
   );
 }

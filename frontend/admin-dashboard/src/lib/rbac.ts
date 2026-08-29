@@ -126,6 +126,8 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   // Interview calendar — TA and RMG only (plus Admin/CEO via isSuperAdmin).
   // Sales roles are excluded on purpose; see nav.ts.
   { key: "crm:calendar", label: "Interview Calendar", group: "CRM", roles: ["RMG", "TA"] },
+  { key: "crm:emails", label: "Emails (candidate mail history)", group: "CRM", roles: ["TA", "RMG", "Sales", "Sales_Head", "HR"] },
+  { key: "crm:activity-log", label: "Activity Log (global audit stream)", group: "CRM", roles: ["TA", "RMG", "Sales", "Sales_Head", "HR", "Finance"] },
   { key: "crm:projects", label: "Projects (hub: PE · Timesheets · POs · Invoices)", group: "CRM",
     roles: ["Sales", "Sales_Head", "HR", "Finance", "RMG", "TA"] },
   { key: "crm:project-employees", label: "Project Employees (in hubs)", group: "CRM", roles: ["Sales", "Sales_Head", "HR", "Finance"] },
@@ -141,6 +143,11 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "crm:tds", label: "TDS", group: "CRM", roles: ["Finance"] },
   { key: "crm:employees", label: "Employees", group: "CRM", roles: ["HR"] },
   { key: "crm:reports", label: "Reports", group: "CRM", roles: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
+  // Completing the catalogue (25 Aug 2026) — these pages always gate-checked
+  // template grants, but the keys could not be granted from the editor.
+  { key: "crm:requirements", label: "Requirements (Sourcing)", group: "CRM", roles: ["Sales", "Sales_Head", "RMG", "TA"] },
+  { key: "crm:finance-reports", label: "Finance Reports", group: "CRM", roles: ["Finance"] },
+  { key: "crm:payroll", label: "Payroll", group: "CRM", roles: ["HR", "Finance"] },
   { key: "crm:users", label: "Users", group: "CRM", roles: [] },
   { key: "crm:settings", label: "Settings", group: "CRM", roles: [] },
 ];

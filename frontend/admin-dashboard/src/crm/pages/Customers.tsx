@@ -234,6 +234,7 @@ export function CustomersListPage() {
         columns={columns}
         rows={displayRows}
         meta={meta}
+        headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "customer" : "customers"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
         loading={loading}
         search={search}
         onSearch={setSearch}
@@ -274,7 +275,7 @@ export function CustomersListPage() {
             notify={notify}
             canEdit={canWrite}
             canDelete={canWrite}
-          />
+          colored />
         )}
       />
       {showNew && (
@@ -1494,6 +1495,7 @@ export function CustomerScopedTable<T extends { id: number }>({
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "record" : "records"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           onPage={setPage}
           {...(searchable ? { search, onSearch: (q: string) => { setSearch(q); setPage(1); } } : {})}
           onRowClick={onRow}

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { CalendarDays, CalendarOff, ExternalLink, Plus, RefreshCw, Save } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { RateHistory } from "./ProjectEmployees";
@@ -302,6 +303,17 @@ function PeApplyLeaveModal({
       setApiError("Leave type and from date are required");
       return;
     }
+    /* "To" is rendered required for Multi_Day but was never checked — an empty
+     * To silently posted to_date = from_date, i.e. a ONE-day leave the employee
+     * believed was longer. */
+    if (multiDay && !toDate) {
+      setApiError("Multi-day leave needs a To date — pick the last day of the leave");
+      return;
+    }
+    if (multiDay && toDate < fromDate) {
+      setApiError("The To date cannot be before the From date");
+      return;
+    }
     setBusy(true); setApiError("");
     try {
       const res = await crmPost("/api/leave-applications", {
@@ -311,7 +323,7 @@ function PeApplyLeaveModal({
         leave_type_id: Number(leaveTypeId),
         leave_period_type: periodType,
         from_date: fromDate,
-        to_date: multiDay && toDate ? toDate : fromDate,
+        to_date: multiDay ? toDate : fromDate,
         reason: reason.trim() || null,
       });
       onDone((res as any).message);
@@ -496,7 +508,7 @@ function RateHistorySection({ pe, reload, notify }: {
   reload: () => void;
   notify: (m: string, k?: "ok" | "err") => void;
 }) {
-  const canEditRates = useHasRole("Sales_Head", "Finance", "HR", "RMG");
+  const canEditRates = useCanAct("project-employees", "edit", useHasRole("Sales_Head", "Finance", "HR", "RMG"));
   const [editing, setEditing] = useState(false);
   const [drafts, setDrafts] = useState<RateDraftRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -672,8 +684,8 @@ function RateHistorySection({ pe, reload, notify }: {
 
 export function ProjectEmployeeDetailPage() {
   const { id } = useCrmParams();
-  const canWrite = useHasRole("Sales_Head", "HR");
-  const canSyncLeave = useHasRole("HR", "Admin");
+  const canWrite = useCanAct("project-employees", "edit", useHasRole("Sales_Head", "HR"));
+  const canSyncLeave = useCanAct("project-employees", "edit", useHasRole("HR", "Admin"));
   const [toast, notify] = useToast();
   const [pe, setPe] = useState<PeDetail | null>(null);
   const [error, setError] = useState("");

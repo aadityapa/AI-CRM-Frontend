@@ -484,6 +484,11 @@ function _setInviteStartupState(text) {
   if (aiState) aiState.innerText = msg;
   const status = document.getElementById("candidateStatus");
   if (status) status.innerText = msg;
+  // The "Preparing your interview" hero is what the candidate actually sees
+  // before the interview layout is revealed — keep its subtitle in sync so
+  // status (and the scheduled-wait countdown) is never invisible to them.
+  const welcomeSub = document.getElementById("inviteWelcomeSubtitle");
+  if (welcomeSub) welcomeSub.textContent = msg;
 }
 function _showInviteLoadingOverlay(message) {
   const welcome = document.getElementById("screenInviteWelcome");
@@ -617,11 +622,16 @@ function startInviteCountdown(seconds, onDone) {
     setAuthStatus(msg);
     const q = document.getElementById("candidateQuestion");
     if (q) q.innerText = msg;
+    // Show the countdown on the visible "Preparing your interview" hero too,
+    // so a scheduled interview reads as "starts in HH:MM:SS", not frozen.
+    const wsub = document.getElementById("inviteWelcomeSubtitle");
+    if (wsub) wsub.textContent = msg;
     if (left <= 0) {
       if (timerEl) timerEl.classList.remove("countdown-active");
       setAuthStatus("Preparing your interview session...");
       const prepQ = document.getElementById("candidateQuestion");
       if (prepQ) prepQ.innerText = "Preparing your interview session...";
+      if (wsub) wsub.textContent = "Preparing your interview session...";
       try {
         await onDone();
       } catch (err) {
@@ -807,9 +817,7 @@ async function proceedWithInviteLogin() {
         }
         if (q) q.innerText = "Interview starts in: 00:00:00";
         if (aiState) aiState.innerText = "Interview scheduled";
-        startInviteCountdown(data.seconds_until_start || 0, () => {
-          proceedWithInviteLogin();
-        });
+        startInviteCountdown(data.seconds_until_start || 0, () => proceedWithInviteLogin());
         return;
       }
       const user = data.user || {};
@@ -927,14 +935,18 @@ function showCandidateWelcome() {
           applyRulesConfig(_inviteInterviewConfig);
 
           const candidate = String(schedule.candidate_name || "").trim();
-          if (candidate && nameEl) nameEl.textContent = `, ${candidate}`;
+          // Redesign 27 Aug 2026: the comma lives in the static "Welcome,"
+          // heading; the name renders on its own line (display:block).
+          if (candidate && nameEl) nameEl.textContent = candidate;
           if (subEl && schedule.job_title) {
-            subEl.innerHTML = `Your secure AI interview for <strong>${schedule.job_title}</strong> is ready to begin. ` +
-              "Please review the quick checklist below, then click <strong>Start Interview</strong> when you are ready.";
+            subEl.innerHTML = `Your AI-powered interview for <strong>${schedule.job_title}</strong> is ready. ` +
+              "Please review the checklist to ensure optimal performance. When prepared, select <strong>Start Interview</strong>.";
           }
           if (metaEl && schedule.scheduled_at_local) {
             metaEl.hidden = false;
-            metaEl.textContent = `Scheduled: ${schedule.scheduled_at_local}`;
+            metaEl.textContent = candidate
+              ? `Interview scheduled for ${candidate}: ${schedule.scheduled_at_local}`
+              : `Interview scheduled: ${schedule.scheduled_at_local}`;
           }
         })
         .catch(() => { /* ignore — welcome card stays generic */ });

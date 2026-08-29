@@ -107,6 +107,8 @@ const LazyProjectEmployees = React.lazy(() =>
   import("./ProjectEmployees").then((m) => ({ default: m.ProjectEmployeesPage })));
 const LazyTimesheets = React.lazy(() =>
   import("./Timesheets").then((m) => ({ default: m.TimesheetsListPage })));
+const LazyTimesheetImport = React.lazy(() =>
+  import("./Timesheets").then((m) => ({ default: m.TimesheetImportModal })));
 const LazyPurchaseOrders = React.lazy(() =>
   import("./Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
 const LazyInvoices = React.lazy(() =>
@@ -148,12 +150,24 @@ export function ProjectsListPage() {
 
   const canCreate = useCanAct("projects", "create", useHasRole("Sales_Head", "Finance"));
   const [toast, showToast] = useToast();
+  /* Customer filter (25 Aug 2026): server-side — the list is paginated. */
+  const [customerFilter, setCustomerFilter] = useState("");
+  const [customerOpts, setCustomerOpts] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    crmGet<any[]>("/api/customers/names")
+      .then((r) => setCustomerOpts((r.data || []).map((c: any) => ({ id: c.id, name: c.name }))
+        .sort((a: any, b: any) => a.name.localeCompare(b.name))))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await crmGet<Project[]>(`/api/projects${qs({ status: tab, page, limit: 20, search })}`);
+      const res = await crmGet<Project[]>(`/api/projects${qs({
+        status: tab, page, limit: 20, search,
+        customer_id: customerFilter || undefined,
+      })}`);
       setRows(res.data || []);
       setMeta(res.meta);
     } catch (e: any) {
@@ -161,12 +175,13 @@ export function ProjectsListPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page, search]);
+  }, [tab, page, search, customerFilter]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [customerFilter]);
 
   useEffect(() => {
     crmGet<any[]>("/api/opportunities?limit=100").then((r) => setOpps(r.data || [])).catch(() => {});
-    crmGet<any[]>("/api/customers?limit=100").then((r) => setCustomers(r.data || [])).catch(() => {});
+    crmGet<any[]>("/api/customers/names").then((r) => setCustomers(r.data || [])).catch(() => {});
   }, []);
 
   const customerName = useMemo(() => {
@@ -182,7 +197,23 @@ export function ProjectsListPage() {
 
   const columns: Column<Project>[] = [
     { key: "name", label: "Name", render: (r) => <span className="font-semibold">{r.name}</span> },
-    { key: "customer", label: "Customer", render: (r) => customerName(r.customer_id) },
+    { key: "customer", label: "Customer", render: (r) => {
+      // Logo-style initials chip before the name (redesign mock).
+      const name = customerName(r.customer_id);
+      const initials = name.replace(/[^A-Za-z0-9 ]/g, "").split(/\s+/).filter(Boolean)
+        .slice(0, 2).map((p) => p[0]!.toUpperCase()).join("") || "?";
+      return (
+        <span className="inline-flex items-center gap-2">
+          <span
+            aria-hidden
+            className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-brand-600/10 text-[9px] font-bold text-brand-700 ring-1 ring-inset ring-brand-600/20 dark:text-brand-300"
+          >
+            {initials}
+          </span>
+          <span className="font-medium">{name}</span>
+        </span>
+      );
+    } },
     // Null-safe: projects created without a sales opportunity show a dash.
     { key: "opportunity", label: "Opportunity",
       render: (r) => (r.opportunity_id ? oppTitle(r.opportunity_id) : "—") },
@@ -220,11 +251,24 @@ export function ProjectsListPage() {
         </React.Suspense>
       ) : (
       <>
-      <Tabs
-        tabs={PROJECT_STATUSES.map((s) => ({ key: s, label: pretty(s) }))}
-        active={tab}
-        onChange={(k) => { setTab(k); setPage(1); }}
-      />
+      {/* Status filter as a segmented pill group (redesign mock, 28 Aug 2026)
+          — reads as a filter over one list, not as three separate pages. */}
+      <div className="inline-flex w-fit items-center gap-1 rounded-control bg-surface-2 p-1 ring-1 ring-inset ring-subtle">
+        {PROJECT_STATUSES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => { setTab(s); setPage(1); }}
+            className={`rounded-control px-3.5 py-1.5 text-sm font-semibold transition-colors duration-micro ease-smooth ${
+              tab === s
+                ? "bg-surface-1 text-brand-600 shadow-sm dark:text-brand-300"
+                : "text-muted hover:text-primary"
+            }`}
+          >
+            {pretty(s)}
+          </button>
+        ))}
+      </div>
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : (
@@ -237,6 +281,19 @@ export function ProjectsListPage() {
           onSearch={(q) => { setSearch(q); setPage(1); }}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
+          filters={
+            <select className="input-recessed !w-52 rounded-control px-3 py-2 text-sm"
+              value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
+              title="Filter by customer">
+              <option value="">All customers</option>
+              {customerOpts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          }
+          headerRight={meta ? (
+            <span className="whitespace-nowrap text-xs font-medium text-muted">
+              {meta.total} project{meta.total === 1 ? "" : "s"}, page {meta.page}/{Math.max(1, meta.pages || 1)}
+            </span>
+          ) : undefined}
           emptyMessage={<TeachingEmpty page="projects" />}
           rowActions={canCreate ? (r) => (
             <RowActions
@@ -249,6 +306,7 @@ export function ProjectsListPage() {
               notify={showToast}
               canEdit
               canDelete
+              colored
             />
           ) : undefined}
         />
@@ -362,11 +420,9 @@ function OverviewTab({
             <Pencil size={15} /> Edit project
           </button>
         )}
-        {canPo && (
-          <button className={btnPrimary} onClick={() => setShowPo(true)}>
-            <Receipt size={15} /> Create PO
-          </button>
-        )}
+        {/* Create PO removed from the project page (user decision, 27 Aug
+            2026) — POs are raised from the Purchase Orders tab, where the
+            full wizard (addresses, GST, employee) lives. */}
       </div>
       {createdPo && (
         <div className="rounded-card border border-success/30 bg-success-soft px-4 py-3 text-sm text-success">
@@ -1045,6 +1101,9 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [toast, showToast] = useToast();
 
   const employeeName = useMemo(() => {
     const m = new Map<number, string>();
@@ -1082,6 +1141,44 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
     );
   }, [rows, search, employeeName]);
 
+  /** Create the sheet for one due (employee, month) — full day grid included. */
+  const createSheet = async (r: any) => {
+    const key = `${r.employee_id}-${r.year}-${r.month}`;
+    setCreating(key);
+    try {
+      const res = await crmPost("/api/timesheets", {
+        project_id: project.id, employee_id: r.employee_id,
+        month: r.month, year: r.year, generate_days: true,
+      });
+      showToast(res.message || `Timesheet created for ${MONTHS[(r.month || 1) - 1]} ${r.year}`);
+      await load();
+    } catch (e: any) {
+      showToast(e?.message || "Failed to create the timesheet", "err");
+    } finally {
+      setCreating(null);
+    }
+  };
+
+  const dueRows = rows.filter((r) => !r.id);
+  const createAllDue = async () => {
+    setCreating("all");
+    let ok = 0, failed = 0;
+    for (const r of dueRows) {
+      try {
+        await crmPost("/api/timesheets", {
+          project_id: project.id, employee_id: r.employee_id,
+          month: r.month, year: r.year, generate_days: true,
+        });
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    showToast(`${ok} timesheet(s) created${failed ? ` · ${failed} failed` : ""}`, failed ? "err" : "ok");
+    setCreating(null);
+    await load();
+  };
+
   const columns: Column<any>[] = [
     { key: "employee", label: "Employee", render: (r) => employeeName(r.employee_id) },
     { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year}` },
@@ -1097,14 +1194,31 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
     ) },
     { key: "submitted_at", label: "Submitted", render: (r) => fmtDate(r.submitted_at) },
     { key: "approved_at", label: "Approved", render: (r) => fmtDate(r.approved_at) },
+    {
+      key: "actions", label: "",
+      // One click closes the gap (user request, 27 Aug 2026): a due month
+      // gets its sheet created right here, day grid generated by policy.
+      render: (r) => !r.id ? (
+        <button
+          type="button"
+          className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
+          disabled={creating !== null}
+          onClick={(e) => { e.stopPropagation(); void createSheet(r); }}
+        >
+          {creating === `${r.employee_id}-${r.year}-${r.month}` ? "Creating…" : "Create"}
+        </button>
+      ) : null,
+    },
   ];
 
   if (error) return <ErrorBox error={error} onRetry={load} />;
   return (
+    <>
     <DataTable<any>
       columns={columns}
       rows={filtered}
       meta={meta}
+      headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "timesheet" : "timesheets"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
       loading={loading}
       onPage={setPage}
       search={search}
@@ -1135,9 +1249,41 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
             {TS_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
             <option value="Due">Due (not created)</option>
           </select>
+          {dueRows.length > 0 && (
+            <button
+              type="button"
+              className={`${btnPrimary} !px-3 !py-2 text-xs`}
+              disabled={creating !== null}
+              onClick={() => void createAllDue()}
+              title="Create every due timesheet shown on this page, with the day grid generated"
+            >
+              {creating === "all" ? "Creating…" : `Create all due (${dueRows.length})`}
+            </button>
+          )}
+          <button
+            type="button"
+            className={`${btnSecondary} !px-3 !py-2 text-xs`}
+            onClick={() => setShowImport(true)}
+            title="Bulk-upload historic timesheet data from Excel for an employee on this project"
+          >
+            Import Excel
+          </button>
         </>
       }
     />
+    {showImport && (
+      <React.Suspense fallback={null}>
+        <LazyTimesheetImport
+          projects={[{ id: project.id, name: project.name }]}
+          initialProjectId={String(project.id)}
+          onClose={() => setShowImport(false)}
+          onDone={() => load()}
+          notify={showToast}
+        />
+      </React.Suspense>
+    )}
+    {toast}
+    </>
   );
 }
 
@@ -1164,7 +1310,9 @@ function FinanceTab({ project }: { project: ProjectDetail }) {
     setLoading(true);
     Promise.all([
       crmGet<any[]>(`/api/invoices${qs({ project_id: project.id, limit: 100 })}`),
-      crmGet<any[]>(`/api/purchase-orders${qs({ customer_id: project.customer_id, limit: 100 })}`).catch(() => ({ data: [] as any[] })),
+      // Project-scoped (27 Aug 2026): only POs allocated here or raised for
+      // this project's mapped employees — not the customer's whole PO book.
+      crmGet<any[]>(`/api/purchase-orders${qs({ project_id: project.id, limit: 100 })}`).catch(() => ({ data: [] as any[] })),
     ])
       .then(([inv, po]) => {
         if (cancelled) return;
@@ -1209,10 +1357,10 @@ function FinanceTab({ project }: { project: ProjectDetail }) {
     <div className="space-y-5">
       <section>
         <h2 className="mb-2 text-sm font-bold text-primary">
-          Purchase orders <span className="font-normal text-muted">(for this customer)</span>
+          Purchase orders <span className="font-normal text-muted">(allocated to this project or its employees)</span>
         </h2>
         {pos.length === 0 ? (
-          <EmptyState message="No purchase orders for this customer" />
+          <EmptyState message="No purchase orders allocated to this project yet" />
         ) : (
           <DataTable<any>
             columns={[

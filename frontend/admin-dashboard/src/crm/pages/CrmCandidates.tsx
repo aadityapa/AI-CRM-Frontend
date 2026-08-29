@@ -308,6 +308,7 @@ export function CandidatesListPage() {
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "candidate" : "candidates"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           loading={loading}
           search={search}
           onSearch={setSearch}
@@ -378,7 +379,7 @@ export function CandidatesListPage() {
                 notify={showToast}
                 canEdit
                 canDelete
-              />
+              colored />
             </span>
           ) : undefined}
         />
@@ -463,6 +464,27 @@ function CandidateFormModal({
 
   type DupMatch = { id: number; name: string; email?: string | null; phone?: string | null; match_on: string[] };
   const [dupes, setDupes] = useState<DupMatch[] | null>(null);
+  // Email is the candidate's unique key: an email match is a HARD block (no
+  // second record). Name/phone matches stay a soft warning — two people can
+  // share a name. `emailMatch` is the existing record we point the recruiter to.
+  const emailMatch = !isEdit ? (dupes || []).find((d) => d.match_on.includes("email")) || null : null;
+  const emailBlocked = !!emailMatch;
+
+  /** Check the email the moment it's entered, so a duplicate is caught before
+   * the recruiter fills the whole form. Email-only — the full multi-signal
+   * check still runs on submit. */
+  const checkEmailDuplicate = async () => {
+    if (isEdit) return;
+    const email = form.email.trim();
+    if (!email || email.endsWith("@import.karnex.in")) return;
+    try {
+      const res = await crmGet<DupMatch[]>(
+        `/api/candidates/check-duplicates?email=${encodeURIComponent(email)}`,
+      );
+      const hits = (res.data || []).filter((d) => d.match_on.includes("email"));
+      if (hits.length > 0) setDupes(hits);
+    } catch { /* a check failure must never block the form */ }
+  };
 
   const submit = async (opts?: { skipDupCheck?: boolean }) => {
     if (!form.first_name.trim()) return setError("First name is required");
@@ -560,6 +582,65 @@ function CandidateFormModal({
       >
       {error && <div className="mb-3"><ErrorBox error={error} /></div>}
       <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+        {/* Email FIRST (create): the unique key, checked before anything else so a
+            duplicate is caught up front and the recruiter is pointed at the
+            existing record. */}
+        {!isEdit && (
+          <>
+            <div className={secHead}>Candidate email — checked first</div>
+            <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
+              <input className={inputCls} type="email" value={form.email} autoFocus
+                placeholder="Enter the candidate's email first"
+                onChange={(e) => { set("email", e.target.value); if (dupes) setDupes(null); }}
+                onBlur={() => void checkEmailDuplicate()} />
+              {isPlaceholderEmail(form.email) && (
+                <p className="mt-1 text-xs text-warning">
+                  Placeholder address — replace it with the candidate&rsquo;s real one.
+                </p>
+              )}
+            </WizardField>
+            {dupes && dupes.length > 0 && (
+              <div
+                className={`sm:col-span-2 rounded-card border p-4 ${
+                  emailBlocked
+                    ? "border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/40"
+                    : "border-warning/40 bg-warning-soft"
+                }`}
+                role="alert"
+              >
+                <p className={`text-sm font-bold ${emailBlocked ? "text-rose-700 dark:text-rose-300" : "text-warning"}`}>
+                  {emailBlocked
+                    ? "This email already exists — a duplicate can't be created"
+                    : `Possible duplicate${dupes.length > 1 ? "s" : ""} — is this the same person?`}
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {dupes.map((d) => (
+                    <li key={d.id} className="flex flex-wrap items-center gap-2 text-sm text-secondary">
+                      <span className="font-semibold text-primary">{d.name || `#${d.id}`}</span>
+                      {d.phone && <span>{d.phone}</span>}
+                      {d.email && !d.email.endsWith("@import.karnex.in") && <span>{displayEmail(d.email)}</span>}
+                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">
+                        same {d.match_on.join(" + ")}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                        onClick={() => { onClose(); crmNavigate(`candidates/${d.id}`); }}
+                      >
+                        Open record
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-secondary">
+                  {emailBlocked
+                    ? "Email is the candidate's unique key, so a second record isn't allowed. Open the existing candidate to update their resume or details, or apply them to an opportunity."
+                    : "Open the existing record instead of creating a second one — or, if this really is a different person, create anyway."}
+                </p>
+              </div>
+            )}
+          </>
+        )}
         <div className={secHead}>Name</div>
         <WizardField label="Salutation">
           <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
@@ -578,17 +659,19 @@ function CandidateFormModal({
         </WizardField>
 
         <div className={secHead}>Basic details</div>
-        <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
-          <input className={inputCls} type="email" value={form.email} disabled={locked("email")} onChange={(e) => set("email", e.target.value)} />
-          {/* Kept visible and editable so it can be replaced, but flagged — this
-              address is a system placeholder, not a way to reach the candidate. */}
-          {isPlaceholderEmail(form.email) && (
-            <p className="mt-1 text-xs text-warning">
-              Placeholder address — this candidate had no email in Zoho. Replace it with
-              their real one.
-            </p>
-          )}
-        </WizardField>
+        {/* Email lives up top on create; on edit it stays here so it can be replaced. */}
+        {isEdit && (
+          <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
+            <input className={inputCls} type="email" value={form.email} disabled={locked("email")}
+              onChange={(e) => set("email", e.target.value)} />
+            {isPlaceholderEmail(form.email) && (
+              <p className="mt-1 text-xs text-warning">
+                Placeholder address — this candidate had no email in Zoho. Replace it with
+                their real one.
+              </p>
+            )}
+          </WizardField>
+        )}
         <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
           <input className={inputCls} value={form.phone} disabled={locked("phone")} onChange={(e) => set("phone", e.target.value)} />
         </WizardField>
@@ -668,39 +751,17 @@ function CandidateFormModal({
           </WizardField>
         )}
       </div>
-      {dupes && dupes.length > 0 && (
-        <div className="mt-4 rounded-card border border-warning/40 bg-warning-soft p-4" role="alert">
-          <p className="text-sm font-bold text-warning">
-            Possible duplicate{dupes.length > 1 ? "s" : ""} — is this the same person?
-          </p>
-          <ul className="mt-2 space-y-1.5">
-            {dupes.map((d) => (
-              <li key={d.id} className="flex flex-wrap items-center gap-2 text-sm text-secondary">
-                <span className="font-semibold text-primary">{d.name || `#${d.id}`}</span>
-                {d.phone && <span>{d.phone}</span>}
-                {d.email && !d.email.endsWith("@import.karnex.in") && <span>{displayEmail(d.email)}</span>}
-                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">
-                  same {d.match_on.join(" + ")}
-                </span>
-                <button
-                  type="button"
-                  className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
-                  onClick={() => { onClose(); crmNavigate(`candidates/${d.id}`); }}
-                >
-                  View
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs text-secondary">
-            Open the existing record instead of creating a second one — or, if this really is a
-            different person, create anyway.
-          </p>
-        </div>
-      )}
       <div className={wizFooterRow}>
         <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-        {dupes && dupes.length > 0 && !isEdit ? (
+        {emailBlocked ? (
+          <button
+            className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`}
+            onClick={() => { onClose(); if (emailMatch) crmNavigate(`candidates/${emailMatch.id}`); }}
+            disabled={busy}
+          >
+            Open existing candidate
+          </button>
+        ) : dupes && dupes.length > 0 && !isEdit ? (
           <button
             className={`${btnSecondary} ml-auto h-10 rounded-xl px-4`}
             onClick={() => void submit({ skipDupCheck: true })}
@@ -935,6 +996,7 @@ export function CandidateDetailPage() {
           { key: "skills", label: "Skills", count: data.skills.length },
           { key: "profiles", label: "Linked Profiles", count: data.profiles.length },
           { key: "outreach", label: "Outreach" },
+          { key: "emails", label: "Emails" },
         ]}
         active={tab}
         onChange={setTab}
@@ -1017,6 +1079,7 @@ export function CandidateDetailPage() {
       )}
 
       {tab === "outreach" && <OutreachTab candidateId={data.id} showToast={showToast} />}
+      {tab === "emails" && <EmailsTab candidateId={data.id} />}
 
       {showEdit && (
         <CandidateFormModal
@@ -1099,6 +1162,81 @@ export function CandidateDetailPage() {
 }
 
 /* ------------------------------------------------------------------ outreach tab */
+
+type CandidateEmailRow = {
+  id: number; event: string; subject: string; body_text: string; status: string;
+  from_name?: string | null; reply_to_email?: string | null; reply_to_name?: string | null;
+  attempts: number; last_error?: string | null; created_at?: string | null; sent_at?: string | null;
+};
+
+/** Every email the system sent to this candidate (invites, hiring-interest,
+ * confirmations) with delivery status and which recruiter receives the reply.
+ * Outbound only — replies land in the recruiter's mailbox, not in Karnex. */
+function EmailsTab({ candidateId }: { candidateId: number }) {
+  const [rows, setRows] = useState<CandidateEmailRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [openId, setOpenId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    crmGet<CandidateEmailRow[]>(`/api/candidates/${candidateId}/emails`)
+      .then((r) => { if (alive) setRows(r.data || []); })
+      .catch((e: any) => { if (alive) setError(e?.message || "Failed to load emails"); });
+    return () => { alive = false; };
+  }, [candidateId]);
+
+  if (error) return <ErrorBox error={error} />;
+  if (rows === null) return <Spinner label="Loading email history…" />;
+  if (rows.length === 0) {
+    return (
+      <EmptyState message="No emails sent to this candidate yet — interview invites and hiring-interest mails will appear here. (Replies go to the sending recruiter's mailbox.)" />
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted">
+        {rows.length} email{rows.length === 1 ? "" : "s"} sent to this candidate. Replies go to the
+        recruiter shown on each mail — Karnex records the outbound side only.
+      </p>
+      {rows.map((r) => (
+        <div key={r.id} className="rounded-card border border-subtle bg-surface-1">
+          <button
+            type="button"
+            className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-left"
+            onClick={() => setOpenId(openId === r.id ? null : r.id)}
+          >
+            <StatusBadge status={r.status} />
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-primary">{r.subject}</span>
+            <span className="text-xs text-muted">
+              {r.sent_at
+                ? new Date(r.sent_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+                : r.created_at
+                  ? new Date(r.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+                  : "—"}
+            </span>
+          </button>
+          {openId === r.id && (
+            <div className="border-t border-subtle px-4 py-3">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+                <span>Event: <span className="font-semibold text-secondary">{r.event}</span></span>
+                {r.from_name && <span>From: <span className="font-semibold text-secondary">{r.from_name}</span></span>}
+                {r.reply_to_email && (
+                  <span>Replies go to: <span className="font-semibold text-secondary">{r.reply_to_name || r.reply_to_email}</span></span>
+                )}
+                {r.status === "Failed" && r.last_error && (
+                  <span className="text-danger">Error: {r.last_error} ({r.attempts} attempts)</span>
+                )}
+              </div>
+              <pre className="mt-3 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-card bg-surface-2 p-3 text-sm leading-relaxed text-primary font-sans">
+                {r.body_text}
+              </pre>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function OutreachTab({
   candidateId,

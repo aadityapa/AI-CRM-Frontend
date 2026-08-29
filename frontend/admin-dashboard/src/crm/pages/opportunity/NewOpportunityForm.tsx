@@ -31,6 +31,7 @@ import { CONTACT_ROLES } from "../../constants/geo";
 import { CustomerFormModal, type Customer } from "../Customers";
 import { branchContactAutofill, emailFromContact, phoneFromContact, splitBranchContacts } from "../../lib/contactPhone";
 import { useHasRole } from "../../CrmApp";
+import { useCanAct } from "../../useAccess";
 import {
   calculateBillingBases,
   calculateRfiValue,
@@ -184,7 +185,7 @@ export function NewOpportunityForm({
 }) {
   const reduce = useReducedMotion();
   const [toast, notify] = useToast();
-  const isSales = useHasRole("Sales", "Sales_Head");
+  const isSales = useCanAct("opportunities", "create", useHasRole("Sales", "Sales_Head"));
   // A plain Sales person — Sales_Head and Admin keep the full status list, since
   // they oversee the whole pipeline rather than just opening it.
   // Both hooks must run unconditionally (rules-of-hooks) — combine after.
@@ -379,6 +380,39 @@ export function NewOpportunityForm({
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opportunityId, state.isLoaded]);
+
+  /* Live duplicate check on Opportunity ID (26 Aug 2026): a duplicate used to
+   * surface only at SAVE, after the whole form was filled. The field now warns
+   * ~0.5s after typing stops. The auto-previewed number is never checked (the
+   * server guarantees it), and edit mode excludes the record itself. The
+   * message feeds validateField, so Next/Create stay blocked while it stands. */
+  const [oppIdTaken, setOppIdTaken] = useState("");
+  useEffect(() => {
+    const typed = String(state.core.opp_id ?? "").trim();
+    if (!typed || typed === autoOppIdRef.current) {
+      setOppIdTaken("");
+      setErrors((e) => (e.opp_id ? { ...e, opp_id: "" } : e));
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      crmGet<{ available: boolean; existing?: { opp_id: string; title?: string | null; customer_name?: string | null } | null }>(
+        `/api/opportunities/check-id?opp_id=${encodeURIComponent(typed)}${opportunityId ? `&exclude_id=${opportunityId}` : ""}`,
+      )
+        .then((r) => {
+          if (!alive) return;
+          const ex = r.data?.existing;
+          const msg = r.data?.available === false
+            ? `${ex?.opp_id || typed} already exists${ex?.title ? ` — "${ex.title}"` : ""}${ex?.customer_name ? ` (${ex.customer_name})` : ""}. Choose a different ID.`
+            : "";
+          setOppIdTaken(msg);
+          setErrors((e) => ({ ...e, opp_id: msg }));
+        })
+        .catch(() => { /* offline check failure must not block typing; save still validates */ });
+    }, 450);
+    return () => { alive = false; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.core.opp_id, opportunityId]);
 
   /* Closing Date auto-derives (18 Aug 2026): RFI Received Date + Notice
    * Period days. Fills only while the field is empty or still holding the
@@ -1083,6 +1117,8 @@ export function NewOpportunityForm({
   };
 
   const validateField = (f: FieldDef): string => {
+    // Duplicate Opportunity ID blocks Next/Create until changed.
+    if (f.key === "opp_id" && oppIdTaken) return oppIdTaken;
     const v = isCoreKey(f.key) ? state.core[f.key] : details[f.key];
     if (f.required && (v === "" || v === null || v === undefined
         || (Array.isArray(v) && v.length === 0))) return `${f.label} is required`;

@@ -16,10 +16,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Bot, Calendar as CalendarIcon, ChevronLeft, ChevronRight, ExternalLink,
   FileText, Link2, Mail, MapPin, Plus, RefreshCw, User, Users,
+  Clock3,
+  Check,
 } from "lucide-react";
 
 import { crmGet, qs } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate } from "../routerHooks";
 import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal";
 import { Modal, btnPrimary, btnSecondary, inputCls } from "../components/ui";
@@ -112,7 +115,7 @@ const SOURCE_STYLE: Record<CalendarSource, { chip: string; block: string; label:
 /* ------------------------------------------------------------------ */
 
 export default function CalendarPage() {
-  const canSchedule = useHasRole("TA", "RMG");
+  const canSchedule = useCanAct("calendar", "edit", useHasRole("TA", "RMG"));
 
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [showAi, setShowAi] = useState(true);
@@ -357,16 +360,23 @@ export default function CalendarPage() {
                         }}
                       >
                         <span className="flex items-center gap-1 font-semibold">
-                          {ev.source === "ai_l1" ? (
-                            <Bot size={10} className="shrink-0" />
-                          ) : (
-                            <Users size={10} className="shrink-0" />
-                          )}
+                          <Clock3 size={10} className="shrink-0 opacity-70" />
                           <span className="truncate">{formatTime(item.start)}</span>
+                          {ev.source === "ai_l1"
+                            ? <Bot size={10} className="ml-auto shrink-0 opacity-60" />
+                            : <Users size={10} className="ml-auto shrink-0 opacity-60" />}
                         </span>
                         <span className="mt-0.5 block truncate font-medium">
-                          {ev.candidate_name || ev.title}
+                          Interview: {ev.candidate_name || ev.title}
                         </span>
+                        {height >= 34 && (
+                          /* initials chip, bottom-right — as in the mock */
+                          <span className="absolute bottom-1 right-1.5 grid h-4 w-4 place-items-center rounded-full bg-white/70 text-[8px] font-bold text-slate-700 ring-1 ring-black/10 dark:bg-white/20 dark:text-white">
+                            {(ev.candidate_name || ev.title || "?")
+                              .split(/\s+/).filter(Boolean).slice(0, 2)
+                              .map((p) => p[0]?.toUpperCase() || "").join("")}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -459,9 +469,13 @@ function Toolbar({
   const navBtn =
     "inline-flex h-8 w-8 items-center justify-center rounded-control border border-subtle " +
     "bg-surface-2 text-secondary transition-colors hover:bg-surface-3 hover:text-primary";
-  const pill = (on: boolean, tone: string) =>
-    `inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${
-      on ? tone : "border-subtle bg-surface-2 text-muted hover:text-secondary"
+  /* Checkbox-style source filters (27 Aug 2026 redesign): a small coloured
+   * checkbox + label, like the reference design — the pill look read as
+   * status chips, not filters. */
+  const checkRow = "inline-flex cursor-pointer select-none items-center gap-1.5 text-xs font-semibold text-secondary hover:text-primary";
+  const checkBox = (on: boolean, tone: string) =>
+    `grid h-3.5 w-3.5 place-items-center rounded-[3px] border transition-colors ${
+      on ? `${tone} border-transparent text-white` : "border-strong bg-surface-1"
     }`;
 
   return (
@@ -490,31 +504,27 @@ function Toolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={onToggleAi}
-          className={pill(showAi, "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-600/50 dark:bg-brand-950/40 dark:text-brand-300")}
-          aria-pressed={showAi}
-        >
-          <Bot size={12} /> AI{counts ? ` (${counts.ai_l1})` : ""}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleManual}
-          className={pill(showManual, "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-600/50 dark:bg-violet-950/40 dark:text-violet-300")}
-          aria-pressed={showManual}
-        >
-          <Users size={12} /> Panel{counts ? ` (${counts.manual_round})` : ""}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleMine}
-          className={pill(mine, "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-600/50 dark:bg-emerald-950/40 dark:text-emerald-300")}
-          aria-pressed={mine}
-          title="Only interviews you scheduled"
-        >
-          <User size={12} /> Mine
-        </button>
+        <label className={checkRow}>
+          <button type="button" role="checkbox" aria-checked={showAi}
+            className={checkBox(showAi, "bg-brand-600")} onClick={onToggleAi}>
+            {showAi && <Check size={10} strokeWidth={3.5} />}
+          </button>
+          AI{counts ? ` (${counts.ai_l1})` : ""}
+        </label>
+        <label className={checkRow}>
+          <button type="button" role="checkbox" aria-checked={showManual}
+            className={checkBox(showManual, "bg-violet-500")} onClick={onToggleManual}>
+            {showManual && <Check size={10} strokeWidth={3.5} />}
+          </button>
+          Panel{counts ? ` (${counts.manual_round})` : ""}
+        </label>
+        <label className={checkRow} title="Only interviews you scheduled">
+          <button type="button" role="checkbox" aria-checked={mine}
+            className={checkBox(mine, "bg-emerald-500")} onClick={onToggleMine}>
+            {mine && <Check size={10} strokeWidth={3.5} />}
+          </button>
+          Mine
+        </label>
         {canSchedule && (
           <button type="button" className={btnPrimary} onClick={onNew}>
             <Plus size={15} /> New interview

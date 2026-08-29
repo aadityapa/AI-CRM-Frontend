@@ -6,8 +6,10 @@ import { Tabs } from "../components/ui";
 import { OpportunitiesListPage } from "./Opportunities";
 import { RequirementsListPage } from "./Requirements";
 import { ProfilesListPage } from "./Profiles";
+import { TemplateRequestsPage } from "./TemplateRequests";
 
-export type OppWorkspaceTab = "pipeline" | "sow" | "requirements" | "applicants";
+export type OppWorkspaceTab =
+  | "pipeline" | "sow" | "requirements" | "applicants" | "template-requests";
 
 /** Roles that see the Pipeline (opportunities table) sub-tab. */
 export const PIPELINE_TAB_ROLES = ["Admin", "Sales", "Sales_Head"] as const;
@@ -37,13 +39,17 @@ export function visibleOpportunitySubTabs(roles: string[]): OppWorkspaceTab[] {
   // request) — the panel still renders for deep links (?opp_tab=requirements
   // and the legacy /requirements redirect), it just has no tab button.
   if (isAdmin || APPLICANTS_TAB_ROLES.some((r) => set.has(r))) tabs.push("applicants");
+  // Admin/CEO only (26 Aug 2026, user decision): Template Requests lives HERE
+  // for admins — their sidebar entry is hidden. TA/RMG keep the sidebar page.
+  if (isAdmin) tabs.push("template-requests");
   return tabs;
 }
 
 function readInitialTab(fallback: OppWorkspaceTab): OppWorkspaceTab {
   try {
     const v = new URLSearchParams(window.location.search).get("opp_tab");
-    if (v === "requirements" || v === "pipeline" || v === "sow" || v === "applicants") return v;
+    if (v === "requirements" || v === "pipeline" || v === "sow"
+      || v === "applicants" || v === "template-requests") return v;
   } catch {
     /* ignore */
   }
@@ -58,6 +64,8 @@ export function OpportunitiesWorkspace({
   const canPipeline = useHasRole(...PIPELINE_TAB_ROLES);
   const canRequirements = useHasRole(...REQUIREMENTS_TAB_ROLES);
   const canApplicants = useHasRole(...APPLICANTS_TAB_ROLES);
+  // useHasRole("Admin") is true for CEO too (isSuperAdmin shortcut).
+  const isAdminCeo = useHasRole("Admin");
 
   const tabs = useMemo(() => {
     const out: { key: OppWorkspaceTab; label: string }[] = [];
@@ -68,8 +76,9 @@ export function OpportunitiesWorkspace({
     // Requirements tab removed from the strip (14 Aug 2026) — the panel still
     // answers deep links so RMG/TA workflows and old bookmarks keep working.
     if (canApplicants) out.push({ key: "applicants", label: "Applicants" });
+    if (isAdminCeo) out.push({ key: "template-requests", label: "Template Requests" });
     return out;
-  }, [canPipeline, canApplicants]);
+  }, [canPipeline, canApplicants, isAdminCeo]);
 
   const defaultTab = preferTab && tabs.some((t) => t.key === preferTab)
     ? preferTab
@@ -77,7 +86,8 @@ export function OpportunitiesWorkspace({
 
   const [tab, setTab] = useState<OppWorkspaceTab>(() =>
     preferTab && (preferTab === "pipeline" || preferTab === "sow"
-      || preferTab === "requirements" || preferTab === "applicants")
+      || preferTab === "requirements" || preferTab === "applicants"
+      || preferTab === "template-requests")
       ? preferTab
       : readInitialTab(defaultTab),
   );
@@ -135,6 +145,7 @@ export function OpportunitiesWorkspace({
           subtitle="Every candidate application across opportunities."
         />
       ) : null}
+      {tab === "template-requests" && isAdminCeo ? <TemplateRequestsPage /> : null}
     </div>
   );
 }

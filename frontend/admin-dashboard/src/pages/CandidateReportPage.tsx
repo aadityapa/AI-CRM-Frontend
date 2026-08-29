@@ -167,7 +167,10 @@ export function CandidateReportPage({
       try {
         setLoading(true);
         setError("");
-        const hist = await getCandidateInterviewHistory(candidateId, { limit: 80 });
+        const hist = await getCandidateInterviewHistory(candidateId, {
+          limit: 80,
+          iid: String(initialInterviewId || "").trim() || undefined,
+        });
         if (!alive) return;
         setHistory(hist);
         if (hist?.candidate) {
@@ -215,7 +218,7 @@ export function CandidateReportPage({
     (async () => {
       try {
         setRecordBusy(true);
-        const rec = await getCandidateInterviewDetail(candidateId, id);
+        const rec = await getCandidateInterviewDetail(history?.candidate?.id || candidateId, id);
         if (!alive) return;
         setRecord(rec);
       } catch {
@@ -342,7 +345,7 @@ export function CandidateReportPage({
       try {
         setSwBusy(true);
         setSwError("");
-        const res = await getCandidateStrengthsWeaknesses(candidateId, id);
+        const res = await getCandidateStrengthsWeaknesses(history?.candidate?.id || candidateId, id);
         if (!alive) return;
         setSwAnalysis((res?.analysis as StrengthsWeaknessesAnalysis) || null);
         if (!res?.analysis?.questions?.length) {
@@ -383,15 +386,16 @@ export function CandidateReportPage({
   const refreshInterviewData = useCallback(async () => {
     const id = String(selectedInterviewId || "").trim();
     if (!id || !candidateId) return;
+    const cid = history?.candidate?.id || candidateId;
     const [hist, rec] = await Promise.all([
-      getCandidateInterviewHistory(candidateId, { limit: 80 }),
-      getCandidateInterviewDetail(candidateId, id),
+      getCandidateInterviewHistory(cid, { limit: 80 }),
+      getCandidateInterviewDetail(cid, id),
     ]);
     setHistory(hist);
     setRecord(rec);
     setSwAnalysis(null);
     invalidateApiCache();
-  }, [candidateId, selectedInterviewId]);
+  }, [candidateId, selectedInterviewId, history?.candidate?.id]);
 
   const confirmExcludeFromScore = useCallback(async () => {
     const id = String(selectedInterviewId || "").trim();

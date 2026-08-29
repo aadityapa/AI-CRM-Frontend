@@ -1140,12 +1140,6 @@ export function EditBranchWizard({
                 onChange={(v) => setI("country", v)}
               />
             </Field>
-            <Field label="GSTIN" error={errors.gstin}>
-              <input className={inputCls} value={ident.gstin} maxLength={15} onChange={(e) => setI("gstin", e.target.value.toUpperCase())} />
-            </Field>
-            <Field label="PAN" error={errors.pan}>
-              <input className={inputCls} value={ident.pan} maxLength={10} onChange={(e) => setI("pan", e.target.value.toUpperCase())} />
-            </Field>
             <label className="flex items-center gap-2 text-sm font-semibold text-primary sm:col-span-2">
               <input type="checkbox" className={chk} checked={ident.is_primary} onChange={(e) => setI("is_primary", e.target.checked)} />
               Primary branch

@@ -56,6 +56,12 @@ function formatApiError(body: unknown, status: number): string {
   if (typeof b.message === "string" && b.message.trim()) return b.message;
   const detail = b.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
+  // Structured detail ({message, ...payload}) — e.g. the duplicate-applicant
+  // 409, which carries who applied and the profile id alongside the text.
+  if (detail && typeof detail === "object" && !Array.isArray(detail)
+      && typeof (detail as any).message === "string") {
+    return (detail as any).message;
+  }
   if (Array.isArray(detail)) {
     const parts = detail.map((item) => {
       if (!item || typeof item !== "object") return String(item);
@@ -83,7 +89,12 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<{ dat
   }
   if (!res.ok || (body && typeof body === "object" && body.success === false)) {
     const msg = formatApiError(body, res.status);
-    throw new CrmApiError(msg, res.status, body?.errors || (Array.isArray(body?.detail) ? body.detail : []));
+    // Object detail rides along in errors[0] so callers can read structured
+    // payloads (e.g. duplicate_profile on the applicant 409).
+    const errs = body?.errors
+      || (Array.isArray(body?.detail) ? body.detail
+        : body?.detail && typeof body.detail === "object" ? [body.detail] : []);
+    throw new CrmApiError(msg, res.status, errs);
   }
   if (body && typeof body === "object" && "data" in body) {
     return { data: body.data as T, meta: body.meta as Meta | undefined, message: body.message || "" };

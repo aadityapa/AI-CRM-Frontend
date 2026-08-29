@@ -7,12 +7,14 @@ import {
   CalendarOff,
   Clock,
   FileSpreadsheet,
+  History,
   FileText,
   LayoutDashboard,
   Network,
   Receipt,
   Settings as SettingsIcon,
   Target,
+  Mail,
   UserCog,
   Users,
   UsersRound,
@@ -39,6 +41,10 @@ export const CRM_NAV: CrmNavItem[] = [
   // interviews is not their workflow, which is also why the upcoming-interviews
   // widget was removed from their dashboard.
   { path: "calendar", label: "Interview Calendar", icon: CalendarClock, roles: ["Admin", "CEO", "TA", "RMG"] },
+  { path: "emails", label: "Emails", icon: Mail, roles: ["Admin", "CEO", "TA", "RMG", "Sales", "Sales_Head", "HR"] },
+  // Activity Log moved into Settings → Activity Log (user decision, 26 Aug
+  // 2026): it is an admin audit surface, not a daily working screen. The
+  // `activity-log` route stays registered so old deep links still resolve.
   // Projects is the PROJECT HUB (Aug 2026): its tabs carry Project Employees,
   // Timesheets, Purchase Orders and Invoices — the old Timesheets sidebar
   // entry was replaced by this. Roles = union of everything the hub serves.
@@ -57,7 +63,6 @@ export const CRM_NAV: CrmNavItem[] = [
   // no standalone sidebar pages. Their routes stay for deep links.
   { path: "employees", label: "Employees", icon: UserCog, roles: ["Admin", "HR"] },
   { path: "reports", label: "Reports", icon: FileSpreadsheet, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
-  { path: "users", label: "Users", icon: UserCog, roles: ["Admin", "CEO"] },
-  { path: "access-templates", label: "Access Templates", icon: UserCog, roles: ["Admin", "CEO"] },
+  { path: "users", label: "Access Control", icon: UserCog, roles: ["Admin", "CEO"] },
   { path: "settings", label: "Settings", icon: SettingsIcon, roles: ["Admin", "CEO"] },
 ];

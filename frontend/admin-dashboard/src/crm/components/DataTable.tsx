@@ -4,11 +4,29 @@
  * 150ms neutral hover shift, shimmer skeleton loading rows, and token-only
  * pagination controls. Numeric columns opt into right alignment via
  * Column.align = "right" (rendered with tabular figures). */
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, Search } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, Filter, Search } from "lucide-react";
 import type { Meta } from "../api";
-import { EmptyState, focusRing, inputCls } from "./ui";
+import { EmptyState, btnPrimary, btnSecondary, focusRing, inputCls } from "./ui";
+
+/** Per-column filter (Aug 2026) — OPT-IN. A column that declares `filter` gets
+ * a funnel in its header; the page receives the value and re-queries the
+ * SERVER, so filtering covers the whole dataset, not just the visible page. */
+export type ColumnFilterDef =
+  | { type: "text"; placeholder?: string }
+  | { type: "number-range"; minLabel?: string; maxLabel?: string; step?: number }
+  | { type: "date-range" }
+  | { type: "select"; options: { value: string; label: string }[] };
+
+export type ColumnFilterValue = {
+  text?: string; value?: string; min?: string; max?: string; from?: string; to?: string;
+};
+
+export function columnFilterActive(v?: ColumnFilterValue): boolean {
+  if (!v) return false;
+  return Boolean(v.text || v.value || v.min || v.max || v.from || v.to);
+}
 
 export type Column<T> = {
   key: string;
@@ -18,7 +36,121 @@ export type Column<T> = {
   align?: "right";
   render?: (row: T) => React.ReactNode;
   className?: string;
+  /** Opt-in header filter — see ColumnFilterDef. Requires the table's
+   * `onColumnFilter` prop; ignored otherwise. */
+  filter?: ColumnFilterDef;
 };
+
+/** The header funnel + its popover. Fixed-positioned from the button rect so
+ * the table's horizontal scroll container cannot clip it. */
+function HeaderFilter({
+  column, value, onApply,
+}: {
+  column: { key: string; label: string; filter: ColumnFilterDef };
+  value?: ColumnFilterValue;
+  onApply: (v: ColumnFilterValue | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<ColumnFilterValue>(value || {});
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const active = columnFilterActive(value);
+
+  useEffect(() => { if (open) setDraft(value || {}); }, [open, value]);
+  useEffect(() => {
+    if (!open) return;
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 268)) });
+    const onDown = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)
+          && !btnRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const apply = () => { onApply(columnFilterActive(draft) ? draft : null); setOpen(false); };
+  const clear = () => { onApply(null); setOpen(false); };
+  const fld = `${inputCls} h-8 text-sm`;
+  const def = column.filter;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        aria-label={`Filter ${column.label}`}
+        aria-expanded={open}
+        className={`rounded-control p-0.5 transition-colors duration-micro ${
+          active ? "text-brand-600 dark:text-brand-300" : "text-muted opacity-50 hover:opacity-100 hover:text-primary"
+        }`}
+      >
+        <Filter size={12} fill={active ? "currentColor" : "none"} />
+      </button>
+      {open && (
+        <div
+          ref={panelRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          className="z-50 w-64 rounded-card border border-subtle bg-surface-1 p-3 shadow-overlay"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => { if (e.key === "Enter") apply(); }}
+        >
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
+            Filter: {column.label}
+          </div>
+          {def.type === "text" && (
+            <input autoFocus className={fld} placeholder={def.placeholder || "Contains…"}
+              value={draft.text || ""}
+              onChange={(e) => setDraft({ text: e.target.value })} />
+          )}
+          {def.type === "select" && (
+            <select autoFocus className={fld} value={draft.value || ""}
+              onChange={(e) => setDraft({ value: e.target.value })}>
+              <option value="">All</option>
+              {def.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          )}
+          {def.type === "number-range" && (
+            <div className="flex items-center gap-2">
+              <input autoFocus type="number" step={def.step ?? 1} className={fld}
+                placeholder={def.minLabel || "Min"} value={draft.min || ""}
+                onChange={(e) => setDraft((d) => ({ ...d, min: e.target.value }))} />
+              <span className="text-xs text-muted">to</span>
+              <input type="number" step={def.step ?? 1} className={fld}
+                placeholder={def.maxLabel || "Max"} value={draft.max || ""}
+                onChange={(e) => setDraft((d) => ({ ...d, max: e.target.value }))} />
+            </div>
+          )}
+          {def.type === "date-range" && (
+            <div className="space-y-2">
+              <input autoFocus type="date" className={fld} value={draft.from || ""}
+                onChange={(e) => setDraft((d) => ({ ...d, from: e.target.value }))} />
+              <input type="date" className={fld} value={draft.to || ""}
+                onChange={(e) => setDraft((d) => ({ ...d, to: e.target.value }))} />
+            </div>
+          )}
+          <div className="mt-3 flex justify-end gap-2">
+            {active && (
+              <button type="button" className={`${btnSecondary} !h-8 !px-3 text-xs`} onClick={clear}>
+                Clear
+              </button>
+            )}
+            <button type="button" className={`${btnPrimary} !h-8 !px-3 text-xs`} onClick={apply}>
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /* Pagination buttons: bordered flat control, hover tint, 50% disabled. */
 const pageBtnCls =
@@ -48,6 +180,9 @@ export function DataTable<T extends { id?: number | string }>({
   selectedIds,
   onSelectionChange,
   rowLabel,
+  columnFilters,
+  onColumnFilter,
+  headerRight,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -74,6 +209,12 @@ export function DataTable<T extends { id?: number | string }>({
   onSelectionChange?: (next: Set<string | number>) => void;
   /** Accessible name for a row's checkbox, e.g. (r) => r.candidate_name. */
   rowLabel?: (row: T) => string;
+  /** Current per-column filter values, keyed by column key (opt-in). */
+  columnFilters?: Record<string, ColumnFilterValue>;
+  /** Receives a column's new filter (null = cleared). The page re-queries. */
+  onColumnFilter?: (key: string, value: ColumnFilterValue | null) => void;
+  /** Right-aligned extra in the search/filter row, e.g. "30 projects, page 1/1". */
+  headerRight?: React.ReactNode;
 }) {
   const reduce = useReducedMotion();
 
@@ -117,7 +258,7 @@ export function DataTable<T extends { id?: number | string }>({
   const colCount = allColumns.length;
   return (
     <div className="elev-1 min-w-0 overflow-hidden rounded-panel">
-      {(onSearch || filters) && (
+      {(onSearch || filters || headerRight) && (
         <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 py-3">
           {onSearch && (
             <div className="relative w-full sm:w-auto">
@@ -131,6 +272,7 @@ export function DataTable<T extends { id?: number | string }>({
             </div>
           )}
           {filters}
+          {headerRight != null && <div className="ml-auto">{headerRight}</div>}
         </div>
       )}
       {/* Mobile/tablet: table keeps its natural width and scrolls horizontally
@@ -178,6 +320,13 @@ export function DataTable<T extends { id?: number | string }>({
                     </button>
                   ) : (
                     <span className="inline-flex items-center gap-1">{c.label}</span>
+                  )}
+                  {c.filter && onColumnFilter && (
+                    <HeaderFilter
+                      column={{ key: c.key, label: c.label, filter: c.filter }}
+                      value={columnFilters?.[c.key]}
+                      onApply={(v) => onColumnFilter(c.key, v)}
+                    />
                   )}
                 </th>
               ))}

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Briefcase, Check, Search, UserRound } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
+import { CrmLink } from "../routerHooks";
 import {
   ErrorBox, Modal, Spinner, btnPrimary, btnSecondary, inputCls,
 } from "./ui";
@@ -59,6 +60,11 @@ export function ApplyToOpportunityModal({
   const [selected, setSelected] = useState<Option | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** Structured 409: who already applied this candidate, with the profile link. */
+  const [dupProfile, setDupProfile] = useState<{
+    profile_id: number; candidate_name?: string; applied_by?: string | null;
+    applied_on?: string | null; pipeline_status?: string;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -138,15 +144,23 @@ export function ApplyToOpportunityModal({
       );
       onClose();
     } catch (e: any) {
-      // 409 = already applied. Say so plainly rather than showing a raw error.
-      const msg = String(e?.message || "");
-      setError(
-        /already exists/i.test(msg)
-          ? pickingOpportunity
-            ? "This candidate has already applied to that opportunity."
-            : "That candidate has already applied to this opportunity."
-          : msg || "Failed to apply",
-      );
+      // 409 = already applied. The server sends WHO applied and the profile id
+      // (user decision, 25 Aug 2026) so a second TA sees the existing entry
+      // instead of a dead-end message.
+      const payload = (e?.errors || []).find((x: any) => x && typeof x === "object" && x.duplicate_profile);
+      if (payload) {
+        setDupProfile(payload.duplicate_profile);
+        setError("");
+      } else {
+        const msg = String(e?.message || "");
+        setError(
+          /already exists|already applied/i.test(msg)
+            ? pickingOpportunity
+              ? "This candidate has already applied to that opportunity."
+              : "That candidate has already applied to this opportunity."
+            : msg || "Failed to apply",
+        );
+      }
       setBusy(false);
     }
   };
@@ -157,6 +171,22 @@ export function ApplyToOpportunityModal({
         <p className="text-sm text-muted">{subtitle}</p>
 
         {error && <ErrorBox error={error} />}
+        {dupProfile && (
+          <div className="rounded-card border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+            <div className="font-bold">Already applied to this opportunity</div>
+            <div className="mt-1">
+              <b>{dupProfile.candidate_name || "This candidate"}</b> was applied
+              {dupProfile.applied_by ? <> by <b>{dupProfile.applied_by}</b></> : null}
+              {dupProfile.applied_on ? <> on {new Date(dupProfile.applied_on).toLocaleDateString()}</> : null}
+              {dupProfile.pipeline_status ? <> — currently at {String(dupProfile.pipeline_status).replace(/_/g, " ")}</> : null}.
+            </div>
+            <div className="mt-1.5">
+              <CrmLink to={`profiles/${dupProfile.profile_id}`} className="font-semibold underline">
+                Open the existing profile →
+              </CrmLink>
+            </div>
+          </div>
+        )}
 
         <div className="relative">
           <Search

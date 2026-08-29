@@ -55,11 +55,32 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   Pending_Engineering_Review: "Awaiting RMG review",
   Pending_RMG: "Awaiting RMG template",
   RMG_Review: "RMG Review",
-  Self_Withdrawn: "Candidate Withdrew",
+  Self_Withdrawn: "Self Withdrew",
+  // Round-specific customer rejections (Aug 2026): a resume-screen "no" is a
+  // different conversation from an interview "no". Stored values are new enum
+  // members; the generic Customer_Rejected stays for legacy rows and for drops
+  // at Shortlisted / Customer Approval.
+  Customer_Screen_Rejected: "Customer Screen Reject",
+  Customer_L1_Rejected: "Customer L1 Interview Reject",
+  Customer_L2_Rejected: "Customer L2 Interview Reject",
 };
 
 export function statusLabel(status: string): string {
   return STATUS_LABEL_OVERRIDES[status] ?? String(status).replace(/_/g, " ");
+}
+
+/** "Self Withdrew (RMG Review)" — the withdrawal label carrying the stage the
+ * candidate withdrew FROM (candidate_profiles.withdrawn_from_status). Returns
+ * undefined for every other status so callers can pass it straight to
+ * StatusBadge's `label` override. */
+export function selfWithdrewLabel(
+  status?: string | null,
+  withdrawnFrom?: string | null,
+): string | undefined {
+  if (status === "Self_Withdrawn" && withdrawnFrom) {
+    return `Self Withdrew (${statusLabel(withdrawnFrom)})`;
+  }
+  return undefined;
 }
 
 export function StatusBadge({ status, label }: { status?: string | null; label?: string }) {
@@ -486,6 +507,28 @@ export function SkeletonText({ lines = 3, className = "" }: { lines?: number; cl
 }
 
 export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  /* Permission errors are not ERRORS to the person seeing them — they are a
+   * property of their role. Rendering the backend's raw "Requires one of
+   * roles: Admin, CEO, TA" as a red failure box (with a useless Retry) read
+   * as something being broken. One check here fixes every screen. */
+  if (/requires one of roles|not permitted|permission denied|access denied/i.test(error)) {
+    return (
+      <div className="flex items-start gap-3 rounded-card border border-subtle bg-surface-1 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-muted" aria-hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </span>
+        <div>
+          <div className="text-sm font-semibold text-primary">This section isn&rsquo;t available for your role</div>
+          <div className="mt-0.5 text-sm text-secondary">
+            You don&rsquo;t currently have access to this area. If you need it for your work,
+            ask your administrator to grant it from Access Control.
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-card border border-subtle bg-danger-soft px-4 py-3 text-sm text-danger">
       {error}

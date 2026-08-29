@@ -650,7 +650,7 @@ export function ProjectEmployeesPage() {
 
   useEffect(() => {
     crmGet<any[]>("/api/projects?limit=200").then((r) => setProjects((r.data || []).map((p) => ({ id: p.id, name: p.name })))).catch(() => {});
-    crmGet<any[]>("/api/customers?limit=200").then((r) => setCustomers((r.data || []).map((c) => ({ id: c.id, name: c.name })))).catch(() => {});
+    crmGet<any[]>("/api/customers/names").then((r) => setCustomers((r.data || []).map((c) => ({ id: c.id, name: c.name })))).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -767,6 +767,7 @@ export function ProjectEmployeesPage() {
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "employee" : "employees"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           loading={loading}
           search={search}
           onSearch={setSearch}
@@ -786,7 +787,7 @@ export function ProjectEmployeesPage() {
               notify={notify}
               canEdit
               canDelete
-            />
+            colored />
           ) : undefined}
         />
       )}

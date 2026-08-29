@@ -8,6 +8,7 @@ import { Ban, CalendarOff, Check, Plus, X } from "lucide-react";
 import { CrmApiError, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanAct } from "../useAccess";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -87,7 +88,7 @@ const iconBtn =
 /** `embedded` — rendered as an inner tab (Timesheets → Leave Applications):
  * the host page owns the h1, so the title is hidden. */
 export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const isHr = useHasRole("HR");
+  const isHr = useCanAct("leave-applications", "edit", useHasRole("HR"));
   const [tab, setTab] = useState("Pending");
   const [rows, setRows] = useState<LeaveApplication[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -240,6 +241,7 @@ export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean
           columns={columns}
           rows={rows}
           meta={meta}
+          headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "application" : "applications"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
           loading={loading}
           onPage={setPage}
           emptyMessage={<TeachingEmpty page="leave-applications" />}
@@ -276,7 +278,7 @@ export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean
               notify={showToast}
               canEdit={false}
               canDelete
-            />
+            colored />
           ) : undefined}
         />
       )}
