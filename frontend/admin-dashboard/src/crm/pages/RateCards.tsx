@@ -13,6 +13,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
+// Local wall-clock date: the server decides "current" with date.today() (IST);
+// toISOString() is UTC and lags a day until 05:30 IST (4 Sep 2026 fix).
+import { toDateKey } from "../lib/calendarDates";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import {
@@ -52,7 +55,7 @@ const inr = (v: number | null | undefined) =>
 /** Group rows into slab versions: current (latest effective_from <= today),
  * future (starts later), expired (superseded). NULL sorts oldest. */
 export function splitSlabVersions(rows: RateRow[]) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toDateKey(new Date());
   const keys = [...new Set(rows.map((r) => r.effective_from || ""))].sort();
   const currentKey = [...keys].filter((k) => k <= today).pop();
   const current = currentKey === undefined ? [] : rows.filter((r) => (r.effective_from || "") === currentKey);
@@ -467,7 +470,7 @@ function LadderBuilderModal({
   // fresh at year 1 and carries the date it takes effect — the previous
   // version expires by itself the moment this one's date arrives.
   const [effectiveFrom, setEffectiveFrom] = useState(
-    () => new Date().toISOString().slice(0, 10));
+    () => toDateKey(new Date()));
   const [lines, setLines] = useState<{ from: string; to: string; rate: string }[]>([
     { from: "1", to: "", rate: "" },
   ]);
@@ -630,7 +633,7 @@ function CopyFromBranchModal({
   const [branches, setBranches] = useState<{ id: number; branch_name: string; is_primary?: boolean }[]>([]);
   const [sourceId, setSourceId] = useState<string>("");
   const [effectiveFrom, setEffectiveFrom] = useState(
-    () => new Date().toISOString().slice(0, 10));
+    () => toDateKey(new Date()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 

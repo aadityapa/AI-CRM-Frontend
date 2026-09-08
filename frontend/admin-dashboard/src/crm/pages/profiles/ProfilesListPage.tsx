@@ -294,7 +294,7 @@ export function ProfilesListPage({
     }
     if (activeMetric === "advanced") {
       return rows.filter((r) =>
-        ["Customer_Screening", "Customer_Interview", "Shortlisted", "Customer_Approval", "Preboarding", "Joined"]
+        ["Customer_Screening", "Customer_Interview", "Shortlisted", "Customer_Approval", "HR_Screening", "HR_Interviewing", "Preboarding", "Joined"]
           .includes(r.pipeline_status));
     }
     if (activeMetric === "strong") {

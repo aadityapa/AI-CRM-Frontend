@@ -3695,6 +3695,11 @@
       --lp-text: #e2e8f0;
       --lp-mx: 50vw;
       --lp-my: 42vh;
+      /* Pointer parallax (6 Sep 2026, user request): -1..1 from the viewport
+         centre, written by the pointermove handler; each background layer
+         drifts by its own depth factor so the scene moves with the mouse. */
+      --lp-px: 0;
+      --lp-py: 0;
       background: var(--lp-bg);
       overflow: hidden;
       padding: 96px 24px 48px;
@@ -3712,7 +3717,8 @@
       z-index: 0;
       pointer-events: none;
     }
-    #screenStartup .lp-bg > div { position: absolute; }
+    #screenStartup .lp-bg > div,
+    #screenStartup .lp-par > div { position: absolute; }
     #screenStartup .lp-aurora {
       inset: -45%;
       background:
@@ -3720,11 +3726,22 @@
         radial-gradient(30% 28% at 74% 22%, rgba(139, 92, 246, 0.26), transparent 70%),
         radial-gradient(26% 26% at 62% 74%, rgba(34, 211, 238, 0.13), transparent 72%),
         radial-gradient(38% 34% at 30% 78%, rgba(99, 102, 241, 0.16), transparent 70%);
-      animation: lpAurora 52s ease-in-out infinite alternate;
+      animation: lpAurora 18s ease-in-out infinite alternate;
+      will-change: transform;
+    }
+    /* Parallax depth: each layer sits in a wrapper that follows the pointer.
+       Wrappers (not the layers) carry the pointer transform, so the layers'
+       own keyframe transforms keep running underneath. */
+    #screenStartup .lp-par {
+      position: absolute;
+      inset: 0;
+      transform: translate3d(calc(var(--lp-px) * var(--depth, 10px)), calc(var(--lp-py) * var(--depth, 10px)), 0);
+      transition: transform 0.6s cubic-bezier(0.2, 0, 0, 1);
       will-change: transform;
     }
     #screenStartup .lp-grid {
-      inset: 0;
+      inset: -56px;
+      animation: lpGridPan 40s linear infinite;
       background-image:
         linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
         linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
@@ -3769,7 +3786,7 @@
         95vw 76vh 0 rgba(226, 232, 240, 0.35), 9vw 90vh 0 rgba(226, 232, 240, 0.3),
         41vw 92vh 0 rgba(226, 232, 240, 0.35), 63vw 6vh 0 rgba(226, 232, 240, 0.45),
         87vw 92vh 0 rgba(226, 232, 240, 0.3), 15vw 8vh 0 rgba(226, 232, 240, 0.4);
-      animation: lpTwinkle 7s ease-in-out infinite;
+      animation: lpTwinkle 7s ease-in-out infinite, lpDrift 90s linear infinite;
     }
     #screenStartup .lp-stars--b {
       box-shadow:
@@ -3781,7 +3798,7 @@
         81vw 42vh 0 rgba(34, 211, 238, 0.35), 88vw 12vh 0 rgba(165, 180, 252, 0.45),
         93vw 52vh 0 rgba(165, 180, 252, 0.35), 3vw 72vh 0 rgba(165, 180, 252, 0.4),
         46vw 4vh 0 rgba(165, 180, 252, 0.35), 97vw 88vh 0 rgba(165, 180, 252, 0.3);
-      animation-delay: 3.5s;
+      animation: lpTwinkle 7s ease-in-out 3.5s infinite, lpDrift 130s linear 0s infinite reverse;
     }
     #screenStartup .lp-bloom {
       width: 900px; height: 620px; left: 50%; top: 44%;
@@ -3793,6 +3810,18 @@
       opacity: 0.035;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
       background-size: 160px 160px;
+    }
+    /* Particle network (6 Sep 2026, user request: "more attractive"): a
+       canvas of drifting nodes joined by lines when they come close, nudged
+       toward the pointer, plus the odd comet. Drawn above the aurora/grid,
+       below the content. */
+    #screenStartup .lp-net {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0.9;
+      mix-blend-mode: screen;
     }
     #screenStartup .lp-spotlight {
       inset: 0;
@@ -4059,6 +4088,12 @@
     }
     #screenStartup .lp-hero-card {
       position: relative;
+      /* Shrink-wrap the robot (5 Sep 2026, user report): the card is a block
+         and stretched to the column's full width while the image inside was
+         capped at 430px, which left an empty strip to the right of the robot
+         on wide screens. Cap the card the same way and centre it. */
+      width: min(100%, 430px);
+      margin: 0 auto;
       border-radius: 22px;
       overflow: hidden;
       background: rgba(15, 23, 42, 0.5);
@@ -4091,13 +4126,77 @@
     }
     #screenStartup .lp-hero-card img {
       display: block;
-      width: min(100%, 430px);
+      width: 100%;
       aspect-ratio: 1 / 1;
       object-fit: cover;
       border: none;
       border-radius: 0;
       box-shadow: none;
       filter: saturate(1.06) contrast(1.04);
+    }
+    /* ---------- cut-out variant (6 Sep 2026) ---------- */
+    #screenStartup .lp-hero-card--cutout {
+      width: min(100%, 520px);
+      background: transparent;
+      box-shadow: none;
+      border-radius: 0;
+      overflow: visible;
+      isolation: isolate;
+    }
+    #screenStartup .lp-hero-card--cutout::before,
+    #screenStartup .lp-hero-card--cutout::after { display: none; }
+    #screenStartup .lp-hero-card--cutout img {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      aspect-ratio: auto;
+      object-fit: contain;
+      /* Lift it off the page: a cool drop shadow + a faint rim of the brand
+         glow along the metal edges. */
+      filter:
+        drop-shadow(0 30px 40px rgba(2, 4, 16, 0.75))
+        drop-shadow(0 0 18px rgba(129, 140, 248, 0.35))
+        saturate(1.08) contrast(1.05);
+      animation: lpBob 5.5s ease-in-out infinite;
+      will-change: transform;
+    }
+    /* Big soft glow behind the body, breathing. */
+    #screenStartup .lp-glow-ring {
+      position: absolute;
+      left: 50%; top: 46%;
+      width: 78%; aspect-ratio: 1 / 1;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background:
+        radial-gradient(closest-side, rgba(139, 92, 246, 0.55), rgba(99, 102, 241, 0.28) 45%, rgba(34, 211, 238, 0.08) 70%, transparent 100%);
+      filter: blur(28px);
+      animation: lpGlowBreathe 6s ease-in-out infinite;
+      z-index: 1;
+      pointer-events: none;
+    }
+    /* Light pool under the platform so it reads as standing on the page. */
+    #screenStartup .lp-light-pool {
+      position: absolute;
+      left: 8%; right: 8%; bottom: -6%;
+      height: 22%;
+      border-radius: 50%;
+      background: radial-gradient(50% 60% at 50% 40%, rgba(139, 92, 246, 0.55), rgba(99, 102, 241, 0.2) 55%, transparent 80%);
+      filter: blur(22px);
+      animation: lpPoolPulse 5.5s ease-in-out infinite;
+      z-index: 1;
+      pointer-events: none;
+    }
+    @keyframes lpBob {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-14px) rotate(-0.6deg); }
+    }
+    @keyframes lpGlowBreathe {
+      0%, 100% { opacity: 0.75; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+    }
+    @keyframes lpPoolPulse {
+      0%, 100% { opacity: 0.8; transform: scaleX(1); }
+      50% { opacity: 1; transform: scaleX(1.06); }
     }
     #screenStartup .lp-reflection {
       /* in-card fade + reflected glow under the robot */
@@ -4120,8 +4219,19 @@
     }
     /* ---------- keyframes (transform/opacity + small box-shadow pulses) ---------- */
     @keyframes lpAurora {
-      from { transform: translate3d(-2%, -1%, 0) rotate(0deg) scale(1); }
-      to { transform: translate3d(2.5%, 2%, 0) rotate(5deg) scale(1.06); }
+      from { transform: translate3d(-4%, -3%, 0) rotate(0deg) scale(1); }
+      to { transform: translate3d(5%, 4%, 0) rotate(8deg) scale(1.1); }
+    }
+    /* The grid pans one cell (56px) and loops seamlessly. */
+    @keyframes lpGridPan {
+      from { transform: translate3d(0, 0, 0); }
+      to { transform: translate3d(56px, 56px, 0); }
+    }
+    /* Star fields drift slowly across the viewport (twinkle runs alongside). */
+    @keyframes lpDrift {
+      from { transform: translate3d(0, 0, 0); }
+      50% { transform: translate3d(3vw, -2vh, 0); }
+      to { transform: translate3d(0, 0, 0); }
     }
     @keyframes lpOrb {
       0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
@@ -4181,10 +4291,17 @@
       #screenStartup .hero-actions { justify-content: center; }
       #screenStartup .startup-login-card { margin-left: auto; margin-right: auto; }
       #screenStartup .lp-hero-card img { width: min(100%, 320px); }
+      #screenStartup .lp-hero-card--cutout { width: min(100%, 340px); }
+      #screenStartup .lp-hero-card--cutout img { width: 100%; }
       #screenStartup .lp-orb--violet { display: none; }
     }
     /* ---------- reduced motion: static gradients, everything visible ---------- */
     @media (prefers-reduced-motion: reduce) {
+      #screenStartup .lp-par { transform: none !important; transition: none; }
+      #screenStartup .lp-hero-card--cutout img,
+      #screenStartup .lp-glow-ring,
+      #screenStartup .lp-light-pool { animation: none; }
+      #screenStartup .lp-grid { animation: none; }
       #screenStartup .lp-aurora,
       #screenStartup .lp-orb,
       #screenStartup .lp-stars,
@@ -7378,14 +7495,18 @@
 
   <section id="screenStartup" class="startup-screen active" aria-labelledby="landingTitle">
     <div class="lp-bg" aria-hidden="true">
-      <div class="lp-aurora"></div>
-      <div class="lp-grid"></div>
-      <div class="lp-orb lp-orb--indigo"></div>
-      <div class="lp-orb lp-orb--violet"></div>
-      <div class="lp-orb lp-orb--cyan"></div>
-      <div class="lp-stars"></div>
-      <div class="lp-stars lp-stars--b"></div>
+      <!-- Far → near: deeper layers move less with the pointer. -->
+      <div class="lp-par" style="--depth: -8px"><div class="lp-aurora"></div></div>
+      <div class="lp-par" style="--depth: -4px"><div class="lp-grid"></div></div>
+      <div class="lp-par" style="--depth: 14px">
+        <div class="lp-orb lp-orb--indigo"></div>
+        <div class="lp-orb lp-orb--violet"></div>
+        <div class="lp-orb lp-orb--cyan"></div>
+      </div>
+      <div class="lp-par" style="--depth: 10px"><div class="lp-stars"></div></div>
+      <div class="lp-par" style="--depth: 22px"><div class="lp-stars lp-stars--b"></div></div>
       <div class="lp-bloom"></div>
+      <canvas class="lp-net" id="lpNet"></canvas>
       <div class="lp-noise"></div>
       <div class="lp-spotlight"></div>
     </div>
@@ -7419,9 +7540,14 @@
           <div class="lp-halo" aria-hidden="true"></div>
           <div class="lp-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
           <div class="lp-tilt">
-            <div class="lp-hero-card">
-              <img src="assets/3d_robot_avatar.png" alt="3D AI Robot Interviewer" loading="lazy" decoding="async">
-              <div class="lp-reflection" aria-hidden="true"></div>
+            <!-- Cut-out robot (6 Sep 2026, user request): the old square PNG
+                 carried its own background and read as a photo stuck on the
+                 page. This one has a transparent background, so the robot
+                 stands IN the scene — glow behind, light pool under. -->
+            <div class="lp-hero-card lp-hero-card--cutout">
+              <div class="lp-glow-ring" aria-hidden="true"></div>
+              <img src="assets/3d_robot_avatar_cut.png" alt="3D AI Robot Interviewer" decoding="async" draggable="false">
+              <div class="lp-light-pool" aria-hidden="true"></div>
             </div>
           </div>
           <div class="lp-ground" aria-hidden="true"></div>
@@ -7442,6 +7568,9 @@
         raf = 0;
         s.style.setProperty("--lp-mx", px + "px");
         s.style.setProperty("--lp-my", py + "px");
+        // Background parallax: -1..1 from the centre (see .lp-par).
+        s.style.setProperty("--lp-px", ((px / window.innerWidth - 0.5) * 2).toFixed(3));
+        s.style.setProperty("--lp-py", ((py / window.innerHeight - 0.5) * 2).toFixed(3));
         if (tilt) {
           var nx = px / window.innerWidth - 0.5;
           var ny = py / window.innerHeight - 0.5;
@@ -7454,7 +7583,137 @@
       }, { passive: true });
       s.addEventListener("pointerleave", function () {
         if (tilt) tilt.style.transform = "";
+        s.style.setProperty("--lp-px", "0");
+        s.style.setProperty("--lp-py", "0");
       }, { passive: true });
+    })();
+
+    /* Landing particle network (6 Sep 2026). ~90 nodes drift, link up within
+       130px, lean toward the pointer, and a comet streaks across every few
+       seconds. Runs only while the landing section is visible; pauses on a
+       hidden tab; halves the node count on small screens. Deliberately NOT
+       gated on prefers-reduced-motion — this is the page's hero motion and
+       the user asked for it — but the pointer pull still is. */
+    (function () {
+      var s = document.getElementById("screenStartup");
+      var c = document.getElementById("lpNet");
+      if (!s || !c || !c.getContext) return;
+      var ctx = c.getContext("2d");
+      var W = 0, H = 0, dpr = 1, nodes = [], comets = [], raf = 0, last = 0, nextComet = 2000;
+      var mouse = { x: -1e4, y: -1e4, on: false };
+      var pull = !(window.matchMedia && (matchMedia("(prefers-reduced-motion: reduce)").matches
+                  || !matchMedia("(pointer: fine)").matches));
+      var LINK = 130, COUNT = 90;
+      var PALETTE = ["129,140,248", "139,92,246", "34,211,238", "226,232,240"];
+
+      function size() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        W = s.clientWidth; H = s.clientHeight;
+        c.width = Math.floor(W * dpr); c.height = Math.floor(H * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        var n = W < 720 ? Math.floor(COUNT / 2) : COUNT;
+        while (nodes.length < n) nodes.push(spawn(true));
+        nodes.length = n;
+      }
+      function spawn(anywhere) {
+        var edge = Math.floor(Math.random() * 4);
+        return {
+          x: anywhere ? Math.random() * W : (edge === 1 ? W + 4 : edge === 3 ? -4 : Math.random() * W),
+          y: anywhere ? Math.random() * H : (edge === 0 ? -4 : edge === 2 ? H + 4 : Math.random() * H),
+          vx: (Math.random() - 0.5) * 0.35,
+          vy: (Math.random() - 0.5) * 0.35,
+          r: 1 + Math.random() * 1.6,
+          c: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+          tw: Math.random() * Math.PI * 2
+        };
+      }
+      function comet() {
+        var fromLeft = Math.random() < 0.5;
+        var y = Math.random() * H * 0.6;
+        comets.push({
+          x: fromLeft ? -40 : W + 40, y: y,
+          vx: (fromLeft ? 1 : -1) * (7 + Math.random() * 5),
+          vy: 2 + Math.random() * 2.5,
+          life: 1
+        });
+      }
+      function step(t) {
+        raf = requestAnimationFrame(step);
+        var dt = Math.min(48, t - last) / 16.67; last = t;
+        ctx.clearRect(0, 0, W, H);
+        var i, j, a, b, d, dx, dy;
+        for (i = 0; i < nodes.length; i++) {
+          a = nodes[i];
+          if (pull && mouse.on) {
+            dx = mouse.x - a.x; dy = mouse.y - a.y; d = dx * dx + dy * dy;
+            if (d < 220 * 220 && d > 1) {
+              var f = 0.012 / Math.sqrt(d) * 60;
+              a.vx += dx * f * 0.002 * dt; a.vy += dy * f * 0.002 * dt;
+            }
+          }
+          a.x += a.vx * dt; a.y += a.vy * dt;
+          a.vx *= 0.995; a.vy *= 0.995;
+          if (Math.abs(a.vx) < 0.05) a.vx += (Math.random() - 0.5) * 0.04;
+          if (Math.abs(a.vy) < 0.05) a.vy += (Math.random() - 0.5) * 0.04;
+          if (a.x < -10 || a.x > W + 10 || a.y < -10 || a.y > H + 10) nodes[i] = a = spawn(false);
+          a.tw += 0.02 * dt;
+        }
+        // links
+        ctx.lineWidth = 1;
+        for (i = 0; i < nodes.length; i++) {
+          a = nodes[i];
+          for (j = i + 1; j < nodes.length; j++) {
+            b = nodes[j];
+            dx = a.x - b.x; if (dx > LINK || dx < -LINK) continue;
+            dy = a.y - b.y; if (dy > LINK || dy < -LINK) continue;
+            d = Math.sqrt(dx * dx + dy * dy);
+            if (d < LINK) {
+              ctx.strokeStyle = "rgba(" + a.c + "," + ((1 - d / LINK) * 0.35).toFixed(3) + ")";
+              ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+            }
+          }
+        }
+        // nodes with a soft glow
+        for (i = 0; i < nodes.length; i++) {
+          a = nodes[i];
+          var al = 0.55 + Math.sin(a.tw) * 0.35;
+          ctx.fillStyle = "rgba(" + a.c + "," + al.toFixed(3) + ")";
+          ctx.beginPath(); ctx.arc(a.x, a.y, a.r, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(" + a.c + "," + (al * 0.12).toFixed(3) + ")";
+          ctx.beginPath(); ctx.arc(a.x, a.y, a.r * 4, 0, Math.PI * 2); ctx.fill();
+        }
+        // comets
+        nextComet -= dt * 16.67;
+        if (nextComet <= 0) { comet(); nextComet = 3500 + Math.random() * 4500; }
+        for (i = comets.length - 1; i >= 0; i--) {
+          var k = comets[i];
+          k.x += k.vx * dt; k.y += k.vy * dt; k.life -= 0.006 * dt;
+          if (k.life <= 0 || k.x < -80 || k.x > W + 80 || k.y > H + 80) { comets.splice(i, 1); continue; }
+          var g = ctx.createLinearGradient(k.x, k.y, k.x - k.vx * 12, k.y - k.vy * 12);
+          g.addColorStop(0, "rgba(226,232,240," + (0.9 * k.life).toFixed(3) + ")");
+          g.addColorStop(1, "rgba(129,140,248,0)");
+          ctx.strokeStyle = g; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(k.x, k.y); ctx.lineTo(k.x - k.vx * 12, k.y - k.vy * 12); ctx.stroke();
+          ctx.fillStyle = "rgba(255,255,255," + (0.95 * k.life).toFixed(3) + ")";
+          ctx.beginPath(); ctx.arc(k.x, k.y, 2.2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      function start() { if (!raf) { last = performance.now(); raf = requestAnimationFrame(step); } }
+      function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+      function visible() { return document.visibilityState !== "hidden" && s.classList.contains("active"); }
+      size();
+      window.addEventListener("resize", size, { passive: true });
+      s.addEventListener("pointermove", function (e) {
+        var r = s.getBoundingClientRect();
+        mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; mouse.on = true;
+      }, { passive: true });
+      s.addEventListener("pointerleave", function () { mouse.on = false; }, { passive: true });
+      document.addEventListener("visibilitychange", function () { visible() ? start() : stop(); });
+      // The landing section toggles .active when the app moves on to login /
+      // interview screens — stop drawing behind them.
+      new MutationObserver(function () { visible() ? start() : stop(); })
+        .observe(s, { attributes: true, attributeFilter: ["class"] });
+      if (visible()) start();
     })();
   </script>
 

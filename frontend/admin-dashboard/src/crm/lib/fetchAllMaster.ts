@@ -17,11 +17,21 @@ export async function fetchAllMaster<T>(
   path: string,
   params: Record<string, unknown> = {},
 ): Promise<T[]> {
+  // A path that already carries a query string ("/api/designations?is_active=true")
+  // is split so its params merge with ours — appending `?page=` produced
+  // "?is_active=true?page=1" and a 422 that silently emptied the dropdown
+  // (4 Sep 2026).
+  const qIdx = path.indexOf("?");
+  const base = qIdx >= 0 ? path.slice(0, qIdx) : path;
+  const inline: Record<string, unknown> = {};
+  if (qIdx >= 0) {
+    new URLSearchParams(path.slice(qIdx + 1)).forEach((v, k) => { inline[k] = v; });
+  }
   const out: T[] = [];
   let page = 1;
   let pages = 1;
   do {
-    const res = await crmGet<T[]>(`${path}${qs({ ...params, page, limit: PAGE_SIZE })}`);
+    const res = await crmGet<T[]>(`${base}${qs({ ...inline, ...params, page, limit: PAGE_SIZE })}`);
     const rows = res.data || [];
     out.push(...rows);
     pages = res.meta?.pages ?? 1;

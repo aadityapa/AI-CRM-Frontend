@@ -682,6 +682,7 @@ export function ProjectEmployeesPage() {
   const columns: Column<PeRow>[] = useMemo(() => [
     {
       key: "employee_name", label: "Employee",
+      filter: { type: "text", placeholder: "Name or email…" },
       render: (r) => (
         <div>
           <div className="font-semibold text-primary">{r.employee_name || "—"}</div>
@@ -689,8 +690,10 @@ export function ProjectEmployeesPage() {
         </div>
       ),
     },
-    { key: "project_name", label: "Project", render: (r) => r.project_name || "—" },
-    { key: "customer_name", label: "Client", render: (r) => <span className="text-secondary">{r.customer_name || "—"}</span> },
+    { key: "project_name", label: "Project", render: (r) => r.project_name || "—",
+      filter: { type: "select", options: projects.map((p) => ({ value: String(p.id), label: p.name })) } },
+    { key: "customer_name", label: "Client", render: (r) => <span className="text-secondary">{r.customer_name || "—"}</span>,
+      filter: { type: "select", options: customers.map((c) => ({ value: String(c.id), label: c.name })) } },
     { key: "onboarding_date", label: "Onboarding", render: (r) => dt(r.onboarding_date) },
     {
       key: "leave_balance_total", label: "Leave balance",
@@ -710,7 +713,7 @@ export function ProjectEmployeesPage() {
       key: "is_exit", label: "Is exit",
       render: (r) => <StatusBadge status={r.is_exit ? "Exited" : r.is_active ? "Active" : "Inactive"} />,
     },
-  ], []);
+  ], [projects, customers]);
 
   return (
     <div>
@@ -773,6 +776,18 @@ export function ProjectEmployeesPage() {
           onSearch={setSearch}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)}
+          /* Header filters (4 Sep 2026) mirror the toolbar's — one state, two
+             handles, so a pick in either place shows in both. */
+          columnFilters={{
+            employee_name: search ? { text: search } : {},
+            project_name: projectFilter ? { value: projectFilter } : {},
+            customer_name: customerFilter ? { value: customerFilter } : {},
+          }}
+          onColumnFilter={(key, v) => {
+            if (key === "employee_name") setSearch(v?.text || "");
+            else if (key === "project_name") { setProjectFilter(v?.value || ""); setPage(1); }
+            else if (key === "customer_name") { setCustomerFilter(v?.value || ""); setPage(1); }
+          }}
           emptyMessage={<TeachingEmpty page="project-employees" />}
           rowActions={canWrite ? (r) => (
             <RowActions

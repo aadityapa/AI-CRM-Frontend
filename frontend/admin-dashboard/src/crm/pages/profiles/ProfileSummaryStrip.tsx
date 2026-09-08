@@ -18,7 +18,7 @@ const AWAITING = new Set(["Technical_Screening", "RMG_Review", "Sales_Screening"
 /** Stages that mean the candidate got past the internal pipeline. */
 const ADVANCED = new Set([
   "Customer_Screening", "Customer_Interview", "Shortlisted",
-  "Customer_Approval", "Preboarding", "Joined",
+  "Customer_Approval", "HR_Screening", "HR_Interviewing", "Preboarding", "Joined",
 ]);
 
 export function ProfileSummaryStrip({

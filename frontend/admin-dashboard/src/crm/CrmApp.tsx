@@ -317,7 +317,15 @@ function NotificationsBell() {
       }
       path = path.split("?")[0].split("#")[0];
       const tab = (link.match(/[?&]tab=([a-zA-Z0-9_-]+)(?:&|$)/) || [])[1];
-      if (tab) path += `?tab=${tab}`;
+      // `q` = the search term a notification wants prefilled (8 Sep 2026) —
+      // forwarded only after decoding + re-encoding, never as raw text.
+      const rawQ = (link.match(/[?&]q=([^&#]+)/) || [])[1];
+      let q = "";
+      if (rawQ) {
+        try { q = decodeURIComponent(rawQ).slice(0, 120); } catch { q = ""; }
+      }
+      const extra = [tab ? `tab=${tab}` : "", q ? `q=${encodeURIComponent(q)}` : ""].filter(Boolean);
+      if (extra.length) path += `?${extra.join("&")}`;
       crmNavigate(path);
       return;
     }

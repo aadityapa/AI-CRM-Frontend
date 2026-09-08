@@ -17,8 +17,8 @@ export const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-
 
 /* ---------- Status badge (consistent colour map per spec) ---------- */
 const GREEN = ["Active", "Closed_Won", "Joined", "Approved", "Paid", "Fulfilled", "Accepted", "Passed", "Present", "Open_For_Sourcing", "Confirmed"];
-const BLUE = ["In_Progress", "Submitted", "Scheduled", "Posted_On_Portals", "Scored", "New", "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening", "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval", "Preboarding", "Completed", "Closed_Partial"];
-const YELLOW = ["On_Hold", "Pending", "Pending_Scan", "Partially_Paid", "Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Unpaid", "Half_Day", "Blanket", "Draft"];
+const BLUE = ["In_Progress", "Submitted", "Scheduled", "Posted_On_Portals", "Scored", "New", "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening", "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval", "HR_Screening", "HR_Interviewing", "Preboarding", "Completed", "Closed_Partial"];
+const YELLOW = ["On_Hold", "Sales_Hold", "Pending", "Pending_Scan", "Partially_Paid", "Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Unpaid", "Half_Day", "Blanket", "Draft"];
 const RED = ["Rejected", "Closed_Lost", "Cancelled", "Failed", "Expired", "Absent", "Sales_Head_Rejected", "Engineering_Rejected", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Exhausted"];
 const GREY = ["Archived", "Inactive", "Closed", "Not_Scheduled", "Removed", "Leave", "Holiday"];
 
@@ -46,7 +46,12 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   // stage specifically means the CUSTOMER shortlisted them. Label only: the
   // stored value stays `Shortlisted`, so no migration and no data rewrite.
   Shortlisted: "Customer Shortlisted",
-  Customer_Approval: "Customer Approved",
+  // This stage is the OFFER TERMS awaiting Sales Head (user decision,
+  // 2 Sep 2026) — "Customer Approved" made it read as the customer's yes,
+  // which is the stage before (Shortlisted). Label only; value unchanged.
+  Customer_Approval: "Pending Sales Head Approval",
+  HR_Screening: "HR Screening",
+  HR_Interviewing: "HR Interviewing",
   // The team says "Pre Onboarding"; the column has always stored "Preboarding".
   Preboarding: "Pre Onboarding",
   // Vocabulary pass (Aug 2026): say WHO the ball is with, in plain words.
@@ -55,6 +60,13 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   Pending_Engineering_Review: "Awaiting RMG review",
   Pending_RMG: "Awaiting RMG template",
   RMG_Review: "RMG Review",
+  // Opportunity "Sales Hold" (8 Sep 2026). On_Hold is NOT relabelled here —
+  // it is also a Requirement status; the Opportunities page passes its own
+  // "Customer Hold" label via pipelineStageLabel().
+  Sales_Hold: "Sales Hold",
+  // Nexus vocabulary (Sep 2026 import): the stage where internal L1/L2 rounds
+  // are running is "Technical Interviewing". Label only; value unchanged.
+  Technical_Screening: "Technical Interviewing",
   Self_Withdrawn: "Self Withdrew",
   // Round-specific customer rejections (Aug 2026): a resume-screen "no" is a
   // different conversation from an interview "no". Stored values are new enum
@@ -149,6 +161,7 @@ export function Modal({
   wide,
   fullScreen,
   medium,
+  xl,
   footer,
   bodyClassName,
   /** Deep layered chrome for wizards: page = surface-0, bars = surface-1. */
@@ -176,6 +189,9 @@ export function Modal({
   fullScreen?: boolean;
   /** Mid-size dialog (e.g. file preview) — wider than default, not full-page. */
   medium?: boolean;
+  /** Extra-wide POPUP (side-by-side layouts, e.g. the bulk verify wizard) —
+   *  bigger than medium but still a rounded dialog, never a page takeover. */
+  xl?: boolean;
   /** Optional sticky footer action bar (shown only in full-page mode). */
   footer?: React.ReactNode;
   /** Extra classes for the scrollable body (e.g. flush padding for nested panes). */
@@ -247,9 +263,11 @@ export function Modal({
   const panelCls = [
     isFullPage
       ? "flex h-[100dvh] w-full max-w-none flex-col overflow-hidden"
-      : medium
-        ? "elev-3 flex w-full max-w-3xl max-h-[90dvh] flex-col overflow-hidden rounded-modal"
-        : "elev-3 flex w-full max-w-lg max-h-[90dvh] flex-col overflow-hidden rounded-modal",
+      : xl
+        ? "elev-3 flex w-full max-w-6xl max-h-[92dvh] flex-col overflow-hidden rounded-modal"
+        : medium
+          ? "elev-3 flex w-full max-w-3xl max-h-[90dvh] flex-col overflow-hidden rounded-modal"
+          : "elev-3 flex w-full max-w-lg max-h-[90dvh] flex-col overflow-hidden rounded-modal",
     panelClassName || "",
   ].filter(Boolean).join(" ");
 
@@ -539,6 +557,22 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
   );
 }
 
+/** The server's reason a dialog action failed, shown INSIDE the dialog
+ * (3 Sep 2026). A modal that only toasts its error looks like it did nothing
+ * — the timesheet-reject 409 ("an invoice was already generated") was the
+ * report. Renders nothing for an empty string, so it can sit unconditionally
+ * above a dialog's footer. */
+export function ActionError({ error, className = "" }: { error?: string | null; className?: string }) {
+  if (!error) return null;
+  return (
+    <div role="alert"
+      className={`flex items-start gap-2 rounded-card border border-danger/40 bg-danger-soft px-3 py-2.5 text-sm text-danger ${className}`}>
+      <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
+      <span className="min-w-0 break-words">{error}</span>
+    </div>
+  );
+}
+
 export function EmptyState({
   message,
   icon,
@@ -610,7 +644,9 @@ export function useToast(): [React.ReactNode, (msg: string, kind?: "ok" | "err")
   const show = (msg: string, kind: "ok" | "err" = "ok") => {
     setToast({ msg, kind });
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setToast(null), 3500);
+    // Errors stay longer: they carry the server's reason (a 409 "invoice
+    // already generated", a 400 validation message) and need reading.
+    timer.current = window.setTimeout(() => setToast(null), kind === "err" ? 8000 : 3500);
   };
   const node = (
     <AnimatePresence>
@@ -621,16 +657,27 @@ export function useToast(): [React.ReactNode, (msg: string, kind?: "ok" | "err")
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 48, scale: 0.95 }}
           transition={{ type: "spring", stiffness: 420, damping: 30 }}
-          className={`glass fixed bottom-5 right-5 z-[250] flex items-center gap-2 rounded-card border-l-2 px-4 py-2.5 text-sm font-semibold text-primary shadow-overlay ${
+          className={`glass fixed bottom-5 right-5 z-[250] flex max-w-md items-start gap-2 rounded-card border-l-2 px-4 py-2.5 text-sm font-semibold text-primary shadow-overlay ${
             toast.kind === "ok" ? "border-l-success" : "border-l-danger"
           }`}
-          role="status"
+          role={toast.kind === "err" ? "alert" : "status"}
         >
-          {toast.kind === "ok" ? <CheckCircle2 size={16} className="text-success" /> : <XCircle size={16} className="text-danger" />}
-          {toast.msg}
+          {toast.kind === "ok"
+            ? <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
+            : <XCircle size={16} className="mt-0.5 shrink-0 text-danger" />}
+          <span className="min-w-0 break-words">{toast.msg}</span>
+          <button type="button" aria-label="Dismiss" className="ml-1 shrink-0 text-muted hover:text-primary"
+            onClick={() => { window.clearTimeout(timer.current); setToast(null); }}>
+            <X size={14} />
+          </button>
         </motion.div>
       )}
     </AnimatePresence>
   );
-  return [node, show];
+  // PORTAL (3 Sep 2026): pages render `{toast}` wherever it lands in their
+  // tree — often inside a framer-motion wrapper. A transformed ancestor turns
+  // `position: fixed` into "fixed relative to that box", so the toast ended
+  // up clipped inside the page instead of at the viewport corner and a
+  // server error (the timesheet-reject 409) looked like nothing happened.
+  return [typeof document !== "undefined" ? createPortal(node, document.body) : node, show];
 }

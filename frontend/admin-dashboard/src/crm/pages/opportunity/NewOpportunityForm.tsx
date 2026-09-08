@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Plus, Trash2, Upload } from "lucide-react";
 import { crmGet, crmPost, crmPut, crmUpload } from "../../api";
+import { toDateKey } from "../../lib/calendarDates";
 import { motion as motionTok } from "../../../design-system/tokens/tokens";
 import { Modal, btnSecondary, ErrorBox, inputCls, useToast, ConfirmModal } from "../../components/ui";
 import {
@@ -127,11 +128,11 @@ function recalculateOpportunityState(state: OpportunityFormState): OpportunityFo
     details = {
       ...current,
       hours_per_day: current.hours_per_day === undefined ? 8 : current.hours_per_day,
-      // Holidays & Leave stay at 0 until a branch-linked leave policy prefills
-      // them (or the user types values) — never invent 10 / 24. Weekoff is NOT
-      // policy-driven: it's the fixed number of weekend days in a year
-      // (52 weekends × 2 = 104), so it always calculates to 104.
-      holidays: current.holidays === undefined || current.holidays === "" ? 0 : current.holidays,
+      // Holidays default to the standard 10 (user decision, 27 Aug 2026) and
+      // stay editable — a change reflows straight into Actual Billing Days.
+      // Weekoff is NOT policy-driven: it's the fixed number of weekend days
+      // in a year (52 weekends × 2 = 104), so it always calculates to 104.
+      holidays: current.holidays === undefined || current.holidays === "" ? 10 : current.holidays,
       weekoff: current.weekoff === undefined || current.weekoff === "" ? 104 : current.weekoff,
       leave: current.leave === undefined || current.leave === "" ? 0 : current.leave,
       holidays_billable: current.holidays_billable === undefined ? false : current.holidays_billable,
@@ -482,7 +483,7 @@ export function NewOpportunityForm({
     // opportunities — the newest effective_from on-or-before today wins;
     // future ladders wait, expired ones are history. NULL = since forever.
     const pickCurrentVersion = (rows: Record<string, any>[]) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toDateKey(new Date());
       const keys = [...new Set(rows.map((b) => String(b.effective_from || "")))].sort();
       const cur = keys.filter((k) => k <= today).pop();
       return cur === undefined ? [] : rows.filter((b) => String(b.effective_from || "") === cur);
@@ -700,11 +701,11 @@ export function NewOpportunityForm({
       setState((s) => {
         const tm = { ...(s.detailsByType["T&M"] || {}) };
         let changed = false;
-        // Holidays reset to 0 (branch-calendar-driven); Leave defaults to the
-        // standard 24 (agreed Aug 2026 — it feeds the CTC Slab deduction);
+        // Holidays default to the standard 10 (user decision, 27 Aug 2026);
+        // Leave defaults to the standard 24 (it feeds the CTC Slab deduction);
         // Weekoff stays 104 (52 weekends), not tied to any leave policy.
-        if (tm.holidays !== 0) {
-          tm.holidays = 0;
+        if (tm.holidays !== 10) {
+          tm.holidays = 10;
           changed = true;
         }
         if (tm.leave !== 24) {
@@ -793,17 +794,12 @@ export function NewOpportunityForm({
           }
           const mappedBillingType = POLICY_BILLING_TYPE_MAP[String(p.billing_type || "")];
           if (mappedBillingType) setTmDetail("billing_type", mappedBillingType);
-          // HOLIDAYS come from THIS branch's own holiday calendar
-          // (branch_holidays_count) — independent of any leave policy. A branch
-          // with a configured calendar (e.g. HARMAN - Bangalore) shows its count
-          // even when no branch leave policy is linked. 0 when the branch has
-          // no calendar of its own.
-          const branchHolidays = p.branch_holidays_count;
-          if (branchHolidays != null && Number.isFinite(Number(branchHolidays))) {
-            setTmDetail("holidays", Number(branchHolidays));
-          } else {
-            setTmDetail("holidays", 0);
-          }
+          // HOLIDAYS: the standard default is 10 on every new opportunity
+          // (user decision, 27 Aug 2026) — editable, and a change reflows
+          // into Actual Billing Days. The branch's own holiday-calendar count
+          // no longer auto-overrides it; type the branch's real count when a
+          // specific deal needs it.
+          setTmDetail("holidays", 10);
           // WEEKOFF is not policy-driven — always the standard 104 (52 weekends),
           // unless a future branch weekoff_count is sent.
           if (p.weekoff_count != null && Number.isFinite(Number(p.weekoff_count))) {

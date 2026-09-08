@@ -565,7 +565,9 @@ function RejectLeaveModal({
       await crmPost(`/api/leave-applications/${application.id}/reject`, { reason: reason.trim() });
       onDone();
     } catch (e: any) {
-      onError(e?.message || "Failed to reject leave application");
+      const msg = e?.message || "Failed to reject leave application";
+      setError(msg);        // inline, under the field — not only the toast
+      onError(msg);
     } finally {
       setBusy(false);
     }

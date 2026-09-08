@@ -9,10 +9,10 @@ import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
-import type { Column } from "../components/DataTable";
+import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import {
-  ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
+  ActionError, ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
@@ -113,6 +113,8 @@ const LazyPurchaseOrders = React.lazy(() =>
   import("./Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
 const LazyInvoices = React.lazy(() =>
   import("./Finance").then((m) => ({ default: m.InvoicesPage })));
+const LazyReceipts = React.lazy(() =>
+  import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
 
 /* ================================================================ LIST PAGE */
 
@@ -153,6 +155,26 @@ export function ProjectsListPage() {
   /* Customer filter (25 Aug 2026): server-side — the list is paginated. */
   const [customerFilter, setCustomerFilter] = useState("");
   const [customerOpts, setCustomerOpts] = useState<{ id: number; name: string }[]>([]);
+  /* Header column filters (4 Sep 2026): Name → search, Customer → the same
+     server-side customer filter as the dropdown, Opportunity and Billing
+     frequency → their own server params. */
+  const [colFilters, setColFilters] = useState<Record<string, ColumnFilterValue>>({});
+  const onColumnFilter = (key: string, v: ColumnFilterValue | null) => {
+    if (key === "name") { setSearch(v?.text || ""); setPage(1); return; }
+    if (key === "customer") { setCustomerFilter(v?.value || ""); return; }
+    setColFilters((prev) => {
+      const next = { ...prev };
+      if (v) next[key] = v;
+      else delete next[key];
+      return next;
+    });
+    setPage(1);
+  };
+  const columnFilterValues = useMemo<Record<string, ColumnFilterValue>>(() => ({
+    ...colFilters,
+    name: search ? { text: search } : {},
+    customer: customerFilter ? { value: customerFilter } : {},
+  }), [colFilters, search, customerFilter]);
   useEffect(() => {
     crmGet<any[]>("/api/customers/names")
       .then((r) => setCustomerOpts((r.data || []).map((c: any) => ({ id: c.id, name: c.name }))
@@ -167,6 +189,8 @@ export function ProjectsListPage() {
       const res = await crmGet<Project[]>(`/api/projects${qs({
         status: tab, page, limit: 20, search,
         customer_id: customerFilter || undefined,
+        opportunity_id: colFilters.opportunity?.value || undefined,
+        billing_frequency: colFilters.billing_frequency?.value || undefined,
       })}`);
       setRows(res.data || []);
       setMeta(res.meta);
@@ -175,7 +199,7 @@ export function ProjectsListPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, page, search, customerFilter]);
+  }, [tab, page, search, customerFilter, colFilters]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [customerFilter]);
 
@@ -196,8 +220,11 @@ export function ProjectsListPage() {
   }, [opps]);
 
   const columns: Column<Project>[] = [
-    { key: "name", label: "Name", render: (r) => <span className="font-semibold">{r.name}</span> },
-    { key: "customer", label: "Customer", render: (r) => {
+    { key: "name", label: "Name", render: (r) => <span className="font-semibold">{r.name}</span>,
+      filter: { type: "text", placeholder: "Project name…" } },
+    { key: "customer", label: "Customer",
+      filter: { type: "select", options: customerOpts.map((c) => ({ value: String(c.id), label: c.name })) },
+      render: (r) => {
       // Logo-style initials chip before the name (redesign mock).
       const name = customerName(r.customer_id);
       const initials = name.replace(/[^A-Za-z0-9 ]/g, "").split(/\s+/).filter(Boolean)
@@ -216,8 +243,11 @@ export function ProjectsListPage() {
     } },
     // Null-safe: projects created without a sales opportunity show a dash.
     { key: "opportunity", label: "Opportunity",
+      filter: { type: "select", options: opps.map((o) => ({ value: String(o.id), label: `${o.opp_id ? `${o.opp_id} — ` : ""}${o.title}` })) },
       render: (r) => (r.opportunity_id ? oppTitle(r.opportunity_id) : "—") },
-    { key: "billing_frequency", label: "Billing frequency", render: (r) => pretty(r.billing_frequency) },
+    { key: "billing_frequency", label: "Billing frequency", render: (r) => pretty(r.billing_frequency),
+      filter: { type: "select", options: ["Monthly", "Bi_Weekly", "Weekly", "Quarterly", "Yearly"]
+        .map((v) => ({ value: v, label: pretty(v) })) } },
     { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
   ];
 
@@ -238,6 +268,8 @@ export function ProjectsListPage() {
           ...(canTs ? [{ key: "timesheets", label: "Timesheets" }] : []),
           ...(canPos ? [{ key: "pos", label: "Purchase Orders" }] : []),
           ...(canInv ? [{ key: "invoices", label: "Invoices" }] : []),
+          // Money received from customers (7 Sep 2026) — same visibility as Invoices.
+          ...(canInv ? [{ key: "receipts", label: "Customer Received Amount" }] : []),
         ]}
         active={hubTab}
         onChange={setHubTab}
@@ -248,6 +280,7 @@ export function ProjectsListPage() {
           {hubTab === "timesheets" && canTs && <LazyTimesheets />}
           {hubTab === "pos" && canPos && <LazyPurchaseOrders />}
           {hubTab === "invoices" && canInv && <LazyInvoices />}
+          {hubTab === "receipts" && canInv && <LazyReceipts />}
         </React.Suspense>
       ) : (
       <>
@@ -281,6 +314,8 @@ export function ProjectsListPage() {
           onSearch={(q) => { setSearch(q); setPage(1); }}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
+          columnFilters={columnFilterValues}
+          onColumnFilter={onColumnFilter}
           filters={
             <select className="input-recessed !w-52 rounded-control px-3 py-2 text-sm"
               value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
@@ -519,7 +554,9 @@ function CreatePoModal({
       });
       onDone(res.data);
     } catch (e: any) {
-      onError(e?.message || "Failed to create PO");
+      const msg = e?.message || "Failed to create PO";
+      setError(msg);        // inline — the field error slot doubles as the server's reason
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -751,7 +788,9 @@ function AssignEmployeeModal({
       });
       onDone();
     } catch (e: any) {
-      onError(e?.message || "Failed to assign employee");
+      const msg = e?.message || "Failed to assign employee";
+      setErrors((p) => ({ ...p, _server: msg }));   // inline — e.g. 409 "already on this project"
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -760,6 +799,7 @@ function AssignEmployeeModal({
   return (
     <Modal title="Assign Employee" onClose={onClose} fullScreen>
       <div className="space-y-3">
+        <ActionError error={errors._server} />
         <Field label="Employee" required error={errors.employee}>
           <select className={inputCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
             <option value="">Select employee…</option>
@@ -821,6 +861,7 @@ function EditTeamModal({
   const [newRateDate, setNewRateDate] = useState("");
   const [newRateValue, setNewRateValue] = useState("");
   const [rateError, setRateError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [busy, setBusy] = useState(false);
   const [ratesDirty, setRatesDirty] = useState(false);
 
@@ -833,7 +874,9 @@ function EditTeamModal({
       });
       onDone();
     } catch (e: any) {
-      onError(e?.message || "Failed to update project employee");
+      const msg = e?.message || "Failed to update project employee";
+      setSaveError(msg);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -864,7 +907,9 @@ function EditTeamModal({
       setNewRateValue("");
       setRatesDirty(true);
     } catch (e: any) {
-      onError(e?.message || "Failed to add rate");
+      const msg = e?.message || "Failed to add rate";
+      setRateError(msg);    // inline, in the rate block's own error slot
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -915,6 +960,7 @@ function EditTeamModal({
             </p>
           </div>
         </div>
+        <ActionError error={saveError} />
       </div>
       <div className="mt-5 flex justify-end gap-2">
         <button className={btnSecondary} onClick={busy ? undefined : () => { if (ratesDirty) onDone(); onClose(); }} disabled={busy}>
@@ -1046,7 +1092,9 @@ function AddCommEntryModal({
       });
       onDone();
     } catch (e: any) {
-      onError(e?.message || "Failed to add entry");
+      const msg = e?.message || "Failed to add entry";
+      setError(msg);        // inline, in the Name field's error slot
+      onError(msg);
     } finally {
       setBusy(false);
     }

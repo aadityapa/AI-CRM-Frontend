@@ -91,4 +91,17 @@ export interface InvoiceData {
   shipping: PartyDetails;
   bank: BankDetails;
   gst: GSTBreakup;
+  /** "Scan to view" (3 Sep 2026): the public signed link and its QR image. */
+  share?: ShareLinks | null;
+}
+
+export interface ShareLinks {
+  token: string;
+  view_url: string;
+  data_url: string;
+  pdf_url: string;
+  /** What the QR encodes — this app's public page, or the hosted viewer. */
+  qr_target: string;
+  /** data:image/svg+xml;base64,… rendered server-side. */
+  qr_svg?: string | null;
 }
