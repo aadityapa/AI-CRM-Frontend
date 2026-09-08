@@ -13,6 +13,7 @@ import {
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { ActivityLogPage } from "./ActivityLog";
+import { EmailDraftsTab } from "./settings/EmailDraftsTab";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -1076,6 +1077,7 @@ export function CrmSettingsPage() {
           { key: "organisation", label: "Organisation" },
           { key: "operations", label: "Operations" },
           { key: "app-settings", label: "App Settings" },
+          { key: "email-drafts", label: "Email Drafts" },
           { key: "ui-text", label: "UI Text" },
           { key: "activity-log", label: "Activity Log" },
         ]}
@@ -1180,6 +1182,7 @@ export function CrmSettingsPage() {
         {tab === "customer-policies" && <CustomerPoliciesTab notify={notify} />}
         {tab === "organisation" && <OrganisationTab notify={notify} />}
         {tab === "operations" && <OperationsTab notify={notify} />}
+        {tab === "email-drafts" && <EmailDraftsTab notify={notify} />}
         {tab === "app-settings" && <AppSettingsTab notify={notify} />}
         {tab === "ui-text" && <UiTextTab notify={notify} />}
         {tab === "activity-log" && <ActivityLogPage />}
@@ -1537,3 +1540,7 @@ function EditCustomerPolicyModal({
     </Modal>
   );
 }
+
+/* ------------------------------------------------------------ email drafts */
+/* Moved to ./settings/EmailDraftsTab.tsx (3 Sep 2026) — candidate, internal
+   and admin-created drafts in one editor. */

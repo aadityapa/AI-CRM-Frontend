@@ -1,15 +1,15 @@
 /** Candidate master pages: searchable list + detail with personal info,
  * education, experience, skills and linked candidate-profiles tabs. */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Briefcase, FileText, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2, User } from "lucide-react";
-import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
+import { Briefcase, FileText, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from "lucide-react";
+import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
-import { useCrmAccess } from "../useAccess";
+import { useCanAct, useCrmAccess } from "../useAccess";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -30,8 +30,10 @@ import {
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import {
-  SectionHeaderBanner, WizardField,
+  SectionHeaderBanner, WizardField, WizardFooter, WizardShell, WizardStepCard,
+  WizardTopBar, type StepStatus, type WizardStep,
 } from "../components/wizard";
+import { PhoneField } from "../components/PhoneField";
 
 /** Local single-screen shell — applies the shared wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -168,6 +170,31 @@ const lacToRupees = (v: string) => (v === "" ? null : Math.round(Number(v) * LAK
 /** Rupees from the API -> lakhs for a form field. */
 const rupeesToLac = (v?: number | null) =>
   v === null || v === undefined ? "" : String(Number(v) / LAKH);
+
+/** A CTC read off a RESUME -> the value a "(Lac)" input expects.
+ *
+ * Mirrors services/ctc.py::parse_ctc_to_rupees. A CV writes the same salary as
+ * "12 LPA", "12,00,000", "₹12L" or "1.2 Cr"; pasting the raw digits into a Lac
+ * field multiplied it by 100,000 on save (2 Sep 2026: ₹1,00,00,00,000 on the
+ * Applicants tab). Explicit units win; a bare number under 1,000 is already
+ * lakhs. Returns "" when it cannot be read confidently — better blank than wrong.
+ */
+const ctcToLacInput = (raw: unknown): string => {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (!text) return "";
+  const m = text.replace(/\s/g, "").match(/(\d+(?:[.,]\d+)*)/);
+  if (!m) return "";
+  const num = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(num) || num <= 0) return "";
+  let lakhs: number;
+  if (/\bcr\b|crore/.test(text)) lakhs = num * 100;
+  else if (/lpa|lakh|lacs?\b|\bl\b|\dl\b/.test(text)) lakhs = num;
+  else if (/\bk\b|thousand|\dk\b/.test(text)) lakhs = (num * 1000) / LAKH;
+  else if (num < 1000) lakhs = num;          // "12" on a CV means 12 LPA
+  else lakhs = num / LAKH;                   // already rupees
+  if (!(lakhs > 0) || lakhs > 5000) return ""; // > ₹50 crore = a unit slip
+  return String(Number(lakhs.toFixed(2)));
+};
 const candName = (c: Candidate) => c.full_name || [c.first_name, c.last_name].filter(Boolean).join(" ");
 const locLabel = (l: LocationOpt) => [l.city, l.state, l.country].filter(Boolean).join(", ");
 
@@ -203,10 +230,8 @@ function useMaster<T = any>(path: string): T[] {
 
 export function CandidatesListPage() {
   const canWrite = useHasRole(...WRITE_ROLES);
-  // Applying a candidate to a requirement is TA's job (sourcing) — Admin/CEO pass too.
-  const isTAUser = useHasRole("TA");
   // Roles allowed to create a Candidate Profile (POST /api/candidate-profiles).
-  const canApply = useHasRole("TA", "Sales", "RMG");
+  const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
   const skills = useMaster<SkillOpt>("/api/skills?is_active=true");
 
   const [rows, setRows] = useState<Candidate[]>([]);
@@ -221,6 +246,18 @@ export function CandidatesListPage() {
   const [domain, setDomain] = useState("");
   const [debounced, setDebounced] = useState({ search: "", domain: "" });
   const [showCreate, setShowCreate] = useState(false);
+  /* Bulk ZIP → talent pool (31 Aug 2026). Background job + polling, exactly
+     like the requirement bulk upload: one AI parse per resume is minutes for
+     a full zip, so the button reports "Processing 23/50…". */
+  const [zipBusy, setZipBusy] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
+  const [zipResult, setZipResult] = useState<{
+    created: { file: string; candidate_id: number; name: string; email?: string;
+      no_email?: boolean; name_match?: { candidate_id: number; name: string } | null }[];
+    enriched: { file: string; candidate_id: number; name: string; email?: string; filled: number }[];
+    failed: { file: string; reason: string }[];
+    total: number;
+  } | null>(null);
   const [applyFor, setApplyFor] = useState<Candidate | null>(null);
   const [toast, showToast] = useToast();
 
@@ -290,14 +327,61 @@ export function CandidatesListPage() {
     },
   ];
 
+  const uploadCandidateZip = async (f: File) => {
+    setZipBusy(true);
+    setZipProgress(null);
+    try {
+      const start = await crmUpload<{ job_id: string; total: number; oversize: any[] }>(
+        "/api/candidates/bulk-zip", f);
+      const jobId = start.data.job_id;
+      setZipProgress({ done: 0, total: start.data.total });
+      const poll = async (): Promise<void> => {
+        const res = await crmGet<{
+          status: string; done: number; total: number; error?: string;
+          oversize?: any[]; result?: NonNullable<typeof zipResult>;
+        }>(`/api/resumes/bulk-jobs/${jobId}`);
+        const j = res.data;
+        if (j.status === "running") {
+          setZipProgress({ done: j.done || 0, total: j.total || 0 });
+          await new Promise((r) => setTimeout(r, 1500));
+          return poll();
+        }
+        if (j.status === "error") throw new Error(j.error || "Bulk processing failed");
+        const result = j.result!;
+        if (j.oversize?.length) result.failed = [...result.failed, ...j.oversize];
+        setZipResult(result);
+        load();
+      };
+      await poll();
+    } catch (e: any) {
+      showToast(e?.message || "ZIP upload failed", "err");
+    } finally {
+      setZipBusy(false);
+      setZipProgress(null);
+    }
+  };
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-display text-xl font-bold text-primary">Candidates</h1>
         {canWrite && (
-          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> New Candidate
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Bulk pool intake (31 Aug 2026, user request): one ZIP of CVs →
+                many candidates, details extracted per resume. No opportunity —
+                TA applies them later from each record. */}
+            <label className={`${btnSecondary} ${zipBusy ? "pointer-events-none opacity-60" : "cursor-pointer"}`}>
+              <input type="file" accept=".zip" className="hidden" disabled={zipBusy}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadCandidateZip(f); e.target.value = ""; }} />
+              <FileText size={15} />
+              {zipBusy
+                ? (zipProgress ? `Processing ${zipProgress.done}/${zipProgress.total}…` : "Uploading…")
+                : "Bulk upload (ZIP)"}
+            </label>
+            <button className={btnPrimary} onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> New Candidate
+            </button>
+          </div>
         )}
       </div>
 
@@ -385,6 +469,77 @@ export function CandidatesListPage() {
         />
       )}
 
+      {zipResult && (
+        <Modal medium title="Bulk upload results" onClose={() => setZipResult(null)}>
+          <div className="space-y-4 text-sm">
+            <p className="text-secondary">
+              {zipResult.total} resume(s) in the ZIP — {zipResult.created.length} candidate(s) added
+              {zipResult.enriched.length > 0 && <>, {zipResult.enriched.length} already existed</>}
+              {zipResult.failed.length > 0 && <>, {zipResult.failed.length} failed</>}.
+            </p>
+            {zipResult.created.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">
+                  Added — now in the Candidates list
+                </div>
+                <ul className="max-h-56 space-y-1 overflow-y-auto">
+                  {zipResult.created.map((c) => (
+                    <li key={c.file} className="text-secondary">
+                      <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                        onClick={() => { setZipResult(null); crmNavigate(`candidates/${c.candidate_id}`); }}>
+                        {c.name}
+                      </button>
+                      {c.email && !c.no_email && <> · {displayEmail(c.email)}</>}
+                      {c.no_email && <span className="text-warning"> · no email found — add one before mailing them</span>}
+                      <span className="text-xs text-muted"> ({c.file})</span>
+                      {c.name_match && (
+                        <div className="text-xs text-muted">
+                          note: same name as existing candidate{" "}
+                          <button type="button" className="underline"
+                            onClick={() => { setZipResult(null); crmNavigate(`candidates/${c.name_match!.candidate_id}`); }}>
+                            {c.name_match.name}
+                          </button>{" "}
+                          (different email/phone — likely a different person)
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {zipResult.enriched.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">
+                  Already existed — no duplicate created, missing details topped up
+                </div>
+                <ul className="max-h-40 space-y-1 overflow-y-auto">
+                  {zipResult.enriched.map((c) => (
+                    <li key={c.file} className="text-secondary">
+                      <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                        onClick={() => { setZipResult(null); crmNavigate(`candidates/${c.candidate_id}`); }}>
+                        {c.name || `#${c.candidate_id}`}
+                      </button>
+                      {c.filled > 0 && <> · {c.filled} field(s) filled from this CV</>}
+                      <span className="text-xs text-muted"> ({c.file})</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {zipResult.failed.length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-danger">Failed</div>
+                <ul className="max-h-24 space-y-0.5 overflow-y-auto text-xs text-danger">
+                  {zipResult.failed.map((s) => <li key={s.file}>{s.file} — {s.reason}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button className={btnPrimary} onClick={() => setZipResult(null)}>Done</button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {showCreate && (
         <CandidateFormModal
           onClose={() => setShowCreate(false)}
@@ -423,6 +578,10 @@ function CandidateFormModal({
   const designations = useMaster<DesignationOpt>("/api/designations?is_active=true");
   const locations = useMaster<LocationOpt>("/api/locations");
   const isEdit = !!initial;
+  // Recruiter = whoever is adding the candidate (1 Sep 2026, user request).
+  // Prefilled, not locked: a coordinator sometimes enters a colleague's find,
+  // and an edit must never silently reassign an existing candidate.
+  const me = useMe();
 
   const init = (initial || {}) as any;
   const [form, setForm] = useState({
@@ -438,7 +597,7 @@ function CandidateFormModal({
     notice_period: init.notice_period || "",
     city: init.city || "",
     preferred_locations: init.preferred_locations || "",
-    recruiter_email: init.recruiter_email || "",
+    recruiter_email: init.recruiter_email || (isEdit ? "" : me.email || ""),
     technical_domain: initial?.technical_domain || "",
     roles: init.roles || "",
     designation_id: initial?.designation_id ? String(initial.designation_id) : "",
@@ -455,6 +614,71 @@ function CandidateFormModal({
   const [error, setError] = useState("");
 
   const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
+
+  /* Resume-FIRST create (31 Aug 2026, user request): TA drops the CV, the AI
+     parse prefills every EMPTY field, duplicates surface immediately (email OR
+     last-10-digit phone — same rule as bulk upload) with candidate/profile
+     links, and the file attaches as the candidate's CV on Create (which also
+     auto-fills skills/education/experience history server-side). */
+  const [cvFile, setCvFile] = useState<File | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parseDup, setParseDup] = useState<any | null>(null);
+  const [parseNameNote, setParseNameNote] = useState<any | null>(null);
+
+  const numOnly = (v: unknown): string => {
+    const s = String(v ?? "").replace(/[, ]/g, "");
+    return s && !Number.isNaN(Number(s)) ? s : "";
+  };
+
+  const parseResume = async (f: File) => {
+    setCvFile(f);
+    setParsing(true);
+    setParseDup(null);
+    setParseNameNote(null);
+    try {
+      const res = await crmUpload<any>("/api/resumes/parse", f);
+      const p = res.data?.parsed || {};
+      setForm((prev) => {
+        const next = { ...prev };
+        const fill = (k: keyof typeof prev, v: unknown) => {
+          const s = String(v ?? "").trim();
+          if (s && !String(next[k] ?? "").trim()) (next as any)[k] = s;
+        };
+        const nameParts = String(p.name || "").trim().split(/\s+/).filter(Boolean);
+        if (!next.first_name.trim() && !next.last_name.trim() && nameParts.length) {
+          next.first_name = nameParts[0];
+          if (nameParts.length > 1) next.last_name = nameParts[nameParts.length - 1];
+          if (nameParts.length > 2) next.middle_name = nameParts.slice(1, -1).join(" ");
+        }
+        fill("email", p.email);
+        fill("phone", p.phone);
+        fill("experience_years", numOnly(p.experience));
+        fill("notice_period", p.notice_period);
+        fill("city", p.location);
+        fill("preferred_locations", p.location);
+        fill("technical_domain", p.technical_domain);
+        fill("linkedin_url", p.linkedin_url);
+        fill("roles", p.designation);
+        // These two fields are in LAC (they are ×100,000'd on save), so a
+        // parsed "12,00,000" must become 12 — not 1200000, which stored
+        // ₹1,20,00,00,00,000 (2 Sep 2026 bug report).
+        fill("current_ctc", ctcToLacInput(p.current_ctc));
+        fill("expected_ctc", ctcToLacInput(p.expected_ctc));
+        return next;
+      });
+      setParseDup(res.data?.duplicate || null);
+      setParseNameNote(res.data?.name_match || null);
+      if (p.text_extracted === false) {
+        setError("The file has no readable text — fill the details manually (the CV still attaches on Create)");
+      } else {
+        setError("");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Could not read the resume — fill the details manually");
+    } finally {
+      setParsing(false);
+    }
+  };
 
   // Template field grants: lock what the template sets to view-only. Applies
   // on EDIT — creating a record types every field of a record that doesn't
@@ -486,9 +710,113 @@ function CandidateFormModal({
     } catch { /* a check failure must never block the form */ }
   };
 
+  /* ---------------------------------------------------------- wizard steps */
+  /* Stepped chrome (1 Sep 2026, user request) — the same shell as New Customer
+     and New Opportunity. One 40-field scroll became four short screens, and the
+     rail on the left doubles as a completeness check before Create. */
+  const STEPS = useMemo(() => {
+    const rest = [
+      { key: "personal", title: "Personal details",
+        description: "Name, contact, and where the candidate is based." },
+      { key: "professional", title: "Professional",
+        description: "Experience, domain, roles, and who is recruiting them." },
+      { key: "compensation", title: "Compensation & notice",
+        description: "Current and expected CTC, plus resignation status." },
+    ];
+    return isEdit
+      ? rest
+      : [{ key: "resume", title: "Resume & email",
+           description: "Drop the CV and the form fills itself. The email is checked for duplicates first." },
+         ...rest];
+  }, [isEdit]);
+
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [maxReached, setMaxReached] = useState(0);
+  const [stepDir, setStepDir] = useState(1);
+  const totalSteps = STEPS.length;
+  const clampedStep = Math.min(Math.max(stepIndex, 0), totalSteps - 1);
+  const currentStep = STEPS[clampedStep];
+  const isFirstStep = clampedStep === 0;
+  const isLastStep = clampedStep === totalSteps - 1;
+  const stepPct = Math.round(((clampedStep + 1) / totalSteps) * 100);
+
+  const stepStatus = (key: string): StepStatus => {
+    switch (key) {
+      case "resume":
+        if (emailBlocked) return "error";
+        if (!form.email.trim()) return "empty";
+        return cvFile ? "complete" : "partial";
+      case "personal": {
+        if (!form.first_name.trim() || !form.email.trim()) return "empty";
+        return form.phone.trim() ? "complete" : "partial";
+      }
+      case "professional": {
+        const filled = [form.technical_domain, form.roles, form.designation_id,
+          form.recruiter_email, form.experience_years].filter((v) => String(v).trim()).length;
+        return filled === 0 ? "empty" : filled >= 3 ? "complete" : "partial";
+      }
+      case "compensation":
+        if (form.current_ctc && form.expected_ctc) return "complete";
+        return form.current_ctc || form.expected_ctc ? "partial" : "empty";
+      default:
+        return "empty";
+    }
+  };
+
+  const wizardSteps: WizardStep[] = STEPS.map((s) => ({
+    key: s.key,
+    title: s.title,
+    sublabel: s.description.split(".")[0],
+    status: stepStatus(s.key),
+  }));
+
+  /** Returns the step a required field is missing on, or -1 when all good. */
+  const firstIncompleteStep = (): number => {
+    const need = (key: string) => STEPS.findIndex((s) => s.key === key);
+    if (!form.email.trim()) return Math.max(need(isEdit ? "personal" : "resume"), 0);
+    if (!form.first_name.trim()) return Math.max(need("personal"), 0);
+    return -1;
+  };
+
+  const validateStep = (idx: number): boolean => {
+    const key = STEPS[idx]?.key;
+    if (key === "resume") {
+      if (!form.email.trim()) { setError("Enter the candidate's email to continue"); return false; }
+      if (emailBlocked) { setError("This email already exists — open the existing candidate instead"); return false; }
+    }
+    if (key === "personal") {
+      if (!form.first_name.trim()) { setError("First name is required"); return false; }
+      if (!form.email.trim()) { setError("Email is required"); return false; }
+    }
+    setError("");
+    return true;
+  };
+
+  const goToStep = (i: number) => {
+    if (i < 0 || i >= totalSteps || i > maxReached) return;
+    setStepDir(i > clampedStep ? 1 : -1);
+    setStepIndex(i);
+  };
+  const goPrev = () => { if (!isFirstStep) goToStep(clampedStep - 1); };
+  const goNext = () => {
+    if (!validateStep(clampedStep) || isLastStep) return;
+    const next = clampedStep + 1;
+    setMaxReached((m) => Math.max(m, next));
+    setStepDir(1);
+    setStepIndex(next);
+  };
+
   const submit = async (opts?: { skipDupCheck?: boolean }) => {
-    if (!form.first_name.trim()) return setError("First name is required");
-    if (!form.email.trim()) return setError("Email is required");
+    // Jump back to the step that is actually missing something — an error at
+    // the bottom of the last step used to point at a field two screens away.
+    const bad = firstIncompleteStep();
+    if (bad >= 0) {
+      setMaxReached((m) => Math.max(m, bad));
+      setStepDir(-1);
+      setStepIndex(bad);
+      return setError(!form.email.trim() ? "Email is required" : "First name is required");
+    }
     setBusy(true);
     setError("");
     // Duplicate check BEFORE creating (create mode only): the same person
@@ -558,6 +886,12 @@ function CandidateFormModal({
       const res = isEdit
         ? await crmPut<Candidate>(`/api/candidates/${initial!.id}`, payload)
         : await crmPost<Candidate>("/api/candidates", payload);
+      if (!isEdit && cvFile && res.data?.id) {
+        // Attach the parsed resume as the candidate's CV — the server also
+        // auto-fills skills/education/experience history from it. Best-effort:
+        // the candidate exists either way.
+        try { await crmUpload(`/api/candidates/${res.data.id}/cv`, cvFile); } catch { /* CV can be re-uploaded from the record */ }
+      }
       onSaved(res.data);
     } catch (e: any) {
       setError(e?.message || "Failed to save candidate");
@@ -565,29 +899,113 @@ function CandidateFormModal({
     }
   };
 
-  const secHead = "sm:col-span-2 mt-1 border-t border-subtle pt-3 text-xs font-bold uppercase tracking-wide text-muted";
+  const grid = "grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2";
 
-  return (
-    <Modal
-      title={<span className="sr-only">{isEdit ? "Edit Candidate" : "New Candidate"}</span>}
-      onClose={onClose}
-      fullScreen
-      scopeClassName="crm-wizard wiz-noise"
-      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
+  /* The duplicate banner sits ABOVE the step body, not inside a step: the
+     email check fires on blur (step 1) but the full name/phone check fires on
+     submit (last step), and a warning the recruiter can't see is no warning. */
+  const dupBanner = dupes && dupes.length > 0 ? (
+    <div
+      className={`mb-4 rounded-card border p-4 ${
+        emailBlocked
+          ? "border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/40"
+          : "border-warning/40 bg-warning-soft"
+      }`}
+      role="alert"
     >
-      <WizFormShell
-        title={isEdit ? "Edit Candidate" : "New Candidate"}
-        subtitle="Capture the candidate's personal, professional, and compensation details."
-        icon={<User size={20} aria-hidden />}
-      >
-      {error && <div className="mb-3"><ErrorBox error={error} /></div>}
-      <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
-        {/* Email FIRST (create): the unique key, checked before anything else so a
-            duplicate is caught up front and the recruiter is pointed at the
-            existing record. */}
-        {!isEdit && (
-          <>
-            <div className={secHead}>Candidate email — checked first</div>
+      <p className={`text-sm font-bold ${emailBlocked ? "text-rose-700 dark:text-rose-300" : "text-warning"}`}>
+        {emailBlocked
+          ? "This email already exists — a duplicate can't be created"
+          : `Possible duplicate${dupes.length > 1 ? "s" : ""} — is this the same person?`}
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {dupes.map((d) => (
+          <li key={d.id} className="flex flex-wrap items-center gap-2 text-sm text-secondary">
+            <span className="font-semibold text-primary">{d.name || `#${d.id}`}</span>
+            {d.phone && <span>{d.phone}</span>}
+            {d.email && !d.email.endsWith("@import.karnex.in") && <span>{displayEmail(d.email)}</span>}
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">
+              same {d.match_on.join(" + ")}
+            </span>
+            <button
+              type="button"
+              className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+              onClick={() => { onClose(); crmNavigate(`candidates/${d.id}`); }}
+            >
+              Open record
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-secondary">
+        {emailBlocked
+          ? "Email is the candidate's unique key, so a second record isn't allowed. Open the existing candidate to update their resume or details, or apply them to an opportunity."
+          : "Open the existing record instead of creating a second one — or, if this really is a different person, create anyway."}
+      </p>
+    </div>
+  ) : null;
+
+  const renderStep = () => {
+    switch (currentStep.key) {
+      case "resume":
+        return (
+          <div className={grid}>
+            <div className="sm:col-span-2">
+              <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-card border border-dashed border-strong bg-surface-2/50 px-4 py-3 hover:bg-surface-2">
+                <input type="file" className="hidden" accept=".pdf,.docx,.txt"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void parseResume(f); e.target.value = ""; }} />
+                <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
+                  {parsing ? "Reading resume…" : cvFile ? "Choose a different resume" : "Choose resume (.pdf / .docx / .txt)"}
+                </span>
+                {cvFile && !parsing && (
+                  <span className="text-xs text-secondary">{cvFile.name} — the next steps are prefilled; correct anything wrong</span>
+                )}
+                {!cvFile && !parsing && (
+                  <span className="text-xs text-muted">Details are extracted automatically and the CV attaches on Create — or skip and type manually.</span>
+                )}
+              </label>
+            </div>
+            {parseDup && (
+              <div className="sm:col-span-2 rounded-card border border-warning/40 bg-warning-soft px-4 py-3" role="alert">
+                <p className="text-sm font-bold text-warning">
+                  This resume matches an existing candidate — don&rsquo;t create a duplicate
+                </p>
+                <p className="mt-1 text-sm text-secondary">
+                  <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                    onClick={() => { onClose(); crmNavigate(`candidates/${parseDup.candidate_id}`); }}>
+                    {parseDup.name || `Candidate #${parseDup.candidate_id}`}
+                  </button>
+                  {parseDup.email ? <> · {displayEmail(parseDup.email)}</> : null}
+                  {parseDup.phone ? <> · {parseDup.phone}</> : null}
+                </p>
+                {(parseDup.profiles || []).length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5 text-xs text-secondary">
+                    {parseDup.profiles.map((pr: any) => (
+                      <li key={pr.profile_id}>
+                        Applied to <b>{pr.opportunity_title}</b> ({String(pr.pipeline_status || "").replace(/_/g, " ")}) —{" "}
+                        <button type="button" className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                          onClick={() => { onClose(); crmNavigate(`profiles/${pr.profile_id}`); }}>
+                          open profile
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1.5 text-xs text-secondary">
+                  Open the existing record to update their CV or apply them to an opportunity instead.
+                </p>
+              </div>
+            )}
+            {parseNameNote && !parseDup && (
+              <p className="sm:col-span-2 text-xs text-muted">
+                Note: same name as existing candidate{" "}
+                <button type="button" className="font-semibold underline"
+                  onClick={() => { onClose(); crmNavigate(`candidates/${parseNameNote.candidate_id}`); }}>
+                  {parseNameNote.name}
+                </button>{" "}
+                (different email/phone — likely a different person).
+              </p>
+            )}
             <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
               <input className={inputCls} type="email" value={form.email} autoFocus
                 placeholder="Enter the candidate's email first"
@@ -599,184 +1017,214 @@ function CandidateFormModal({
                 </p>
               )}
             </WizardField>
-            {dupes && dupes.length > 0 && (
-              <div
-                className={`sm:col-span-2 rounded-card border p-4 ${
-                  emailBlocked
-                    ? "border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/40"
-                    : "border-warning/40 bg-warning-soft"
-                }`}
-                role="alert"
-              >
-                <p className={`text-sm font-bold ${emailBlocked ? "text-rose-700 dark:text-rose-300" : "text-warning"}`}>
-                  {emailBlocked
-                    ? "This email already exists — a duplicate can't be created"
-                    : `Possible duplicate${dupes.length > 1 ? "s" : ""} — is this the same person?`}
-                </p>
-                <ul className="mt-2 space-y-1.5">
-                  {dupes.map((d) => (
-                    <li key={d.id} className="flex flex-wrap items-center gap-2 text-sm text-secondary">
-                      <span className="font-semibold text-primary">{d.name || `#${d.id}`}</span>
-                      {d.phone && <span>{d.phone}</span>}
-                      {d.email && !d.email.endsWith("@import.karnex.in") && <span>{displayEmail(d.email)}</span>}
-                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase text-muted">
-                        same {d.match_on.join(" + ")}
-                      </span>
-                      <button
-                        type="button"
-                        className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
-                        onClick={() => { onClose(); crmNavigate(`candidates/${d.id}`); }}
-                      >
-                        Open record
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-2 text-xs text-secondary">
-                  {emailBlocked
-                    ? "Email is the candidate's unique key, so a second record isn't allowed. Open the existing candidate to update their resume or details, or apply them to an opportunity."
-                    : "Open the existing record instead of creating a second one — or, if this really is a different person, create anyway."}
-                </p>
-              </div>
+          </div>
+        );
+
+      case "personal":
+        return (
+          <div className={grid}>
+            <WizardField label="Salutation">
+              <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
+                <option value="">—</option>
+                {["Mr", "Ms", "Mrs", "Dr", "Mx"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="First name" required icon="user" filled={!!form.first_name.trim()}>
+              <input className={inputCls} value={form.first_name} disabled={locked("name")} onChange={(e) => set("first_name", e.target.value)} />
+            </WizardField>
+            <WizardField label="Middle name" icon="user">
+              <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
+            </WizardField>
+            <WizardField label="Last name" icon="user">
+              <input className={inputCls} value={form.last_name} onChange={(e) => set("last_name", e.target.value)} />
+            </WizardField>
+            {/* Email is captured on step 1 when creating; on edit it stays here so it can be replaced. */}
+            {isEdit && (
+              <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
+                <input className={inputCls} type="email" value={form.email} disabled={locked("email")}
+                  onChange={(e) => set("email", e.target.value)} />
+                {isPlaceholderEmail(form.email) && (
+                  <p className="mt-1 text-xs text-warning">
+                    Placeholder address — this candidate had no email in Zoho. Replace it with
+                    their real one.
+                  </p>
+                )}
+              </WizardField>
             )}
-          </>
-        )}
-        <div className={secHead}>Name</div>
-        <WizardField label="Salutation">
-          <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
-            <option value="">—</option>
-            {["Mr", "Ms", "Mrs", "Dr", "Mx"].map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </WizardField>
-        <WizardField label="First name" required icon="user" filled={!!form.first_name.trim()}>
-          <input className={inputCls} value={form.first_name} disabled={locked("name")} onChange={(e) => set("first_name", e.target.value)} />
-        </WizardField>
-        <WizardField label="Middle name" icon="user">
-          <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
-        </WizardField>
-        <WizardField label="Last name" icon="user">
-          <input className={inputCls} value={form.last_name} onChange={(e) => set("last_name", e.target.value)} />
-        </WizardField>
+            <WizardField className="sm:col-span-2" label="Phone">
+              <PhoneField
+                value={form.phone}
+                disabled={locked("phone")}
+                onChange={(v) => set("phone", v)}
+              />
+            </WizardField>
+            <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
+              <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
+            </WizardField>
+            <WizardField label="Gender">
+              <select className={inputCls} value={form.gender} onChange={(e) => set("gender", e.target.value)}>
+                <option value="">Select…</option>
+                {["Male", "Female", "Other", "Prefer not to say"].map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </WizardField>
+            <WizardField label="City">
+              <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="e.g. Bangalore" />
+            </WizardField>
+            <WizardField className="sm:col-span-2" label="Current address">
+              <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
+            </WizardField>
+            <WizardField className="sm:col-span-2" label="Permanent address">
+              <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
+            </WizardField>
+          </div>
+        );
 
-        <div className={secHead}>Basic details</div>
-        {/* Email lives up top on create; on edit it stays here so it can be replaced. */}
-        {isEdit && (
-          <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
-            <input className={inputCls} type="email" value={form.email} disabled={locked("email")}
-              onChange={(e) => set("email", e.target.value)} />
-            {isPlaceholderEmail(form.email) && (
-              <p className="mt-1 text-xs text-warning">
-                Placeholder address — this candidate had no email in Zoho. Replace it with
-                their real one.
-              </p>
+      case "professional":
+        return (
+          <div className={grid}>
+            <WizardField label="Experience (years)" icon="hash" filled={form.experience_years !== ""}>
+              <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} disabled={locked("experience_years")} onChange={(e) => set("experience_years", e.target.value)} />
+            </WizardField>
+            <WizardField label="Notice period">
+              <input className={inputCls} value={form.notice_period} disabled={locked("notice_period")} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
+            </WizardField>
+            <WizardField label="Technical domain">
+              <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Backend, Data Engineering" />
+            </WizardField>
+            <WizardField
+              label="Recruiter"
+              icon="mail"
+              filled={!!form.recruiter_email.trim()}
+              info={!isEdit && form.recruiter_email === (me.email || "") && form.recruiter_email
+                ? <p className="mt-1 text-xs text-muted">
+                    You ({me.full_name || me.username}) — change it if you are adding this
+                    candidate on a colleague&rsquo;s behalf.
+                  </p>
+                : undefined}
+            >
+              <input className={inputCls} value={form.recruiter_email} onChange={(e) => set("recruiter_email", e.target.value)} placeholder="recruiter@karnex.in" />
+            </WizardField>
+            <WizardField label="Roles">
+              <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
+            </WizardField>
+            <WizardField label="Designation">
+              <select className={inputCls} value={form.designation_id} onChange={(e) => set("designation_id", e.target.value)}>
+                <option value="">None</option>
+                {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </WizardField>
+            {/* Free-text "Preferred locations" removed 3 Sep 2026 (user decision) —
+                the master-data dropdown below is the only location field. The
+                form key is kept so existing values still round-trip on edit. */}
+            <WizardField label="Preferred location" icon="map">
+              <select className={inputCls} value={form.preferred_location_id} onChange={(e) => set("preferred_location_id", e.target.value)}>
+                <option value="">None</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{locLabel(l)}</option>)}
+              </select>
+            </WizardField>
+            <WizardField className="sm:col-span-2" label="LinkedIn URL" icon={<Linkedin size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
+              <input className={inputCls} value={form.linkedin_url} onChange={(e) => set("linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/…" />
+            </WizardField>
+          </div>
+        );
+
+      case "compensation":
+        return (
+          <div className={grid}>
+            <WizardField label="Current CTC (Lac)" icon="hash" filled={form.current_ctc !== ""}>
+              <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} disabled={locked("current_ctc")} onChange={(e) => set("current_ctc", e.target.value)} />
+            </WizardField>
+            <WizardField label="Expected CTC (Lac)" icon="hash" filled={form.expected_ctc !== ""}>
+              <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} disabled={locked("expected_ctc")} onChange={(e) => set("expected_ctc", e.target.value)} />
+            </WizardField>
+            <div className="sm:col-span-2 flex items-end gap-4 pb-1">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
+                <input type="checkbox" checked={form.resignation_status} disabled={locked("resignation")} onChange={(e) => set("resignation_status", e.target.checked)} />
+                Resigned / serving notice
+              </label>
+            </div>
+            {form.resignation_status && (
+              <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
+                <input className={inputCls} type="date" value={form.last_working_day} disabled={locked("resignation")} onChange={(e) => set("last_working_day", e.target.value)} />
+              </WizardField>
             )}
-          </WizardField>
-        )}
-        <WizardField label="Phone" icon="phone" filled={!!form.phone.trim()}>
-          <input className={inputCls} value={form.phone} disabled={locked("phone")} onChange={(e) => set("phone", e.target.value)} />
-        </WizardField>
-        <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
-          <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
-        </WizardField>
-        <WizardField label="Gender">
-          <select className={inputCls} value={form.gender} onChange={(e) => set("gender", e.target.value)}>
-            <option value="">Select…</option>
-            {["Male", "Female", "Other", "Prefer not to say"].map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-        </WizardField>
-        <WizardField label="Experience (years)" icon="hash" filled={form.experience_years !== ""}>
-          <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} disabled={locked("experience_years")} onChange={(e) => set("experience_years", e.target.value)} />
-        </WizardField>
-        <WizardField label="Notice period">
-          <input className={inputCls} value={form.notice_period} disabled={locked("notice_period")} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
-        </WizardField>
-        <WizardField className="sm:col-span-2" label="Current address">
-          <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
-        </WizardField>
-        <WizardField className="sm:col-span-2" label="Permanent address">
-          <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
-        </WizardField>
+          </div>
+        );
 
-        <WizardField label="City">
-          <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="e.g. Bangalore" />
-        </WizardField>
+      default:
+        return null;
+    }
+  };
 
-        <div className={secHead}>Professional</div>
-        <WizardField label="Technical domain">
-          <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Backend, Data Engineering" />
-        </WizardField>
-        <WizardField label="Recruiter">
-          <input className={inputCls} value={form.recruiter_email} onChange={(e) => set("recruiter_email", e.target.value)} placeholder="recruiter@karnex.in" />
-        </WizardField>
-        <WizardField label="Preferred locations" info="Comma separated when the candidate is open to several.">
-          <input className={inputCls} value={form.preferred_locations} onChange={(e) => set("preferred_locations", e.target.value)} placeholder="e.g. Bangalore, Pune" />
-        </WizardField>
-        <WizardField label="Roles">
-          <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
-        </WizardField>
-        <WizardField label="Designation">
-          <select className={inputCls} value={form.designation_id} onChange={(e) => set("designation_id", e.target.value)}>
-            <option value="">None</option>
-            {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </WizardField>
-        <WizardField label="LinkedIn URL" icon={<Linkedin size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
-          <input className={inputCls} value={form.linkedin_url} onChange={(e) => set("linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/…" />
-        </WizardField>
-        <WizardField label="Preferred location" icon="map">
-          <select className={inputCls} value={form.preferred_location_id} onChange={(e) => set("preferred_location_id", e.target.value)}>
-            <option value="">None</option>
-            {locations.map((l) => <option key={l.id} value={l.id}>{locLabel(l)}</option>)}
-          </select>
-        </WizardField>
+  // The last step's primary action changes with what the duplicate check found.
+  const submitLabel = emailBlocked
+    ? "Open existing candidate"
+    : dupes && dupes.length > 0 && !isEdit
+      ? "Create anyway — different person"
+      : isEdit ? "Save changes" : "Create Candidate";
+  const onSubmitClick = () => {
+    if (emailBlocked) {
+      onClose();
+      if (emailMatch) crmNavigate(`candidates/${emailMatch.id}`);
+      return;
+    }
+    void submit({ skipDupCheck: !!(dupes && dupes.length > 0) });
+  };
 
-        <div className={secHead}>Compensation</div>
-        <WizardField label="Current CTC (Lac)" icon="hash" filled={form.current_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} disabled={locked("current_ctc")} onChange={(e) => set("current_ctc", e.target.value)} />
-        </WizardField>
-        <WizardField label="Expected CTC (Lac)" icon="hash" filled={form.expected_ctc !== ""}>
-          <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} disabled={locked("expected_ctc")} onChange={(e) => set("expected_ctc", e.target.value)} />
-        </WizardField>
-
-        <div className={secHead}>Separation</div>
-        <div className="flex items-end gap-4 pb-1">
-          <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
-            <input type="checkbox" checked={form.resignation_status} disabled={locked("resignation")} onChange={(e) => set("resignation_status", e.target.checked)} />
-            Resigned / serving notice
-          </label>
-        </div>
-        {form.resignation_status && (
-          <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
-            <input className={inputCls} type="date" value={form.last_working_day} disabled={locked("resignation")} onChange={(e) => set("last_working_day", e.target.value)} />
-          </WizardField>
-        )}
+  return (
+    <WizardShell
+      onClose={onClose}
+      ariaLabel={isEdit ? "Edit candidate steps" : "New candidate steps"}
+      topBar={
+        <WizardTopBar
+          title={isEdit ? `Edit Candidate — ${[form.first_name, form.last_name].filter(Boolean).join(" ")}` : "New Candidate"}
+          stepIndex={clampedStep}
+          totalSteps={totalSteps}
+          stepPct={stepPct}
+          busy={busy}
+          showAutosave={false}
+        />
+      }
+      footer={
+        <WizardFooter
+          stepIndex={clampedStep}
+          totalSteps={totalSteps}
+          stepPct={stepPct}
+          isFirstStep={isFirstStep}
+          isLastStep={isLastStep}
+          busy={busy}
+          onPrev={goPrev}
+          onNext={goNext}
+          onSubmit={onSubmitClick}
+          submitLabel={submitLabel}
+          submitBusyLabel={isEdit ? "Saving…" : "Creating…"}
+        />
+      }
+      steps={wizardSteps}
+      currentIndex={clampedStep}
+      maxReached={maxReached}
+      onSelectStep={goToStep}
+    >
+      <div
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
+          e.preventDefault();
+          if (!isLastStep) goNext();
+        }}
+      >
+        <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+          <SectionHeaderBanner
+            title={currentStep.title}
+            description={currentStep.description}
+            headingRef={stepHeadingRef}
+          />
+          {error && <div className="mb-4"><ErrorBox error={error} /></div>}
+          {dupBanner}
+          {renderStep()}
+        </WizardStepCard>
       </div>
-      <div className={wizFooterRow}>
-        <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-        {emailBlocked ? (
-          <button
-            className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`}
-            onClick={() => { onClose(); if (emailMatch) crmNavigate(`candidates/${emailMatch.id}`); }}
-            disabled={busy}
-          >
-            Open existing candidate
-          </button>
-        ) : dupes && dupes.length > 0 && !isEdit ? (
-          <button
-            className={`${btnSecondary} ml-auto h-10 rounded-xl px-4`}
-            onClick={() => void submit({ skipDupCheck: true })}
-            disabled={busy}
-          >
-            {busy ? "Saving…" : "Create anyway — different person"}
-          </button>
-        ) : (
-          <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={() => void submit()} disabled={busy}>
-            {busy ? "Saving…" : isEdit ? "Save changes" : "Create Candidate"}
-          </button>
-        )}
-      </div>
-      </WizFormShell>
-    </Modal>
+    </WizardShell>
   );
 }
 
@@ -788,8 +1236,10 @@ export function CandidateDetailPage() {
   const params = useCrmParams();
   const id = params.id;
   const canWrite = useHasRole(...WRITE_ROLES);
-  // Applying a candidate to a requirement is TA's job (sourcing) — Admin/CEO pass too.
-  const isTAUser = useHasRole("TA");
+  /* Same rule as the list row and the server gate (7 Sep 2026 fix): TA / Sales /
+     RMG, template-aware, and NO CV requirement — applying needs no CV (the
+     modal says so), yet this page hid the button until one was uploaded. */
+  const canApplyHere = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
 
   const [data, setData] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState("");
@@ -926,12 +1376,12 @@ export function CandidateDetailPage() {
           </div>
           <div className="flex items-center gap-3">
             <FileLink url={data.cv_url} label="View CV" />
-            {isTAUser && data.cv_url && (
+            {canApplyHere && (
               <button
                 type="button"
                 className={`${btnPrimary} h-10 rounded-xl`}
                 onClick={() => setApplyOpen(true)}
-                title="Apply this candidate directly to an open requirement — CV and details attach automatically"
+                title="Apply this candidate to an opportunity — creates their pipeline profile at Sourcing"
               >
                 <Briefcase size={15} /> Apply to Opportunity
               </button>
@@ -994,7 +1444,9 @@ export function CandidateDetailPage() {
           { key: "education", label: "Education", count: data.education.length },
           { key: "experience", label: "Experience", count: data.experience.length },
           { key: "skills", label: "Skills", count: data.skills.length },
-          { key: "profiles", label: "Linked Profiles", count: data.profiles.length },
+          // "Linked Opportunities" (2 Sep 2026, user request): each row IS an
+          // opportunity this candidate was put forward for. Key unchanged.
+          { key: "profiles", label: "Linked Opportunities", count: data.profiles.length },
           { key: "outreach", label: "Outreach" },
           { key: "emails", label: "Emails" },
         ]}
@@ -1074,7 +1526,7 @@ export function CandidateDetailPage() {
           columns={profileCols}
           rows={data.profiles}
           onRowClick={(r) => crmNavigate(`profiles/${r.id}`)}
-          emptyMessage="No linked candidate profiles"
+          emptyMessage="Not applied to any opportunity yet"
         />
       )}
 

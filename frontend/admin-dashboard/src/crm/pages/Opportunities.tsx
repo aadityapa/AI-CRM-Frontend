@@ -12,7 +12,7 @@ import { useCanAct, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
 import { DataTable } from "../components/DataTable";
-import type { Column } from "../components/DataTable";
+import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
 import { AiInterviewCell } from "../components/AiInterviewCell";
@@ -25,6 +25,8 @@ import { CustomerScopedTable, ProjectEmployeesScopedTab } from "./Customers";
 import { OPPORTUNITY_SCHEMA, sectionVisible, fieldVisible } from "./opportunity/opportunitySchema";
 import type { OpportunityType, SectionDef, FieldDef } from "./opportunity/opportunitySchema";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
+import { DuplicateProfileNotice, duplicateProfileFromError, duplicateProfileSummary } from "../components/DuplicateProfileNotice";
+import type { DuplicateProfile } from "../components/DuplicateProfileNotice";
 import {
   EmptyState,
   ErrorBox,
@@ -120,6 +122,7 @@ export const PIPELINE_STAGE_LABELS: Record<string, string> = {
   New: "New",
   Active: "Active",
   On_Hold: "Customer Hold",
+  Sales_Hold: "Sales Hold",
   Closed_Won: "Close Won",
   Closed_Lost: "Close Lost",
   Closed_Partial: "Close Partial",
@@ -144,6 +147,7 @@ export function pipelineStageLabel(stage: string): string {
 const TAB_STAGES: Record<string, string[]> = {
   Active: ["Active", "New"],
   On_Hold: ["On_Hold"],
+  Sales_Hold: ["Sales_Hold"],
   Closed: ["Closed_Won", "Closed_Lost", "Closed_Partial"],
   Archived: ["Archived"],
 };
@@ -152,6 +156,7 @@ const LIST_TABS = [
   { key: "Active", label: "Active" },
   { key: "Pending", label: "Pending Approval" },
   { key: "On_Hold", label: "Customer Hold" },
+  { key: "Sales_Hold", label: "Sales Hold" },
   { key: "Closed", label: "Closed" },
   { key: "Rejected", label: "Rejected" },
   { key: "Archived", label: "Archived" },
@@ -173,7 +178,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const canWriteRole = useHasRole("Sales", "Sales_Head");
   const canWrite = useCanAct("opportunities", "edit", canWriteRole);
   // Roles allowed to create a Candidate Profile.
-  const canApply = useHasRole("TA", "Sales", "RMG");
+  const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
   const [tab, setTab] = useState("Active");
   // "" = All stages (the tab's whole stage set) — see TAB_STAGES note above.
   const [stage, setStage] = useState<string>("");
@@ -189,6 +194,28 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const [editId, setEditId] = useState<number | null>(null);
   const [applyTo, setApplyTo] = useState<Opportunity | null>(null);
   const [toast, showToast] = useToast();
+  /* Per-column header filters (4 Sep 2026, user request). Server-side —
+     the list is paginated, so filtering the page in hand would hide matches
+     on other pages. Kept across the status sub-tabs: a user narrowing to one
+     customer wants that to hold while they flip Active → Closed. */
+  const [colFilters, setColFilters] = useState<Record<string, ColumnFilterValue>>({});
+  const onColumnFilter = (key: string, v: ColumnFilterValue | null) => {
+    setColFilters((prev) => {
+      const next = { ...prev };
+      if (v) next[key] = v;
+      else delete next[key];
+      return next;
+    });
+    setPage(1);
+  };
+  const [customerOpts, setCustomerOpts] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    crmGet<any[]>("/api/customers/names")
+      .then((r) => setCustomerOpts((r.data || [])
+        .map((c: any) => ({ value: String(c.id), label: String(c.name) }))
+        .sort((a: any, b: any) => a.label.localeCompare(b.label))))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -202,8 +229,19 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
     setLoading(true);
     setError("");
     try {
+      // A Type column pick narrows within the tab's family (T&M / SOW);
+      // otherwise the tab's family filter applies.
+      const typePick = colFilters.opp_type?.value;
       const base = { page, limit: 20, search: debounced, sort_by: sort.by, sort_dir: sort.dir,
-        ...(typeFilter ? { opp_type: typeFilter } : {}) };
+        ...(typePick ? { opp_type: typePick } : typeFilter ? { opp_type: typeFilter } : {}),
+        opp_id: colFilters.opp_id?.text || undefined,
+        title: colFilters.title?.text || undefined,
+        customer_id: colFilters.customer_name?.value || undefined,
+        rfi_min: colFilters.rfi_value?.min || undefined,
+        rfi_max: colFilters.rfi_value?.max || undefined,
+        created_from: colFilters.created_at?.from || undefined,
+        created_to: colFilters.created_at?.to || undefined,
+      };
       const query =
         tab === "Pending"
           ? { approval_status: PENDING_APPROVAL_STATUS, ...base }
@@ -221,11 +259,16 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
     } finally {
       setLoading(false);
     }
-  }, [tab, stage, page, debounced, sort, typeFilter]);
+  }, [tab, stage, page, debounced, sort, typeFilter, colFilters]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const typeOpts = (typeFilter === "SOW"
+    ? ["Work_Package", "Fixed_Price", "Retainer"]
+    : typeFilter === "T&M" ? ["T&M"] : ["T&M", "Work_Package", "Fixed_Price", "Retainer"])
+    .map((t) => ({ value: t, label: t.replace(/_/g, " ") }));
 
   const switchTab = (key: string) => {
     setTab(key);
@@ -238,14 +281,19 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const stages = TAB_STAGES[tab] || [];
 
   const columns: Column<Opportunity>[] = [
-    { key: "opp_id", label: "Opp ID", sortable: true },
-    { key: "title", label: "Title", sortable: true },
-    { key: "customer_name", label: "Customer", render: (r) => r.customer_name || "—" },
-    { key: "opp_type", label: "Type", render: (r) => String(r.opp_type || "—").replace(/_/g, " ") },
+    { key: "opp_id", label: "Opp ID", sortable: true, filter: { type: "text", placeholder: "e.g. OPP-2026" } },
+    { key: "title", label: "Title", sortable: true, filter: { type: "text", placeholder: "Contains…" } },
+    { key: "customer_name", label: "Customer", sortable: true, render: (r) => r.customer_name || "—",
+      filter: { type: "select", options: customerOpts } },
+    { key: "opp_type", label: "Type", sortable: true, render: (r) => String(r.opp_type || "—").replace(/_/g, " "),
+      // One family per tab: T&M has a single type, so no filter to offer there.
+      ...(typeOpts.length > 1 ? { filter: { type: "select" as const, options: typeOpts } } : {}) },
     // Stage & Approval columns removed (14 Aug 2026): the tab strip + the two
     // dropdown filters carry that state, so the columns were pure repetition.
-    { key: "rfi_value", label: "RFI Value", align: "right", render: (r) => fmtMoney(r.rfi_value) },
-    { key: "created_at", label: "Created", sortable: true, align: "right", render: (r) => fmtDate(r.created_at) },
+    { key: "rfi_value", label: "RFI Value", sortable: true, align: "right", render: (r) => fmtMoney(r.rfi_value),
+      filter: { type: "number-range", minLabel: "Min ₹", maxLabel: "Max ₹" } },
+    { key: "created_at", label: "Created", sortable: true, align: "right", render: (r) => fmtDate(r.created_at),
+      filter: { type: "date-range" } },
   ];
 
   return (
@@ -286,8 +334,16 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           onSort={(by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "desc" ? "asc" : "desc" }))}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`opportunities/${r.id}`)}
+          columnFilters={colFilters}
+          onColumnFilter={onColumnFilter}
           filters={
-            <span className="inline-flex flex-wrap gap-2">
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {Object.keys(colFilters).length > 0 && (
+                <button type="button" className="text-xs font-semibold text-sky-600 hover:underline"
+                  onClick={() => { setColFilters({}); setPage(1); }}>
+                  Clear column filters ({Object.keys(colFilters).length})
+                </button>
+              )}
               {stages.length > 1 && (
                 <select
                   className={`${inputCls} !w-40`}
@@ -306,7 +362,11 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
             </span>
           }
           emptyMessage={<TeachingEmpty page="opportunities" />}
-          rowActions={canWrite ? (r) => (
+          // Apply and Edit/Delete are separate rights (7 Sep 2026 fix): the
+          // apply icon used to sit INSIDE the canWrite (Sales) block, so TA
+          // and RMG — the roles the backend allows — never saw it on the
+          // list and had to open every opportunity to apply.
+          rowActions={(canWrite || canApply) ? (r) => (
             <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               {canApply && (
                 <button
@@ -319,16 +379,18 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
                   <UserPlus size={15} />
                 </button>
               )}
-            <RowActions
-              entity="opportunity"
-              itemLabel={r.title}
-              onEdit={() => setEditId(r.id)}
-              deleteUrl={`/api/opportunities/${r.id}`}
-              onDeleted={() => afterListDelete(r.id, setRows, load)}
-              notify={showToast}
-              canEdit
-              canDelete
-            colored />
+              {canWrite && (
+                <RowActions
+                  entity="opportunity"
+                  itemLabel={r.title}
+                  onEdit={() => setEditId(r.id)}
+                  deleteUrl={`/api/opportunities/${r.id}`}
+                  onDeleted={() => afterListDelete(r.id, setRows, load)}
+                  notify={showToast}
+                  canEdit
+                  canDelete
+                  colored />
+              )}
             </span>
           ) : undefined}
         />
@@ -418,6 +480,14 @@ export function SuggestedCandidatesTab({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  /* Bulk-apply outcome (7 Sep 2026 fix): every failure listed with the
+     duplicate's profile link, instead of "failed: <first name> (+N more)"
+     and a cleared selection that hid who was left. */
+  const [bulkResult, setBulkResult] = useState<{ ok: number; total: number;
+    failed: { name: string; message: string; dup: DuplicateProfile | null }[] } | null>(null);
+  /* Single "Apply here" duplicate — rendered inside the confirm modal. */
+  const [applyDup, setApplyDup] = useState<DuplicateProfile | null>(null);
+  const [applyErr, setApplyErr] = useState("");
   /* TA filters (Aug 2026): the scan can return up to 50 candidates — TA asked
    * to narrow by match %, skill/name, and quality so they don't scroll. All
    * client-side over the already-loaded rows; nothing re-fetches. */
@@ -503,6 +573,34 @@ export function SuggestedCandidatesTab({
 
   const [emailErrs, setEmailErrs] = useState<{ subject?: string; message?: string }>({});
 
+  /* Admin-created drafts (Settings → Email Drafts → Your own drafts) as
+     "Use a draft" (3 Sep 2026). Their single-brace {candidate} {first_name}
+     {role} {customer} {sender} become the {{double-brace}} placeholders this
+     composer renders PER candidate at send time, so one draft still greets
+     each recipient by name. */
+  const [customDrafts, setCustomDrafts] = useState<{ key: string; label: string; description: string; subject: string; body: string }[]>([]);
+  const [customDraftKey, setCustomDraftKey] = useState("");
+  useEffect(() => {
+    if (!emailTargets) return;
+    crmGet<any[]>("/api/email-drafts/custom").then((r) => setCustomDrafts(r.data || [])).catch(() => {});
+  }, [emailTargets]);
+  const applyCustomDraft = (key: string) => {
+    setCustomDraftKey(key);
+    const d = customDrafts.find((x) => x.key === key);
+    if (!d) {
+      if (emailTemplate.current) { setEmailSubject(emailTemplate.current.subject); setEmailMessage(emailTemplate.current.message); }
+      return;
+    }
+    const map: Record<string, string> = {
+      candidate: "{{full_name}}", first_name: "{{first_name}}", role: "{{role}}",
+      customer: "{{customer}}", sender: "{{sender}}", company: "Karnex",
+    };
+    const conv = (s: string) => (s || "").replace(/\{([a-z_]+)\}/gi, (m, k: string) => map[k.toLowerCase()] ?? m);
+    setEmailSubject(conv(d.subject));
+    setEmailMessage(conv(d.body));
+    setEmailErrs({});
+  };
+
   const sendEmails = async () => {
     const batch = (emailTargets || []).filter((r) => realEmail(r.email));
     if (batch.length === 0) return;
@@ -565,26 +663,27 @@ export function SuggestedCandidatesTab({
     setBusy(true);
     setBulkDone(0);
     let ok = 0;
-    const failed: string[] = [];
+    const failed: { name: string; message: string; dup: DuplicateProfile | null }[] = [];
+    const applied = new Set<number>();
     for (const r of batch) {
       try {
         await crmPost("/api/candidate-profiles", {
           candidate_id: r.candidate_id, opportunity_id: oppId,
         });
         ok++;
+        applied.add(r.candidate_id);
       } catch (e: any) {
-        failed.push(`${r.name}: ${e?.message || "failed"}`);
+        const dup = duplicateProfileFromError(e);
+        failed.push({ name: r.name, message: dup ? duplicateProfileSummary(dup) : (e?.message || "failed"), dup });
       }
       setBulkDone((d) => d + 1);
     }
     setBusy(false);
     setBulkOpen(false);
-    setSelected(new Set());
-    showToast(
-      failed.length
-        ? `Applied ${ok} of ${batch.length} — failed: ${failed[0]}${failed.length > 1 ? ` (+${failed.length - 1} more)` : ""}`
-        : `Applied ${ok} candidate(s) to this opportunity`,
-    );
+    // Keep the ones that failed selected so they can be retried or reviewed.
+    setSelected((prev) => new Set([...prev].filter((id) => !applied.has(id))));
+    if (failed.length) setBulkResult({ ok, total: batch.length, failed });
+    else showToast(`Applied ${ok} candidate(s) to this opportunity`);
     load();
     onApplied();
   };
@@ -892,6 +991,30 @@ export function SuggestedCandidatesTab({
         );
       })()}
 
+      {bulkResult && (
+        <Modal title={`Applied ${bulkResult.ok} of ${bulkResult.total}`} onClose={() => setBulkResult(null)}>
+          <p className="text-sm text-secondary">
+            {bulkResult.failed.length} could not be applied. They stay selected so you can review or retry.
+          </p>
+          <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {bulkResult.failed.map((f) => (
+              <li key={f.name}>
+                {f.dup ? (
+                  <DuplicateProfileNotice dup={{ ...f.dup, candidate_name: f.dup.candidate_name || f.name }} compact />
+                ) : (
+                  <div className="rounded-card border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+                    <b>{f.name}</b>: {f.message}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex justify-end">
+            <button className={btnPrimary} onClick={() => setBulkResult(null)}>Close</button>
+          </div>
+        </Modal>
+      )}
+
       {emailTargets && (() => {
         const batch = emailTargets;
         const withEmail = batch.filter((r) => realEmail(r.email));
@@ -953,6 +1076,20 @@ export function SuggestedCandidatesTab({
               </details>
             )}
             <div className="mt-3 space-y-3">
+              {customDrafts.length > 0 && (
+                <div>
+                  <label htmlFor="cand-email-draft" className="mb-1 block text-xs font-semibold text-secondary">
+                    Use a draft
+                  </label>
+                  <select id="cand-email-draft" className={inputCls} value={customDraftKey}
+                    onChange={(e) => applyCustomDraft(e.target.value)}>
+                    <option value="">— Built-in “we're hiring” wording —</option>
+                    {customDrafts.map((d) => (
+                      <option key={d.key} value={d.key}>{d.label}{d.description ? ` — ${d.description}` : ""}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label htmlFor="cand-email-subject" className="mb-1 block text-xs font-semibold text-secondary">
                   Subject <span className="text-danger">*</span>
@@ -1056,11 +1193,15 @@ export function SuggestedCandidatesTab({
               </span>
             )}
           </p>
+          {applyErr && <div className="mt-3"><ErrorBox error={applyErr} /></div>}
+          {applyDup && <div className="mt-3"><DuplicateProfileNotice dup={applyDup} /></div>}
           <div className="mt-4 flex justify-end gap-2">
-            <button className={btnSecondary} onClick={() => setApplying(null)}>Cancel</button>
-            <button className={btnPrimary} disabled={busy}
+            <button className={btnSecondary} onClick={() => { setApplying(null); setApplyDup(null); setApplyErr(""); }}>Cancel</button>
+            <button className={btnPrimary} disabled={busy || !!applyDup}
               onClick={async () => {
                 setBusy(true);
+                setApplyDup(null);
+                setApplyErr("");
                 try {
                   await crmPost("/api/candidate-profiles", {
                     candidate_id: applying.candidate_id, opportunity_id: oppId,
@@ -1070,7 +1211,11 @@ export function SuggestedCandidatesTab({
                   load();
                   onApplied();
                 } catch (e: any) {
-                  showToast(e?.message || "Apply failed");
+                  // Structured 409 (7 Sep 2026 fix): show who applied + the
+                  // profile link inside the modal, not a vanishing toast.
+                  const dup = duplicateProfileFromError(e);
+                  if (dup) setApplyDup(dup);
+                  else setApplyErr(e?.message || "Apply failed");
                 } finally {
                   setBusy(false);
                 }
@@ -1092,13 +1237,13 @@ export function SuggestedCandidatesTab({
 const APPLICANT_STAGE_FILTERS: { key: string; label: string; statuses: string[] }[] = [
   { key: "all", label: "All", statuses: [] },
   { key: "sourcing", label: "Sourcing", statuses: ["Sourcing"] },
-  { key: "tech", label: "Technical Screening", statuses: ["Technical_Screening"] },
+  { key: "tech", label: "Technical Interviewing", statuses: ["Technical_Screening"] },
   { key: "rmg", label: "RMG Screening", statuses: ["RMG_Review"] },
   { key: "cust_screen", label: "Customer Screening", statuses: ["Customer_Screening"] },
   { key: "sales_screen", label: "Sales Screening", statuses: ["Sales_Screening"] },
   { key: "cust_interview", label: "Customer Interviewing",
     statuses: ["Customer_Interview", "L1_Feedback", "L2_Feedback"] },
-  { key: "onboarding", label: "Onboarding", statuses: ["Preboarding", "Joined"] },
+  { key: "onboarding", label: "Onboarding", statuses: ["HR_Screening", "HR_Interviewing", "Preboarding", "Joined"] },
 ];
 
 /* ------------------------------------------------------- collapsible card */
@@ -1269,6 +1414,11 @@ export function OpportunityDetailPage() {
   const [error, setError] = useState("");
   const [showSkills, setShowSkills] = useState(false);
   const [showStage, setShowStage] = useState(false);
+  /* The outcome button that was clicked; null = no confirm open. */
+  const [outcomeStage, setOutcomeStage] = useState<string | null>(null);
+  const [outcomeComment, setOutcomeComment] = useState("");
+  const [outcomeBusy, setOutcomeBusy] = useState(false);
+  const [outcomeErr, setOutcomeErr] = useState("");
   const [showReject, setShowReject] = useState(false);
   // Sales Head opens the full wizard to review (and optionally correct)
   // before signing off — approval happens on save inside the wizard.
@@ -1502,10 +1652,19 @@ export function OpportunityDetailPage() {
               {opp.approval_status && opp.approval_status !== "Approved" && <StatusBadge status={opp.approval_status} />}
             </h1>
           </div>
-          {/* Stage-transition button removed (18 Aug 2026, user request) —
-              stages now move through the workflow (approval, bidding,
-              onboarding), not a manual jump. The modal + API endpoint stay,
-              so restoring the button is a five-line change if ever needed. */}
+          {/* Outcome buttons (8 Sep 2026, user request): Sales / Sales Head
+              set the deal's status right here — Close Won / Close Lost /
+              Customer Hold / Close Partial / Sales Hold — and the list tabs
+              follow. Only the moves the server allows from the current stage
+              are offered; a hold or close can be undone with Reactivate. */}
+          {canWrite && opp.approval_status === "Approved" && (
+            <OutcomeButtons
+              current={opp.pipeline_stage}
+              allowed={allowedStages}
+              busy={!!outcomeStage}
+              onPick={(stage) => { setOutcomeComment(""); setOutcomeStage(stage); }}
+            />
+          )}
         </div>
 
         {opp.approval_status === "Pending_Sales_Head_Approval" && (
@@ -1817,6 +1976,64 @@ export function OpportunityDetailPage() {
         />
       )}
 
+      {outcomeStage && (
+        <Modal
+          title={`${pipelineStageLabel(outcomeStage)} — ${opp.opp_id}`}
+          onClose={() => { if (!outcomeBusy) { setOutcomeStage(null); setOutcomeErr(""); } }}
+          dirty={!!outcomeComment.trim()}
+        >
+          {outcomeErr && <div className="mb-3"><ErrorBox error={outcomeErr} /></div>}
+          <div className="text-sm text-secondary">
+            Move <b className="text-primary">{opp.title}</b> from{" "}
+            <StatusBadge status={opp.pipeline_stage} label={pipelineStageLabel(opp.pipeline_stage)} /> to{" "}
+            <StatusBadge status={outcomeStage} label={pipelineStageLabel(outcomeStage)} />?
+            {outcomeStage.startsWith("Closed_") && (
+              <div className="mt-2 text-xs text-muted">
+                Closed deals move to the Closed tab. Use Reactivate on the opportunity if it comes back.
+              </div>
+            )}
+          </div>
+          <div className="mt-4">
+            <Field label="Comment">
+              <textarea
+                className={`${inputCls} min-h-20`}
+                rows={3}
+                value={outcomeComment}
+                onChange={(e) => setOutcomeComment(e.target.value)}
+                placeholder="Reason / context (optional) — goes to the activity log"
+              />
+            </Field>
+          </div>
+          <div className="mt-6 flex justify-end gap-2">
+            <button className={btnSecondary} onClick={() => setOutcomeStage(null)} disabled={outcomeBusy}>Cancel</button>
+            <button
+              className={outcomeStage === "Closed_Lost" ? btnDanger : btnPrimary}
+              disabled={outcomeBusy}
+              onClick={async () => {
+                setOutcomeBusy(true);
+                setOutcomeErr("");
+                try {
+                  const res = await crmPost<Opportunity>(`/api/opportunities/${opp.id}/stage-transition`, {
+                    new_stage: outcomeStage,
+                    comment: outcomeComment.trim() || null,
+                  });
+                  setOpp(res.data);
+                  showToast(`${opp.opp_id} marked ${pipelineStageLabel(outcomeStage)}`);
+                  setOutcomeStage(null);
+                  loadLog();
+                } catch (e: any) {
+                  setOutcomeErr(e?.message || "Could not change the status");
+                } finally {
+                  setOutcomeBusy(false);
+                }
+              }}
+            >
+              {outcomeBusy ? "Saving…" : `Mark ${pipelineStageLabel(outcomeStage)}`}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {showStage && (
         <StageTransitionModal
           current={opp.pipeline_stage}
@@ -1947,6 +2164,51 @@ function EditSkillsModal({
 }
 
 /* ------------------------------------------------------------------ stage modal */
+
+/** The five outcomes Sales sets from the page header (8 Sep 2026) plus
+ * Reactivate. Order is the user's; a button only shows when the server allows
+ * that move from the current stage (`allowed_next_stages`). */
+const OUTCOME_BUTTONS: { stage: string; label: string; tone: "ok" | "danger" | "hold" | "neutral" }[] = [
+  { stage: "Closed_Won", label: "Close Won", tone: "ok" },
+  { stage: "Closed_Lost", label: "Close Lost", tone: "danger" },
+  { stage: "On_Hold", label: "Customer Hold", tone: "hold" },
+  { stage: "Closed_Partial", label: "Close Partial", tone: "neutral" },
+  { stage: "Sales_Hold", label: "Sales Hold", tone: "hold" },
+  { stage: "Active", label: "Reactivate", tone: "ok" },
+];
+
+const OUTCOME_TONE: Record<string, string> = {
+  ok: "border-success/40 bg-success-soft text-success hover:bg-success/15",
+  danger: "border-danger/40 bg-danger-soft text-danger hover:bg-danger/15",
+  hold: "border-warning/40 bg-warning-soft text-warning hover:bg-warning/15",
+  neutral: "border-info/40 bg-info-soft text-info hover:bg-info/15",
+};
+
+function OutcomeButtons({ current, allowed, busy, onPick }: {
+  current: string;
+  allowed: string[];
+  busy: boolean;
+  onPick: (stage: string) => void;
+}) {
+  const items = OUTCOME_BUTTONS.filter((b) => b.stage !== current && allowed.includes(b.stage));
+  if (!items.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Opportunity status">
+      {items.map((b) => (
+        <button
+          key={b.stage}
+          type="button"
+          disabled={busy}
+          onClick={() => onPick(b.stage)}
+          className={`rounded-control border px-3 py-1.5 text-xs font-semibold transition-colors duration-micro disabled:opacity-60 ${OUTCOME_TONE[b.tone]}`}
+          title={`Mark this opportunity ${b.label}`}
+        >
+          {b.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function StageTransitionModal({
   current,

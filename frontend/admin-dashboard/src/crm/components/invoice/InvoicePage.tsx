@@ -40,7 +40,7 @@ export function TaxInvoiceDocument({
       <AmountWords grandTotal={data.gst.grand_total} taxAmount={data.gst.total_gst} />
       <div className={styles.bottomRow}>
         <BankDetailsBlock bank={data.bank} />
-        <Declaration seller={data.seller} />
+        <Declaration seller={data.seller} share={data.share} />
       </div>
       <InvoiceFooter seller={data.seller} />
     </div>

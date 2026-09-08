@@ -5,7 +5,9 @@
  * (form renderer, autofill, save paths) goes through these helpers so the
  * dependency stays isolated and easy to typecheck/mock.
  */
-import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
+import {
+  getCountries, getCountryCallingCode, parsePhoneNumberFromString, type CountryCode,
+} from "libphonenumber-js";
 
 export type ParsedPhone = {
   /** Calling code with plus sign, e.g. "+91". */
@@ -102,6 +104,57 @@ export function formatPhoneDisplay(raw: string | null | undefined): string {
   if (!s || BARE_COUNTRY_CODE.test(s)) return "";
   const parsed = parsePhone(s);
   return parsed ? `${parsed.countryCode} ${parsed.national}` : s;
+}
+
+/* ------------------------------------------------------------------ countries */
+
+export type CountryOption = {
+  /** ISO 3166-1 alpha-2, e.g. "IN". */
+  iso: CountryCode;
+  /** English country name, e.g. "India". */
+  name: string;
+  /** Calling code with plus sign, e.g. "+91". */
+  dial: string;
+};
+
+/** Common first, so the everyday choices are one keystroke away. */
+const PINNED: CountryCode[] = ["IN", "US", "GB", "AE", "SG", "AU", "CA", "DE"];
+
+let cached: CountryOption[] | null = null;
+
+/**
+ * Every country libphonenumber knows, as `{iso, name, dial}` — names come from
+ * the browser's own `Intl.DisplayNames` (no country-name dependency to ship or
+ * keep current), with the ISO code as the fallback on the rare engine that
+ * lacks it. India and the other everyday destinations are pinned to the top;
+ * the rest follow alphabetically.
+ */
+export function countryOptions(): CountryOption[] {
+  if (cached) return cached;
+  let display: { of(code: string): string | undefined } | null = null;
+  try {
+    display = new Intl.DisplayNames(["en"], { type: "region" });
+  } catch { /* older engine — fall back to the ISO code */ }
+
+  const all: CountryOption[] = getCountries().map((iso) => ({
+    iso,
+    name: (() => { try { return display?.of(iso) || iso; } catch { return iso; } })(),
+    dial: `+${getCountryCallingCode(iso)}`,
+  }));
+  const pinned = PINNED
+    .map((iso) => all.find((c) => c.iso === iso))
+    .filter((c): c is CountryOption => !!c);
+  const rest = all
+    .filter((c) => !PINNED.includes(c.iso))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  cached = [...pinned, ...rest];
+  return cached;
+}
+
+/** ISO code for a dial code ("+91" → "IN"), preferring the pinned countries. */
+export function isoForDial(dial: string): CountryCode | null {
+  const want = String(dial || "").trim();
+  return countryOptions().find((c) => c.dial === want)?.iso ?? null;
 }
 
 /** True when the value contains an actual number (not empty, not a bare "+CC"). */

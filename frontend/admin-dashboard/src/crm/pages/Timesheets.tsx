@@ -4,7 +4,7 @@
  * submit/approve/reject workflow. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
@@ -18,7 +18,7 @@ import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
-  ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge,
+  ActionError, ConfirmModal, ErrorBox, Field, Modal, Spinner, StatusBadge,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
@@ -138,6 +138,15 @@ type Summary = {
   total_no_of_days_worked?: number | null;
   total_billable_hours?: number | null;
   total_billable_days?: number | null;
+  /* The customer's monthly cap (3 Sep 2026): worked_* is before the cap,
+     cap_excess_* the part above it, comp_off_from_cap its leave credit. */
+  worked_billable_hours?: number | null;
+  worked_billable_days?: number | null;
+  cap_excess_hours?: number | null;
+  cap_excess_days?: number | null;
+  comp_off_from_cap?: number | null;
+  billable_cap_hours_month?: number | null;
+  billable_cap_days_month?: number | null;
   actual_billable_hours?: number | null;
   actual_billable_days?: number | null;
   actual_billable_day?: number | null;
@@ -549,7 +558,10 @@ export function TimesheetsListPage() {
 
   useEffect(() => {
     crmGet<any[]>("/api/projects?limit=100").then((r) => setProjects(r.data || [])).catch(() => {});
-    crmGet<any[]>("/api/employees?limit=100").then((r) => setEmployees(r.data || [])).catch(() => {});
+    /* ALL employees, paged at the server's 100-cap (31 Aug 2026): one page
+       left everyone past #100 out of the filter dropdown and the name map. */
+    import("../lib/fetchAllMaster").then(({ fetchAllMaster }) =>
+      fetchAllMaster<any>("/api/employees").then(setEmployees)).catch(() => {});
   }, []);
 
   const projectName = useMemo(() => {
@@ -564,8 +576,14 @@ export function TimesheetsListPage() {
   }, [employees]);
 
   const columns: Column<Timesheet>[] = [
-    { key: "project", label: "Project", render: (r) => <span className="font-semibold">{projectName(r.project_id)}</span> },
-    { key: "employee", label: "Employee", render: (r) => employeeName(r.employee_id) },
+    /* Server-sent names first (31 Aug 2026, user bug report): the client map
+       came from /api/employees clamped at 100 rows — with 289 employees,
+       anyone past the first page rendered as "#400". */
+    { key: "project", label: "Project", render: (r) => (
+      <span className="font-semibold">{(r as any).project_name || projectName(r.project_id)}</span>
+    ) },
+    { key: "employee", label: "Employee",
+      render: (r) => (r as any).employee_name || employeeName(r.employee_id) },
     { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year}` },
     { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} label={tsStatusLabel(r.status)} /> },
     { key: "submitted_at", label: "Submitted", render: (r) => fmtDate(r.submitted_at) },
@@ -1006,7 +1024,9 @@ function NewTimesheetModal({
       });
       onDone(res.data);
     } catch (e: any) {
-      onError(e?.message || "Failed to create timesheet");
+      const msg = e?.message || "Failed to create timesheet";
+      setErrors((p) => ({ ...p, _server: msg }));   // inline — a 409 "already exists" must be readable
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -1080,6 +1100,7 @@ function NewTimesheetModal({
           {!locked && (
             <InfoChip>A full month day grid will be generated automatically.</InfoChip>
           )}
+          <ActionError error={errors._server} />
         </div>
         {!locked && (
           <div className={wizFooterRow}>
@@ -1394,6 +1415,9 @@ export function TimesheetDetailPage() {
      Sales and (via isSuperAdmin) Admin/CEO. Anyone who can reach this page can
      still read every entry; only the decision is gated. */
   const canApprove = useCanAct("timesheets", "edit", useHasRole("RMG", "Sales"));
+  /* Admin/CEO only (3 Sep 2026, user decision): the one role that may undo
+     an invoice raised by mistake together with the sheet behind it. */
+  const isAdmin = useHasRole("Admin", "CEO");
   const [ts, setTs] = useState<TimesheetDetail | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [entries, setEntries] = useState<EntryRow[]>([]);
@@ -2256,17 +2280,48 @@ export function TimesheetDetailPage() {
       {ts.status === "Approved" && canApprove && (
         <div className="elev-1 rounded-panel p-4 sm:p-5">
           <h2 className="text-sm font-bold tracking-wide text-primary">Approved</h2>
-          <p className="mt-1 text-xs text-muted">
-            The invoice figures were frozen when this sheet was approved. If rates or the
-            billing policy changed afterwards and those frozen figures are wrong, reject the
-            sheet to unlock it — after correction and resubmission, re-approval freezes the
-            new figures. This is no longer possible once an invoice has been generated.
-          </p>
-          <div className="mt-4 border-t border-subtle pt-4">
-            <button className={btnDanger} onClick={() => setShowReject(true)}>
-              <X size={15} /> Reject (undo approval)
-            </button>
-          </div>
+          {ts.invoice ? (
+            /* Invoice exists → the server refuses a plain reject (409). Say so
+               instead of offering a button that fails (3 Sep 2026, user
+               report). Admin/CEO get the UNDO: reject the sheet AND delete
+               the invoice raised from it, in one confirmed step. */
+            <div className="mt-2 rounded-card border border-warning/40 bg-warning-soft px-3.5 py-3 text-xs text-secondary">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
+                <div className="min-w-0 flex-1">
+                  <b className="text-primary">This timesheet can no longer be rejected the normal way</b> — invoice{" "}
+                  <CrmLink to={`invoices/${ts.invoice.id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                    {ts.invoice.invoice_number}
+                  </CrmLink>{" "}
+                  ({ts.invoice.payment_status}) was generated from its frozen figures.
+                  {isAdmin
+                    ? " As Admin/CEO you can undo it: the invoice is deleted (payments reversed, PO balance restored) and the sheet goes back to the employee for correction."
+                    : " To correct the hours or rate, ask Admin/CEO to undo the invoice, or have Finance cancel it first; if it was already sent to the customer, raise a credit note instead."}
+                  {isAdmin && (
+                    <div className="mt-3">
+                      <button className={btnDanger} onClick={() => setShowReject(true)}>
+                        <X size={15} /> Undo invoice &amp; reject timesheet
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-muted">
+                The invoice figures were frozen when this sheet was approved. If rates or the
+                billing policy changed afterwards and those frozen figures are wrong, reject the
+                sheet to unlock it — after correction and resubmission, re-approval freezes the
+                new figures. This is no longer possible once an invoice has been generated.
+              </p>
+              <div className="mt-4 border-t border-subtle pt-4">
+                <button className={btnDanger} onClick={() => setShowReject(true)}>
+                  <X size={15} /> Reject (undo approval)
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -2318,18 +2373,33 @@ export function TimesheetDetailPage() {
           })()}
           <Stat label="Total Present Days" value={num(summary?.present_days)} />
           <Stat label="Total Hours Worked" value={num(dirty ? liveSummary.hours : summary?.total_hours_worked ?? summary?.hours_worked)} />
-          <Stat label="Total Billable Days" value={num(summary?.total_billable_days)} />
-          <Stat label="Total Billable Hours" value={num(summary?.total_billable_hours)} />
+          {/* Billable = what the CUSTOMER is billed — the invoice's figure
+              (3 Sep 2026, user decision). When the project caps the month
+              (e.g. 176 h) the cap shows here and the hours worked above it
+              are credited to the employee as comp-off, not lost. */}
+          <Stat label="Total Billable Days" value={num(summary?.total_billable_days)}
+            hint={Number(summary?.cap_excess_days || 0) > 0
+              ? `${num(summary?.worked_billable_days)} worked · customer cap`
+              : undefined} />
+          <Stat label="Total Billable Hours" value={num(summary?.total_billable_hours)}
+            hint={Number(summary?.cap_excess_hours || 0) > 0
+              ? `${num(summary?.worked_billable_hours)} worked · ${num(summary?.cap_excess_hours)} h over the ${
+                summary?.billable_cap_hours_month != null ? `${num(summary.billable_cap_hours_month)} h ` : ""}cap → comp-off`
+              : undefined} />
           {/* Comp-off tiles follow the project's mode (bill XOR credit):
               BILLED mode — weekend work goes on the invoice, so show what was
               billed; there is no credit to earn or spend.
               CREDIT mode — weekend work earns leave (credited in real time on
-              save), so show earned and used. */}
-          {policy.comp_off_billable ? (
+              save), so show earned and used. Hours above the customer's cap
+              earn comp-off in EITHER mode — they are never billed. */}
+          {policy.comp_off_billable && !(Number(summary?.comp_off_from_cap || 0) > 0) ? (
             <Stat label="Comp-Off Billed" value={num(dirty ? liveSummary.compOffBilled : summary?.comp_off_billed)} />
           ) : (
             <>
-              <Stat label="Comp-Off Earned" value={num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)} />
+              <Stat label="Comp-Off Earned" value={num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)}
+                hint={Number(summary?.comp_off_from_cap || 0) > 0
+                  ? `incl. ${num(summary?.comp_off_from_cap)} for hours above the customer cap — kept in the leave balance`
+                  : undefined} />
               <Stat label="Comp-Off Used" value={num(summary?.comp_off_days)} />
             </>
           )}
@@ -2399,8 +2469,9 @@ export function TimesheetDetailPage() {
       {showReject && (
         <RejectModal
           timesheetId={ts.id}
+          undoInvoice={isAdmin && ts.invoice ? ts.invoice : null}
           onClose={() => setShowReject(false)}
-          onDone={() => { setShowReject(false); showToast("Timesheet rejected"); load(); }}
+          onDone={(msg) => { setShowReject(false); showToast(msg || "Timesheet rejected"); load(); }}
           onError={(m) => showToast(m, "err")}
         />
       )}
@@ -2441,11 +2512,12 @@ function LabeledValue({ label, value, wrap }: { label: string; value: React.Reac
 }
 
 /** Summary "calculated field" tile (v3 glass KPI tile). */
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
   return (
     <div className="glass fx-gradient-border fx-lift rounded-xl px-3.5 py-3">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
       <div className="mt-1 font-display text-lg font-bold tabular-nums text-primary">{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] leading-snug text-muted">{hint}</div>}
     </div>
   );
 }
@@ -4081,29 +4153,44 @@ function TimesheetDuePanel({ showToast }: { showToast: (msg: string, kind?: "ok"
 }
 
 function RejectModal({
-  timesheetId, onClose, onDone, onError,
+  timesheetId, undoInvoice, onClose, onDone, onError,
 }: {
   timesheetId: number;
+  /** Admin/CEO only: the invoice that will be DELETED along with the reject. */
+  undoInvoice?: { id: number; invoice_number: string; payment_status: string } | null;
   onClose: () => void;
-  onDone: () => void;
+  onDone: (msg?: string) => void;
   onError: (msg: string) => void;
 }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [serverError, setServerError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmUndo, setConfirmUndo] = useState(false);
 
   const submit = async () => {
     if (reason.trim().length < 10) {
       setError("Rejection reason is mandatory (minimum 10 characters)");
       return;
     }
+    if (undoInvoice && !confirmUndo) {
+      setError("Tick the confirmation to delete the invoice along with the reject");
+      return;
+    }
     setError("");
     setBusy(true);
     try {
-      await crmPost(`/api/timesheets/${timesheetId}/reject`, { reason: reason.trim() });
-      onDone();
+      const res = await crmPost(`/api/timesheets/${timesheetId}/reject`, {
+        reason: reason.trim(),
+        ...(undoInvoice ? { undo_invoice: true } : {}),
+      });
+      onDone(res.message);
     } catch (e: any) {
-      onError(e?.message || "Failed to reject timesheet");
+      // Inline AND toast (3 Sep 2026): the 409 "an invoice was already
+      // generated" used to reach only the toast, which the modal hid.
+      const msg = e?.message || "Failed to reject timesheet";
+      setServerError(msg);
+      onError(msg);
     } finally {
       setBusy(false);
     }
@@ -4117,10 +4204,30 @@ function RejectModal({
       bodyClassName="!px-0 !py-0"
     >
       <WizFormShell
-        title="Reject Timesheet"
-        subtitle="Provide a clear reason (minimum 10 characters). The employee will be notified."
+        title={undoInvoice ? "Undo Invoice & Reject Timesheet" : "Reject Timesheet"}
+        subtitle={undoInvoice
+          ? `Admin/CEO undo: invoice ${undoInvoice.invoice_number} is deleted and the sheet goes back to the employee for correction. Provide a clear reason (minimum 10 characters).`
+          : "Provide a clear reason (minimum 10 characters). The employee will be notified."}
         icon={<X size={20} aria-hidden />}
       >
+        {undoInvoice && (
+          <div className="mb-4 rounded-card border border-danger/40 bg-danger-soft px-3.5 py-3 text-sm text-secondary">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" />
+              <div>
+                <b className="text-danger">This cannot be undone.</b> Invoice <b>{undoInvoice.invoice_number}</b>{" "}
+                ({undoInvoice.payment_status}) will be deleted together with any payments and TDS recorded
+                against it, its PO balance is restored, and Finance is notified. If a credit note was already
+                issued the undo is refused — reverse that first.
+              </div>
+            </div>
+            <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm font-semibold text-primary">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-danger" checked={confirmUndo}
+                onChange={(e) => { setConfirmUndo(e.target.checked); setError(""); }} />
+              I understand — delete invoice {undoInvoice.invoice_number} and reject this timesheet
+            </label>
+          </div>
+        )}
         <WizardField label="Rejection reason" required error={error}>
           <textarea
             className={`${inputCls} min-h-24`}
@@ -4130,9 +4237,13 @@ function RejectModal({
           />
         </WizardField>
         <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
+        <ActionError error={serverError} className="mt-3" />
         <div className={wizFooterRow}>
           <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={`${btnDanger} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>
+          <button className={`${btnDanger} ml-auto h-10 rounded-xl px-4`} onClick={submit}
+            disabled={busy || (!!undoInvoice && !confirmUndo)}>
+            {busy ? (undoInvoice ? "Undoing…" : "Rejecting…") : undoInvoice ? "Undo invoice & reject" : "Reject"}
+          </button>
         </div>
       </WizFormShell>
     </Modal>

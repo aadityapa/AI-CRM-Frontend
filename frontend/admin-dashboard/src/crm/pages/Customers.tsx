@@ -1552,7 +1552,7 @@ function CustomerOpportunitiesTab({ customerId }: { customerId: number }) {
         onRow={(r) => crmNavigate(`opportunities/${r.id}`)}
         filters={[
           { key: "pipeline_stage", label: "Stage",
-            options: optsFromValues(["New", "Active", "On_Hold", "Closed_Won",
+            options: optsFromValues(["New", "Active", "On_Hold", "Sales_Hold", "Closed_Won",
               "Closed_Lost", "Closed_Partial", "Rejected", "Archived"]) },
           { key: "approval_status", label: "Approval",
             options: optsFromValues(["Approved", "Pending_Sales_Head_Approval", "Rejected"]) },

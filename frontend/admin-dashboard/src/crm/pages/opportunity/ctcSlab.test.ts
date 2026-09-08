@@ -30,36 +30,35 @@ describe("Candidate CTC Slab calculations", () => {
     });
   });
 
-  it("uses Max Billable Hours/Month (branch Billing Properties) as the contractual hours basis", () => {
-    // All off-days billable → calendar hours = 365 × 8 = 2920 when no cap.
+  it("derives hours from billing days × hours/day — the branch cap never replaces it (P1 fix, 27 Aug 2026)", () => {
+    // The old behaviour substituted maxBillableHoursMonth × 12 (176 × 12 =
+    // 2112) for the calendar derivation. That rule existed ONLY in the form —
+    // the server (opportunity_ctc.py) stores calendar-derived figures — so
+    // the screen promised ~16% more revenue than the DB saved. Hours now
+    // ALWAYS equal days × hours/day, with or without a cap.
     const allBillable = {
       ...base,
       holidaysBillable: true,
       weekoffBillable: true,
       leaveBillable: true,
     };
-    expect(calculateBillingBases(allBillable).actualBillingHours).toBe(2920);
-    // Cap set → it REPLACES the calendar derivation: hours = cap × 12.
+    expect(calculateBillingBases(allBillable).actualBillingHours).toBe(2920); // 365 × 8
     expect(
       calculateBillingBases({ ...allBillable, maxBillableHoursMonth: 176 }).actualBillingHours,
-    ).toBe(2112);
+    ).toBe(2920); // cap ignored for the revenue basis
     expect(
       calculateBillingBases({ ...base, maxBillableHoursMonth: 176 }).actualBillingHours,
-    ).toBe(2112); // overrides even when calendar hours (1816) are lower
-    // Blank/0 cap → calendar derivation unchanged.
+    ).toBe(1816); // 227 days × 8 — matches what the server stores
     expect(
       calculateBillingBases({ ...allBillable, maxBillableHoursMonth: 0 }).actualBillingHours,
     ).toBe(2920);
-    // Revenue chain: Monthly = 1414.77 × 176 = 2,48,999.52; Annual = monthly × 12.
+    // Revenue chain from the calendar hours: Monthly = 1414.77 × 2920 ÷ 12.
     const row = calculateCtcSlabRow(
       { rate: 1414.77, management_cost_pct: 30, hike_pct: 10 },
       { ...allBillable, billingType: "Per Hour", maxBillableHoursMonth: 176 },
     );
-    expect(row.revenue_monthly).toBe(248999.52);
-    expect(row.revenue_annual).toBe(2987994.24);
-    // Rest of the chain unchanged: budget = annual × 0.70; approved = budget ÷ 1.10.
-    expect(row.engineering_budget).toBe(2091595.97);
-    expect(row.approved_ctc_lac).toBe(1901450.88);
+    expect(row.revenue_annual).toBe(4131128.4); // 1414.77 × 2920
+    expect(row.revenue_monthly).toBe(344260.7); // annual ÷ 12
   });
 
   it.each([
@@ -175,24 +174,24 @@ describe("Candidate CTC Slab calculations", () => {
     expect(zeroDuration.approved_ctc_lac).toBe("");
   });
 
-  it("derives Exp Max as the midpoint of Exp Min and Target Exp", () => {
+  it("derives Exp Max as one year above Exp Min (NEXUS parity, 4 Sep 2026)", () => {
     const row = calculateCtcSlabRow(
-      { exp_min: 3, target_exp: 5, rate: 400 },
+      { exp_min: 7, target_exp: 10, rate: 1407.5 },
       { ...base, billingType: "Per Hour" },
     );
-    expect(row.exp_max).toBe(4);
+    expect(row.exp_max).toBe(8);
 
-    const noTarget = calculateCtcSlabRow(
-      { exp_min: 3, target_exp: "", rate: 400 },
+    const noMin = calculateCtcSlabRow(
+      { exp_min: "", target_exp: 5, rate: 400 },
       { ...base, billingType: "Per Hour" },
     );
-    expect(noTarget.exp_max).toBe("");
+    expect(noMin.exp_max).toBe("");
 
     const nonTm = calculateCtcSlabRow(
       { exp_min: 2, target_exp: 6, rate: 120000 },
       { opportunityType: "Work_Package" },
     );
-    expect(nonTm.exp_max).toBe(4);
+    expect(nonTm.exp_max).toBe(3);
   });
 
   it("validates experience ordering", () => {

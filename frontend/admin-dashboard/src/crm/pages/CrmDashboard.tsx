@@ -237,6 +237,10 @@ function PoExpiryWarnings() {
   const { data } = useDashData<{ expired: PoExpiryRow[]; expiring_soon: PoExpiryRow[] }>(
     "/api/purchase-orders/reports/expiry?days=45",
   );
+  // COLLAPSED by default (user decision, 27 Aug 2026): with dozens of expired
+  // test POs the open list swallowed the whole dashboard. The one-line summary
+  // stays as the alert; "Show details" opens the list on demand.
+  const [open, setOpen] = useState(false);
   const expired = data?.expired || [];
   const soon = data?.expiring_soon || [];
   if (expired.length === 0 && soon.length === 0) return null;
@@ -248,10 +252,21 @@ function PoExpiryWarnings() {
         className="rounded-card border border-warning/40 bg-warning-soft/60 p-4 shadow-raised"
         role="alert"
       >
-        <p className="text-sm font-bold text-primary">
-          ⚠️ Purchase Orders expiring {soon.length > 0 ? `within 45 days (${soon.length})` : ""}
-          {expired.length > 0 ? `${soon.length > 0 ? " · " : ""}already expired (${expired.length})` : ""}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-bold text-primary">
+            ⚠️ Purchase Orders expiring {soon.length > 0 ? `within 45 days (${soon.length})` : ""}
+            {expired.length > 0 ? `${soon.length > 0 ? " · " : ""}already expired (${expired.length})` : ""}
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded-control border border-warning/50 bg-surface-1 px-3 py-1.5 text-xs font-bold text-primary transition-colors duration-micro hover:bg-surface-2"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "Hide details" : `Show details (${expired.length + soon.length})`}
+          </button>
+        </div>
+        {open && (
         <ul className="mt-2 divide-y divide-subtle/60">
           {expired.map((po) => (
             <li key={`e${po.id}`} className={rowCls}>
@@ -276,6 +291,7 @@ function PoExpiryWarnings() {
             </li>
           ))}
         </ul>
+        )}
       </div>
     </FadeInUp>
   );

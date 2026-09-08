@@ -80,15 +80,15 @@ export function calculateBillingBases(inputs: BillingInputs): BillingBases {
   const paidAddBack = Math.min(zeroWhenBlank(inputs.paidLeaves), leaveDeducted);
   const actualBillingDays = roundMoney(Math.max(0, 365 - deductions + paidAddBack));
   const hoursPerDay = finiteOrNull(inputs.hoursPerDay);
-  let actualBillingHours: number | "" =
+  // Hours = Billing Days × Hours Per Day, ALWAYS (fix, 27 Aug 2026 — the P1
+  // divergence). The branch's Max Billable Hours/Month used to REPLACE this
+  // derivation (176 × 12 = 2112 instead of 227 × 8 = 1816), but that rule
+  // existed only in the form: the server (opportunity_ctc.py) has no cap, so
+  // the DB stored ~16% less revenue than the screen promised. The form now
+  // shows exactly what will be saved. The monthly cap remains what it really
+  // is — a timesheet/invoicing ceiling — not a revenue basis.
+  const actualBillingHours: number | "" =
     hoursPerDay === null ? "" : roundMoney(actualBillingDays * Math.max(0, hoursPerDay));
-  // Branch Billing Properties → Max Billable Hours / Month is the CONTRACTUAL
-  // hours basis: when set, it replaces the calendar derivation entirely —
-  // Monthly Revenue = rate × cap, Annual = monthly × 12 (cap × 12 hours/year).
-  const capMonthly = finiteOrNull(inputs.maxBillableHoursMonth);
-  if (capMonthly !== null && capMonthly > 0) {
-    actualBillingHours = roundMoney(capMonthly * 12);
-  }
   return { actualBillingDays, actualBillingHours };
 }
 
@@ -101,11 +101,12 @@ export function calculateCtcSlabRow(
   inputs: BillingInputs,
 ): CtcSlabRow {
   const bases = calculateBillingBases(inputs);
-  // Exp Max is derived: midpoint of Exp Min and Target Exp, ROUNDED UP to
-  // the whole year (Zoho parity, 14 Aug 2026): 7→8 shows 8, never 7.5.
+  // Exp Max is derived: ONE YEAR above Exp Min (NEXUS parity, 4 Sep 2026,
+  // user decision). Each slab row is one year of the candidate's career —
+  // 7→8, 8→9, 9→10 — whatever the target. Mirrors opportunity_ctc.py.
   const expMin = finiteOrNull(row.exp_min);
   const targetExp = finiteOrNull(row.target_exp);
-  const expMax = expMin !== null && targetExp !== null ? Math.ceil((expMin + targetExp) / 2) : "";
+  const expMax = expMin !== null ? expMin + 1 : "";
   row = { ...row, exp_max: expMax };
   const rate = finiteOrNull(row.rate);
   const managementCostPct = zeroWhenBlank(row.management_cost_pct);

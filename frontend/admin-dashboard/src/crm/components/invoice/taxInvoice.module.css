@@ -443,6 +443,35 @@
   width: 100%;
 }
 
+/* "Scan to view this invoice" QR (3 Sep 2026) — sits on the left of the seal
+   row; a plain <img data:URL> so html2canvas prints it exactly. */
+.qrBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin-right: auto;
+  align-self: flex-end;
+}
+
+.qrImage {
+  display: block;
+  width: 78px;
+  height: 78px;
+  padding: 3px;
+  border: 1px solid var(--inv-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.qrCaption {
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--inv-muted);
+  text-align: center;
+  max-width: 96px;
+}
+
 .footer {
   margin-top: auto;
   background: var(--inv-primary);

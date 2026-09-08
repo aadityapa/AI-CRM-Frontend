@@ -148,14 +148,46 @@ async function renderPdfToContainer(
   }
 }
 
-function FilePreviewModal({
+/** Selectable text from a PDF via pdf.js getTextContent — the canvas render
+ * cannot be copied from, and the verify wizard is exactly a copy-paste job. */
+async function extractPdfText(data: ArrayBuffer): Promise<string> {
+  const pdfjs = await import("pdfjs-dist");
+  const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
+  const parts: string[] = [];
+  const maxPages = Math.min(pdf.numPages, 30);
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    let lastY: number | null = null;
+    let line: string[] = [];
+    const lines: string[] = [];
+    for (const item of content.items as any[]) {
+      if (typeof item?.str !== "string") continue;
+      const y = Array.isArray(item.transform) ? Math.round(item.transform[5]) : null;
+      // New vertical position = new line; keeps phone/email/etc. separable.
+      if (lastY != null && y != null && Math.abs(y - lastY) > 2) {
+        if (line.length) lines.push(line.join(" ").trim());
+        line = [];
+      }
+      if (item.str.trim()) line.push(item.str.trim());
+      if (y != null) lastY = y;
+    }
+    if (line.length) lines.push(line.join(" ").trim());
+    parts.push(lines.filter(Boolean).join("\n"));
+  }
+  return parts.join("\n\n— — —\n\n").trim();
+}
+
+/** The preview body WITHOUT the modal shell (28 Aug 2026): reused by the
+ * bulk-upload verify wizard, which renders the resume beside an edit form. */
+export function FilePreviewPane({
   url,
   title,
-  onClose,
 }: {
   url: string;
   title: string;
-  onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -165,6 +197,11 @@ function FilePreviewModal({
   const [kind, setKind] = useState<"pdf" | "image" | "html" | "text" | "other">("other");
   const [ready, setReady] = useState(false);
   const [pdfPainting, setPdfPainting] = useState(false);
+  /* "Text (copy)" view: canvases can't be selected — the verify wizard needs
+     copy-paste, so PDFs get a second, selectable text rendering on demand. */
+  const [pdfView, setPdfView] = useState<"original" | "text">("original");
+  const [pdfText, setPdfText] = useState<string | null>(null);
+  const [pdfTextBusy, setPdfTextBusy] = useState(false);
   const [fileExt, setFileExt] = useState(() => extOf(url, title));
   const blobRef = useRef<Blob | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -182,6 +219,8 @@ function FilePreviewModal({
       setBlobUrl(null);
       setReady(false);
       setPdfPainting(false);
+      setPdfView("original");
+      setPdfText(null);
       setKind("other");
       try {
         const path = toAuthPath(url);
@@ -310,10 +349,39 @@ function FilePreviewModal({
     URL.revokeObjectURL(href);
   };
 
+  const showTextView = async () => {
+    setPdfView("text");
+    if (pdfText != null || pdfTextBusy) return;
+    const blob = blobRef.current;
+    if (!blob) return;
+    setPdfTextBusy(true);
+    try {
+      setPdfText((await extractPdfText(await blob.arrayBuffer())) || "(No selectable text in this PDF.)");
+    } catch {
+      setPdfText("Could not extract text from this PDF — use Download instead.");
+    } finally {
+      setPdfTextBusy(false);
+    }
+  };
+
+  const toggleBtn = (on: boolean) =>
+    `rounded-control px-2.5 py-1 text-xs font-semibold transition-colors duration-micro ${
+      on ? "bg-surface-1 text-brand-600 shadow-sm dark:text-brand-300" : "text-muted hover:text-primary"}`;
+
   return (
-    <Modal title={title} onClose={onClose} medium>
       <div className="space-y-3">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
+          {kind === "pdf" && !error && (
+            <div className="mr-auto inline-flex rounded-control bg-surface-2 p-0.5 ring-1 ring-inset ring-subtle">
+              <button type="button" className={toggleBtn(pdfView === "original")} onClick={() => setPdfView("original")}>
+                Original
+              </button>
+              <button type="button" className={toggleBtn(pdfView === "text")} onClick={() => void showTextView()}
+                title="Selectable text — copy details straight from the resume">
+                Text (copy)
+              </button>
+            </div>
+          )}
           <button type="button" className={btnSecondary} onClick={download} disabled={!ready || loading}>
             <Download size={14} /> Download
           </button>
@@ -330,11 +398,20 @@ function FilePreviewModal({
         <div
           ref={pdfHostRef}
           className={
-            kind === "pdf" && !error
+            kind === "pdf" && !error && pdfView === "original"
               ? "max-h-[65vh] min-h-[200px] overflow-y-auto rounded-lg bg-surface-2 p-2"
               : "hidden"
           }
         />
+        {kind === "pdf" && !error && pdfView === "text" && (
+          pdfTextBusy || pdfText == null ? (
+            <p className="py-8 text-center text-sm text-muted">Extracting text…</p>
+          ) : (
+            <pre className="max-h-[65vh] select-text overflow-auto whitespace-pre-wrap rounded-lg border border-subtle bg-surface-1 p-4 text-[13px] leading-relaxed text-primary">
+              {pdfText}
+            </pre>
+          )
+        )}
         {!loading && !error && kind === "html" && html && (
           <div
             className="prose prose-sm max-w-none dark:prose-invert rounded-lg border border-subtle bg-surface-1 p-4 text-primary [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-subtle [&_td]:p-1.5 [&_th]:border [&_th]:border-subtle [&_th]:p-1.5"
@@ -357,6 +434,21 @@ function FilePreviewModal({
           </p>
         )}
       </div>
+  );
+}
+
+function FilePreviewModal({
+  url,
+  title,
+  onClose,
+}: {
+  url: string;
+  title: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={title} onClose={onClose} medium>
+      <FilePreviewPane url={url} title={title} />
     </Modal>
   );
 }

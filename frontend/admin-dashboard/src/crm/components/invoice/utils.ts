@@ -191,5 +191,6 @@ export function mapApiInvoiceToData(raw: Record<string, unknown>): InvoiceData {
       subTotal: sub,
       grandTotal: grand,
     }),
+    share: (raw.share as InvoiceData["share"]) ?? null,
   };
 }

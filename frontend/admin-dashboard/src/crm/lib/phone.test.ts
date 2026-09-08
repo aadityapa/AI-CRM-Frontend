@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  countryOptions,
   formatE164,
   formatPhoneDisplay,
   hasPhoneNumber,
+  isoForDial,
   normalizePhoneForSave,
   parsePhone,
 } from "./phone";
@@ -68,5 +70,32 @@ describe("contactPhone autofill", () => {
     expect(fill.contact_phone).toBe("");
     expect(fill.hiring_manager_email).toBe("ramya@harman.com");
     expect(fill.hiring_manager_contact).toBe("+918767897654");
+  });
+});
+
+/* ------------------------------------------------------------ country picker */
+describe("countryOptions (1 Sep 2026 — country dropdown on phone fields)", () => {
+  it("lists every country with a name and a dial code, India first", () => {
+    const all = countryOptions();
+    expect(all.length).toBeGreaterThan(200);
+    expect(all[0]).toMatchObject({ iso: "IN", dial: "+91" });
+    // Names come from Intl.DisplayNames; the ISO code is the fallback, so the
+    // only hard requirement is that nothing is blank.
+    expect(all.every((c) => !!c.name && /^\+\d+$/.test(c.dial))).toBe(true);
+  });
+
+  it("puts the everyday destinations above the alphabetical tail", () => {
+    const top = countryOptions().slice(0, 8).map((c) => c.iso);
+    expect(top).toContain("US");
+    expect(top).toContain("AE");
+    const rest = countryOptions().slice(8).map((c) => c.name);
+    expect([...rest].sort((a, b) => a.localeCompare(b))).toEqual(rest);
+  });
+
+  it("resolves a dial code back to a country, preferring the pinned one", () => {
+    expect(isoForDial("+91")).toBe("IN");
+    // +1 is shared by the US and Canada — the pinned order decides.
+    expect(isoForDial("+1")).toBe("US");
+    expect(isoForDial("+9999")).toBeNull();
   });
 });

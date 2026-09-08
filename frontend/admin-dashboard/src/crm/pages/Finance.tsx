@@ -13,7 +13,7 @@ import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import {
-  btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, inputCls,
+  ActionError, btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, inputCls,
   Modal, Spinner, StatusBadge, Tabs, useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
@@ -390,7 +390,8 @@ export function PurchaseOrdersPage() {
     const needle = search.trim().toLowerCase();
     const visible = !needle ? rows : rows.filter((r) =>
       String(r.po_number || "").toLowerCase().includes(needle)
-      || (customers[r.customer_id] || "").toLowerCase().includes(needle));
+      || (customers[r.customer_id] || "").toLowerCase().includes(needle)
+      || String(r.employee_name || "").toLowerCase().includes(needle));
     const byCust = new Map<number, any[]>();
     for (const r of visible) {
       const list = byCust.get(r.customer_id) || [];
@@ -430,7 +431,7 @@ export function PurchaseOrdersPage() {
         <Search size={14} className="shrink-0 text-muted" />
         <input
           className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
-          placeholder="Search PO number or customer…"
+          placeholder="Search PO number, customer or employee…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -463,6 +464,7 @@ export function PurchaseOrdersPage() {
               <thead>
                 <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-muted">
                   <th className="px-4 py-2">PO Number</th>
+                  <th className="px-3 py-2">Employee</th>
                   <th className="px-3 py-2">Type</th>
                   <th className="px-3 py-2">Total</th>
                   <th className="px-3 py-2">Consumed</th>
@@ -476,6 +478,7 @@ export function PurchaseOrdersPage() {
                   <tr key={r.id} className="row-hover cursor-pointer border-t border-subtle"
                     onClick={() => crmNavigate(`pos/${r.id}`)}>
                     <td className="px-4 py-2.5 font-semibold text-primary">{r.po_number}</td>
+                    <td className="px-3 py-2.5 text-secondary">{r.employee_name || "—"}</td>
                     <td className="px-3 py-2.5 text-secondary">{r.po_type}</td>
                     <td className="px-3 py-2.5 tnum">{inr(r.total_value)}</td>
                     <td className="px-3 py-2.5 tnum">{inr(r.consumed_value)}</td>
@@ -1685,6 +1688,7 @@ function AllocateModal({
   const [projectId, setProjectId] = useState("");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState("");
   // Contact captured at allocation time (26 Aug 2026) — the customer's contacts.
   const [contacts, setContacts] = useState<any[]>([]);
   const [contactId, setContactId] = useState("");
@@ -1738,7 +1742,9 @@ function AllocateModal({
       });
       onSaved();
     } catch (e: any) {
-      onError(e?.message || "Failed to allocate");
+      const msg = e?.message || "Failed to allocate";
+      setServerError(msg);
+      onError(msg);
       setBusy(false);
     }
   };
@@ -1750,6 +1756,7 @@ function AllocateModal({
       icon={<Layers size={20} aria-hidden />}
       onClose={onClose}
       busy={busy}
+      error={serverError}
       onSubmit={() => void submit()}
       submitLabel="Allocate"
       submitBusyLabel="Saving…"
@@ -1833,6 +1840,7 @@ function RenewPoModal({
   const [startDate, setStartDate] = useState(() => dayAfter(po.end_date));
   const [endDate, setEndDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState("");
 
   const totalN = num(totalValue);
   const totalErr =
@@ -1853,7 +1861,9 @@ function RenewPoModal({
       });
       onRenewed(res.data?.id, res.message || "Renewal purchase order created");
     } catch (e: any) {
-      onError(e?.message || "Failed to renew the purchase order");
+      const msg = e?.message || "Failed to renew the purchase order";
+      setServerError(msg);
+      onError(msg);
       setBusy(false);
     }
   };
@@ -1865,6 +1875,7 @@ function RenewPoModal({
       icon={<RefreshCw size={20} aria-hidden />}
       onClose={onClose}
       busy={busy}
+      error={serverError}
       onSubmit={() => void submit()}
       submitLabel="Create renewal"
       submitBusyLabel="Creating…"
@@ -2109,7 +2120,9 @@ function InvoiceFormModal({
       const res = await crmPost("/api/invoices", payload);
       onSaved(res.data);
     } catch (e: any) {
-      onError(e?.message || "Failed to create invoice");
+      const msg = e?.message || "Failed to create invoice";
+      setErr(msg);          // inline — e.g. "invoice exceeds the PO balance"
+      onError(msg);
       setBusy(false);
     }
   };
@@ -2503,6 +2516,7 @@ function FinanceModalShell({
   submitBusyLabel,
   submitDisabled,
   busy,
+  error,
   children,
 }: {
   title: string;
@@ -2514,6 +2528,8 @@ function FinanceModalShell({
   submitBusyLabel: string;
   submitDisabled?: boolean;
   busy?: boolean;
+  /** The server's reason the last submit failed — shown inside the dialog. */
+  error?: string | null;
   children: React.ReactNode;
 }) {
   return (
@@ -2526,6 +2542,7 @@ function FinanceModalShell({
       <div className="rounded-b-modal px-5 py-5">
         <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
         <div className="space-y-5">{children}</div>
+        <ActionError error={error} className="mt-4" />
         <div className="mt-6 flex items-center gap-3">
           <button
             type="button"
@@ -2566,6 +2583,7 @@ function RecordPaymentModal({
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState("");
 
   const balance = Number(invoice.balance_amount || 0);
   const grand = Number(invoice.grand_total || 0);
@@ -2585,7 +2603,9 @@ function RecordPaymentModal({
       await crmPost(`/api/invoices/${invoice.id}/record-payment`, payload);
       onSaved();
     } catch (e: any) {
-      onError(e?.message || "Failed to record payment");
+      const msg = e?.message || "Failed to record payment";
+      setServerError(msg);
+      onError(msg);
       setBusy(false);
     }
   };
@@ -2596,6 +2616,7 @@ function RecordPaymentModal({
       subtitle={`Grand total ${formatGstInr(grand)}. Outstanding balance ${formatGstInr(balance)}. Log a receipt against this invoice.`}
       icon={<IndianRupee size={20} aria-hidden />}
       onClose={onClose}
+      error={serverError}
       busy={busy}
       onSubmit={() => void submit()}
       submitLabel="Record Payment"
@@ -2639,6 +2660,7 @@ function RecordTdsModal({
 }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState("");
   const amtN = num(amount);
   const amountErr = amount !== "" && (amtN === undefined || amtN <= 0) ? "Amount must be a positive number" : "";
 
@@ -2651,7 +2673,9 @@ function RecordTdsModal({
       await crmPost(`/api/invoices/${invoiceId}/record-tds`, payload);
       onSaved();
     } catch (e: any) {
-      onError(e?.message || "Failed to record TDS");
+      const msg = e?.message || "Failed to record TDS";
+      setServerError(msg);
+      onError(msg);
       setBusy(false);
     }
   };
@@ -2663,6 +2687,7 @@ function RecordTdsModal({
       icon={<Receipt size={20} aria-hidden />}
       onClose={onClose}
       busy={busy}
+      error={serverError}
       onSubmit={() => void submit()}
       submitLabel="Record TDS"
       submitBusyLabel="Saving…"
@@ -2700,6 +2725,7 @@ function TdsPaymentModal({
 }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [serverError, setServerError] = useState("");
   const balance = Number(tds.tds_balance || 0);
   const amtN = num(amount);
   const amountErr =
@@ -2714,7 +2740,9 @@ function TdsPaymentModal({
       await crmPost(`/api/invoices/${invoiceId}/tds-payment`, { amount: amtN });
       onSaved();
     } catch (e: any) {
-      onError(e?.message || "Failed to record TDS payment");
+      const msg = e?.message || "Failed to record TDS payment";
+      setServerError(msg);
+      onError(msg);
       setBusy(false);
     }
   };
@@ -2726,6 +2754,7 @@ function TdsPaymentModal({
       icon={<IndianRupee size={20} aria-hidden />}
       onClose={onClose}
       busy={busy}
+      error={serverError}
       onSubmit={() => void submit()}
       submitLabel="Record TDS Payment"
       submitBusyLabel="Saving…"

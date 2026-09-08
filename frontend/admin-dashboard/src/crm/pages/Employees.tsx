@@ -407,7 +407,9 @@ function EmployeeFormModal({
         : await crmPost("/api/employees", payload);
       onSaved(res.data);
     } catch (e: any) {
-      onError(e?.message || "Failed to save employee");
+      const msg = e?.message || "Failed to save employee";
+      setErr(msg);          // inline — e.g. 409 "email already exists"
+      onError(msg);
       setBusy(false);
     }
   };

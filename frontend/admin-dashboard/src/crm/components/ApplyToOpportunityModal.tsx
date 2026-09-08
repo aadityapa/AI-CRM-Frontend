@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Briefcase, Check, Search, UserRound } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
-import { CrmLink } from "../routerHooks";
+import { DuplicateProfileNotice, duplicateProfileFromError } from "./DuplicateProfileNotice";
+import type { DuplicateProfile } from "./DuplicateProfileNotice";
 import {
   ErrorBox, Modal, Spinner, btnPrimary, btnSecondary, inputCls,
 } from "./ui";
@@ -27,7 +28,29 @@ type Option = {
   title: string;
   subtitle?: string | null;
   meta?: string | null;
+  /** Suggested-candidate match (pick-candidate mode only). */
+  score?: number;
+  matched?: string[];
+  missing?: string[];
+  engaged?: boolean;
+  /** Search haystack for filtering suggestions client-side. */
+  hay?: string;
 };
+
+/** Matched candidates for the opportunity (7 Sep 2026, user request): the
+ *  same skills / experience / history scoring the Suggested Candidates tab
+ *  uses, shown FIRST with the match %; the whole master follows below. */
+type Suggestion = {
+  candidate_id: number; name: string; email?: string | null; phone?: string | null;
+  experience_years?: number | null; city?: string | null; technical_domain?: string | null;
+  score: number; matched_skills: string[]; missing_mandatory_skills: string[]; engaged: boolean;
+};
+
+function scoreTone(score: number): string {
+  if (score >= 70) return "bg-success-soft text-success";
+  if (score >= 45) return "bg-warning-soft text-warning";
+  return "bg-surface-1 text-muted";
+}
 
 const SEARCH_DEBOUNCE_MS = 300;
 const PAGE_SIZE = 25;
@@ -58,13 +81,11 @@ export function ApplyToOpportunityModal({
   const [options, setOptions] = useState<Option[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Option | null>(null);
+  const [suggested, setSuggested] = useState<Option[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   /** Structured 409: who already applied this candidate, with the profile link. */
-  const [dupProfile, setDupProfile] = useState<{
-    profile_id: number; candidate_name?: string; applied_by?: string | null;
-    applied_on?: string | null; pipeline_status?: string;
-  } | null>(null);
+  const [dupProfile, setDupProfile] = useState<DuplicateProfile | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -75,6 +96,42 @@ export function ApplyToOpportunityModal({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Suggested (matched) candidates — loaded once per opportunity, best first.
+  useEffect(() => {
+    if (pickingOpportunity || !opportunityId) return;
+    let alive = true;
+    crmGet<Suggestion[]>(`/api/opportunities/${opportunityId}/suggested-candidates`)
+      .then((r) => {
+        if (!alive) return;
+        const rows = (r.data || []).slice().sort((a, b) => b.score - a.score);
+        setSuggested(rows.map((c) => ({
+          id: c.candidate_id,
+          title: c.name || `#${c.candidate_id}`,
+          subtitle: [c.technical_domain, c.city].filter(Boolean).join(" · ") || null,
+          meta: c.experience_years != null ? `${c.experience_years} yrs` : null,
+          score: Math.round(c.score),
+          matched: c.matched_skills || [],
+          missing: c.missing_mandatory_skills || [],
+          engaged: !!c.engaged,
+          hay: [c.name, c.email, c.phone, c.city, c.technical_domain].filter(Boolean).join(" ").toLowerCase(),
+        })));
+      })
+      .catch(() => { if (alive) setSuggested([]); });   // matcher down → plain search still works
+    return () => { alive = false; };
+  }, [pickingOpportunity, opportunityId]);
+
+  const visibleSuggested = useMemo(() => {
+    if (!suggested) return [];
+    const q = debounced.toLowerCase();
+    return q ? suggested.filter((o) => (o.hay || "").includes(q)) : suggested;
+  }, [suggested, debounced]);
+  const suggestedIds = useMemo(() => new Set((suggested || []).map((o) => o.id)), [suggested]);
+  // "All candidates" = the server search minus anyone already in the matched list.
+  const otherOptions = useMemo(
+    () => (pickingOpportunity ? options : options.filter((o) => !suggestedIds.has(o.id))),
+    [options, suggestedIds, pickingOpportunity],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +189,7 @@ export function ApplyToOpportunityModal({
     }
     setBusy(true);
     setError("");
+    setDupProfile(null);
     try {
       const body = pickingOpportunity
         ? { candidate_id: candidateId, opportunity_id: selected.id }
@@ -147,9 +205,9 @@ export function ApplyToOpportunityModal({
       // 409 = already applied. The server sends WHO applied and the profile id
       // (user decision, 25 Aug 2026) so a second TA sees the existing entry
       // instead of a dead-end message.
-      const payload = (e?.errors || []).find((x: any) => x && typeof x === "object" && x.duplicate_profile);
-      if (payload) {
-        setDupProfile(payload.duplicate_profile);
+      const dup = duplicateProfileFromError(e);
+      if (dup) {
+        setDupProfile(dup);
         setError("");
       } else {
         const msg = String(e?.message || "");
@@ -171,22 +229,7 @@ export function ApplyToOpportunityModal({
         <p className="text-sm text-muted">{subtitle}</p>
 
         {error && <ErrorBox error={error} />}
-        {dupProfile && (
-          <div className="rounded-card border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
-            <div className="font-bold">Already applied to this opportunity</div>
-            <div className="mt-1">
-              <b>{dupProfile.candidate_name || "This candidate"}</b> was applied
-              {dupProfile.applied_by ? <> by <b>{dupProfile.applied_by}</b></> : null}
-              {dupProfile.applied_on ? <> on {new Date(dupProfile.applied_on).toLocaleDateString()}</> : null}
-              {dupProfile.pipeline_status ? <> — currently at {String(dupProfile.pipeline_status).replace(/_/g, " ")}</> : null}.
-            </div>
-            <div className="mt-1.5">
-              <CrmLink to={`profiles/${dupProfile.profile_id}`} className="font-semibold underline">
-                Open the existing profile →
-              </CrmLink>
-            </div>
-          </div>
-        )}
+        {dupProfile && <DuplicateProfileNotice dup={dupProfile} />}
 
         <div className="relative">
           <Search
@@ -204,50 +247,91 @@ export function ApplyToOpportunityModal({
           />
         </div>
 
-        <div className="max-h-72 overflow-y-auto rounded-xl border border-subtle bg-surface-2">
-          {loading ? (
-            <div className="p-6">
-              <Spinner label="Searching…" />
-            </div>
-          ) : options.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted">
-              {debounced ? "Nothing matched that search." : "No results."}
-            </p>
-          ) : (
-            <ul role="listbox" aria-label={pickingOpportunity ? "Opportunities" : "Candidates"}>
-              {options.map((o) => {
-                const active = selected?.id === o.id;
-                return (
-                  <li key={o.id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => setSelected(o)}
-                      className={`flex w-full items-center gap-3 border-b border-subtle px-4 py-2.5 text-left last:border-b-0 transition-colors ${
-                        active ? "bg-surface-1" : "hover:bg-surface-1"
-                      }`}
-                    >
-                      <span className="text-muted" aria-hidden>
-                        {pickingOpportunity ? <Briefcase size={15} /> : <UserRound size={15} />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-primary">
-                          {o.title}
-                        </span>
-                        {(o.subtitle || o.meta) && (
-                          <span className="block truncate text-xs text-muted">
-                            {[o.meta, o.subtitle].filter(Boolean).join(" · ")}
+        <div className="max-h-80 overflow-y-auto rounded-xl border border-subtle bg-surface-2">
+          {(() => {
+            const renderRow = (o: Option) => {
+              const active = selected?.id === o.id;
+              return (
+                <li key={o.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => { setSelected(o); setDupProfile(null); setError(""); }}
+                    className={`flex w-full items-center gap-3 border-b border-subtle px-4 py-2.5 text-left last:border-b-0 transition-colors ${
+                      active ? "bg-surface-1" : "hover:bg-surface-1"
+                    }`}
+                  >
+                    <span className="text-muted" aria-hidden>
+                      {pickingOpportunity ? <Briefcase size={15} /> : <UserRound size={15} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-primary">{o.title}</span>
+                        {o.engaged && (
+                          <span className="shrink-0 rounded-full bg-danger-soft px-1.5 py-0.5 text-[10px] font-bold text-danger" title="Currently Joined / Preboarding on another opportunity">
+                            engaged
                           </span>
                         )}
                       </span>
-                      {active && <Check size={16} className="shrink-0 text-success" aria-hidden />}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                      {(o.subtitle || o.meta) && (
+                        <span className="block truncate text-xs text-muted">
+                          {[o.meta, o.subtitle].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+                      {o.score != null && (o.matched?.length || o.missing?.length) ? (
+                        <span className="block truncate text-[11px] text-muted">
+                          {o.matched && o.matched.length > 0 && <>matches: {o.matched.slice(0, 4).join(", ")}{o.matched.length > 4 ? "…" : ""}</>}
+                          {o.missing && o.missing.length > 0 && <span className="text-danger"> · missing: {o.missing.join(", ")}</span>}
+                        </span>
+                      ) : null}
+                    </span>
+                    {o.score != null && (
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${scoreTone(o.score)}`} title="Skills / experience match">
+                        {o.score}%
+                      </span>
+                    )}
+                    {active && <Check size={16} className="shrink-0 text-success" aria-hidden />}
+                  </button>
+                </li>
+              );
+            };
+            const sectionHead = (label: string, count: number) => (
+              <li className="sticky top-0 z-[1] border-b border-subtle bg-surface-2 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">
+                {label} <span className="font-medium normal-case tracking-normal">({count})</span>
+              </li>
+            );
+            const showSuggested = !pickingOpportunity;
+            const nothing = !loading && otherOptions.length === 0 && (!showSuggested || visibleSuggested.length === 0);
+            if (nothing) {
+              return (
+                <p className="p-6 text-center text-sm text-muted">
+                  {debounced ? "Nothing matched that search." : "No results."}
+                </p>
+              );
+            }
+            return (
+              <ul role="listbox" aria-label={pickingOpportunity ? "Opportunities" : "Candidates"}>
+                {showSuggested && suggested === null && (
+                  <li className="px-4 py-2 text-xs text-muted">Finding matched candidates…</li>
+                )}
+                {showSuggested && visibleSuggested.length > 0 && (
+                  <>
+                    {sectionHead("Suggested — matched to this opportunity", visibleSuggested.length)}
+                    {visibleSuggested.map(renderRow)}
+                  </>
+                )}
+                {showSuggested && sectionHead("All candidates", otherOptions.length)}
+                {loading ? (
+                  <li className="p-4"><Spinner label="Searching…" /></li>
+                ) : otherOptions.length === 0 ? (
+                  <li className="px-4 py-2 text-xs text-muted">{debounced ? "No other candidates match." : "—"}</li>
+                ) : (
+                  otherOptions.map(renderRow)
+                )}
+              </ul>
+            );
+          })()}
         </div>
 
         {selected && (

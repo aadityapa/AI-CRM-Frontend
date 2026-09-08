@@ -33,6 +33,8 @@ export type ProfileColumnRow = {
   opportunity_id: number;
   opportunity_opp_id?: string | null;
   opportunity_title?: string | null;
+  opportunity_exp_min?: number | null;
+  opportunity_exp_max?: number | null;
   customer_name?: string | null;
   pipeline_status: string;
   stage?: string | null;
@@ -59,6 +61,7 @@ export type ProfileColumnRow = {
   resignation_status?: boolean;
   customer_submission_date?: string | null;
   customer_onboarding_date?: string | null;
+  karnex_onboarding_date?: string | null;
   ta_owner_name?: string | null;
   applied_on?: string | null;
   created_at?: string | null;
@@ -79,6 +82,7 @@ export const DEFAULT_PROFILE_COLUMNS = [
   "pipeline_status",
   "interview_round",
   "experience_years",
+  "opportunity_exp",
   "notice_period",
   "applied_on",
   "ta_owner_name",
@@ -165,6 +169,21 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
           </div>
         </div>
       ),
+    },
+    {
+      // The opportunity's REQUIRED experience band (28 Aug 2026, user
+      // request) — next to the candidate's own Exp, "does this person fit?"
+      // is answerable without opening the opportunity.
+      key: "opportunity_exp",
+      label: "Opp Exp (yrs)",
+      align: "right",
+      render: (r) => {
+        const mn = r.opportunity_exp_min;
+        const mx = r.opportunity_exp_max;
+        if (mn == null && mx == null) return dash;
+        if (mn != null && mx != null) return `${mn} – ${mx}`;
+        return mn != null ? `${mn}+` : `≤ ${mx}`;
+      },
     },
     {
       // The primary signal. The ring states the score and its tier; the badge
@@ -322,8 +341,16 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
       render: (r) => (r.customer_submission_date ? h.fmtDate(r.customer_submission_date) : dash),
     },
     {
+      // Two onboarding dates since 2 Sep 2026, so "Onboarding date" no longer
+      // says which one — both columns name their side explicitly.
+      key: "karnex_onboarding_date",
+      label: "Karnex onboarding",
+      sortable: true,
+      render: (r) => (r.karnex_onboarding_date ? h.fmtDate(r.karnex_onboarding_date) : dash),
+    },
+    {
       key: "customer_onboarding_date",
-      label: "Onboarding date",
+      label: "Customer onboarding",
       sortable: true,
       render: (r) => (r.customer_onboarding_date ? h.fmtDate(r.customer_onboarding_date) : dash),
     },

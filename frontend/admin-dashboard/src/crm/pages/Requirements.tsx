@@ -12,19 +12,27 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  AlertTriangle, ArrowLeft, Bot, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileUp, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, UserPlus, X,
+  AlertTriangle, ArrowLeft, Bot, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileUp, Link2, Pencil, Plus, RefreshCw, ScanLine, Send, Star, Trash2, UserPlus, UsersRound, X,
 } from "lucide-react";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, crmUpload, qs } from "../api";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { PhoneField } from "../components/PhoneField";
+import { InterviewerSelect } from "../components/InterviewerSelect";
+import {
+  SalesHeadDecisionModal, SubmitForApprovalModal, type SalesHeadDecision,
+} from "../components/OfferApprovalGate";
 import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole, useMe } from "../CrmApp";
 import { useCanAct, useCrmAccess } from "../useAccess";
+import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
+import { BulkVerifyModal } from "../components/BulkVerifyModal";
+import type { VerifyQueueItem } from "../components/BulkVerifyModal";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
 import {
@@ -34,6 +42,7 @@ import { TeachingEmpty } from "../components/TeachingEmpty";
 // Same DB-scan component the opportunity page uses — one implementation, so
 // TA and Sales always see identical matching logic (18 Aug 2026).
 import { CollapsibleCard, SuggestedCandidatesTab } from "./Opportunities";
+import { InterviewRoundModal } from "./Profiles";
 import {
   SectionHeaderBanner, FieldLabel, WizardField, InfoChip, lockedInputCls,
 } from "../components/wizard";
@@ -77,6 +86,20 @@ type JdAttachment = {
  * where TA sources (18 Aug 2026). Read-only list; stage moves stay on the
  * Candidate Profiles page, which owns the transition rules. */
 /** RMG screening badge (25 Aug 2026): the gate that unlocks AI-L1 actions. */
+/** Stage filter pills (28 Aug 2026, user request): label → the pipeline
+ *  statuses it covers. One pill can span several statuses — "Customer
+ *  Interviewing" is the whole customer-round stretch. */
+const STAGE_PILLS: [label: string, statuses: string[]][] = [
+  ["All", []],
+  ["Sourcing", ["Sourcing"]],
+  ["Technical Interviewing", ["Technical_Screening"]],
+  ["RMG Screening", ["RMG_Review"]],
+  ["Sales Screening", ["Sales_Screening"]],
+  ["Customer Screening", ["Customer_Screening"]],
+  ["Customer Interviewing", ["Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval"]],
+  ["Onboarding", ["HR_Screening", "HR_Interviewing", "Preboarding", "Joined"]],
+];
+
 function RmgScreeningBadge({ status }: { status: string | null | undefined }) {
   if (!status) return <span className="text-xs text-muted" title="Created before the RMG screening gate existed — not gated">—</span>;
   const cls = status === "Shortlisted"
@@ -97,14 +120,19 @@ function RmgScreeningBadge({ status }: { status: string | null | undefined }) {
 }
 
 function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: ToastFn }) {
-  // Who may schedule the AI L1 from here (Admin/CEO pass via useHasRole).
-  const canSchedule = useCanAct("profiles", "edit", useHasRole("TA"));
-  const isRmg = useCanAct("requirements", "edit", useHasRole("RMG"));
-  const isTA = useCanAct("requirements", "edit", useHasRole("TA"));
+  /* Role IDENTITY, not tab access (fix 28 Aug 2026): with template authority,
+     useCanAct alone made every templated user "RMG" here — TA saw the RMG
+     Shortlist/Reject buttons. The role stays a role check; the template only
+     gates whether the tab's edit actions render at all. */
+  const rmgRole = useHasRole("RMG");
+  const rmgCanEdit = useCanAct("requirements", "edit", rmgRole);
+  const isRmg = rmgRole && rmgCanEdit;
+  const taRole = useHasRole("TA");
+  const taCanEdit = useCanAct("requirements", "edit", taRole);
+  const isTA = taRole && taCanEdit;
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [scheduleRow, setScheduleRow] = useState<any | null>(null);
   /* Filters (25 Aug 2026): search by name/email, and "who submitted". */
   const [q, setQ] = useState("");
   const [appliedBy, setAppliedBy] = useState("");
@@ -113,10 +141,33 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
   const [decideNote, setDecideNote] = useState("");
   const [decideErr, setDecideErr] = useState("");
   const [decideBusy, setDecideBusy] = useState(false);
+  /* Delete an application outright (28 Aug 2026, user request) — for wrong
+     uploads. The candidate master record and CV survive; only this profile
+     (and its interview links/rounds) goes. */
+  const [deleteRow, setDeleteRow] = useState<any | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   /* Bulk shortlist (25 Aug 2026): RMG ticks Pending rows and clears them in
    * one click. Rejects stay one-by-one — each needs its own note. */
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  /* ATS on the intake list (2 Sep 2026, user request): RMG wants the fit
+     score BEFORE deciding Shortlist/Reject, and TA uploads now arrive scored.
+     The scan endpoint resolves the requirement from the opportunity itself. */
+  const [scanning, setScanning] = useState<Set<number>>(new Set());
+  const scanRow = async (r: any) => {
+    setScanning((p) => new Set(p).add(r.id));
+    try {
+      const res = await crmPost<any>(`/api/candidate-profiles/${r.id}/ats-scan`, {});
+      toast(res.message || "ATS scan complete");
+      const score = res.data?.ats_score ?? null;
+      setRows((prev) => prev.map((x) => x.id === r.id
+        ? { ...x, ats_score: score, ats_status: res.data?.ats_status ?? x.ats_status } : x));
+    } catch (e: any) {
+      toast(e?.message || "ATS scan failed", "err");
+    } finally {
+      setScanning((p) => { const n = new Set(p); n.delete(r.id); return n; });
+    }
+  };
 
   const bulkShortlist = async () => {
     const ids = [...selected];
@@ -220,6 +271,18 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
       render: (r) => <StatusBadge status={r.pipeline_status} label={selfWithdrewLabel(r.pipeline_status, r.withdrawn_from_status)} /> },
     { key: "rmg_screening_status", label: "RMG Screening",
       render: (r) => <RmgScreeningBadge status={r.rmg_screening_status} /> },
+    { key: "ats_score", label: "ATS", align: "right",
+      render: (r) => {
+        if (r.ats_score == null) return <span className="text-muted">—</span>;
+        const s = Math.round(Number(r.ats_score));
+        const cls = s >= 70
+          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+          : s >= 40
+            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            : "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300";
+        return <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${cls}`}
+          title="ATS match score against the requirement JD and skills">{s}</span>;
+      } },
     { key: "experience_years", label: "Exp (yrs)", align: "right",
       render: (r) => (r.experience_years ?? "—") },
     { key: "ta_owner_name", label: "Applied by",
@@ -232,10 +295,19 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
     key: "_actions", label: "", align: "right",
     render: (r) => {
       const gate = r.rmg_screening_status;
-      const l1Blocked = gate === "Pending" || gate === "Rejected";
-      const rejectedStages = ["Rejected", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn"];
+      const rejectedStages =["Rejected", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn"];
       return (
         <div className="flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+          {(isRmg || isTA) && !rejectedStages.includes(r.pipeline_status) && (
+            <button className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
+              disabled={scanning.has(r.id)}
+              onClick={() => void scanRow(r)}
+              title={r.ats_score == null
+                ? "Score this candidate's CV against the requirement"
+                : "Re-run the ATS scan"}>
+              <ScanLine size={13} /> {scanning.has(r.id) ? "Scanning…" : r.ats_score == null ? "Run ATS" : "Re-scan"}
+            </button>
+          )}
           {isRmg && gate === "Pending" && (
             <>
               <button className={`${btnPrimary} !px-2.5 !py-1 text-xs`}
@@ -249,25 +321,23 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
               </button>
             </>
           )}
-          {canSchedule && (
-            <button
-              className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
-              disabled={l1Blocked}
-              onClick={() => setScheduleRow(r)}
-              title={gate === "Pending"
-                ? "Locked until RMG shortlists this candidate"
-                : gate === "Rejected"
-                  ? "RMG rejected this candidate at screening"
-                  : "Schedule the AI L1 interview for this applicant"}
-            >
-              <CalendarPlus size={13} /> Schedule L1
-            </button>
-          )}
+          {/* No "Schedule L1" here (2 Sep 2026, user decision): this tab is
+              the intake list — RMG screens, TA can drop a candidate. Every
+              interview from the AI L1 on is scheduled from the Applied
+              Candidates tab, and offering it in two places meant two
+              buttons that could disagree about whether it was allowed. */}
           {isTA && !rejectedStages.includes(r.pipeline_status) && (
             <button className={`${btnSecondary} !px-2.5 !py-1 text-xs text-rose-600 dark:text-rose-300`}
               onClick={() => { setDecideRow({ row: r, kind: "ta-reject" }); setDecideNote(""); setDecideErr(""); }}
               title="Candidate not interested / dropped out — reject with a note">
               <X size={13} /> Reject
+            </button>
+          )}
+          {isTA && (
+            <button className={`${btnSecondary} !px-2.5 !py-1 text-xs text-rose-600 dark:text-rose-300`}
+              onClick={() => setDeleteRow(r)}
+              title="Delete this application entirely (wrong upload) — the candidate record and CV stay">
+              <Trash2 size={13} /> Delete
             </button>
           )}
         </div>
@@ -298,6 +368,11 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
           </button>
         )}
       </div>
+      <p className="text-xs text-muted">
+        Everyone submitted to this opportunity, whatever their screening state. Once RMG
+        shortlists a candidate they also appear on the <b>Applied Candidates</b> tab, where
+        every interview from AI L1 onwards is scheduled.
+      </p>
       {error ? <ErrorBox error={error} /> : (
         <DataTable columns={cols} rows={visible} loading={loading}
           emptyMessage={rows.length === 0
@@ -305,13 +380,29 @@ function RequirementApplicantsTab({ oppId, toast }: { oppId: number; toast: Toas
             : "No applicants match the current filters."}
           onRowClick={(r: any) => crmNavigate(`profiles/${r.id}`)} />
       )}
-      {scheduleRow && (
-        <ScheduleAiInterviewModal
-          profileId={scheduleRow.id}
-          candidate={{ full_name: scheduleRow.candidate_name, email: scheduleRow.email }}
-          onClose={() => setScheduleRow(null)}
-          onDone={() => { setScheduleRow(null); load(); }}
-          showToast={(m, k) => toast(m, k)}
+      {deleteRow && (
+        <ConfirmModal
+          title="Delete this application?"
+          message={<>Remove <b>{deleteRow.candidate_name || "this candidate"}</b> from this opportunity?
+            The candidate master record and CV stay — only this application (its pipeline history,
+            interview rounds and AI interview links) is deleted. This cannot be undone.</>}
+          confirmLabel="Delete"
+          danger
+          busy={deleteBusy}
+          onConfirm={async () => {
+            setDeleteBusy(true);
+            try {
+              const res = await crmDelete(`/api/candidate-profiles/${deleteRow.id}`);
+              toast(res.message || "Application deleted");
+              setDeleteRow(null);
+              load();
+            } catch (e: any) {
+              toast(e?.message || "Delete failed", "err");
+            } finally {
+              setDeleteBusy(false);
+            }
+          }}
+          onClose={() => { if (!deleteBusy) setDeleteRow(null); }}
         />
       )}
       {decideRow && (
@@ -375,6 +466,7 @@ type Req = {
   /** RMG hold (25 Aug 2026). */
   held_from_status?: string | null;
   held_reason?: string | null;
+  job_postings_count?: number;
   /** The id every role tracks — the parent opportunity's (18 Aug 2026). */
   opportunity_opp_id?: string | null;
   opportunity_id: number;
@@ -411,7 +503,11 @@ type Req = {
 };
 
 type ResumeRow = {
+  /** Resume id — NEGATIVE on a profile-only row (an RMG-cleared candidate
+   *  applied from the Candidates page, so there is no resume record and
+   *  scheduling goes through `profile_id`, 28 Aug 2026). */
   id: number;
+  is_profile_only?: boolean;
   requirement_id: number;
   candidate_id: number | null;
   /** Bulk upload held this row as a possible duplicate of this candidate. */
@@ -468,6 +564,37 @@ type ResumeRow = {
   ai_interview_record_id?: string | null;
   profile_id?: number | null;
   profile_pipeline_status?: string | null;
+  /** The Pre-Onboarding budget hold (3 Sep 2026). */
+  budget_status?: "Concern" | "Out_of_Budget" | "Resolved" | null;
+  l2_requested?: boolean;
+  l2_scheduled?: boolean;
+  l2_event_id?: number | null;
+  l2_result?: string | null;
+  /* The MANUAL L1 (1 Sep 2026): the human round RMG runs instead of the AI
+     screen. Same four facts as the L2, so both render through one code path. */
+  l1_manual_requested?: boolean;
+  l1_manual_scheduled?: boolean;
+  l1_manual_event_id?: number | null;
+  l1_manual_result?: string | null;
+  /* Rounds TA schedules from this row (2 Sep 2026): the HR round at HR
+     Screening and the customer's own rounds. Same four facts as the L2. */
+  hr_requested?: boolean;
+  hr_scheduled?: boolean;
+  hr_event_id?: number | null;
+  hr_result?: string | null;
+  cust_l1_scheduled?: boolean;
+  cust_l1_result?: string | null;
+  cust_l1_event_id?: number | null;
+  cust_l1_when?: string | null;
+  cust_l1_link?: boolean;
+  cust_l2_scheduled?: boolean;
+  cust_l2_result?: string | null;
+  cust_l2_event_id?: number | null;
+  cust_l2_when?: string | null;
+  cust_l2_link?: boolean;
+  /** Newest offer on the applied profile — the terms Sales Head approves. */
+  latest_offer?: { ctc: number | null; joining_date: string | null;
+                   offer_date: string | null; status: string } | null;
   ai_invite_token?: string | null;
   ai_invite_url?: string | null;
   ai_access_key?: string | null;
@@ -1243,6 +1370,12 @@ export function RequirementsListPage() {
   const me = useMe();
   const canCreate = useCanAct("opportunities", "create", useHasRole("Sales")); // Admin passes too
   const [toastNode, toast] = useToast();
+  /* Apply a candidate straight from the list (7 Sep 2026, user request): TA
+     lands on THIS table under the Opportunities tab (the pipeline table is
+     Sales-only), so the row icon has to live here too. Same gate as the
+     server: profiles create for TA / Sales / RMG, template-aware. */
+  const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
+  const [applyTo, setApplyTo] = useState<Req | null>(null);
 
   const roles = me.roles;
   const isAdmin = roles.includes("Admin");
@@ -1424,6 +1557,25 @@ export function RequirementsListPage() {
           onSearch={setSearch}
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`requirements/${r.id}`)}
+          rowActions={canApply ? (r) => (
+            <span className="inline-flex items-center" onClick={(e) => e.stopPropagation()}>
+              {SOURCING_STATUSES.includes(r.status) ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:!text-indigo-600"
+                  title="Apply a candidate to this opportunity"
+                  aria-label={`Apply a candidate to ${r.title}`}
+                  onClick={(e) => { e.stopPropagation(); setApplyTo(r); }}
+                >
+                  <UserPlus size={15} />
+                </button>
+              ) : (
+                <span className="inline-flex p-1.5 text-muted/40" title="Applications open once the requirement is in sourcing">
+                  <UserPlus size={15} />
+                </span>
+              )}
+            </span>
+          ) : undefined}
           emptyMessage={
             taMode && !statusFilter && !dq
               ? "Nothing to source yet — requirements appear here once RMG approves them for sourcing."
@@ -1456,6 +1608,15 @@ export function RequirementsListPage() {
         />
       )}
 
+      {applyTo && (
+        <ApplyToOpportunityModal
+          mode="pick-candidate"
+          opportunityId={applyTo.opportunity_id}
+          opportunityLabel={`${reqLabel(applyTo)} — ${applyTo.title}`}
+          onClose={() => setApplyTo(null)}
+          onApplied={(msg) => { toast(msg); setApplyTo(null); }}
+        />
+      )}
       {showCreate && (
         <RequirementFormModal
           initial={null}
@@ -1563,7 +1724,9 @@ function JobPostingsTab({
   toast: ToastFn;
   onRequirementChanged: () => void;
 }) {
-  const isTA = useCanAct("requirements", "edit", useHasRole("TA"));
+  const taRole = useHasRole("TA");
+  const taCanEdit = useCanAct("requirements", "edit", taRole);
+  const isTA = taRole && taCanEdit;
   const [postings, setPostings] = useState<JobPosting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2199,8 +2362,8 @@ function UploadResumeModal({
           <WizardField label="Email" icon="mail" filled={!!email.trim()}>
             <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </WizardField>
-          <WizardField label="Phone" icon="phone" filled={!!phone.trim()}>
-            <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <WizardField label="Phone" filled={!!phone.trim()}>
+            <PhoneField value={phone} onChange={setPhone} />
           </WizardField>
           <WizardField label="Source portal">
             <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
@@ -2277,9 +2440,66 @@ function EditResumeModal({
   const [preferredLocation, setPreferredLocation] = useState(d.preferred_location || "");
   const [busy, setBusy] = useState(false);
 
+  /* Profile-only rows (applied from the candidate record, no resume row)
+     carry a NEGATIVE synthetic id — PUT /api/resumes/-15954 404'd (1 Sep 2026
+     user bug report). For those, edit the CANDIDATE record instead, which is
+     where their details actually live. */
+  const profileOnly = !!(row as any).is_profile_only || row.id < 0;
+
   const save = async () => {
     if (!name.trim()) { toast("Candidate name is required", "err"); return; }
     setBusy(true);
+    if (profileOnly) {
+      const candId = (row as any).candidate_id;
+      if (!candId) {
+        toast("This applicant has no candidate record to edit", "err");
+        setBusy(false);
+        return;
+      }
+      try {
+        const parts = name.trim().split(/\s+/);
+        const num = (v: string) => {
+          const s = v.replace(/[^\d.]/g, "");
+          return s ? Number(s) : null;
+        };
+        /* These CTC boxes are free text ("12 LPA", "12,00,000"), but
+           candidates.current_ctc is RUPEES — stripping to digits stored ₹12
+           for "12 LPA". Mirrors services/ctc.py::parse_ctc_to_rupees. */
+        const ctcRupees = (v: string): number | null => {
+          const text = v.trim().toLowerCase();
+          if (!text) return null;
+          const m = text.replace(/\s/g, "").match(/(\d+(?:[.,]\d+)*)/);
+          if (!m) return null;
+          const n = Number(m[1].replace(/,/g, ""));
+          if (!Number.isFinite(n) || n <= 0) return null;
+          let rupees: number;
+          if (/\bcr\b|crore/.test(text)) rupees = n * 1e7;
+          else if (/lpa|lakh|lacs?\b|\bl\b|\dl\b/.test(text)) rupees = n * 1e5;
+          else if (/\bk\b|thousand|\dk\b/.test(text)) rupees = n * 1e3;
+          else if (n < 1000) rupees = n * 1e5;   // "12" means 12 LPA
+          else rupees = n;                        // already rupees
+          return rupees > 5e8 ? null : Math.round(rupees);
+        };
+        const res = await crmPut(`/api/candidates/${candId}`, {
+          first_name: parts[0],
+          last_name: parts.length > 1 ? parts.slice(1).join(" ") : null,
+          ...(email.trim() ? { email: email.trim() } : {}),
+          phone: phone.trim() || null,
+          experience_years: num(experience),
+          notice_period: noticePeriod.trim() || null,
+          technical_domain: domain.trim() || null,
+          current_ctc: ctcRupees(currentCtc),
+          expected_ctc: ctcRupees(expectedCtc),
+          preferred_locations: preferredLocation.trim() || null,
+        });
+        toast(res.message || "Candidate updated");
+        onSaved();
+      } catch (e: any) {
+        toast(e?.message || "Update failed", "err");
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const res = await crmPut(`/api/resumes/${row.id}`, {
         candidate_name: name.trim(),
@@ -2317,6 +2537,13 @@ function EditResumeModal({
         icon={<Pencil size={20} aria-hidden />}
       >
         <div className="space-y-5">
+          {profileOnly && (
+            <p className="rounded-card border border-subtle bg-surface-2/60 px-3 py-2 text-xs text-secondary">
+              This applicant has no uploaded resume — edits save to their
+              <b> candidate record</b>. Source portal, education and skills live on a
+              resume, so they aren&rsquo;t editable here.
+            </p>
+          )}
           <WizardField label="Candidate name" required icon="user" filled={!!name.trim()}>
             <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
           </WizardField>
@@ -2324,21 +2551,25 @@ function EditResumeModal({
             <WizardField label="Email" icon="mail" filled={!!email.trim()}>
               <input className={inputCls} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </WizardField>
-            <WizardField label="Phone" icon="phone" filled={!!phone.trim()}>
-              <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <WizardField label="Phone" filled={!!phone.trim()}>
+              <PhoneField value={phone} onChange={setPhone} />
             </WizardField>
-            <WizardField label="Source portal">
-              <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
-                <option value="">—</option>
-                {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </WizardField>
+            {!profileOnly && (
+              <WizardField label="Source portal">
+                <select className={inputCls} value={source} onChange={(e) => setSource(e.target.value)}>
+                  <option value="">—</option>
+                  {SOURCE_PORTALS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </WizardField>
+            )}
             <WizardField label="Total experience (years)" filled={!!experience.trim()}>
               <input className={inputCls} value={experience} onChange={(e) => setExperience(e.target.value)} placeholder="e.g. 4.5" />
             </WizardField>
-            <WizardField label="Highest education" filled={!!education.trim()}>
-              <input className={inputCls} value={education} onChange={(e) => setEducation(e.target.value)} placeholder="e.g. B.Tech, Computer Science" />
-            </WizardField>
+            {!profileOnly && (
+              <WizardField label="Highest education" filled={!!education.trim()}>
+                <input className={inputCls} value={education} onChange={(e) => setEducation(e.target.value)} placeholder="e.g. B.Tech, Computer Science" />
+              </WizardField>
+            )}
             <WizardField label="Technical domain" filled={!!domain.trim()}>
               <input className={inputCls} value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="e.g. Backend / Data Engineering" />
             </WizardField>
@@ -2355,9 +2586,11 @@ function EditResumeModal({
               <input className={inputCls} value={preferredLocation} onChange={(e) => setPreferredLocation(e.target.value)} placeholder="e.g. Bangalore" />
             </WizardField>
           </div>
-          <WizardField label="Key skills" filled={!!skills.trim()}>
-            <input className={inputCls} value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="e.g. Python, FastAPI, PostgreSQL, AWS" />
-          </WizardField>
+          {!profileOnly && (
+            <WizardField label="Key skills" filled={!!skills.trim()}>
+              <input className={inputCls} value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="e.g. Python, FastAPI, PostgreSQL, AWS" />
+            </WizardField>
+          )}
           <div className={wizFooterRow}>
             <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
             <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={() => void save()} disabled={busy}>
@@ -2377,12 +2610,37 @@ function ResumesTab({
   toast: ToastFn;
   onRequirementChanged: () => void;
 }) {
-  const isTA = useCanAct("requirements", "edit", useHasRole("TA"));
-  const isRmg = useCanAct("requirements", "edit", useHasRole("RMG"));
+  const taRole = useHasRole("TA");
+  const taCanEdit = useCanAct("requirements", "edit", taRole);
+  const isTA = taRole && taCanEdit;
+  /* Role IDENTITY, not tab access (fix 28 Aug 2026): with template authority,
+     useCanAct alone made every templated user "RMG" here — TA saw the RMG
+     Shortlist/Reject buttons. The role stays a role check; the template only
+     gates whether the tab's edit actions render at all. */
+  const rmgRole = useHasRole("RMG");
+  const rmgCanEdit = useCanAct("requirements", "edit", rmgRole);
+  const isRmg = rmgRole && rmgCanEdit;
+  /* The Sales → Sales Head approval gate on this tab too (2 Sep 2026): the
+     step must be offered wherever a candidate is worked, not only on the
+     profile page. Same role-identity rule as RMG above. */
+  const salesRole = useHasRole("Sales", "Sales_Head");
+  const salesCanEdit = useCanAct("requirements", "edit", salesRole);
+  const isSales = salesRole && salesCanEdit;
+  const salesHeadRole = useHasRole("Sales_Head");
+  const salesHeadCanEdit = useCanAct("requirements", "edit", salesHeadRole);
+  const isSalesHead = salesHeadRole && salesHeadCanEdit;
+  const [approvalRow, setApprovalRow] = useState<ResumeRow | null>(null);
+  const [decisionRow, setDecisionRow] = useState<{ row: ResumeRow; decision: SalesHeadDecision } | null>(null);
+  /* TA schedules EVERY round from here (2 Sep 2026, user flow): the customer's
+     L1/L2 and the HR round open the profile's own round form, preset to the
+     round — one form, one wording, and the candidate is emailed the invite. */
+  const [roundModal, setRoundModal] = useState<{ row: ResumeRow; kind: string; existing?: any } | null>(null);
   const [rows, setRows] = useState<ResumeRow[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  /* `?q=` from a notification link prefills the search so the candidate the
+     mail was about is the first row (8 Sep 2026). */
+  const [search, setSearch] = useState(deepLinkSearch);
   const dq = useDebounced(search);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2394,7 +2652,7 @@ function ResumesTab({
    * and TA applies them (or not) from the results dialog. */
   const [zipBusy, setZipBusy] = useState(false);
   const [zipResult, setZipResult] = useState<{
-    applied: { file: string; name: string; candidate_id: number; profile_id: number | null; ats_score?: number | null;
+    applied: { file: string; name: string; resume_id: number; candidate_id: number; profile_id: number | null; ats_score?: number | null;
       name_match?: { candidate_id: number; name: string; email?: string } | null }[];
     held: { file: string; resume_id: number; extracted_name: string; ats_score?: number | null; duplicate: {
       candidate_id: number; name: string; email?: string; phone?: string;
@@ -2407,6 +2665,9 @@ function ResumesTab({
   } | null>(null);
   const [zipApplying, setZipApplying] = useState<number | null>(null);
   const [zipAppliedDups, setZipAppliedDups] = useState<Set<number>>(new Set());
+  /* Verify wizard (28 Aug 2026): TA steps through the applied candidates —
+     resume beside parsed details — right from the results dialog. */
+  const [verifyQueue, setVerifyQueue] = useState<VerifyQueueItem[] | null>(null);
 
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -2438,7 +2699,25 @@ function ResumesTab({
         const result = j.result!;
         // Oversize members were rejected before the job started — fold them in.
         if (j.oversize?.length) result.failed = [...result.failed, ...j.oversize];
-        setZipResult(result);
+        /* Straight into side-by-side verification (user decision, 28 Aug
+           2026): resume left, parsed details right, one candidate at a time —
+           applied AND held-duplicate rows both. The summary dialog only
+           appears when there is nothing to step through (all skipped/failed),
+           because then something must explain why. */
+        const queue: VerifyQueueItem[] = [
+          ...result.applied.map((a) => ({ resume_id: a.resume_id, name: a.name })),
+          ...result.held.map((h) => ({ resume_id: h.resume_id, name: h.extracted_name, held: true })),
+        ];
+        if (queue.length > 0) {
+          const bits = [`${result.applied.length} applied`];
+          if (result.held.length) bits.push(`${result.held.length} possible duplicate(s)`);
+          if (result.skipped.length) bits.push(`${result.skipped.length} already uploaded`);
+          if (result.failed.length) bits.push(`${result.failed.length} failed`);
+          toast(bits.join(" · "));
+          setVerifyQueue(queue);
+        } else {
+          setZipResult(result);
+        }
         setZipAppliedDups(new Set());
         load();
         onRequirementChanged();
@@ -2470,6 +2749,9 @@ function ResumesTab({
   const [breakdownRow, setBreakdownRow] = useState<ResumeRow | null>(null);
   const [rejectRow, setRejectRow] = useState<ResumeRow | null>(null);
   const [scheduleRow, setScheduleRow] = useState<ResumeRow | null>(null);
+  /* Profile-only rows schedule through the PROFILE modal — there is no
+     resume record for the resume-based confirm path to act on. */
+  const [profileScheduleRow, setProfileScheduleRow] = useState<ResumeRow | null>(null);
   const [editRow, setEditRow] = useState<ResumeRow | null>(null);
   const [deleteRow, setDeleteRow] = useState<ResumeRow | null>(null);
   const [inviteOpenId, setInviteOpenId] = useState<number | null>(null);
@@ -2482,6 +2764,12 @@ function ResumesTab({
    * from the opportunity's profiles (where attribution is stamped). */
   const [appliedBy, setAppliedBy] = useState("");
   const [taNames, setTaNames] = useState<string[]>([]);
+  /* Dismissed duplicates are hidden by default (0087) — this shows ONLY them. */
+  const [showDismissed, setShowDismissed] = useState(false);
+  /* Stage pills (28 Aug 2026, user request): one-click filter by the
+     candidate's LIVE pipeline stage. Server-side — the list is paginated. */
+  const [stagePill, setStagePill] = useState("All");
+  const stageCsv = (STAGE_PILLS.find(([l]) => l === stagePill)?.[1] || []).join(",");
   useEffect(() => {
     let alive = true;
     crmGet<any[]>(`/api/candidate-profiles?opportunity_id=${req.opportunity_id}&limit=100`)
@@ -2499,7 +2787,11 @@ function ResumesTab({
     try {
       const res = await crmGet<ResumeRow[]>(
         `/api/requirements/${req.id}/resumes${qs({
-          page, limit: 20, search: dq || undefined, applied_by: appliedBy || undefined,
+          // 10 a page (1 Sep 2026, user request) — the tab is a working list
+          // the recruiter acts on row by row, not something to scroll.
+          page, limit: 10, search: dq || undefined, applied_by: appliedBy || undefined,
+          dismissed: showDismissed ? 1 : undefined,
+          stage: stageCsv || undefined,
         })}`,
       );
       setRows(res.data || []);
@@ -2509,9 +2801,9 @@ function ResumesTab({
     } finally {
       setLoading(false);
     }
-  }, [req.id, page, dq, appliedBy]);
+  }, [req.id, page, dq, appliedBy, showDismissed, stageCsv]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [dq, appliedBy]);
+  useEffect(() => { setPage(1); }, [dq, appliedBy, showDismissed, stageCsv]);
 
   /** Scan responses now flag auto_shortlisted / slot_invite_sent per resume.
    * Remember auto-shortlisted ids for this session (drives the "Auto" chip)
@@ -2536,6 +2828,26 @@ function ResumesTab({
     if (invites === 0) return base;
     if (invites === auto.length) return `${base}, invites sent`;
     return `${base}, ${invites} invite${invites === 1 ? "" : "s"} sent`;
+  };
+
+  /** ATS for a profile-only applicant: the server builds the resume row from
+   *  the candidate's CV and scores it — after reload the row is a normal one. */
+  const scanProfile = async (r: ResumeRow) => {
+    if (!r.profile_id) return;
+    setBusyId(r.id);
+    try {
+      const res = await crmPost<any>(
+        `/api/candidate-profiles/${r.profile_id}/ats-scan${qs({ requirement_id: req.id })}`,
+      );
+      const summary = captureAutoResults(res.data);
+      const msg = res.message || "ATS scan complete";
+      toast(summary ? `${msg} — ${summary}` : msg);
+      load();
+    } catch (e: any) {
+      toast(e?.message || "ATS scan failed", "err");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const scan = async (r: ResumeRow) => {
@@ -2643,11 +2955,25 @@ function ResumesTab({
 
   // ---- RMG decision actions (same flow as the profile's "RMG review needed"
   // banner), available right here on the requirement's resume rows. ----
+  /* Which human round the schedule/feedback modals are acting on. The manual
+     L1 and the L2 are the same form with a different label, so they share one
+     set of state rather than a duplicated pair (1 Sep 2026). */
+  type RoundKind = "L1" | "L2";
   const [f2fRow, setF2fRow] = useState<ResumeRow | null>(null);
+  const [f2fRound, setF2fRound] = useState<RoundKind>("L2");
+  const roundState = (r: ResumeRow, round: RoundKind) => (round === "L1"
+    ? { requested: !!r.l1_manual_requested, scheduled: !!r.l1_manual_scheduled,
+        eventId: r.l1_manual_event_id ?? null, result: r.l1_manual_result ?? null }
+    : { requested: !!r.l2_requested, scheduled: !!r.l2_scheduled,
+        eventId: r.l2_event_id ?? null, result: r.l2_result ?? null });
+  /* Who from RMG takes the L2 call. TA schedules on RMG's behalf here, so the
+     field starts blank and the server fills in the RMG who ASKED for the round
+     when it is left empty (28 Aug 2026). */
+  const [f2fInterviewer, setF2fInterviewer] = useState("");
   const [f2fWhen, setF2fWhen] = useState("");
   const [f2fLink, setF2fLink] = useState("");
   const [f2fNote, setF2fNote] = useState("");
-  const [f2fErrs, setF2fErrs] = useState<{ when?: string; link?: string }>({});
+  const [f2fErrs, setF2fErrs] = useState<{ when?: string; link?: string; who?: string }>({});
   const [rmgBusyId, setRmgBusyId] = useState<number | null>(null);
   /* RMG screening decisions right on this tab (25 Aug 2026) — same endpoint
    * as the Applicants tab, so RMG screens wherever they happen to be. */
@@ -2682,13 +3008,17 @@ function ResumesTab({
   const [rmgDecision, setRmgDecision] = useState<{ row: ResumeRow; kind: "sales" | "reject" } | null>(null);
   const [rmgComment, setRmgComment] = useState("");
   const [rmgCommentErr, setRmgCommentErr] = useState("");
+  /* "Ask TA to collect the notice period" on Submit to Sales (2 Sep 2026,
+     user request) — defaults to ticked when the row has none on record. */
+  const [rmgAskNotice, setRmgAskNotice] = useState(true);
 
   const rmgTransition = (r: ResumeRow, kind: "sales" | "reject") => {
     if (!r.profile_id) return;
     setRmgDecision({ row: r, kind });
     setRmgCommentErr("");
+    setRmgAskNotice(!(r.application_details?.notice_period || "").trim());
     setRmgComment(kind === "sales"
-      ? "AI L1 passed — RMG review complete, forwarding to Sales team"
+      ? "L1 & L2 Done - RMG Review Completed, Forwarding to Sales Team"
       : "");
   };
 
@@ -2706,6 +3036,7 @@ function ResumesTab({
       const res = await crmPost(`/api/candidate-profiles/${rmgDecision.row.profile_id}/status-transition`, {
         new_status: isSales ? "Sales_Screening" : "RMG_Rejected",
         comment: rmgComment.trim(),
+        ask_notice_period: isSales && rmgAskNotice,
       });
       toast(res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected"));
       setRmgDecision(null);
@@ -2719,16 +3050,82 @@ function ResumesTab({
 
   /** RMG → TA handoff (27 Aug 2026): RMG no longer fills the schedule form —
    * one click notifies the TA owner, TA schedules, RMG is informed. */
-  const requestL2 = async (r: ResumeRow) => {
+  const requestRound = async (r: ResumeRow, round: RoundKind) => {
     if (!r.profile_id) return;
     setRmgBusyId(r.id);
     try {
-      const res = await crmPost(`/api/candidate-profiles/${r.profile_id}/l2-request`, {});
-      toast(res.message || "TA notified — they will schedule the L2 with the candidate");
+      const res = await crmPost(`/api/candidate-profiles/${r.profile_id}/l2-request`, { round });
+      toast(res.message || `TA notified — they will schedule the ${round} with the candidate`);
+      // One-shot: lock the button immediately (server flag covers reloads).
+      setRows((prev) => prev.map((x) => (x.id === r.id
+        ? { ...x, ...(round === "L1" ? { l1_manual_requested: true } : { l2_requested: true }) }
+        : x)));
     } catch (e: any) {
-      toast(e?.message || "Failed to request the L2 round", "err");
+      toast(e?.message || `Failed to request the ${round} round`, "err");
     } finally {
       setRmgBusyId(null);
+    }
+  };
+
+  /* RMG's "go manual" decision (1 Sep 2026, user flow): skip the AI screen AND
+     ask TA for a human L1 in one click, so the candidate never lands in RMG
+     Review with nobody sure whose move it is. RMG-only, by design. */
+  const [manualRow, setManualRow] = useState<ResumeRow | null>(null);
+  const [manualNote, setManualNote] = useState("");
+  const [manualBusy, setManualBusy] = useState(false);
+
+  const submitGoManual = async () => {
+    if (!manualRow?.profile_id) return;
+    setManualBusy(true);
+    try {
+      const res = await crmPost(`/api/candidate-profiles/${manualRow.profile_id}/skip-ai-l1`, {
+        note: manualNote.trim() || undefined,
+        request_manual_l1: true,
+      });
+      toast(res.message || "Manual route chosen — TA notified to schedule the L1");
+      setManualRow(null);
+      setManualNote("");
+      load();
+    } catch (e: any) {
+      toast(e?.message || "Could not switch to the manual route", "err");
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  /* L2 feedback (28 Aug 2026, user request): RMG records the round's outcome
+     right from the row. Saves onto the L2 InterviewEvent — the same record
+     the candidate profile's Interviews tab renders, so it reflects there. */
+  const [l2FbRow, setL2FbRow] = useState<ResumeRow | null>(null);
+  const [l2FbRound, setL2FbRound] = useState<RoundKind>("L2");
+  const [l2FbResult, setL2FbResult] = useState("");
+  const [l2FbNote, setL2FbNote] = useState("");
+  const [l2FbErr, setL2FbErr] = useState("");
+  const [l2FbBusy, setL2FbBusy] = useState(false);
+
+  const openFeedback = (r: ResumeRow, round: RoundKind) => {
+    setL2FbRow(r); setL2FbRound(round);
+    setL2FbResult(""); setL2FbNote(""); setL2FbErr("");
+  };
+
+  const submitL2Feedback = async () => {
+    const eventId = l2FbRow ? roundState(l2FbRow, l2FbRound).eventId : null;
+    if (!l2FbRow?.profile_id || !eventId) return;
+    if (!l2FbResult) { setL2FbErr(`Pick the ${l2FbRound} result`); return; }
+    if (l2FbNote.trim().length < 5) { setL2FbErr("Feedback of at least 5 characters is required"); return; }
+    setL2FbBusy(true);
+    try {
+      const res = await crmPut(
+        `/api/candidate-profiles/${l2FbRow.profile_id}/interview-rounds/${eventId}`,
+        { status: "Completed", result: l2FbResult, feedback: l2FbNote.trim(), user_role: "RMG" },
+      );
+      toast(res.message || `${l2FbRound} feedback recorded — visible on the candidate profile's Interviews tab`);
+      setL2FbRow(null); setL2FbResult(""); setL2FbNote(""); setL2FbErr("");
+      load();
+    } catch (e: any) {
+      setL2FbErr(e?.message || "Failed to save feedback");
+    } finally {
+      setL2FbBusy(false);
     }
   };
 
@@ -2736,22 +3133,28 @@ function ResumesTab({
     if (!f2fRow?.profile_id) return;
     /* Same rule as the profile banner: an empty date/link used to POST nulls,
      * and the candidate got an invite email with no time and no link. */
-    const errs: { when?: string; link?: string } = {};
+    const errs: { when?: string; link?: string; who?: string } = {};
     if (!f2fWhen.trim()) errs.when = "Pick the date and time of the call";
     if (!f2fLink.trim()) errs.link = "Paste the meeting link the candidate should join";
     else if (!/^https?:\/\/\S+$/i.test(f2fLink.trim())) errs.link = "Enter a full link starting with https://";
+    /* The manual L1 has no RMG to fall back on — TA is booking it on behalf of
+       whoever is actually running it, so the name has to be chosen. */
+    if (f2fRound === "L1" && !f2fInterviewer.trim()) errs.who = "Pick the employee taking this interview";
     setF2fErrs(errs);
-    if (errs.when || errs.link) return;
+    if (errs.when || errs.link || errs.who) return;
     setRmgBusyId(f2fRow.id);
     try {
       const res = await crmPost(`/api/candidate-profiles/${f2fRow.profile_id}/l2-face-to-face`, {
         scheduled_at: f2fWhen.trim(),
         meeting_link: f2fLink.trim(),
         note: f2fNote.trim() || null,
+        interviewer: f2fInterviewer.trim() || null,
+        round: f2fRound,
       });
-      toast(res.message || "L2 face-to-face recorded — TA notified");
+      toast(res.message || `${f2fRound} face-to-face recorded — TA notified`);
       setF2fRow(null);
-      setF2fWhen(""); setF2fLink(""); setF2fNote(""); setF2fErrs({});
+      setF2fWhen(""); setF2fLink(""); setF2fNote(""); setF2fInterviewer(""); setF2fErrs({});
+      load(); // picks up the *_scheduled flag so the Schedule button locks
     } catch (e: any) {
       toast(e?.message || "Failed to record the L2 round", "err");
     } finally {
@@ -2763,8 +3166,14 @@ function ResumesTab({
     if (!deleteRow) return;
     setBusyId(deleteRow.id);
     try {
-      const res = await crmDelete(`/api/resumes/${deleteRow.id}`);
-      toast(res.message || "Resume deleted");
+      /* Profile-only rows have a NEGATIVE synthetic id and no resume to
+         delete (1 Sep 2026) — remove the APPLICATION instead, which is what
+         the row actually represents. */
+      const isProfileOnly = !!deleteRow.is_profile_only || deleteRow.id < 0;
+      const res = isProfileOnly
+        ? await crmDelete(`/api/candidate-profiles/${deleteRow.profile_id}`)
+        : await crmDelete(`/api/resumes/${deleteRow.id}`);
+      toast(res.message || (isProfileOnly ? "Application deleted" : "Resume deleted"));
       setDeleteRow(null);
       load();
       onRequirementChanged();
@@ -2866,8 +3275,25 @@ function ResumesTab({
 
   const pendingOnPage = rows.filter((r) => r.ats_status === "Pending_Scan").length;
   const canUpload = isTA && SOURCING_STATUSES.includes(req.status);
+  /* A closed candidacy (any rejection / withdrawn / joined) gets no more
+     round buttons (7 Sep 2026): the stage checks below already exclude
+     these, but the guard is explicit so a future stage value cannot
+     resurrect "Schedule Customer L2" on a rejected row. */
+  const profileClosed = (r: { profile_pipeline_status?: string | null }) =>
+    /rejected|withdrawn|^joined$/i.test(String(r.profile_pipeline_status || ""));
+  /* Minimal existing-round object so the round modal edits the booked
+     customer slot (adds the link) instead of creating a second round. */
+  const custEventStub = (id: number | null | undefined, kind: string, when: string | null | undefined) =>
+    id == null ? null : {
+      id, kind, scheduled_at: when ?? null, raw_when: null, meeting_link: null, stage: null, mode: null,
+      status: "Scheduled", result: null, interviewer: null, feedback: null, interview_category: "External",
+      duration_minutes: null, user_role: "Customer", employee_id: null, note: null, created_at: null,
+    };
   const rmgJdPreview = (req.rmg_jd_text || "").trim();
-  const rmgJdFiles = req.rmg_jd_attachments || [];
+  /* One JD per requirement (user decision, 4 Sep 2026): re-uploads leave
+     every earlier row attached, so the card showed the same file four times.
+     Scoring uses the latest, so show only that. */
+  const rmgJdFiles = (req.rmg_jd_attachments || []).slice(0, 1); // API returns newest first
 
   const columns: Column<ResumeRow>[] = [
     {
@@ -3019,6 +3445,34 @@ function ResumesTab({
       render: (r) => <span className="text-secondary">{r.applied_by || "—"}</span> },
     { key: "rmg_screening_status", label: "RMG Screening",
       render: (r) => <RmgScreeningBadge status={r.rmg_screening_status} /> },
+    /* ONE column for where the candidate IS (2 Sep 2026, user request). The
+       screening column used to double as the stage — but only once an AI
+       score existed, so a manual-route candidate read "RMG Shortlisted" all
+       the way to Customer Approved. Every row now shows its live pipeline
+       stage here, with the L2 sub-state while RMG still has the candidate. */
+    { key: "profile_pipeline_status", label: "Stage",
+      render: (r) => {
+        if (!r.profile_pipeline_status) return <span className="text-muted">—</span>;
+        if (r.profile_pipeline_status === "RMG_Review" && (r.l2_scheduled || r.l2_requested)) {
+          const pill = (label: string, tone: string) => (
+            <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ring-subtle ${tone}`}>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden />
+              {label}
+            </span>
+          );
+          if (r.l2_result) {
+            const v = r.l2_result.toLowerCase();
+            return pill(`L2: ${r.l2_result}`,
+              v.includes("no") ? "bg-danger-soft text-danger"
+              : v.includes("hire") ? "bg-success-soft text-success"
+              : "bg-warning-soft text-warning");
+          }
+          return r.l2_scheduled
+            ? pill("L2 Scheduled", "bg-info-soft text-info")
+            : pill("L2 Requested", "bg-info-soft text-info");
+        }
+        return <StatusBadge status={r.profile_pipeline_status} />;
+      } },
     { key: "received_date", label: "Received", render: (r) => fmtDate(r.received_date || r.created_at) },
     { key: "ats_score", label: "ATS Score", render: (r) => <ScorePill row={r} onClick={() => setBreakdownRow(r)} /> },
     {
@@ -3068,7 +3522,32 @@ function ResumesTab({
         // score-threshold verdict. Show theirs, and keep the AI's beside it —
         // this column used to show only the raw verdict, so a candidate already
         // marked Selected still read "Failed 57.2%".
-        const status = r.ai_hr_decision_label || r.ai_interview_status || "Not_Scheduled";
+        // A recorded score on a "Not_Scheduled" row = the interview HAPPENED
+        // on an earlier link — say "Completed", not "Not Scheduled" (28 Aug
+        // 2026, user report: done candidates read as never scheduled).
+        const rawStatus = r.ai_interview_status && r.ai_interview_status !== "Not_Scheduled"
+          ? r.ai_interview_status
+          : score != null ? "Completed" : "Not_Scheduled";
+        const status = r.ai_hr_decision_label || rawStatus;
+        /* MANUAL ROUTE (1 Sep 2026): RMG chose a human L1 for this candidate,
+           so "Not Scheduled" is not a gap waiting to be filled — it is the
+           decision. Say so, and show the manual round's own state instead. */
+        const manual = !!(r.l1_manual_requested || r.l1_manual_scheduled);
+        if (manual && score == null) {
+          return (
+            <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
+              <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                title="RMG skipped the AI interview for this candidate — the L1 is a human round">
+                <UsersRound size={11} /> Manual route
+              </span>
+              <span className="text-[11px] font-semibold text-secondary">
+                {r.l1_manual_result ? `L1: ${r.l1_manual_result}`
+                  : r.l1_manual_scheduled ? "L1 scheduled — awaiting feedback"
+                  : "L1 requested — TA scheduling"}
+              </span>
+            </div>
+          );
+        }
         return (
           <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
             <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -3111,13 +3590,137 @@ function ResumesTab({
         );
       },
     },
+    /* Every human round's verdict, for EVERY login (7 Sep 2026, user request):
+       L1 / L2 (RMG), Customer L1 / L2, HR — the same chips the profile's
+       Interviews tab shows, so a rejection at any round is visible in the
+       list without opening the profile. */
+    {
+      key: "rounds", label: "Rounds",
+      render: (r) => {
+        const chips: { label: string; result: string | null | undefined; scheduled: boolean; requested: boolean }[] = [
+          { label: "L1", result: r.l1_manual_result, scheduled: !!r.l1_manual_scheduled, requested: !!r.l1_manual_requested },
+          { label: "L2", result: r.l2_result, scheduled: !!r.l2_scheduled, requested: !!r.l2_requested },
+          { label: "Cust L1", result: r.cust_l1_result, scheduled: !!r.cust_l1_scheduled, requested: false },
+          { label: "Cust L2", result: r.cust_l2_result, scheduled: !!r.cust_l2_scheduled, requested: false },
+          { label: "HR", result: r.hr_result, scheduled: !!r.hr_scheduled, requested: !!r.hr_requested },
+        ].filter((c) => c.result || c.scheduled || c.requested);
+        if (chips.length === 0) return <span className="text-muted">—</span>;
+        const tone = (res: string) => {
+          const v = res.toLowerCase();
+          if (v.includes("no hire") || v.includes("not recommend") || v === "drop") return "bg-danger-soft text-danger";
+          if (v.includes("leaning no")) return "bg-warning-soft text-warning";
+          if (v.includes("hire")) return "bg-success-soft text-success";
+          return "bg-surface-2 text-secondary";
+        };
+        return (
+          <div className="flex max-w-[220px] flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
+            {chips.map((c) => (
+              <span key={c.label}
+                className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ring-subtle ${
+                  c.result ? tone(c.result) : "bg-info-soft text-info"}`}
+                title={c.result ? `${c.label} verdict: ${c.result}` : c.scheduled ? `${c.label} scheduled — awaiting feedback` : `${c.label} requested — TA scheduling`}>
+                {c.label}: {c.result || (c.scheduled ? "Scheduled" : "Requested")}
+              </span>
+            ))}
+          </div>
+        );
+      },
+    },
     {
       key: "_actions", label: "Actions",
       render: (r) => {
         const busy = busyId === r.id;
         const profileId = r.profile_id ?? profileByResume[r.id];
+        /* RMG's part is over once the candidate is with Sales (2 Sep 2026,
+           user request): the row used to go blank, which read as "nothing
+           happened". Show what RMG did, greyed, so the history is legible
+           without offering buttons that would now be wrong. */
+        const rmgDone = !!r.profile_pipeline_status
+          && !["Sourcing", "Technical_Screening", "RMG_Review"].includes(r.profile_pipeline_status);
+        const doneChip = (label: string, title: string) => (
+          <span key={label} className="inline-flex cursor-default items-center rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted ring-1 ring-inset ring-subtle" title={title}>
+            {label}
+          </span>
+        );
+        /* A closed candidacy (rejected at any round / withdrawn / joined) gets
+           NO decision buttons in any login (7 Sep 2026, user request) — just
+           the profile link, plus Delete for TA housekeeping. */
+        if (profileClosed(r)) {
+          return (
+            <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+              {doneChip(String(r.profile_pipeline_status).replace(/_/g, " "), "This candidacy is closed — no further actions")}
+              {profileId != null && (
+                <button className={smallBtn} onClick={() => crmNavigate(`profiles/${profileId}`)}>
+                  <ExternalLink size={13} /> View profile
+                </button>
+              )}
+              {isTA && (
+                <button className={smallDanger} onClick={() => setDeleteRow(r)} disabled={busy} title="Delete this resume/application">
+                  <Trash2 size={13} /> Delete
+                </button>
+              )}
+            </div>
+          );
+        }
         return (
           <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+            {isRmg && rmgDone && (
+              <>
+                {(r.l1_manual_result || r.ai_overall_score_percent != null) &&
+                  doneChip(r.l1_manual_result ? `L1: ${r.l1_manual_result} ✓` : "AI L1 ✓",
+                    r.l1_manual_result ? "Manual L1 recorded" : "AI L1 interview completed")}
+                {r.l2_result && doneChip(`L2: ${r.l2_result} ✓`, "L2 recorded")}
+                {r.profile_pipeline_status === "RMG_Rejected"
+                  ? doneChip("Rejected by RMG", "Closed at RMG review")
+                  : doneChip("Submitted to Sales ✓", "RMG review complete — the candidate is with Sales now")}
+              </>
+            )}
+            {/* The Sales → Sales Head gate, on the row (2 Sep 2026). */}
+            {isSales && r.profile_id != null && r.profile_pipeline_status === "Shortlisted" && (
+              <button
+                className={`${smallPrimary} ${focusRing}`}
+                onClick={() => setApprovalRow(r)}
+                title="Enter the candidate's rate and customer onboarding date, then send to Sales Head"
+              >
+                <Send size={13} /> {r.latest_offer ? "Resubmit for approval" : "Submit for approval"}
+              </button>
+            )}
+            {isSalesHead && r.profile_id != null && r.profile_pipeline_status === "Customer_Approval" && (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {r.latest_offer && (
+                  <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-secondary"
+                    title="The terms Sales submitted">
+                    {r.latest_offer.ctc != null ? `${(r.latest_offer.ctc / 100000).toFixed(2)} L` : "—"}
+                    {r.latest_offer.joining_date ? ` · onboarding ${fmtDate(r.latest_offer.joining_date)}` : ""}
+                  </span>
+                )}
+                <button className={smallPrimary} onClick={() => setDecisionRow({ row: r, decision: "approve" })}
+                  disabled={!r.latest_offer} title={r.latest_offer ? "Approve — moves to Pre Onboarding, HR notified" : "No offer on record — send back to Sales"}>
+                  Approve
+                </button>
+                <button className={smallBtn} onClick={() => setDecisionRow({ row: r, decision: "send_back" })}
+                  title="Send the terms back to Sales to redo">
+                  Send back
+                </button>
+                <button className={smallDanger} onClick={() => setDecisionRow({ row: r, decision: "reject" })}>
+                  Reject
+                </button>
+              </span>
+            )}
+            {(isSales || isSalesHead) && !isTA
+              && ["HR_Screening", "HR_Interviewing", "Preboarding"].includes(r.profile_pipeline_status || "") && (
+              r.budget_status === "Out_of_Budget"
+                ? <span className="inline-flex cursor-default items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+                    title="HR flagged the candidate out of budget at Pre Onboarding — reply from the profile page">
+                    Out of budget — reply to HR
+                  </span>
+                : doneChip("Approved ✓ — with HR",
+                    r.profile_pipeline_status === "HR_Screening"
+                      ? "Sales Head approved the terms; HR reviews and requests the HR round"
+                      : r.profile_pipeline_status === "HR_Interviewing"
+                        ? "The HR round is booked; HR records the verdict"
+                        : "HR round done; HR is checking the budget and preboarding")
+            )}
             {/* Held duplicate: resolve first — Apply (the EXISTING candidate)
                 or Dismiss (keep the CV, don't apply). */}
             {isTA && r.possible_duplicate_of != null && (
@@ -3182,7 +3785,24 @@ function ResumesTab({
                 {busy ? <AiThinking label="Scanning…" /> : <><ScanLine size={13} /> Run ATS Scan</>}
               </button>
             )}
-            {isTA && r.ats_status !== "Shortlisted" && r.ats_status !== "Rejected" && (
+            {/* PROFILE-ONLY row (2 Sep 2026, user report): applied from the
+                Candidates page, so there is no resume row and ATS had nothing
+                to scan. The candidate's own CV is the resume — scanning it
+                materialises the row, and every standard action follows. */}
+            {(isTA || isRmg) && r.is_profile_only && r.profile_id != null && !rmgDone && (
+              <button
+                className={busy ? smallScanning : smallBtn}
+                onClick={() => void scanProfile(r)}
+                disabled={busy || scanAllBusy || !r.resume_file_url}
+                title={r.resume_file_url
+                  ? "Score the candidate's CV against this requirement's JD"
+                  : "No CV on the candidate's record — upload one there first"}
+              >
+                {busy ? <AiThinking label="Scanning…" /> : <><ScanLine size={13} /> Run ATS Scan</>}
+              </button>
+            )}
+            {isTA && !r.is_profile_only
+              && r.ats_status !== "Shortlisted" && r.ats_status !== "Rejected" && (
               <button
                 className={smallPrimary}
                 onClick={() => shortlist(r)}
@@ -3192,7 +3812,7 @@ function ResumesTab({
                 <Star size={13} /> Shortlist
               </button>
             )}
-            {isTA && r.ats_status !== "Rejected" && (
+            {isTA && !r.is_profile_only && r.ats_status !== "Rejected" && (
               <button className={smallDanger} onClick={() => setRejectRow(r)} disabled={busy}>
                 <X size={13} /> Reject
               </button>
@@ -3216,8 +3836,13 @@ function ResumesTab({
                 keeping the button after that only invited double-bookings
                 (27 Aug 2026, user report). A recorded score also hides it,
                 covering sessions completed on an earlier link. */}
-            {isTA && (r.ats_status === "Scored" || r.ats_status === "Shortlisted")
+            {isTA && !r.is_profile_only
+              && (r.ats_status === "Scored" || r.ats_status === "Shortlisted")
               && (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled")
+              && !r.l1_manual_requested && !r.l1_manual_scheduled
+              /* Past the AI stage (RMG Review onwards) the booking link is
+                 only confusing — the server refuses it too (3 Sep 2026). */
+              && ["Sourcing", "Technical_Screening", null, undefined].includes(r.profile_pipeline_status as any)
               && r.ai_overall_score_percent == null && (
               <button
                 className={`${smallBtn} ${focusRing}`}
@@ -3233,8 +3858,31 @@ function ResumesTab({
                 {inviteBusyId === r.id ? "Sending…" : r.slot_invite_sent ? "Resend slot invite" : "Slot invite"}
               </button>
             )}
-            {isTA && r.ats_status === "Shortlisted" &&
-              (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled") && (
+            {/* PROFILE-ONLY ROW (28 Aug 2026): RMG cleared a candidate who was
+                applied from the Candidates page, so there is no resume and no
+                ATS score — scheduling runs through the profile instead. */}
+            {isTA && r.is_profile_only
+              && !r.l1_manual_requested && !r.l1_manual_scheduled && (
+              <button
+                className={smallAi}
+                onClick={() => setProfileScheduleRow(r)}
+                disabled={busy}
+                title="Schedule the AI L1 interview for this candidate"
+              >
+                <Bot size={13} /> Schedule AI L1 Interview
+              </button>
+            )}
+            {/* Same rule as Slot invite (28 Aug 2026, user report): a recorded
+                score means the L1 already HAPPENED — even if this row's status
+                still reads Not_Scheduled (sessions completed on an earlier
+                link). Offering to schedule it again was a double-booking. */}
+            {/* RMG too (2 Sep 2026, user flow): choosing the interview ROUTE is
+                RMG's call, so both choices — AI L1 here, "Go manual" below —
+                sit side by side for RMG until one is taken. */}
+            {(isTA || isRmg) && !r.is_profile_only && r.ats_status === "Shortlisted" &&
+              (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled") &&
+              !r.l1_manual_requested && !r.l1_manual_scheduled &&
+              r.ai_overall_score_percent == null && (
               <button className={smallAi} onClick={() => setScheduleRow(r)} disabled={busy}>
                 <Bot size={13} /> {busy ? "Scheduling…" : "Schedule AI L1 Interview"}
               </button>
@@ -3244,14 +3892,121 @@ function ResumesTab({
                 <ExternalLink size={13} /> View profile
               </button>
             )}
-            {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null && (
+            {/* GO MANUAL (1 Sep 2026, user flow): the AI screen is optional, and
+                this is where RMG actually works — the decision used to live
+                only on the profile page, so from here the row offered nothing
+                at all. RMG-only: choosing the interview route is their call. */}
+            {/* Stays until RMG actually picks a route (2 Sep 2026, user report):
+                after "Run ATS Scan" the row carries ai_interview_status =
+                "Not_Scheduled" — a truthy string that MEANS "no AI interview
+                yet" — and the old `!r.ai_interview_status` read it as "AI
+                route taken", hiding this button the moment the scan finished.
+                Only a real schedule/score, or the manual choice itself, ends
+                the decision. */}
+            {isRmg && r.profile_id != null && r.rmg_screening_status === "Shortlisted"
+              && (r.profile_pipeline_status === "Sourcing"
+                  || r.profile_pipeline_status === "Technical_Screening")
+              && (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled")
+              && r.ai_overall_score_percent == null
+              && !r.l1_manual_requested && !r.l1_manual_scheduled && (
               <button
-                className={`${smallBtn} ${focusRing}`}
-                onClick={() => setF2fRow(r)}
-                disabled={rmgBusyId === r.id}
-                title="Schedule the L2 face-to-face round RMG requested (date/time + meeting link)"
+                className={`${smallPrimary} ${focusRing}`}
+                onClick={() => { setManualRow(r); setManualNote(""); }}
+                disabled={manualBusy}
+                title="Skip the AI interview and ask TA to arrange a human L1 round instead"
               >
-                Schedule L2
+                <UsersRound size={13} /> Go manual — skip AI L1
+              </button>
+            )}
+            {/* TA schedules the rounds RMG asked for. The manual L1 comes
+                first; the L2 button is the one that already existed. */}
+            {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null
+              && (r.l1_manual_requested || r.l1_manual_scheduled) && (
+              <button
+                className={`${r.l1_manual_requested && !r.l1_manual_scheduled ? smallPrimary : smallBtn} ${focusRing}`}
+                onClick={() => { setF2fRound("L1"); setF2fRow(r); }}
+                disabled={rmgBusyId === r.id || !!r.l1_manual_scheduled}
+                title={r.l1_manual_scheduled
+                  ? "Manual L1 already scheduled — RMG has been notified"
+                  : "RMG skipped the AI interview and wants a human L1 — agree a time with the candidate and schedule it"}
+              >
+                {r.l1_manual_scheduled ? "L1 scheduled ✓" : "Schedule manual L1"}
+              </button>
+            )}
+            {/* The customer's rounds and the HR round — TA books them here
+                (2 Sep 2026). Each button shows only while its round is the
+                next thing due, and turns into a done-chip once booked. */}
+            {isTA && r.profile_id != null && !profileClosed(r) && r.profile_pipeline_status === "Customer_Interview" && (
+              r.cust_l1_scheduled
+                ? (r.cust_l1_link
+                  ? doneChip("Customer L1 scheduled ✓", "Sales records the customer's verdict on the Interviews tab")
+                  : (
+                    /* Sales booked the slot but had no link yet (7 Sep 2026):
+                       TA adds the customer's meeting link and the candidate
+                       is invited on save. */
+                    <button className={`${smallPrimary} ${focusRing}`}
+                      onClick={() => setRoundModal({ row: r, kind: "Customer_Interview",
+                        existing: custEventStub(r.cust_l1_event_id, "Customer_Interview", r.cust_l1_when) })}
+                      title="Slot booked without a meeting link — add the customer's link; the candidate is emailed the invite">
+                      <Link2 size={13} /> Add Customer L1 link
+                    </button>
+                  ))
+                : (
+                  <button className={`${smallPrimary} ${focusRing}`}
+                    onClick={() => setRoundModal({ row: r, kind: "Customer_Interview" })}
+                    title="Book the customer's first round — the candidate is emailed the invite">
+                    <CalendarPlus size={13} /> Schedule Customer L1
+                  </button>
+                )
+            )}
+            {isTA && r.profile_id != null && !profileClosed(r) && r.profile_pipeline_status === "L1_Feedback" && (
+              r.cust_l2_scheduled
+                ? (r.cust_l2_link
+                  ? doneChip("Customer L2 scheduled ✓", "Sales records the customer's verdict on the Interviews tab")
+                  : (
+                    <button className={`${smallPrimary} ${focusRing}`}
+                      onClick={() => setRoundModal({ row: r, kind: "Customer_L2",
+                        existing: custEventStub(r.cust_l2_event_id, "Customer_L2", r.cust_l2_when) })}
+                      title="Slot booked without a meeting link — add the customer's link; the candidate is emailed the invite">
+                      <Link2 size={13} /> Add Customer L2 link
+                    </button>
+                  ))
+                : (
+                  <button className={`${smallPrimary} ${focusRing}`}
+                    onClick={() => setRoundModal({ row: r, kind: "Customer_L2" })}
+                    title="Book the customer's second round — the candidate is emailed the invite">
+                    <CalendarPlus size={13} /> Schedule Customer L2
+                  </button>
+                )
+            )}
+            {isTA && r.profile_id != null && !profileClosed(r)
+              && (r.profile_pipeline_status === "HR_Screening" || r.profile_pipeline_status === "HR_Interviewing") && (
+              r.hr_scheduled
+                ? doneChip(r.hr_result ? `HR: ${r.hr_result} ✓` : "HR round scheduled ✓",
+                    r.hr_result ? "HR recorded the verdict" : "HR records Hire / Not Recommend on the Interviews tab")
+                : (
+                  /* Primary once HR has asked for it (3 Sep 2026: HR reviews the
+                     details first, then requests); plain while HR is still reviewing. */
+                  <button className={`${r.hr_requested ? smallPrimary : smallBtn} ${focusRing}`}
+                    onClick={() => setRoundModal({ row: r, kind: "HR_Interview" })}
+                    title={r.hr_requested
+                      ? "HR asked for the HR round — agree a time with the candidate and book it"
+                      : "Sales Head approved — HR is reviewing; you may book the HR round now"}>
+                    <CalendarPlus size={13} /> Schedule HR round{r.hr_requested ? " (requested)" : ""}
+                  </button>
+                )
+            )}
+            {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null
+              && (r.l2_requested || r.l2_scheduled) && (
+              <button
+                className={`${r.l2_requested && !r.l2_scheduled ? smallPrimary : smallBtn} ${focusRing}`}
+                onClick={() => { setF2fRound("L2"); setF2fRow(r); }}
+                disabled={rmgBusyId === r.id || !!r.l2_scheduled}
+                title={r.l2_scheduled
+                  ? "L2 already scheduled — RMG has been notified"
+                  : "RMG asked for an L2 round — agree a time with the candidate and schedule it"}
+              >
+                {r.l2_scheduled ? "L2 scheduled ✓" : "Schedule L2"}
               </button>
             )}
             {isRmg && r.profile_pipeline_status === "RMG_Review" && (
@@ -3259,22 +4014,86 @@ function ResumesTab({
                 <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   <Bot size={11} /> RMG review needed
                 </span>
-                <button
-                  className={`${smallBtn} ${focusRing}`}
-                  onClick={() => void requestL2(r)}
-                  disabled={rmgBusyId === r.id}
-                  title="Ask TA to arrange a face-to-face L2 round — TA agrees the time with the candidate and schedules it"
-                >
-                  {rmgBusyId === r.id ? "Requesting…" : "L2 — Face-to-face"}
-                </button>
-                <button
-                  className={smallPrimary}
-                  onClick={() => void rmgTransition(r, "sales")}
-                  disabled={rmgBusyId === r.id}
-                  title="RMG review complete — submit this candidate to the Sales team"
-                >
-                  {rmgBusyId === r.id ? "Working…" : "Submit to Sales"}
-                </button>
+                {/* The manual L1 only appears once this candidate is ON the
+                    manual route — an AI-screened candidate never sees it. */}
+                {(r.l1_manual_requested || r.l1_manual_scheduled) && (
+                  r.l1_manual_scheduled && r.l1_manual_event_id != null ? (
+                    <button
+                      className={`${r.l1_manual_result ? smallBtn : smallPrimary} ${focusRing}`}
+                      disabled={rmgBusyId === r.id || !!r.l1_manual_result}
+                      onClick={() => openFeedback(r, "L1")}
+                      title={r.l1_manual_result
+                        ? `L1 recorded: ${r.l1_manual_result}. Edit it on the profile's Interviews tab if needed.`
+                        : "Record the manual L1 outcome — reflects on the candidate profile's Interviews tab"}
+                    >
+                      {r.l1_manual_result ? `L1: ${r.l1_manual_result} ✓` : "L1 feedback"}
+                    </button>
+                  ) : (
+                    <span
+                      className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-muted"
+                      title="TA is agreeing a time with the candidate for the manual L1"
+                    >
+                      L1 requested ✓
+                    </span>
+                  )
+                )}
+                {r.l2_scheduled && r.l2_event_id != null ? (
+                  /* Round exists → the next action is recording its outcome. */
+                  <button
+                    className={`${r.l2_result ? smallBtn : smallPrimary} ${focusRing}`}
+                    disabled={rmgBusyId === r.id || !!r.l2_result}
+                    onClick={() => openFeedback(r, "L2")}
+                    title={r.l2_result
+                      ? `L2 recorded: ${r.l2_result}. Edit it on the profile's Interviews tab if needed.`
+                      : "Record the L2 outcome — reflects on the candidate profile's Interviews tab"}
+                  >
+                    {r.l2_result ? `L2: ${r.l2_result} ✓` : "L2 feedback"}
+                  </button>
+                ) : (
+                  /* One round at a time: while a manual L1 is booked but not
+                     yet judged, asking for the L2 would jump the ladder. */
+                  <button
+                    className={`${smallBtn} ${focusRing}`}
+                    onClick={() => void requestRound(r, "L2")}
+                    disabled={rmgBusyId === r.id || !!r.l2_requested
+                      || (!!r.l1_manual_requested && !r.l1_manual_result)}
+                    title={r.l2_requested
+                      ? "Already requested — TA is agreeing a time with the candidate"
+                      : (r.l1_manual_requested && !r.l1_manual_result)
+                        ? "Record the manual L1 outcome first — the L2 follows it"
+                        : "Ask TA to arrange a face-to-face L2 round — TA agrees the time with the candidate and schedules it"}
+                  >
+                    {rmgBusyId === r.id ? "Requesting…"
+                      : r.l2_requested ? "L2 requested ✓"
+                      : "Schedule L2"}
+                  </button>
+                )}
+                {(() => {
+                  /* The ladder has to be JUDGED before Sales sees anyone
+                     (1 Sep 2026, user report). The L2 is OPTIONAL (8 Sep 2026,
+                     user decision): once the L1 is recorded, RMG may schedule
+                     an L2 or submit straight to Sales — both buttons are live.
+                     An L2 that was asked for or booked must still be recorded
+                     before the hand-off. */
+                  const manual = !!(r.l1_manual_requested || r.l1_manual_scheduled);
+                  const l2Open = !!(r.l2_requested || r.l2_scheduled) && !r.l2_result;
+                  const blocked = (manual && !r.l1_manual_result) || l2Open;
+                  const why = manual && !r.l1_manual_result
+                    ? "Record the manual L1 outcome first"
+                    : "Record the L2 outcome first";
+                  return (
+                    <button
+                      className={smallPrimary}
+                      onClick={() => void rmgTransition(r, "sales")}
+                      disabled={rmgBusyId === r.id || blocked}
+                      title={blocked
+                        ? `${why} — Sales only sees candidates the interview ladder has cleared`
+                        : "RMG review complete — submit this candidate to the Sales team"}
+                    >
+                      {rmgBusyId === r.id ? "Working…" : "Submit to Sales"}
+                    </button>
+                  );
+                })()}
                 <button
                   className={smallDanger}
                   onClick={() => void rmgTransition(r, "reject")}
@@ -3372,6 +4191,25 @@ function ResumesTab({
         </p>
       )}
 
+      <div className="space-y-1.5">
+        <div className="text-xs text-secondary">Candidates applied to this opportunity.</div>
+        <div className="flex flex-wrap gap-1.5">
+          {STAGE_PILLS.map(([label]) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setStagePill(label)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset transition-colors duration-micro ease-smooth ${
+                stagePill === label
+                  ? "bg-brand-600 text-white ring-brand-600"
+                  : "bg-surface-1 text-secondary ring-subtle hover:text-primary"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : (
@@ -3382,7 +4220,6 @@ function ResumesTab({
             columns={columns}
             rows={rows}
             meta={meta}
-            headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "resume" : "resumes"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
             loading={loading}
             search={search}
             onSearch={setSearch}
@@ -3398,7 +4235,26 @@ function ResumesTab({
                 {taNames.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             }
-            emptyMessage={appliedBy || dq ? "No applied candidates match the current filters" : "No applied candidates yet"}
+            headerRight={
+              <span className="flex items-center gap-4">
+                <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-muted"
+                  title="Dismissed duplicate CVs are kept on file but hidden from this list">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-brand-600"
+                    checked={showDismissed} onChange={(e) => setShowDismissed(e.target.checked)} />
+                  Show dismissed only
+                </label>
+                {meta && (
+                  <span className="whitespace-nowrap text-xs font-medium text-muted">
+                    {/* "candidates", not "resumes": the list also carries people
+                        applied from the Candidates page, who have no CV row. */}
+                    {meta.total} {meta.total === 1 ? "candidate" : "candidates"}, page {meta.page}/{Math.max(1, meta.pages || 1)}
+                  </span>
+                )}
+              </span>
+            }
+            emptyMessage={showDismissed ? "No dismissed CVs on this requirement"
+              : stagePill !== "All" ? `No candidates at the ${stagePill} stage`
+              : appliedBy || dq ? "No applied candidates match the current filters" : "No applied candidates yet"}
           />
         </div>
       )}
@@ -3422,7 +4278,17 @@ function ResumesTab({
             </p>
             {zipResult.applied.length > 0 && (
               <div>
-                <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Applied — now in the Applicants tab</div>
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wide text-muted">Applied — now in the Applicants tab</span>
+                  <button
+                    className={`${btnPrimary} !px-3 !py-1.5 text-xs`}
+                    title="Step through each candidate: resume on one side, parsed details on the other — confirm or correct, then next"
+                    onClick={() => setVerifyQueue(
+                      zipResult.applied.map((a) => ({ resume_id: a.resume_id, name: a.name })))}
+                  >
+                    Verify details ({zipResult.applied.length})
+                  </button>
+                </div>
                 <ul className="max-h-40 space-y-0.5 overflow-y-auto">
                   {zipResult.applied.map((a) => (
                     <li key={a.file} className="text-secondary">
@@ -3511,6 +4377,13 @@ function ResumesTab({
           </div>
         </Modal>
       )}
+      {verifyQueue && (
+        <BulkVerifyModal
+          queue={verifyQueue}
+          onClose={() => { setVerifyQueue(null); load(); }}
+          notify={toast}
+        />
+      )}
       {breakdownRow && <BreakdownModal row={breakdownRow} onClose={() => setBreakdownRow(null)} />}
       {editRow && (
         <EditResumeModal
@@ -3520,14 +4393,118 @@ function ResumesTab({
           toast={toast}
         />
       )}
+      {l2FbRow && (
+        <Modal title={`${l2FbRound} feedback — ${l2FbRow.candidate_name || "candidate"}`}
+          onClose={() => { if (!l2FbBusy) setL2FbRow(null); }}>
+          <div className="space-y-3">
+            <Field label="Result" required>
+              <select className={inputCls} value={l2FbResult}
+                onChange={(e) => { setL2FbResult(e.target.value); setL2FbErr(""); }}>
+                <option value="">Select result…</option>
+                {["Strong Hire", "Hire", "Leaning Hire", "Leaning No", "No Hire"].map((o) => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Feedback" required error={l2FbErr}>
+              <textarea className={`${inputCls} min-h-[90px]`} value={l2FbNote}
+                onChange={(e) => { setL2FbNote(e.target.value); setL2FbErr(""); }}
+                placeholder={`How did the candidate do in the ${l2FbRound} round?`} />
+            </Field>
+            <p className="text-[11px] text-muted">
+              Marks the {l2FbRound} round Completed and saves the outcome — visible on the
+              candidate profile&rsquo;s Interviews tab.{" "}
+              {l2FbRound === "L1"
+                ? "The L2 round unlocks once this is recorded."
+                : "Then Submit to Sales or Reject as usual."}
+            </p>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button className={btnSecondary} onClick={() => setL2FbRow(null)} disabled={l2FbBusy}>Cancel</button>
+            <button className={btnPrimary} onClick={() => void submitL2Feedback()} disabled={l2FbBusy}>
+              {l2FbBusy ? "Saving…" : "Save feedback"}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {approvalRow?.profile_id != null && (
+        <SubmitForApprovalModal
+          profileId={approvalRow.profile_id}
+          candidateName={approvalRow.candidate_name || "candidate"}
+          existing={approvalRow.latest_offer}
+          onClose={() => setApprovalRow(null)}
+          onDone={(msg) => { setApprovalRow(null); toast(msg); load(); }}
+        />
+      )}
+      {roundModal?.row.profile_id != null && (
+        <InterviewRoundModal
+          profileId={roundModal.row.profile_id}
+          existing={roundModal.existing ?? null}
+          initialKind={roundModal.kind}
+          initialMode="schedule"
+          onClose={() => setRoundModal(null)}
+          onSaved={() => { setRoundModal(null); toast(roundModal.existing ? "Meeting link saved — the candidate has been invited" : "Round scheduled — the candidate has been invited"); load(); }}
+          showToast={(m, k) => toast(m, k)}
+        />
+      )}
+      {decisionRow?.row.profile_id != null && (
+        <SalesHeadDecisionModal
+          profileId={decisionRow.row.profile_id}
+          candidateName={decisionRow.row.candidate_name || "candidate"}
+          decision={decisionRow.decision}
+          terms={decisionRow.row.latest_offer ?? null}
+          onClose={() => setDecisionRow(null)}
+          onDone={(msg) => { setDecisionRow(null); toast(msg); load(); }}
+        />
+      )}
+      {manualRow && (
+        <Modal title="Skip the AI interview — go manual?"
+          onClose={() => { if (!manualBusy) setManualRow(null); }}>
+          <div className="space-y-3">
+            <p className="text-sm text-secondary">
+              <b>{manualRow.candidate_name}</b> moves to <b>RMG Review</b> without an AI
+              interview, and the TA who applied them is asked to arrange a human{" "}
+              <b>L1</b> round. After the L1 feedback you can request the L2, then submit the
+              candidate to Sales for the customer rounds.
+            </p>
+            <Field label="Reason (optional) — the TA sees this">
+              <textarea className={inputCls} rows={3} value={manualNote}
+                onChange={(e) => setManualNote(e.target.value)}
+                placeholder="e.g. Known candidate — assessing directly in the interview" />
+            </Field>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button className={btnSecondary} onClick={() => setManualRow(null)} disabled={manualBusy}>Cancel</button>
+            <button className={btnPrimary} onClick={() => void submitGoManual()} disabled={manualBusy}>
+              {manualBusy ? "Switching…" : "Go manual & notify TA"}
+            </button>
+          </div>
+        </Modal>
+      )}
       {f2fRow && (
-        <Modal title="Schedule L2 face-to-face round" onClose={() => { if (rmgBusyId !== f2fRow.id) setF2fRow(null); }}>
+        <Modal title={f2fRound === "L1" ? "Schedule manual L1 round" : "Schedule L2 face-to-face round"}
+          onClose={() => { if (rmgBusyId !== f2fRow.id) setF2fRow(null); }}>
           <div className="space-y-4">
             <p className="text-sm text-secondary">
               Candidate <span className="font-semibold">{f2fRow.candidate_name}</span> and RMG join a live
               call (e.g. Microsoft Teams). This logs the round, notifies TA to coordinate, and emails the
               candidate the details when an email is on file. Decide after the call.
             </p>
+            <Field label="Interviewer name" required={f2fRound === "L1"} error={f2fErrs.who}>
+              <InterviewerSelect
+                value={f2fInterviewer}
+                onChange={(v) => { setF2fInterviewer(v); setF2fErrs((p) => ({ ...p, who: undefined })); }}
+                err={f2fErrs.who}
+                placeholder={f2fRound === "L1"
+                  ? "Search the employee taking this interview…"
+                  : "Search the RMG taking this call…"}
+              />
+              <p className="mt-1 text-[11px] text-muted">
+                {f2fRound === "L1"
+                  ? "The internal employee running the round — they are named on the candidate's invite."
+                  : "Leave blank to use the RMG who requested this round."}
+              </p>
+            </Field>
             <Field label="Date & time" required error={f2fErrs.when}>
               <input type="datetime-local" className={`${inputCls}${f2fErrs.when ? " input-error" : ""}`} value={f2fWhen}
                 onChange={(e) => { setF2fWhen(e.target.value); setF2fErrs((p) => ({ ...p, when: undefined })); }} />
@@ -3673,6 +4650,20 @@ function ResumesTab({
                 ? <>Move <span className="font-semibold">{rmgDecision.row.candidate_name}</span> from RMG Review to Sales Screening. The comment goes on the activity log.</>
                 : <>Reject <span className="font-semibold">{rmgDecision.row.candidate_name}</span> at the RMG stage. The reason goes on the activity log and cannot be blank.</>}
             </p>
+            {rmgDecision.kind === "sales" && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-control border border-subtle bg-surface-2/60 px-3 py-2 text-sm text-secondary">
+                <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-600"
+                  checked={rmgAskNotice} onChange={(e) => setRmgAskNotice(e.target.checked)} />
+                <span>
+                  <b className="text-primary">Ask TA to collect the notice period</b>
+                  <span className="block text-xs text-muted">
+                    {(rmgDecision.row.application_details?.notice_period || "").trim()
+                      ? `On record: ${rmgDecision.row.application_details?.notice_period}. Tick to have TA re-confirm it with the candidate.`
+                      : "Nothing is on record — TA is notified to confirm it with the candidate now, before Sales reaches the customer."}
+                  </span>
+                </span>
+              </label>
+            )}
             <Field
               label={rmgDecision.kind === "sales" ? "Comment for the activity log" : "Rejection reason"}
               required
@@ -3727,6 +4718,15 @@ function ResumesTab({
           onClose={() => setRejectRow(null)}
         />
       )}
+      {profileScheduleRow?.profile_id != null && (
+        <ScheduleAiInterviewModal
+          profileId={profileScheduleRow.profile_id}
+          candidate={{ full_name: profileScheduleRow.candidate_name, email: profileScheduleRow.email }}
+          onClose={() => setProfileScheduleRow(null)}
+          onDone={() => { setProfileScheduleRow(null); load(); }}
+          showToast={(m, k) => toast(m, k)}
+        />
+      )}
       {scheduleRow && (
         <ConfirmModal
           title="Schedule AI L1 Interview"
@@ -3742,6 +4742,150 @@ function ResumesTab({
           onClose={() => setScheduleRow(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------ interview history tab */
+
+/** Candidate-wise interview history (28 Aug 2026, user decision): now that
+ * candidates propose their own time, the slot list stopped being the story —
+ * what matters is what HAPPENED: every AI L1 session with its legacy truth
+ * (verified/active/completed/terminated, start/finish, tab-switch violations)
+ * plus the human rounds. Slot management stays available, collapsed below. */
+function InterviewHistoryTab({ req, toast }: { req: Req; toast: ToastFn }) {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [showSlots, setShowSlots] = useState(false);
+
+  const load = useCallback(() => {
+    let alive = true;
+    setLoading(true);
+    crmGet<any[]>(`/api/requirements/${req.id}/interview-history`)
+      .then((r) => { if (alive) { setGroups(r.data || []); setError(""); } })
+      .catch((e: any) => { if (alive) setError(e?.message || "Failed to load interview history"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [req.id]);
+  useEffect(() => load(), [load]);
+
+  const sessPill = (s?: string | null) => {
+    if (!s) return <span className="text-xs text-muted">—</span>;
+    const v = s.toLowerCase();
+    const tone = /terminat|abandon/.test(v)
+      ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+      : /complete|recovered/.test(v)
+        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+        : /active|verified/.test(v)
+          ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300"
+          : "bg-surface-2 text-secondary";
+    return (
+      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${tone}`}>
+        {s.replace(/_/g, " ")}
+      </span>
+    );
+  };
+  const vioCell = (e: any) => {
+    const parts = Object.entries(e.violations || {})
+      .map(([t, c]) => `${String(t).replace(/_/g, " ")} × ${c}`);
+    const n = Number(e.violation_count || 0) || parts.length;
+    if (!n) return <span className="text-xs text-muted">None</span>;
+    return (
+      <span className="inline-flex flex-col">
+        <span className={`text-xs font-bold ${n >= 3 ? "text-rose-600 dark:text-rose-300" : "text-amber-700 dark:text-amber-300"}`}>
+          {n} violation{n === 1 ? "" : "s"}
+        </span>
+        {parts.length > 0 && <span className="text-[11px] text-muted">{parts.join(" · ")}</span>}
+      </span>
+    );
+  };
+  const th = "px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-muted";
+  const td = "px-3 py-2 align-top text-sm";
+  /* Legacy scheduled_at_local can be a non-ISO string — show it verbatim
+     rather than "—" when Date() can't parse it. */
+  const dtf = (v?: string | null) => {
+    const s = fmtDateTime(v);
+    return s !== "—" ? s : (v || "—");
+  };
+
+  return (
+    <div className="space-y-4">
+      {loading ? <Spinner label="Loading interview history…" /> : error ? <ErrorBox error={error} onRetry={load} /> : (
+        groups.length === 0 ? (
+          <div className="rounded-card border border-subtle bg-surface-1 p-8 text-center text-sm text-muted">
+            No interviews yet on this requirement — schedule an AI L1 from the Applied Candidates tab.
+          </div>
+        ) : groups.map((g) => (
+          <div key={g.candidate_id ?? g.candidate_name} className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+            <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 py-2.5">
+              <span className="text-sm font-bold text-primary">{g.candidate_name}</span>
+              {g.email && <span className="text-xs text-muted">{g.email}</span>}
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-secondary">
+                {g.entries.length} round{g.entries.length === 1 ? "" : "s"}
+              </span>
+              {g.profile_id != null && (
+                <CrmLink to={`profiles/${g.profile_id}`} className="ml-auto text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                  Open profile
+                </CrmLink>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-sm">
+                <thead><tr className="border-b border-subtle">
+                  <th className={th}>Round</th><th className={th}>Scheduled</th><th className={th}>Session</th>
+                  <th className={th}>Started</th><th className={th}>Completed</th><th className={th}>Violations</th>
+                  <th className={th}>Result</th><th className={th}></th>
+                </tr></thead>
+                <tbody>
+                  {g.entries.map((e: any, i: number) => (
+                    <tr key={i} className="border-b border-subtle last:border-0">
+                      <td className={`${td} font-semibold text-primary`}>{e.type}</td>
+                      <td className={`${td} tabular-nums text-secondary`}>{dtf(e.scheduled_at)}</td>
+                      <td className={td}>{sessPill(e.session_status || e.status)}</td>
+                      <td className={`${td} tabular-nums text-secondary`}>{fmtDateTime(e.started_at)}</td>
+                      <td className={`${td} tabular-nums text-secondary`}>{fmtDateTime(e.completed_at)}</td>
+                      <td className={td}>{vioCell(e)}</td>
+                      <td className={td}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {e.effective_result ? <StatusBadge status={e.effective_result} /> : <span className="text-xs text-muted">—</span>}
+                          {e.score_percent != null && (
+                            <span className="text-xs font-bold tabular-nums text-primary">
+                              {Number(e.score_percent) % 1 === 0 ? e.score_percent : Number(e.score_percent).toFixed(1)}%
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className={`${td} text-right`}>
+                        {e.report_link && (
+                          <a href={e.report_link} className="inline-flex items-center gap-1 text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400">
+                            <ExternalLink size={12} /> Report
+                          </a>
+                        )}
+                        {e.meeting_link && (
+                          <a href={e.meeting_link} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400">
+                            <Link2 size={12} /> Meeting
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+      <div className="rounded-card border border-subtle bg-surface-1">
+        <button type="button"
+          className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-secondary hover:text-primary"
+          onClick={() => setShowSlots((v) => !v)}>
+          <span>Manage interview slots (optional — candidates can propose their own time)</span>
+          <span className="text-xs text-muted">{showSlots ? "Hide" : "Show"}</span>
+        </button>
+        {showSlots && <div className="border-t border-subtle p-4"><SlotsTab req={req} toast={toast} /></div>}
+      </div>
     </div>
   );
 }
@@ -3890,7 +5034,9 @@ function AvailabilityChip({ slot }: { slot: Slot }) {
 }
 
 function SlotsTab({ req, toast }: { req: Req; toast: ToastFn }) {
-  const isTA = useCanAct("requirements", "edit", useHasRole("TA"));
+  const taRole = useHasRole("TA");
+  const taCanEdit = useCanAct("requirements", "edit", taRole);
+  const isTA = taRole && taCanEdit;
   const [slots, setSlots] = useState<Slot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [slotsError, setSlotsError] = useState("");
@@ -4103,13 +5249,38 @@ function ActivityTab({ reqId }: { reqId: number }) {
 
 /* --------------------------------------------------------------- detail */
 
+/** Deep links (8 Sep 2026, user report): a notification link may name the
+ *  tab (`?tab=resumes` = Applied Candidates) and a search term (`?q=`) so the
+ *  reader lands on the candidate the mail was about instead of the page top.
+ *  Unknown tab values fall back to Applied Candidates. */
+const REQUIREMENT_TABS = ["details", "postings", "resumes", "slots", "applicants", "suggested", "activity"];
+
+function initialRequirementTab(): string {
+  try {
+    const t = new URLSearchParams(window.location.search).get("tab") || "";
+    return REQUIREMENT_TABS.includes(t) ? t : "resumes";
+  } catch {
+    return "resumes";
+  }
+}
+
+export function deepLinkSearch(): string {
+  try {
+    return (new URLSearchParams(window.location.search).get("q") || "").trim().slice(0, 120);
+  } catch {
+    return "";
+  }
+}
+
 export function RequirementDetailPage() {
   const params = useCrmParams();
   const id = Number(params.id);
   const me = useMe();
   const [toastNode, toast] = useToast();
 
-  const isTA = useCanAct("requirements", "edit", useHasRole("TA"));
+  const taRole = useHasRole("TA");
+  const taCanEdit = useCanAct("requirements", "edit", taRole);
+  const isTA = taRole && taCanEdit;
   const isSalesHead = useCanAct("requirements", "edit", useHasRole("Sales_Head"));
   const isRMG = useCanAct("requirements", "edit", useHasRole("RMG"));
   const canSeeResumes = useCanAct("requirements", "view", useHasRole("TA", "RMG", "Sales_Head"));
@@ -4120,13 +5291,23 @@ export function RequirementDetailPage() {
   const [error, setError] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [locationName, setLocationName] = useState("");
-  const [tab, setTab] = useState<string>(isTA ? "resumes" : "postings");
+  /* Land on the candidates, not the portal log (28 Aug 2026, user request) —
+     every role's first question here is "who applied?". If the user can't see
+     that tab, the effect below snaps to their first visible one. */
+  const [tab, setTab] = useState<string>(initialRequirementTab);
   /* Sub-tab access (25 Aug 2026): templates hide detail tabs via the
    * `tab:<key>` field entries on the requirements tab ("Hidden" mode).
    * These hooks MUST sit here, above the early returns below — placing them
    * lower violates rules-of-hooks and blanked the whole page (seen live). */
   const reqAcc = useCrmAccess("requirements");
-  const visibleTabKeys = ["details", "postings", ...(canSeeResumes ? ["resumes", "slots"] : []),
+  /* Job Postings hides until USED (28 Aug 2026, user decision): the team
+     doesn't log portal ads today, so the tab was noise. It reappears the
+     moment a posting exists; Admin/CEO always see it so someone can log the
+     first one (that first posting also drives the "Posted" pipeline stage). */
+  const isAdminUser = useHasRole("Admin");
+  const showPostings = isAdminUser || (req?.job_postings_count ?? 0) > 0;
+  const visibleTabKeys = ["details", ...(showPostings ? ["postings"] : []),
+    ...(canSeeResumes ? ["resumes", "slots"] : []),
     "applicants", "suggested", "activity"].filter((k) => reqAcc.subTabVisible(`tab:${k}`));
   useEffect(() => {
     /* A hidden sub-tab must not stay selected (e.g. the TA default "resumes"
@@ -4307,13 +5488,13 @@ export function RequirementDetailPage() {
     // Reference material first (user decision, 25 Aug 2026): the four cards
     // live ONLY here now, instead of trailing below every tab.
     { key: "details", label: "Details" },
-    { key: "postings", label: "Job Postings" },
+    ...(showPostings ? [{ key: "postings", label: "Job Postings" }] : []),
     ...(canSeeResumes
       ? [
           // Renamed from "Resumes" (user decision, 25 Aug 2026): every resume
           // here IS an application, so the tab is named for the people.
           { key: "resumes", label: "Applied Candidates" },
-          { key: "slots", label: "Interview Slots" },
+          { key: "slots", label: "Interview History" },
         ]
       : []),
     // TA works the same opportunity from here (18 Aug 2026): who already
@@ -4526,7 +5707,7 @@ export function RequirementDetailPage() {
       {tab === "resumes" && canSeeResumes && (
         <ResumesTab req={req} toast={toast} onRequirementChanged={() => onChanged()} />
       )}
-      {tab === "slots" && canSeeResumes && <SlotsTab req={req} toast={toast} />}
+      {tab === "slots" && canSeeResumes && <InterviewHistoryTab req={req} toast={toast} />}
       {tab === "applicants" && (
         <RequirementApplicantsTab key={applicantsKey} oppId={req.opportunity_id} toast={toast} />
       )}

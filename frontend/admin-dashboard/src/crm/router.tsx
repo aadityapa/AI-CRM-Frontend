@@ -13,7 +13,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
  * `tab` is here for the same reason as the filters: it is meaningful only to
  * the page that reads it, so carrying it onto the next page would land the
  * reader on an arbitrary tab (or none) after following any other link. */
-const CRM_FILTER_KEYS = ["project_id", "employee_id", "tab"] as const;
+const CRM_FILTER_KEYS = ["project_id", "employee_id", "tab", "q"] as const;
 
 function splitPathQuery(path: string): { pathPart: string; queryPart: string } {
   const raw = path.replace(/^\/+/, "");
