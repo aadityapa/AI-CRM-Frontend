@@ -2,7 +2,7 @@
  * skills, locations, document types, leave policy types) + app settings. */
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Power, Settings } from "lucide-react";
-import { crmGet, crmPost, crmPut, qs } from "../api";
+import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { DataTable } from "../components/DataTable";
@@ -13,7 +13,10 @@ import {
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { ActivityLogPage } from "./ActivityLog";
+import { BackupTab } from "./settings/BackupTab";
+import { SupportTicketsPage } from "./SupportTickets";
 import { EmailDraftsTab } from "./settings/EmailDraftsTab";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -393,13 +396,19 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
         placeholder: "10" },
     ],
   },
+];
+
+/** Settings ▸ Invoice (11 Sep 2026, user request): EVERY value printed on the
+ * Tax Invoice is editable here by Admin/CEO — seller block, statutory ids,
+ * service line defaults, declaration, footer, QR viewer — so a wording or
+ * bank change is never a code deploy. Bank accounts live in their own list
+ * below (Sales picks one per customer). */
+const INVOICE_GROUPS: typeof ORG_GROUPS = [
   {
-    // An office move, a new GSTIN or a bank change must not be a code deploy.
-    title: "Tax Invoice — seller details",
-    hint: "The company block printed on every tax invoice PDF.",
+    title: "Seller — company block",
+    hint: "Top-left of the Tax Invoice: legal name, address, state, email, CIN.",
     fields: [
       { key: "invoice.seller_name", label: "Legal name" },
-      { key: "invoice.seller_tagline", label: "Tagline" },
       { key: "invoice.seller_address_line1", label: "Address line 1" },
       { key: "invoice.seller_address_line2", label: "Address line 2" },
       { key: "invoice.seller_city", label: "City" },
@@ -407,18 +416,60 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
       { key: "invoice.seller_state_code", label: "GST state code",
         hint: "Two digits, e.g. 27 for Maharashtra. Drives CGST/SGST vs IGST." },
       { key: "invoice.seller_pincode", label: "Pincode" },
+      { key: "invoice.seller_country", label: "Country" },
+      { key: "invoice.seller_email", label: "Email (printed in the header)", placeholder: "karnex.singh@karnex.in" },
       { key: "invoice.seller_phone", label: "Phone" },
-      { key: "invoice.seller_email", label: "Billing email" },
-      { key: "invoice.seller_website", label: "Website" },
-      { key: "invoice.seller_gstin", label: "GSTIN" },
-      { key: "invoice.seller_pan", label: "PAN" },
-      { key: "invoice.seller_cin", label: "CIN" },
-      { key: "invoice.seller_declaration", label: "Declaration text" },
+      { key: "invoice.seller_contact_email", label: "Contact email (fallback)" },
     ],
   },
   {
-    title: "Tax Invoice — bank account",
-    hint: "The receivable account printed on every tax invoice.",
+    title: "Statutory identifiers",
+    hint: "Printed on every invoice — check them against the certificates.",
+    fields: [
+      { key: "invoice.seller_cin", label: "CIN No.", placeholder: "U72900RJ2018PTC638288" },
+      { key: "invoice.seller_gstin", label: "GSTIN" },
+      { key: "invoice.seller_pan", label: "PAN" },
+    ],
+  },
+  {
+    title: "Service line",
+    hint: "Defaults for the service table. A PO allocation's own HSN/SAC still wins when set.",
+    fields: [
+      { key: "invoice.sac_code", label: "SAC code", placeholder: "998513",
+        hint: "998513 = contract staffing services." },
+      { key: "invoice.service_description", label: "Description prefix", placeholder: "Contract Staffing Service" },
+    ],
+  },
+  {
+    title: "Declaration & signature",
+    hint: "Bottom-right block above the seal.",
+    fields: [
+      { key: "invoice.seller_declaration", label: "Declaration text" },
+      { key: "invoice.signatory_line", label: "Signatory line", placeholder: "For Karnex Software Solutions Pvt. Ltd." },
+      { key: "invoice.seller_logo_url", label: "Logo image URL", hint: "Leave blank for the bundled Karnex logo." },
+      { key: "invoice.seller_seal_url", label: "Seal / signature image URL", hint: "Leave blank for the bundled seal." },
+    ],
+  },
+  {
+    title: "Footer",
+    hint: "The navy strip at the bottom shows ONLY the website, as a clickable link.",
+    fields: [
+      { key: "invoice.seller_website", label: "Website label", placeholder: "www.karnex.in" },
+      { key: "invoice.footer_website_url", label: "Website link (URL)", placeholder: "https://www.karnex.in" },
+      { key: "invoice.footer_text", label: "Extra footer text (optional)", hint: "Leave blank to show the website only." },
+    ],
+  },
+  {
+    title: "Scan-to-view QR",
+    hint: "Where the QR beside the seal sends a phone. Blank = this app's own public invoice page.",
+    fields: [
+      { key: "invoice.qr_viewer_url", label: "Hosted viewer URL",
+        hint: "Placeholders: {view_url} {pdf_url} {data_url} {token} {invoice_number} {id}" },
+    ],
+  },
+  {
+    title: "Fallback bank details",
+    hint: "Used ONLY when no bank account exists in the list below and the customer has none picked.",
     fields: [
       { key: "invoice.bank_name", label: "Bank" },
       { key: "invoice.bank_account_name", label: "Account name" },
@@ -431,6 +482,15 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
 ];
 
 function OrganisationTab({ notify }: { notify: Notify }) {
+  return <SettingsGroupsTab notify={notify} groups={ORG_GROUPS} testEmail />;
+}
+
+function SettingsGroupsTab({ notify, groups, testEmail, extra }: {
+  notify: Notify;
+  groups: typeof ORG_GROUPS;
+  testEmail?: boolean;
+  extra?: React.ReactNode;
+}) {
   const [rows, setRows] = useState<OrgSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -463,7 +523,7 @@ function OrganisationTab({ notify }: { notify: Notify }) {
     setSaving(true);
     try {
       const res = await crmPut("/api/org-settings", { values: edited });
-      notify(res.message || "Organisation settings saved");
+      notify(res.message || "Settings saved");
       await load();
     } catch (e: any) {
       notify(e?.message || "Failed to save settings", "err");
@@ -484,7 +544,7 @@ function OrganisationTab({ notify }: { notify: Notify }) {
     }
   };
 
-  if (loading) return <Spinner label="Loading organisation settings…" />;
+  if (loading) return <Spinner label="Loading settings…" />;
   if (error) return <ErrorBox error={error} onRetry={load} />;
 
   const srcChip = (s?: OrgSetting) => {
@@ -500,8 +560,13 @@ function OrganisationTab({ notify }: { notify: Notify }) {
 
   return (
     <div className="space-y-4">
-      {ORG_GROUPS.map((g) => (
-        <div key={g.title} className="rounded-card border border-subtle bg-surface-1 shadow-raised">
+      {groups.map((g) => (
+        <React.Fragment key={g.title}>
+        {/* The bank-accounts list sits right above its fallback group, where
+            people look for it (11 Sep 2026 — it was rendered at the top and
+            got scrolled past). */}
+        {extra && g.title === "Fallback bank details" ? extra : null}
+        <div className="rounded-card border border-subtle bg-surface-1 shadow-raised">
           <div className="border-b border-subtle px-4 py-3">
             <div className="text-sm font-bold text-primary">{g.title}</div>
             <div className="text-xs text-muted">{g.hint}</div>
@@ -544,23 +609,251 @@ function OrganisationTab({ notify }: { notify: Notify }) {
             })}
           </div>
         </div>
+        </React.Fragment>
       ))}
+      {extra && !groups.some((g) => g.title === "Fallback bank details") ? extra : null}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-surface-1 px-4 py-3 shadow-raised">
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-secondary">Send a test email to</span>
-            <input className={`${inputCls} !w-64`} type="email" value={testTo}
-              placeholder="you@karnex.in" onChange={(e) => setTestTo(e.target.value)} />
-          </label>
-          <button className={btnSecondary} disabled={testBusy || !testTo.trim()} onClick={sendTest}>
-            {testBusy ? "Queueing…" : "Send test email"}
-          </button>
-        </div>
+        {testEmail ? (
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-secondary">Send a test email to</span>
+              <input className={`${inputCls} !w-64`} type="email" value={testTo}
+                placeholder="you@karnex.in" onChange={(e) => setTestTo(e.target.value)} />
+            </label>
+            <button className={btnSecondary} disabled={testBusy || !testTo.trim()} onClick={sendTest}>
+              {testBusy ? "Queueing…" : "Send test email"}
+            </button>
+          </div>
+        ) : (
+          <span className="text-xs text-muted">Changes apply to every invoice viewed or downloaded after saving.</span>
+        )}
         <button className={btnPrimary} disabled={!dirty || saving} onClick={saveAll}>
           {saving ? "Saving…" : "Save changes"}
         </button>
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------ invoice settings + bank accounts */
+
+type BankAccountRow = {
+  id: number; label: string; bank_name: string; account_name: string; account_number: string;
+  ifsc: string; branch?: string | null; account_type?: string | null; swift_code?: string | null;
+  micr_code?: string | null; upi_id?: string | null; bank_address?: string | null;
+  is_default: boolean; is_active: boolean;
+};
+
+const EMPTY_BANK: Omit<BankAccountRow, "id"> = {
+  label: "", bank_name: "", account_name: "KARNEX SOFTWARE SOLUTIONS PRIVATE LIMITED", account_number: "",
+  ifsc: "", branch: "", account_type: "Current", swift_code: "", micr_code: "", upi_id: "", bank_address: "",
+  is_default: false, is_active: true,
+};
+
+function BankAccountsPanel({ notify }: { notify: Notify }) {
+  const [rows, setRows] = useState<BankAccountRow[]>([]);
+  const [types, setTypes] = useState<string[]>(["Current", "Savings", "OD", "CC", "Other"]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<Partial<BankAccountRow> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadErr("");
+    try {
+      const res = await crmGet<BankAccountRow[]>("/api/bank-accounts?include_inactive=true");
+      setRows(res.data || []);
+      const t = (res.meta as any)?.account_types;
+      if (Array.isArray(t) && t.length) setTypes(t);
+    } catch (e: any) {
+      setLoadErr(e?.message || "Failed to load bank accounts");
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    if (!editing) return;
+    setErr("");
+    const required: Array<[keyof BankAccountRow, string]> = [
+      ["label", "Label"], ["bank_name", "Bank name"], ["account_name", "Account name"],
+      ["account_number", "Account number"], ["ifsc", "IFSC"],
+    ];
+    for (const [k, label] of required) {
+      if (!String(editing[k] || "").trim()) { setErr(`${label} is required`); return; }
+    }
+    setSaving(true);
+    try {
+      const payload = { ...EMPTY_BANK, ...editing };
+      delete (payload as any).id;
+      const res = editing.id
+        ? await crmPut(`/api/bank-accounts/${editing.id}`, payload)
+        : await crmPost("/api/bank-accounts", payload);
+      notify(res.message || "Saved");
+      setEditing(null);
+      await load();
+    } catch (e: any) {
+      setErr(e?.message || "Failed to save bank account");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const makeDefault = async (r: BankAccountRow) => {
+    try {
+      const res = await crmPost(`/api/bank-accounts/${r.id}/default`, {});
+      notify(res.message || "Default updated");
+      await load();
+    } catch (e: any) {
+      notify(e?.message || "Failed", "err");
+    }
+  };
+
+  const remove = async (r: BankAccountRow) => {
+    if (!window.confirm(`Remove "${r.label}"? Customers pointing at it fall back to the default account.`)) return;
+    try {
+      const res = await crmDelete(`/api/bank-accounts/${r.id}`);
+      notify(res.message || "Removed");
+      await load();
+    } catch (e: any) {
+      notify(e?.message || "Failed", "err");
+    }
+  };
+
+  const field = (k: keyof BankAccountRow, label: string, opts?: { placeholder?: string; hint?: string; required?: boolean }) => (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-secondary">{label}{opts?.required ? " *" : ""}</span>
+      <input className={inputCls} value={String(editing?.[k] ?? "")} placeholder={opts?.placeholder}
+        onChange={(e) => setEditing((s) => ({ ...(s || {}), [k]: e.target.value }))} />
+      {opts?.hint && <span className="mt-0.5 block text-[11px] text-muted">{opts.hint}</span>}
+    </label>
+  );
+
+  return (
+    <div className="rounded-card border border-subtle bg-surface-1 shadow-raised">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-4 py-3">
+        <div>
+          <div className="text-sm font-bold text-primary">Bank accounts</div>
+          <div className="text-xs text-muted">
+            Karnex receivable accounts. Sales picks ONE per customer (Leave & Holiday Billing step); that account —
+            else the default — is the only one printed on the customer's invoices.
+          </div>
+        </div>
+        <button className={btnPrimary} onClick={() => { setErr(""); setEditing({ ...EMPTY_BANK, is_default: rows.length === 0 }); }}>
+          <Plus size={15} /> Add bank account
+        </button>
+      </div>
+      {loadErr && (
+        <div className="px-4 py-3 text-sm text-danger">
+          {loadErr} — if this says 404, the backend has not been restarted with the new bank-accounts API
+          (run <code>alembic upgrade head</code> and restart).
+        </div>
+      )}
+      {loading ? <Spinner label="Loading bank accounts…" /> : loadErr ? null : rows.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted">
+          No bank accounts yet — invoices print the fallback bank details from the group below. Add the HDFC account here.
+        </div>
+      ) : (
+        <div className="divide-y divide-[color:var(--border-subtle)]">
+          {rows.map((r) => (
+            <div key={r.id} className={`flex flex-wrap items-start gap-3 px-4 py-3 ${r.is_active ? "" : "opacity-60"}`}>
+              <div className="min-w-64 flex-1">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-primary">
+                  {r.label}
+                  {r.is_default && <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">Default</span>}
+                  {!r.is_active && <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted">Inactive</span>}
+                </div>
+                <div className="mt-0.5 text-xs text-secondary">
+                  {r.bank_name}{r.branch ? ` · ${r.branch}` : ""} · A/C {r.account_number} · IFSC {r.ifsc}
+                  {r.account_type ? ` · ${r.account_type}` : ""}
+                </div>
+                <div className="text-xs text-muted">
+                  {r.account_name}{r.upi_id ? ` · UPI ${r.upi_id}` : ""}{r.swift_code ? ` · SWIFT ${r.swift_code}` : ""}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {!r.is_default && r.is_active && (
+                  <button className={btnSecondary} onClick={() => void makeDefault(r)}>Make default</button>
+                )}
+                <button className={btnSecondary} onClick={() => { setErr(""); setEditing({ ...r }); }}>
+                  <Pencil size={14} /> Edit
+                </button>
+                {!r.is_default && (
+                  <button className={btnSecondary} onClick={() => void remove(r)}>
+                    <Power size={14} /> {r.is_active ? "Remove" : "Delete"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && (
+        <Modal title={editing.id ? `Edit ${editing.label || "bank account"}` : "Add bank account"} onClose={() => setEditing(null)} medium
+          footer={
+            <div className="flex justify-end gap-2">
+              <button className={btnSecondary} onClick={() => setEditing(null)} disabled={saving}>Cancel</button>
+              <button className={btnPrimary} onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            {err && <div className="rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{err}</div>}
+            {field("label", "Label", { placeholder: "HDFC — Baner (Current)", required: true, hint: "How it appears in the customer form picker." })}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {field("bank_name", "Bank name", { placeholder: "HDFC Bank", required: true })}
+              {field("branch", "Branch", { placeholder: "Baner, Pune" })}
+            </div>
+            {field("account_name", "Account holder name", { required: true })}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {field("account_number", "Account number", { placeholder: "50200075368143", required: true })}
+              {field("ifsc", "IFSC", { placeholder: "HDFC0001784", required: true })}
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Account type</span>
+                <select className={inputCls} value={String(editing.account_type || "")}
+                  onChange={(e) => setEditing((s) => ({ ...(s || {}), account_type: e.target.value }))}>
+                  <option value="">—</option>
+                  {types.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </label>
+              {field("swift_code", "SWIFT (optional)")}
+              {field("micr_code", "MICR (optional)")}
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {field("upi_id", "UPI ID (optional)")}
+              {field("bank_address", "Bank address (optional)")}
+            </div>
+            <div className="flex flex-wrap gap-5">
+              <label className="flex items-center gap-2 text-sm text-primary">
+                <input type="checkbox" checked={!!editing.is_default}
+                  onChange={(e) => setEditing((s) => ({ ...(s || {}), is_default: e.target.checked }))} />
+                Default account (used when a customer has no pick)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-primary">
+                <input type="checkbox" checked={editing.is_active !== false}
+                  onChange={(e) => setEditing((s) => ({ ...(s || {}), is_active: e.target.checked }))} />
+                Active
+              </label>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function InvoiceSettingsTab({ notify }: { notify: Notify }) {
+  return (
+    <SettingsGroupsTab
+      notify={notify}
+      groups={INVOICE_GROUPS}
+      extra={<BankAccountsPanel notify={notify} />}
+    />
   );
 }
 
@@ -760,8 +1053,8 @@ function EmailOutboxPanel({ notify }: { notify: Notify }) {
               </div>
               <div className="truncate text-xs text-secondary" title={r.subject}>{r.subject}</div>
               <div className="text-[11px] text-muted">
-                {r.sent_at ? `Sent ${new Date(r.sent_at).toLocaleString()}`
-                  : r.created_at ? `Queued ${new Date(r.created_at).toLocaleString()}` : ""}
+                {r.sent_at ? `Sent ${fmtDateTime12(r.sent_at)}`
+                  : r.created_at ? `Queued ${fmtDateTime12(r.created_at)}` : ""}
                 {r.attempts ? ` · ${r.attempts} attempt${r.attempts === 1 ? "" : "s"}` : ""}
               </div>
               {r.last_error && (
@@ -869,7 +1162,7 @@ function OperationsTab({ notify }: { notify: Notify }) {
           )}
           {jobs.map((j) => {
             const last = j.last_run || {};
-            const at = last.at ? new Date(last.at).toLocaleString() : null;
+            const at = last.at ? fmtDateTime12(last.at) : null;
             const detail = Object.entries(last)
               .filter(([k]) => k !== "at")
               .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
@@ -1045,7 +1338,8 @@ function AppSettingsTab({ notify }: { notify: Notify }) {
 export function CrmSettingsPage() {
   const isAdmin = useHasRole();
   const [toast, notify] = useToast();
-  const [tab, setTab] = useState("departments");
+  // Deep link: settings?tab=<key> (e.g. the Support Tickets back-link and bell notifications).
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "departments");
   const [deptOptions, setDeptOptions] = useState<Option[]>([]);
 
   useEffect(() => {
@@ -1075,11 +1369,14 @@ export function CrmSettingsPage() {
           { key: "leave-policy-types", label: "Leave Policy Types" },
           { key: "customer-policies", label: "Customer Policies" },
           { key: "organisation", label: "Organisation" },
+          { key: "invoice", label: "Invoice" },
           { key: "operations", label: "Operations" },
           { key: "app-settings", label: "App Settings" },
           { key: "email-drafts", label: "Email Drafts" },
           { key: "ui-text", label: "UI Text" },
           { key: "activity-log", label: "Activity Log" },
+          { key: "backup", label: "Backup" },
+          { key: "support-tickets", label: "Support Tickets" },
         ]}
         active={tab}
         onChange={setTab}
@@ -1181,11 +1478,14 @@ export function CrmSettingsPage() {
         )}
         {tab === "customer-policies" && <CustomerPoliciesTab notify={notify} />}
         {tab === "organisation" && <OrganisationTab notify={notify} />}
+        {tab === "invoice" && <InvoiceSettingsTab notify={notify} />}
         {tab === "operations" && <OperationsTab notify={notify} />}
         {tab === "email-drafts" && <EmailDraftsTab notify={notify} />}
         {tab === "app-settings" && <AppSettingsTab notify={notify} />}
         {tab === "ui-text" && <UiTextTab notify={notify} />}
         {tab === "activity-log" && <ActivityLogPage />}
+        {tab === "backup" && <BackupTab notify={notify} />}
+        {tab === "support-tickets" && <SupportTicketsPage embedded />}
       </div>
     </div>
   );

@@ -53,6 +53,7 @@ import {
   type AutosaveState,
   type WizardStep,
 } from "../../components/WizardChrome";
+import { fmtDateTime12 } from "../../../lib/datetime";
 
 type Opt = { value: string; label: string };
 type EngineerRow = {
@@ -2219,7 +2220,7 @@ function ActivityLogSection({ opportunityId }: { opportunityId?: number }) {
               <tr key={r.id} className={tableRow}>
                 <td className={tdCls}>{r.comment || "—"}</td>
                 <td className={tdCls}>
-                  {r.timestamp ? new Date(r.timestamp).toLocaleString() : "—"}
+                  {fmtDateTime12(r.timestamp)}
                 </td>
                 <td className={tdCls}>{r.action_type || "—"}</td>
                 <td className={tdCls}>{r.full_name || r.username || "—"}</td>

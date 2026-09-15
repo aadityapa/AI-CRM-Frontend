@@ -75,6 +75,21 @@ bypass Access Templates — see the B-V2 note before committing.
 
 ---
 
+**September 2026 (uncommitted, see B-V2 `CLAUDE.md` dated notes for the server halves):** Settings ▸ Invoice /
+Backup / Support Tickets tabs (`crm/pages/CrmSettings.tsx` reads `?tab=`; `pages/settings/BackupTab.tsx`);
+`components/support/SupportWidget.tsx` mounted in `App.tsx`; `crm/pages/SupportTickets.tsx` (routes `support-tickets`,
+`support-tickets/:id`, no sidebar entry); `crm/components/CustomerGroupedList.tsx` (`CustomerGroupedList`, `ViewToggle`,
+`useGroupView` → `localStorage["crm.hub.view"]`) used by Projects · Project Employees · Timesheets · Invoices · Customer
+Received Amount; Employees list "Emp ID" column + Profile Workflow `employee_ref`; Profiles/Candidates/Applied
+Candidates TA + date + customer filters (`load` deps must list every filter field — a missed dep left the date filter
+inert); Timesheets "Apply half-day leave", `lopCoverByRow`, `comp_off_covers_lop` mirror; `CustomerFormModal`
+"Loss of Pay in the same month" checkbox; invoice tagline removed from `components/invoice/InvoiceHeader.tsx`.
+**14 Sep 2026 — interview times:** the Applied Candidates "Schedule AI L1 Interview" dialog (`Requirements.tsx`,
+`scheduleWhen`) now sends `scheduled_at` (datetime-local, IST wall clock, `"T"`→`" "`) — it used to send nothing and
+the server stamped the click time. `ScheduleAiInterviewModal` and the manual-round `f2fWhen` inputs already send the
+typed wall clock; never `toISOString()` a datetime-local value on these paths (the interview-rounds form in
+`Profiles.tsx:3655` does, deliberately — the server converts it back with `ist_naive`).
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```

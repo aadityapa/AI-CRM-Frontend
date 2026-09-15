@@ -7,9 +7,15 @@ export type AttendanceStatus =
   | "Holiday"
   | "Week_Off";
 
-export function attendanceFromHoursWorked(hours: number): AttendanceStatus {
-  if (hours >= 8) return "Present";
-  if (hours >= 4) return "Half_Day";
+/** Policy thresholds (11 Sep 2026): the branch/customer full- and half-day
+ *  hours, defaulting to the historical 8 / 4 when not supplied. */
+export type HourThresholds = { full?: number | null; half?: number | null };
+
+export function attendanceFromHoursWorked(hours: number, thresholds?: HourThresholds | null): AttendanceStatus {
+  const full = Number(thresholds?.full || 0) > 0 ? Number(thresholds!.full) : 8;
+  const half = Number(thresholds?.half || 0) > 0 ? Number(thresholds!.half) : full / 2;
+  if (hours >= full) return "Present";
+  if (hours >= half) return "Half_Day";
   return "Absent";
 }
 
@@ -26,9 +32,9 @@ export function applyHoursAttendanceRule<T extends {
   is_working: boolean;
   hours_worked: string;
   attendance_status: string;
-}>(row: T): T {
+}>(row: T, thresholds?: HourThresholds | null): T {
   if (!shouldDeriveAttendanceFromHours(row)) return row;
   const hours = Number(row.hours_worked || 0);
   if (Number.isNaN(hours)) return row;
-  return { ...row, attendance_status: attendanceFromHoursWorked(hours) };
+  return { ...row, attendance_status: attendanceFromHoursWorked(hours, thresholds) };
 }

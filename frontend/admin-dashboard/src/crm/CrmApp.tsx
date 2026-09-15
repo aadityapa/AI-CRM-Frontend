@@ -19,6 +19,7 @@ import { SidebarUserBlock } from "./components/SidebarUserBlock";
 import { isSuperAdmin } from "../lib/rbac";
 import { performAdminLogout } from "../lib/adminLogout";
 import { crmTabVisibleFromMe, type EffectiveAccess } from "./useAccess";
+import { fmtDateTime12 } from "../lib/datetime";
 
 export { CRM_NAV } from "./nav";
 
@@ -406,7 +407,7 @@ function NotificationsBell() {
                   <div className="text-sm font-semibold text-primary">{n.title}</div>
                   {n.message ? <div className="text-xs text-muted">{n.message}</div> : null}
                   <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
-                    <span>{n.created_at ? new Date(n.created_at).toLocaleString() : ""}</span>
+                    <span>{n.created_at ? fmtDateTime12(n.created_at) : ""}</span>
                     {n.link && (
                       <span className="font-semibold text-brand-600 dark:text-brand-300">
                         Open →

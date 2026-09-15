@@ -84,7 +84,7 @@ export function ProfileCardGrid({
               <div className="min-w-0 flex-1">
                 <div className="truncate font-semibold text-primary" title={name}>{name}</div>
                 <div className="truncate text-xs text-muted">
-                  {r.opportunity_opp_id || "—"}{r.customer_name ? ` · ${r.customer_name}` : ""}
+                  {r.opportunity_opp_id || "—"}{r.opportunity_title ? ` — ${r.opportunity_title}` : ""}{r.customer_name ? ` · ${r.customer_name}` : ""}
                 </div>
               </div>
               <input

@@ -20,7 +20,6 @@ export function InvoiceHeader({ data }: { data: InvoiceData }) {
       <div className={styles.sellerBlock}>
         <img className={styles.logoBanner} src={logoSrc} alt="KARNEX" />
         <div className={styles.sellerName}>{displayOrDash(s.name)}</div>
-        {s.tagline ? <div className={styles.tagline}>{s.tagline}</div> : null}
         <div className={styles.iconLine}>
           <MapPin size={12} aria-hidden />
           <span>{displayOrDash(address)}</span>
@@ -58,6 +57,12 @@ export function InvoiceHeader({ data }: { data: InvoiceData }) {
             <span className={styles.metaLabel}>P.O. Date</span>
             <span className={styles.metaSep}>:</span>
             <span className={styles.value}>{dateFmt(data.po_date)}</span>
+            <span className={styles.metaLabel}>GSTIN No.</span>
+            <span className={styles.metaSep}>:</span>
+            <span className={styles.value}>{displayOrDash(s.gstin)}</span>
+            <span className={styles.metaLabel}>PAN No.</span>
+            <span className={styles.metaSep}>:</span>
+            <span className={styles.value}>{displayOrDash(s.pan)}</span>
           </div>
         </div>
       </div>

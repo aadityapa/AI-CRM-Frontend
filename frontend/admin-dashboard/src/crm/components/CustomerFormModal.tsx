@@ -228,7 +228,8 @@ function customerLeavePayload(row: LeaveRow, customerId: number) {
     initial_credit_balance: leaveNumOrNull(row.initial_credit_balance) ?? 0,
     leave_expire: row.leave_expire || null,
     is_max_limit: row.is_max_limit,
-    maximum_carry_forward: leaveNumOrNull(row.maximum_carry_forward) ?? 0,
+    // "" = carry forward all (null); "0" = lapse; N = cap (11 Sep 2026).
+    maximum_carry_forward: row.maximum_carry_forward === "" ? null : (leaveNumOrNull(row.maximum_carry_forward) ?? 0),
     effective_date: row.effective_date || null,
     leave_credit_timing: row.leave_credit_timing || "Start_Of_Period",
     leave_expire_timing: row.leave_expire
@@ -251,9 +252,24 @@ function apiToLeaveRow(r: Record<string, unknown>): LeaveRow {
     leave_expire: String(r.leave_expire || ""),
     leave_expire_timing: String(r.leave_expire_timing || "End_Of_Period"),
     is_max_limit: !!r.is_max_limit,
-    maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "0",
+    maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "",
     effective_date: r.effective_date ? String(r.effective_date).slice(0, 10) : "",
   };
+}
+
+interface BankAccountOption {
+  id: number;
+  label: string;
+  bank_name: string;
+  account_name: string;
+  account_number: string;
+  ifsc: string;
+  branch?: string | null;
+  account_type?: string | null;
+  upi_id?: string | null;
+  swift_code?: string | null;
+  is_default: boolean;
+  is_active: boolean;
 }
 
 export function CustomerFormModal({
@@ -301,11 +317,16 @@ export function CustomerFormModal({
     comp_off_balance_initial: "",
     comp_off_max_limit: "",
     comp_off_max_carry_forward: "",
+    comp_off_covers_lop: false,
     normal_hours_per_day: "",
     user_role: "",
     operation: "",
+    bank_account_id: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Karnex receivable accounts (Settings ▸ Invoice) — Sales picks the ONE
+      printed on this customer's invoices (11 Sep 2026). */
+  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [hasPo, setHasPo] = useState(false);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
@@ -317,6 +338,12 @@ export function CustomerFormModal({
 
   const setField = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
   const setPolicy = (k: string, v: unknown) => setPol((s) => ({ ...s, [k]: v }));
+
+  useEffect(() => {
+    crmGet<BankAccountOption[]>("/api/bank-accounts")
+      .then((r) => setBankAccounts(r.data || []))
+      .catch(() => setBankAccounts([]));
+  }, []);
 
   useEffect(() => {
     crmGet<DocType[]>("/api/document-types?limit=200&is_active=true")
@@ -527,9 +554,11 @@ export function CustomerFormModal({
       comp_off_balance_initial: "",
       comp_off_max_limit: "",
       comp_off_max_carry_forward: "",
+      comp_off_covers_lop: false,
       normal_hours_per_day: "",
       user_role: "",
       operation: "",
+      bank_account_id: "",
     });
     setErrors({});
     setStepIndex(0);
@@ -854,8 +883,11 @@ export function CustomerFormModal({
         comp_off_balance: compOn ? null : numOrNull(String(pol.comp_off_balance)),
         comp_off_balance_initial: compOn ? null : numOrNull(String(pol.comp_off_balance_initial)),
         comp_off_max_limit: compOn ? null : numOrNull(String(pol.comp_off_max_limit)),
-        comp_off_max_carry_forward: compOn ? null : numOrNull(String(pol.comp_off_max_carry_forward)),
+        // Comp-Off year-end: blank = lapses (0); N = carry up to N (11 Sep 2026).
+        comp_off_max_carry_forward: compOn ? null : (numOrNull(String(pol.comp_off_max_carry_forward)) ?? 0),
+        comp_off_covers_lop: compOn ? false : !!pol.comp_off_covers_lop,
         normal_hours_per_day: numOrNull(String(pol.normal_hours_per_day)),
+        bank_account_id: pol.bank_account_id ? Number(pol.bank_account_id) : null,
         week_off_days: String(pol.week_off_days ?? "").trim() || null,
         user_role: String(pol.user_role || "").trim() || null,
         operation: String(pol.operation || "").trim() || null,
@@ -1357,8 +1389,7 @@ export function CustomerFormModal({
               <div>
                 <p className="text-sm font-bold text-primary">Leave & Holiday Billing</p>
                 <p className="mt-0.5 text-xs text-muted">
-                  Week Off / Holidays Billable: bill worked weekend or holiday hours as normal (no Comp-Off credit).
-                  Comp Off Billable: bill as Comp-Off when the direct flag is off. If both off: credit Comp-Off leave on submit.
+                  Holidays / Week Off Billable: the customer pays for those DAYS even when nothing was worked (calendar-month billing). Comp Off Billable: hours actually WORKED on a week-off/holiday are billed as extra; when it is off the employee earns Comp-Off leave instead.
                 </p>
               </div>
               <div className="flex flex-wrap gap-5 rounded-xl border border-subtle bg-surface-2/30 px-4 py-3">
@@ -1370,9 +1401,9 @@ export function CustomerFormModal({
                   <label key={k} className="flex items-center gap-2 text-sm font-medium text-primary"
                     title={
                       k === "week_off_billable"
-                        ? "Bill weekend hours worked as normal worked time (precedence over Comp Off Billable)"
+                        ? "The customer pays for every weekend day of the month, worked or not (calendar-month billing)"
                         : k === "holidays_billable"
-                          ? "Bill holiday hours worked as normal; also bills pure holiday-off days"
+                          ? "The customer pays for every holiday of the month, worked or not"
                           : undefined
                     }
                   >
@@ -1382,6 +1413,12 @@ export function CustomerFormModal({
                   </label>
                 ))}
               </div>
+              {!!(pol.week_off_billable || pol.holidays_billable) && (
+                <p className="rounded-control border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+                  <b>Week off / Holidays billable = the customer pays for those days even when nothing was worked</b> (a 31-day
+                  month bills 31 days). Comp-Off never applies to them. Leave these off if the customer only pays for days worked.
+                </p>
+              )}
 
               {/* Per-leave-type billing rules only matter once leave is
                   billable at all — hidden otherwise so the form asks nothing
@@ -1413,6 +1450,50 @@ export function CustomerFormModal({
                   />
                 </div>
               )}
+            </div>
+
+            <div className="space-y-3 border-t border-subtle pt-6">
+              <div>
+                <p className="text-sm font-bold text-primary">Karnex Bank Account (printed on invoices)</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  The ONE receivable account shown in the Bank Details block of every tax invoice for this
+                  customer. Accounts are managed by Admin under Settings ▸ Invoice; leave blank to use the default.
+                </p>
+              </div>
+              {(() => {
+                const picked = bankAccounts.find((b) => String(b.id) === String(pol.bank_account_id || ""))
+                  || bankAccounts.find((b) => b.is_default);
+                return (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <Field label="Bank account">
+                      <select className={inputCls} value={String(pol.bank_account_id || "")}
+                        onChange={(e) => setPolicy("bank_account_id", e.target.value)}>
+                        <option value="">Default company account{bankAccounts.find((b) => b.is_default)
+                          ? ` (${bankAccounts.find((b) => b.is_default)!.label})` : ""}</option>
+                        {bankAccounts.map((b) => (
+                          <option key={b.id} value={String(b.id)}>
+                            {b.label} — {b.bank_name} · A/C {b.account_number}
+                          </option>
+                        ))}
+                      </select>
+                      {!bankAccounts.length && (
+                        <span className="mt-1 block text-[11px] text-warning">
+                          No bank accounts yet — Admin adds them under Settings ▸ Invoice. Until then the
+                          invoice prints the bank details from Settings.
+                        </span>
+                      )}
+                    </Field>
+                    {picked && (
+                      <div className="rounded-control border border-subtle bg-surface-2/30 px-3 py-2 text-xs text-secondary">
+                        <div className="font-semibold text-primary">{picked.bank_name}{picked.branch ? ` · ${picked.branch}` : ""}</div>
+                        <div>Account name: <span className="font-medium text-primary">{picked.account_name}</span></div>
+                        <div>A/C No.: <span className="font-medium text-primary">{picked.account_number}</span> · IFSC: <span className="font-medium text-primary">{picked.ifsc}</span></div>
+                        <div>Type: {picked.account_type || "—"}{picked.upi_id ? ` · UPI: ${picked.upi_id}` : ""}{picked.swift_code ? ` · SWIFT: ${picked.swift_code}` : ""}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="space-y-4 border-t border-subtle pt-6">
@@ -1479,14 +1560,44 @@ export function CustomerFormModal({
                     onChange={(e) => setPolicy("comp_off_max_limit", e.target.value)}
                   />
                 </Field>
-                <Field label="Comp off max carry forward">
-                  <input
-                    type="number"
-                    className={inputCls}
-                    disabled={compOn}
-                    value={String(pol.comp_off_max_carry_forward ?? "")}
-                    onChange={(e) => setPolicy("comp_off_max_carry_forward", e.target.value)}
-                  />
+                <Field label="At year end (31 Dec) — unused Comp-Off">
+                  {(() => {
+                    const raw = String(pol.comp_off_max_carry_forward ?? "");
+                    const n = Number(raw);
+                    const mode = raw === "" || (!Number.isNaN(n) && n === 0) ? "lapse" : "cap";
+                    return (
+                      <div className="grid grid-cols-1 gap-2">
+                        <select className={inputCls} disabled={compOn} value={mode}
+                          onChange={(e) => setPolicy("comp_off_max_carry_forward", e.target.value === "lapse" ? "0" : (n > 0 ? raw : "5"))}>
+                          <option value="lapse">Lapses (balance resets each year)</option>
+                          <option value="cap">Carries forward — up to a maximum</option>
+                        </select>
+                        {mode === "cap" && (
+                          <input type="number" min={1} step={1} className={inputCls} disabled={compOn} value={raw}
+                            placeholder="days" onChange={(e) => setPolicy("comp_off_max_carry_forward", e.target.value)} />
+                        )}
+                        <span className="text-[11px] text-muted">
+                          Comp-Off earned for week-off / holiday work sits as its own leave type on the employee's
+                          record (and in Apply Leave). This decides what happens to the unused balance on 31 December.
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </Field>
+                <Field label="Loss of Pay in the same month">
+                  <label className={`flex items-start gap-2 text-sm ${compOn ? "opacity-50" : ""}`}>
+                    <input type="checkbox" className="mt-1 h-4 w-4 accent-brand-600" disabled={compOn}
+                      checked={!!pol.comp_off_covers_lop}
+                      onChange={(e) => setPolicy("comp_off_covers_lop", e.target.checked)} />
+                    <span>
+                      Comp-Off earned this month automatically covers this month's Loss of Pay
+                      <span className="block text-[11px] text-muted">
+                        Off (default): the LOP stays on the timesheet and whoever manages it applies the leave they
+                        choose (Comp-Off, Casual, Sick…) on that row. On: weekend work first makes up LOP days
+                        and only the remainder is credited.
+                      </span>
+                    </span>
+                  </label>
                 </Field>
               </div>
             </div>

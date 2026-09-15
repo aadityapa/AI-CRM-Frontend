@@ -6,9 +6,7 @@
  * zebra-free 48px table rows, right-aligned numerics, one primary action per screen. */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ArrowRight, ArrowRightLeft, Bot, Copy, Download, ExternalLink, FileText, GitBranch, Pencil, Plus, Save, Send, Trash2, UserCheck, UsersRound, X } from "lucide-react";
-import { authFetch } from "../../api/client";
-import { OfferLetterEditor } from "../components/OfferLetterEditor";
+import { AlertTriangle, ArrowRight, ArrowRightLeft, Bot, Copy, ExternalLink, FileText, GitBranch, Pencil, Plus, Save, Send, Trash2, UserCheck, UsersRound, X } from "lucide-react";
 import { DuplicateProfileNotice, duplicateProfileFromError } from "../components/DuplicateProfileNotice";
 import type { DuplicateProfile } from "../components/DuplicateProfileNotice";
 import { BudgetFlagModal, BudgetReplyModal, SubmitForApprovalModal } from "../components/OfferApprovalGate";
@@ -49,6 +47,7 @@ import {
 import {
   SectionHeaderBanner, FieldLabel, WizardField,
 } from "../components/wizard";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -344,7 +343,6 @@ const REJECTED_STATUSES = [
 ];
 const REJECTION_LIKE = new Set(REJECTED_STATUSES);
 
-const OFFER_STATUSES = ["Pending", "Accepted", "Expired", "Rejected"];
 
 /** CTC is stored in rupees; recruiters read and quote it in lakhs. 2200000 -> "22.00". */
 const LAKH = 100000;
@@ -1093,7 +1091,8 @@ const PROFILE_TAB_LABELS: Record<string, string> = {
   overview: "Overview",
   interviews: "Interviews",
   skills: "Skill Evaluation",
-  offers: "Offers",
+  // "offers" removed 15 Sep 2026 (user decision): offer terms are captured
+  // inline in the Customer Approval move; the history tab is gone.
   activity: "Activity Log",
   ai: "AI Interview",
 };
@@ -1654,8 +1653,7 @@ export function ProfileDetailPage() {
               label: PROFILE_TAB_LABELS[key],
               count: key === "interviews" ? detail.interview_events?.length
                 : key === "skills" ? detail.skill_evaluations?.length
-                  : key === "offers" ? detail.offers?.length
-                    : undefined,
+                  : undefined,
             }))}
           active={tab}
           onChange={selectTab}
@@ -1680,7 +1678,6 @@ export function ProfileDetailPage() {
         />
       )}
       {tab === "skills" && <SkillsTab detail={detail} onReload={load} showToast={showToast} />}
-      {tab === "offers" && <OffersTab detail={detail} onReload={load} showToast={showToast} />}
       {tab === "activity" && <ActivityTab profileId={detail.id} />}
       {tab === "ai" && (
         <AiInterviewTab
@@ -1771,6 +1768,7 @@ function OverviewTab({
   const [approvalAmount, setApprovalAmount] = useState(rupeesToLac(detail.ctc_approval_amount));
   // Workflow references: issued outside this system, so they can only be typed.
   const [offerRef, setOfferRef] = useState(detail.offer_letter_reference ?? "");
+  const [empRef, setEmpRef] = useState(detail.employee_ref ?? "");
   const [onboardingDate, setOnboardingDate] = useState(detail.customer_onboarding_date ?? "");
   const [karnexOnboardingDate, setKarnexOnboardingDate] =
     useState(detail.karnex_onboarding_date ?? "");
@@ -1824,6 +1822,7 @@ function OverviewTab({
     setExpectedCtc(rupeesToLac(detail.expected_ctc));
     setApprovalAmount(rupeesToLac(detail.ctc_approval_amount));
     setOfferRef(detail.offer_letter_reference ?? "");
+    setEmpRef(detail.employee_ref ?? "");
     setOnboardingDate(detail.customer_onboarding_date ?? "");
     setKarnexOnboardingDate(detail.karnex_onboarding_date ?? "");
     setTotalExp(expDefault(detail));
@@ -1870,6 +1869,9 @@ function OverviewTab({
       if (canEditOffers) {
         // Send null rather than "" so clearing a reference actually clears it.
         body.offer_letter_reference = offerRef.trim() || null;
+      }
+      if (canEditOnboarding) {
+        body.employee_ref = empRef.trim() || null;
       }
       if (canEditOnboarding) {
         body.customer_onboarding_date = onboardingDate || null;
@@ -1965,6 +1967,17 @@ function OverviewTab({
         </dl>
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Emp ID">
+            <input
+              className={inputCls} value={empRef} disabled={!canEditOnboarding}
+              placeholder="e.g. KRX-0042"
+              onChange={(e) => setEmpRef(e.target.value)}
+            />
+            <p className="mt-1 text-[11px] text-muted">
+              Becomes the Employees record's ID at Joined. For an existing employee (e.g. an internal trainee
+              placed with a customer) type their current Emp ID — that record is updated instead of a new one.
+            </p>
+          </Field>
           <Field label="Offer Letter Reference">
             <input
               className={inputCls} value={offerRef} disabled={!canEditOffers}
@@ -2819,276 +2832,6 @@ function SkillsTab({
   );
 }
 
-/* ---------- Offers tab ---------- */
-
-function OffersTab({
-  detail,
-  onReload,
-  showToast,
-}: {
-  detail: ProfileDetail;
-  onReload: () => void;
-  showToast: (msg: string, kind?: "ok" | "err") => void;
-}) {
-  const canOffer = useHasRole("Sales", "Sales_Head", "HR");
-  const [showCreate, setShowCreate] = useState(false);
-  const [busyOfferId, setBusyOfferId] = useState<number | null>(null);
-  const [letterBusy, setLetterBusy] = useState<string | null>(null);
-  const [letterFor, setLetterFor] = useState<number | null>(null);
-
-  /* Formatted offer letter (4 Sep 2026, user request): generated server-side
-     from the profile + offer + candidate + org settings, as PDF or Word so HR
-     can edit before sending. Same blob-download idiom as the Tax Invoice. */
-  const downloadLetter = async (offer: Offer, fmt: "pdf" | "docx") => {
-    const key = `${offer.id}:${fmt}`;
-    setLetterBusy(key);
-    try {
-      const res = await authFetch(`/api/candidate-profiles/${detail.id}/offer/${offer.id}/letter.${fmt}`);
-      if (!res.ok) throw new Error(`Offer letter failed (${res.status})`);
-      const blob = await res.blob();
-      const cd = res.headers.get("Content-Disposition") || "";
-      const m = /filename="?([^"]+)"?/i.exec(cd);
-      const href = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = href;
-      a.download = m?.[1] || `Offer_Letter.${fmt}`;
-      a.click();
-      URL.revokeObjectURL(href);
-      showToast(`Offer letter downloaded (${fmt.toUpperCase()})`);
-    } catch (e: any) {
-      showToast(e?.message || "Failed to generate the offer letter", "err");
-    } finally {
-      setLetterBusy(null);
-    }
-  };
-
-  const offers = detail.offers || [];
-
-  const updateStatus = async (offer: Offer, status: string) => {
-    if (!status || status === offer.status) return;
-    setBusyOfferId(offer.id);
-    try {
-      await crmPut(`/api/candidate-profiles/${detail.id}/offer/${offer.id}`, { status });
-      showToast(`Offer #${offer.id} marked ${status}`);
-      onReload();
-    } catch (e: any) {
-      showToast(e?.message || "Failed to update offer", "err");
-    } finally {
-      setBusyOfferId(null);
-    }
-  };
-
-  return (
-    <div className={cardCls}>
-      <div className="flex flex-wrap items-center justify-between gap-2 fx-hairline-b px-4 py-3">
-        <h2 className="text-base font-bold text-primary">Offer History</h2>
-        {canOffer && (
-          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> New Offer
-          </button>
-        )}
-      </div>
-      {/* Joining IS accepting (2 Sep 2026, user request): HR used to mark the
-          candidate Joined and then hand-edit this dropdown, and the offer sat
-          on "Pending" whenever the second edit was forgotten. The dropdown
-          stays for corrections. */}
-      {canOffer && (
-        <p className="px-4 pt-3 text-xs text-muted">
-          Marking the candidate <b>Joined</b> accepts their pending offer automatically —
-          you only need this dropdown to record a rejection, an expiry, or a correction.
-        </p>
-      )}
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-max text-sm lg:min-w-0">
-          <thead className="sticky top-0 z-10 bg-surface-1">
-            <tr className="border-b border-subtle text-left">
-              <th className={thCls}>Offer date</th>
-              <th className={`${thCls} text-right`}>CTC</th>
-              <th className={thCls}>Joining</th>
-              <th className={thCls}>Expiry</th>
-              <th className={thCls}>Status</th>
-              <th className={thCls}>Offer letter</th>
-              {canOffer && <th className={thCls}>Generated letter</th>}
-              {canOffer && <th className={thCls}>Update status</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {offers.length === 0 ? (
-              <tr>
-                <td colSpan={8}>
-                  <EmptyState
-                    message="No offers yet"
-                    action={canOffer ? (
-                      <button type="button" className={btnPrimary} onClick={() => setShowCreate(true)}>
-                        <Plus size={15} /> New Offer
-                      </button>
-                    ) : undefined}
-                  />
-                </td>
-              </tr>
-            ) : (
-              offers.map((o) => (
-                <tr key={o.id} className="border-b border-subtle">
-                  <td className={tdCls}>{fmtDate(o.offer_date)}</td>
-                  <td className={`${tdCls} text-right font-semibold tabular-nums text-primary`}>{fmtLac(o.ctc)}</td>
-                  <td className={tdCls}>{fmtDate(o.joining_date)}</td>
-                  <td className={tdCls}>{fmtDate(o.expiry_date)}</td>
-                  <td className={tdCls}><StatusBadge status={o.status} /></td>
-                  <td className={tdCls}><FileLink url={o.offer_letter_url} label="Offer letter" /></td>
-                  {canOffer && (
-                    <td className={`${tdCls} whitespace-nowrap`}>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
-                        onClick={() => setLetterFor(o.id)}
-                        title="View and edit the offer letter"
-                      >
-                        <FileText size={14} /> View / Edit
-                      </button>
-                      <span className="mx-1.5 text-muted">·</span>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 hover:underline disabled:opacity-50 dark:text-sky-400"
-                        disabled={letterBusy !== null}
-                        onClick={() => downloadLetter(o, "pdf")}
-                        title="Download the formatted offer letter as PDF"
-                      >
-                        <Download size={14} /> {letterBusy === `${o.id}:pdf` ? "PDF…" : "PDF"}
-                      </button>
-                      <span className="mx-1.5 text-muted">·</span>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 text-sm font-semibold text-sky-600 hover:underline disabled:opacity-50 dark:text-sky-400"
-                        disabled={letterBusy !== null}
-                        onClick={() => downloadLetter(o, "docx")}
-                        title="Download the formatted offer letter as Word (editable)"
-                      >
-                        <Download size={14} /> {letterBusy === `${o.id}:docx` ? "Word…" : "Word"}
-                      </button>
-                    </td>
-                  )}
-                  {canOffer && (
-                    <td className={tdCls}>
-                      <select
-                        className={`${inputCls} !w-32`}
-                        value={o.status}
-                        disabled={busyOfferId === o.id}
-                        onChange={(e) => updateStatus(o, e.target.value)}
-                        aria-label={`Update status of offer ${o.id}`}
-                      >
-                        {OFFER_STATUSES.map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </td>
-                  )}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-      {letterFor !== null && (
-        <OfferLetterEditor
-          profileId={detail.id}
-          offerId={letterFor}
-          onClose={() => setLetterFor(null)}
-          showToast={showToast}
-        />
-      )}
-      {showCreate && (
-        <NewOfferModal
-          profileId={detail.id}
-          onClose={() => setShowCreate(false)}
-          onCreated={() => {
-            setShowCreate(false);
-            showToast("Offer created");
-            onReload();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function NewOfferModal({
-  profileId,
-  onClose,
-  onCreated,
-}: {
-  profileId: number;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [offerDate, setOfferDate] = useState("");
-  const [ctc, setCtc] = useState("");
-  const [joiningDate, setJoiningDate] = useState("");
-  const [expiryDate, setExpiryDate] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = async () => {
-    setError("");
-    if (!offerDate || numOrNull(ctc) === null) {
-      setError("Offer date and CTC are required");
-      return;
-    }
-    setBusy(true);
-    try {
-      await crmPost(`/api/candidate-profiles/${profileId}/offer`, {
-        offer_date: offerDate,
-        ctc: numOrNull(ctc),
-        joining_date: joiningDate || null,
-        expiry_date: expiryDate || null,
-      });
-      onCreated();
-    } catch (e: any) {
-      setError(e?.message || "Failed to create offer");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={<span className="sr-only">New Offer</span>}
-      onClose={onClose}
-      fullScreen
-      scopeClassName="crm-wizard wiz-noise"
-      bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
-    >
-      <WizFormShell
-        title="New Offer"
-        subtitle="Record the offered CTC and key dates for this candidate."
-        icon={<FileText size={20} aria-hidden />}
-      >
-        <div className="space-y-5">
-          <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
-            <WizardField label="Offer date" required icon="calendar" filled={!!offerDate}>
-              <input type="date" className={inputCls} value={offerDate} onChange={(e) => setOfferDate(e.target.value)} />
-            </WizardField>
-            <WizardField label="CTC" required icon="hash" filled={ctc !== ""}>
-              <input type="number" min={0} className={inputCls} value={ctc} onChange={(e) => setCtc(e.target.value)} />
-            </WizardField>
-            <WizardField label="Joining date" icon="calendar" filled={!!joiningDate}>
-              <input type="date" className={inputCls} value={joiningDate} onChange={(e) => setJoiningDate(e.target.value)} />
-            </WizardField>
-            <WizardField label="Expiry date" icon="calendar" filled={!!expiryDate}>
-              <input type="date" className={inputCls} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
-            </WizardField>
-          </div>
-          {error && <ErrorBox error={error} />}
-          <div className={wizFooterRow}>
-            <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-            <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>
-              {busy ? "Creating…" : "Create Offer"}
-            </button>
-          </div>
-        </div>
-      </WizFormShell>
-    </Modal>
-  );
-}
-
 /* ---------- Interviews tab ---------- */
 
 /** Human interview rounds for this application — L1/L2/L3, HR and customer rounds,
@@ -3722,7 +3465,7 @@ export function InterviewRoundModal({
                   {category ? <span className="ml-2 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-secondary">{category}</span> : null}
                 </div>
                 <div className="mt-0.5 text-secondary">
-                  {when ? new Date(when).toLocaleString() : "—"}
+                  {fmtDateTime12(when)}
                   {duration ? ` · ${duration} min` : ""}
                   {(interviewer || employeeId) ? ` · Interviewer: ${interviewer || (opts?.employees || []).find((e) => String(e.id) === employeeId)?.full_name || ""}` : ""}
                   {userRole ? ` · by ${userRole}` : ""}

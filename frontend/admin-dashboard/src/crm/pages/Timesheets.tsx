@@ -4,7 +4,7 @@
  * submit/approve/reject workflow. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, RefreshCw, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
@@ -15,6 +15,8 @@ import { LeaveApplicationsPage } from "./LeaveApplications";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
@@ -24,6 +26,7 @@ import {
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -58,6 +61,10 @@ type Timesheet = {
   month: number;
   year: number;
   status: string;
+  employee_name?: string | null;
+  project_name?: string | null;
+  customer_id?: number | null;
+  customer_name?: string | null;
   rejection_reason: string | null;
   submitted_at: string | null;
   approved_by: number | null;
@@ -89,11 +96,16 @@ type BillingPolicy = {
   leave_billable: boolean;
   holidays_billable: boolean;
   comp_off_billable: boolean;
+  comp_off_covers_lop?: boolean;
   min_hours_full_day: number;
   min_hours_half_day: number;
 };
 
 type TimesheetDetail = Timesheet & {
+  /** Linked invoice (3 Sep 2026, invoice undo) — null until generated. */
+  invoice?: { id: number; invoice_number: string; payment_status: string } | null;
+  can_reject?: boolean;
+  can_generate_invoice?: boolean;
   created_at?: string | null;
   project_title?: string | null;
   customer_id?: number | null;
@@ -157,6 +169,9 @@ type Summary = {
   loss_of_pay_from_half_day?: number | null;
   total_loss_of_pay_days?: number | null;
   comp_off_earned?: number | null;
+  comp_off_earned_gross?: number | null;
+  comp_off_used?: number | null;
+  lop_covered_days?: number | null;
   comp_off_billed?: number | null;
   comp_off_billed_hours?: number | null;
   comp_off_credited?: number | null;
@@ -232,9 +247,20 @@ const LOCATIONS: { value: string; label: string }[] = [
 ];
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
-const billableDayFromHours = (hours: number) => (hours > 0 ? round2(hours / 8) : 0);
+/** Day figure from hours — the SERVER rule (`_days_from_hours`): a full day
+ *  at or above the policy's full-day hours, half a day at or above the
+ *  half-day hours, else 0. Used to be hours ÷ 8, which showed 1.19 days for a
+ *  9.5-hour customer (11 Sep 2026, user report) while the invoice said 1.0. */
+const billableDayFromHours = (hours: number, policy?: Pick<BillingPolicy, "min_hours_full_day" | "min_hours_half_day"> | null) => {
+  if (!(hours > 0)) return 0;
+  const full = Number(policy?.min_hours_full_day || 0) || 8;
+  const half = Number(policy?.min_hours_half_day || 0) || full / 2;
+  if (hours >= full) return 1;
+  if (hours >= half) return 0.5;
+  return 0;
+};
 
-/** Client-side mirror of server compute_billables (invoice days use thresholds; display uses hours/8). */
+/** Client-side mirror of server compute_billables (thresholds for both hours and days). */
 function computeBillables(
   row: Pick<EntryRow, "day_type" | "is_working" | "hours_worked" | "attendance_status" | "leave_period" | "leave_type">,
   policy: BillingPolicy,
@@ -249,24 +275,22 @@ function computeBillables(
   const working = row.day_type === "Working" && row.is_working;
 
   if (!working && row.day_type !== "Working") {
+    // 11 Sep 2026 (mirror server): Holidays/Week Off Billable = the DAY counts
+    // in the billed month; hours WORKED on it are billed only when Comp Off
+    // Billable is on — otherwise the employee earns comp-off leave.
     if (att === "Holiday") {
-      // DECISION: holidays_billable > comp_off_billable > credit (mirror server).
-      if (hours > 0) {
-        if (!(policy.holidays_billable || policy.comp_off_billable)) {
-          return { billable_hours: 0, billable_day: 0 };
-        }
-        return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+      if (hours > 0 && policy.comp_off_billable) {
+        return { billable_hours: hours, billable_day: billableDayFromHours(hours, policy) };
       }
       return policy.holidays_billable
         ? {
             billable_hours: policy.min_hours_full_day,
-            billable_day: billableDayFromHours(policy.min_hours_full_day),
+            billable_day: 1,
           }
         : { billable_hours: 0, billable_day: 0 };
     }
-    // Week Off: week_off_billable > comp_off_billable > credit.
-    if (hours > 0 && (policy.week_off_billable || policy.comp_off_billable)) {
-      return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+    if (hours > 0 && policy.comp_off_billable) {
+      return { billable_hours: hours, billable_day: billableDayFromHours(hours, policy) };
     }
     // Pure week-off (0 hours): Week Off Billable bills the day itself, same
     // as Holidays Billable does for an unworked holiday (mirror server) —
@@ -274,19 +298,33 @@ function computeBillables(
     if (policy.week_off_billable) {
       return {
         billable_hours: policy.min_hours_full_day,
-        billable_day: billableDayFromHours(policy.min_hours_full_day),
+        billable_day: 1,
       };
     }
     return { billable_hours: 0, billable_day: 0 };
   }
   if (att === "Present") {
-    return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+    return { billable_hours: hours, billable_day: billableDayFromHours(hours, policy) };
   }
   if (att === "Half_Day") {
-    return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+    return { billable_hours: hours, billable_day: billableDayFromHours(hours, policy) };
   }
   if (att === "Leave") {
     const typeName = (row.leave_type || "").trim();
+    // Half-day leave on a WORKED day (server mirror, 11 Sep 2026): the worked
+    // half bills on its own; the leave half follows the leave rules.
+    if ((lp === "Half_AM" || lp === "Half_PM") && hours > 0) {
+      const workedH = Math.min(hours, policy.min_hours_half_day);
+      const workedD = Math.min(billableDayFromHours(hours, policy), 0.5);
+      const perTypeH = leaveBillableByType && typeName ? leaveBillableByType[typeName] : undefined;
+      const leaveBillable = !/loss.*pay/i.test(typeName)
+        && (perTypeH !== undefined ? perTypeH : policy.leave_billable)
+        && !(paidLeaveDays != null && paidLeaveDays <= 0);
+      return {
+        billable_hours: workedH + (leaveBillable ? policy.min_hours_half_day : 0),
+        billable_day: workedD + (leaveBillable ? 0.5 : 0),
+      };
+    }
     if (/loss.*pay/i.test(typeName)) {
       return { billable_hours: 0, billable_day: 0 };
     }
@@ -302,23 +340,20 @@ function computeBillables(
       if (paidLeaveDays <= 0) return { billable_hours: 0, billable_day: 0 };
       const half = paidLeaveDays <= 0.5;
       const bh = half ? policy.min_hours_half_day : policy.min_hours_full_day;
-      return { billable_hours: bh, billable_day: billableDayFromHours(bh) };
+      return { billable_hours: bh, billable_day: billableDayFromHours(bh, policy) };
     }
     const half = lp === "Half_AM" || lp === "Half_PM";
     const bh = half ? policy.min_hours_half_day : policy.min_hours_full_day;
-    return { billable_hours: bh, billable_day: billableDayFromHours(bh) };
+    return { billable_hours: bh, billable_day: billableDayFromHours(bh, policy) };
   }
   if (att === "Holiday") {
-    if (hours > 0) {
-      if (!(policy.holidays_billable || policy.comp_off_billable)) {
-        return { billable_hours: 0, billable_day: 0 };
-      }
-      return { billable_hours: hours, billable_day: billableDayFromHours(hours) };
+    if (hours > 0 && policy.comp_off_billable) {
+      return { billable_hours: hours, billable_day: billableDayFromHours(hours, policy) };
     }
     return policy.holidays_billable
       ? {
           billable_hours: policy.min_hours_full_day,
-          billable_day: billableDayFromHours(policy.min_hours_full_day),
+          billable_day: 1,
         }
       : { billable_hours: 0, billable_day: 0 };
   }
@@ -337,9 +372,8 @@ function liveCompOffDayFraction(
     const isHoliday = e.day_type === "Holiday" || e.attendance_status === "Holiday";
     const isWeekOff = e.day_type === "Week_Off" || e.attendance_status === "Week_Off";
     if (!isHoliday && !isWeekOff) return s;
-    const billed = isHoliday
-      ? !!(policy.holidays_billable || policy.comp_off_billable)
-      : !!(policy.week_off_billable || policy.comp_off_billable);
+    // 11 Sep 2026: only Comp Off Billable bills worked weekend/holiday hours.
+    const billed = !!policy.comp_off_billable;
     if (mode === "billed" ? !billed : billed) return s;
     if (hours >= policy.min_hours_full_day) return s + 1;
     if (hours >= policy.min_hours_half_day) return s + 0.5;
@@ -538,22 +572,29 @@ export function TimesheetsListPage() {
   } | null>(null);
   const [toast, showToast] = useToast();
 
+  // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch every page
+  // of the current filters so each customer's section is complete.
+  const [view, setView] = useGroupView();
   const load = useCallback(async () => {
     if (tab !== "all") return;
     setLoading(true);
     setError("");
     try {
-      const res = await crmGet<Timesheet[]>(`/api/timesheets${qs({
-        project_id: projectId, employee_id: employeeId, month, year, status, page, limit: 20,
-      })}`);
-      setRows(res.data || []);
-      setMeta(res.meta);
+      const params = { project_id: projectId, employee_id: employeeId, month, year, status };
+      if (view === "customer") {
+        setRows(await fetchAllMaster<Timesheet>("/api/timesheets", params));
+        setMeta(undefined);
+      } else {
+        const res = await crmGet<Timesheet[]>(`/api/timesheets${qs({ ...params, page, limit: 20 })}`);
+        setRows(res.data || []);
+        setMeta(res.meta);
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load timesheets");
     } finally {
       setLoading(false);
     }
-  }, [projectId, employeeId, month, year, status, page, tab]);
+  }, [projectId, employeeId, month, year, status, page, tab, view]);
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
@@ -672,6 +713,61 @@ export function TimesheetsListPage() {
           {isStaff && <TimesheetDuePanel showToast={showToast} />}
           {error ? (
             <ErrorBox error={error} onRetry={load} />
+          ) : view === "customer" ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <select className={`${inputCls} !w-44`} value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Project">
+                  <option value="">All projects</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select className={`${inputCls} !w-44`} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} aria-label="Employee">
+                  <option value="">All employees</option>
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.full_name || `#${e.id}`}</option>)}
+                </select>
+                <select className={`${inputCls} !w-36`} value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month">
+                  <option value="">All months</option>
+                  {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+                <input type="number" placeholder="Year" className={`${inputCls} !w-28`} value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year" />
+                <select className={`${inputCls} !w-36`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+                  <option value="">All statuses</option>
+                  {TS_STATUSES.map((s) => <option key={s} value={s}>{tsStatusLabel(s)}</option>)}
+                </select>
+                <ViewToggle view={view} onChange={setView} />
+                <span className="ml-auto text-xs text-muted">{rows.length} timesheet{rows.length === 1 ? "" : "s"}</span>
+              </div>
+              <CustomerGroupedList<Timesheet>
+                rows={rows}
+                loading={loading}
+                columns={columns}
+                customerId={(r) => r.customer_id}
+                customerName={(r) => r.customer_name}
+                noun="timesheet"
+                summary={(rs) => (
+                  <>
+                    <span>Pending approval <span className="font-semibold text-primary tnum">{rs.filter((r) => r.status === "Submitted").length}</span></span>
+                    <span>Approved <span className="font-semibold text-primary tnum">{rs.filter((r) => r.status === "Approved").length}</span></span>
+                    <span>Draft <span className="font-semibold text-primary tnum">{rs.filter((r) => r.status === "Draft").length}</span></span>
+                  </>
+                )}
+                onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)}
+                rowKey={(r) => r.id}
+                empty={<TeachingEmpty page="timesheets" />}
+                rowActions={canManage ? (r) => (
+                  <RowActions
+                    entity="timesheet"
+                    itemLabel={`${projectName(r.project_id)} · ${MONTHS[(r.month || 1) - 1]} ${r.year}`}
+                    onView={() => crmNavigate(`timesheets/${r.id}`)}
+                    onEdit={() => crmNavigate(`timesheets/${r.id}`)}
+                    deleteUrl={`/api/timesheets/${r.id}`}
+                    onDeleted={() => afterListDelete(r.id, setRows, load)}
+                    notify={showToast}
+                    canEdit
+                    canDelete
+                  colored />
+                ) : undefined}
+              />
+            </div>
           ) : (
             <DataTable<Timesheet>
               columns={columns}
@@ -704,6 +800,7 @@ export function TimesheetsListPage() {
                     <option value="">All statuses</option>
                     {TS_STATUSES.map((s) => <option key={s} value={s}>{tsStatusLabel(s)}</option>)}
                   </select>
+                  <ViewToggle view={view} onChange={setView} />
                 </>
               }
               rowActions={canManage ? (r) => (
@@ -1602,14 +1699,17 @@ export function TimesheetDetailPage() {
 
   const liveSummary = useMemo(() => {
     const hours = entries.reduce((s, e) => s + Number(e.hours_worked || 0), 0);
+    let billableDaysSum = 0;
     const billableHours = entries.reduce((s, e, i) => {
       const live = computeBillables(
         e, policy, ts?.max_billable_hours_day, ts?.leave_billable_by_type,
         e.attendance_status === "Leave" ? leaveSplit.paidDays[i] : null,
       );
+      billableDaysSum += live.billable_day || 0;
       return s + (live.billable_hours || 0);
     }, 0);
-    const actualBillableDay = billableDayFromHours(billableHours);
+    // Sum of per-day figures (server rule), not hours ÷ 8.
+    const actualBillableDay = round2(billableDaysSum);
     // Same paid/LOP split the grid uses (mirrors server classify).
     const totalLeaveDays = round2(entries.reduce((s, e) => {
       if (e.attendance_status !== "Leave") return s;
@@ -1640,7 +1740,8 @@ export function TimesheetDetailPage() {
     // LOP shows/bills, and the covering fraction earns NO comp-off credit.
     const rawLop = round2(leaveSplit.totalLop + lopFromAbsent + lopFromHalf);
     const rawEarned = liveCompOffDayFraction(entries, policy, "earned");
-    const lopCover = Math.min(rawLop, rawEarned);
+    // Automatic cover is a customer opt-in (0102, default OFF).
+    const lopCover = policy.comp_off_covers_lop ? Math.min(rawLop, rawEarned) : 0;
     return {
       hours,
       billableHours,
@@ -1650,9 +1751,31 @@ export function TimesheetDetailPage() {
       lopCoveredDays: round2(lopCover),
       totalLeaveBillableDays,
       compOffEarned: round2(rawEarned - lopCover),
+      compOffEarnedGross: round2(rawEarned),
+      compOffUsed: round2(lopCover + entries.reduce((n, e) => (
+        e.attendance_status === "Leave" && (e.leave_type || "").trim().toLowerCase() === "comp-off"
+          ? n + ((e.leave_period === "Half_AM" || e.leave_period === "Half_PM") ? 0.5 : 1) : n), 0)),
       compOffBilled: liveCompOffDayFraction(entries, policy, "billed"),
     };
   }, [entries, leaveSplit, policy, ts?.max_billable_hours_day, ts?.leave_billable_by_type]);
+
+  /** Which LOP rows the month's weekend work paid for (Harman rule) — the
+      chip says "covered by Comp-Off" instead of a bare LOP the reader thinks
+      cost the employee money. Budget is spent in date order. */
+  const lopCoverByRow = useMemo(() => {
+    let budget = liveSummary.lopCoveredDays;
+    const out: number[] = [];
+    entries.forEach((e, i) => {
+      let lop = 0;
+      if (e.day_type === "Working" && e.attendance_status === "Absent") lop = 1;
+      else if (e.day_type === "Working" && e.attendance_status === "Half_Day") lop = 0.5;
+      else if (e.attendance_status === "Leave") lop = leaveSplit.lopDays[i] || 0;
+      const covered = Math.min(lop, budget);
+      budget = round2(budget - covered);
+      out.push(round2(covered));
+    });
+    return out;
+  }, [entries, leaveSplit, liveSummary.lopCoveredDays]);
 
   const applyLeaveDialog = useMemo(() => {
     if (applyLeaveRow == null) return null;
@@ -1773,7 +1896,7 @@ export function TimesheetDetailPage() {
             next.hours_worked = String(Number(cap));
           }
         }
-        next = applyHoursAttendanceRule(next);
+        next = applyHoursAttendanceRule(next, { full: policy.min_hours_full_day, half: policy.min_hours_half_day });
         return next;
       });
       // Recompute billables with LOP-aware paid portion across the whole sheet.
@@ -1934,6 +2057,39 @@ export function TimesheetDetailPage() {
           {editable && (
             /* Weekend/holiday repair (27 Aug 2026): sheets generated before the
                policy existed show Sat/Sun as working → Absent + LOP. */
+            <>
+            <button
+              type="button"
+              className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
+              title={`Set every worked day to the policy's full day (${policy.min_hours_full_day} h); leave, absent (0 h), week-off and holiday rows are left alone`}
+              onClick={() => {
+                const full = Number(policy.min_hours_full_day || 0);
+                if (!(full > 0)) return;
+                setEntries((prev) => {
+                  const nextRows = prev.map((row) => {
+                    if (row.day_type !== "Working" || !row.is_working) return row;
+                    if (row.attendance_status === "Leave" || row.attendance_status === "Absent") return row;
+                    const hw = Number(row.hours_worked || 0);
+                    if (!(hw > 0) || hw === full) return row;
+                    return applyHoursAttendanceRule({ ...row, hours_worked: String(full) },
+                      { full: policy.min_hours_full_day, half: policy.min_hours_half_day });
+                  });
+                  const split = classifyLeavePaidVsLop(nextRows, leaveBalances);
+                  return nextRows.map((row, i) => {
+                    const live = computeBillables(
+                      row, policy, ts.max_billable_hours_day, ts.leave_billable_by_type,
+                      row.attendance_status === "Leave" ? split.paidDays[i] : null,
+                    );
+                    return { ...row, billable_hours: live.billable_hours, billable_day: live.billable_day };
+                  });
+                });
+                editSeqRef.current += 1;
+                setAutoState("idle");
+                setDirty(true);
+              }}
+            >
+              Fill worked days with {policy.min_hours_full_day} h
+            </button>
             <button
               type="button"
               className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
@@ -1949,6 +2105,7 @@ export function TimesheetDetailPage() {
             >
               Fix week-offs / holidays
             </button>
+            </>
           )}
           {editable && (
             /* Save/Submit live at the FOOT of the page, after every day of the
@@ -2030,9 +2187,7 @@ export function TimesheetDetailPage() {
                 && (e.day_type === "Working" || isWeekOff);
               const zebra = i % 2 === 1 ? "bg-black/[0.02] dark:bg-white/[0.02]" : "";
               const weekendHl = weekendWorked
-                ? ((isCalendarHoliday
-                    ? (policy.holidays_billable || policy.comp_off_billable)
-                    : (policy.week_off_billable || policy.comp_off_billable))
+                ? (policy.comp_off_billable
                   ? "bg-violet-500/[0.08] ring-1 ring-inset ring-violet-500/20"
                   : "bg-teal-500/[0.08] ring-1 ring-inset ring-teal-500/20")
                 : "";
@@ -2083,9 +2238,9 @@ export function TimesheetDetailPage() {
                         }}
                       />
                       {weekendWorked && (() => {
-                        const billed = isCalendarHoliday
-                          ? !!(policy.holidays_billable || policy.comp_off_billable)
-                          : !!(policy.week_off_billable || policy.comp_off_billable);
+                        // 11 Sep 2026: worked weekend/holiday hours are billed
+                        // only when Comp Off Billable is on; else comp-off credit.
+                        const billed = !!policy.comp_off_billable;
                         return (
                         <span
                           className={
@@ -2118,13 +2273,16 @@ export function TimesheetDetailPage() {
                   </td>
                   <td className={cellCls}>
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {editable && e.attendance_status === "Absent" && e.day_type === "Working" ? (
+                      {editable && (e.attendance_status === "Absent" || e.attendance_status === "Half_Day") && e.day_type === "Working" ? (
                         <button
                           type="button"
                           className={`${btnPrimary} !bg-brand-600/90 !px-2.5 !py-1 text-xs`}
+                          title={e.attendance_status === "Half_Day"
+                            ? "Cover the unworked half with a half-day leave (Comp-Off, Sick, Casual…) instead of losing pay"
+                            : "Cover this day with leave instead of losing pay"}
                           onClick={() => setApplyLeaveRow(i)}
                         >
-                          Apply leave
+                          {e.attendance_status === "Half_Day" ? "Apply half-day leave" : "Apply leave"}
                         </button>
                       ) : isLeave && e.leave_type ? (
                         <LeaveAppliedChip
@@ -2134,21 +2292,24 @@ export function TimesheetDetailPage() {
                           onChange={editable ? () => setApplyLeaveRow(i) : undefined}
                         />
                       ) : null}
-                      {e.day_type === "Working" && e.attendance_status === "Absent" && (
-                        <span
-                          className="inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--wiz-muted)] ring-1 ring-inset ring-[color:var(--wiz-border-strong)]"
-                          title="Unpaid absence — counts toward Total Loss of Pay Days"
-                        >
-                          LOP 1.0
-                        </span>
-                      )}
-                      {e.day_type === "Working" && e.attendance_status === "Half_Day" && (
-                        <span
-                          className="inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--wiz-muted)] ring-1 ring-inset ring-[color:var(--wiz-border-strong)]"
-                          title="Unworked half — counts toward Total Loss of Pay Days"
-                        >
-                          LOP 0.5
-                        </span>
+                      {e.day_type === "Working" && (e.attendance_status === "Absent" || e.attendance_status === "Half_Day") && (
+                        lopCoverByRow[i] > 0 ? (
+                          <span
+                            className="inline-flex items-center rounded-full bg-success-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success ring-1 ring-inset ring-success/30"
+                            title="This unworked time was made up by weekend / holiday work this month — no pay is lost and that comp-off is used here"
+                          >
+                            {e.attendance_status === "Absent" ? "1.0" : "0.5"} covered by Comp-Off
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center rounded-full bg-[color:var(--wiz-border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--wiz-muted)] ring-1 ring-inset ring-[color:var(--wiz-border-strong)]"
+                            title={e.attendance_status === "Absent"
+                              ? "Unpaid absence — counts toward Total Loss of Pay Days"
+                              : "Unworked half — counts toward Total Loss of Pay Days"}
+                          >
+                            LOP {e.attendance_status === "Absent" ? "1.0" : "0.5"}
+                          </span>
+                        )
                       )}
                     </div>
                   </td>
@@ -2396,11 +2557,17 @@ export function TimesheetDetailPage() {
             <Stat label="Comp-Off Billed" value={num(dirty ? liveSummary.compOffBilled : summary?.comp_off_billed)} />
           ) : (
             <>
-              <Stat label="Comp-Off Earned" value={num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)}
+              <Stat label="Comp-Off Earned"
+                value={num(dirty ? liveSummary.compOffEarnedGross : (summary?.comp_off_earned_gross ?? summary?.comp_off_earned))}
                 hint={Number(summary?.comp_off_from_cap || 0) > 0
                   ? `incl. ${num(summary?.comp_off_from_cap)} for hours above the customer cap — kept in the leave balance`
-                  : undefined} />
-              <Stat label="Comp-Off Used" value={num(summary?.comp_off_days)} />
+                  : "Weekend / holiday work this month"} />
+              <Stat label="Comp-Off Used"
+                value={num(dirty ? liveSummary.compOffUsed : (summary?.comp_off_used ?? summary?.comp_off_days))}
+                hint={(dirty ? liveSummary.lopCoveredDays : Number(summary?.lop_covered_days || 0)) > 0
+                  ? `${num(dirty ? liveSummary.lopCoveredDays : summary?.lop_covered_days)} covered this month's LOP (no pay lost); ` +
+                    `${num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)} credited to the leave balance`
+                  : `${num(dirty ? liveSummary.compOffEarned : summary?.comp_off_earned)} credited to the leave balance`} />
             </>
           )}
         </div>
@@ -2418,11 +2585,11 @@ export function TimesheetDetailPage() {
             label="Approved Time"
             value={
               summary?.approved_time?.approved_at
-                ? `${new Date(summary.approved_time.approved_at).toLocaleString()}${
+                ? `${fmtDateTime12(summary.approved_time.approved_at)}${
                     summary.approved_time.approver_name ? ` by ${summary.approved_time.approver_name}` : ""
                   }`
                 : ts.approved_at
-                  ? new Date(ts.approved_at).toLocaleString()
+                  ? fmtDateTime12(ts.approved_at)
                   : "—"
             }
             wrap
@@ -2607,6 +2774,10 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   const [calc, setCalc] = useState<InvoicePreview | null>(null);
   const [qtyStr, setQtyStr] = useState("");
   const [rateStr, setRateStr] = useState("");
+  // Invoice number (11 Sep 2026): prefilled with the next INV-YYYY-NNN, editable
+  // so a customer-dictated number can be used from the start.
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [suggestedNo, setSuggestedNo] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2618,6 +2789,12 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
       // this month) so Finance just confirms; else the project's funding PO.
       const pre = res.data?.suggested_po_id ?? res.data?.selected_po_id;
       if (pre != null) setPoId(String(pre));
+      crmGet<{ invoice_number: string }>("/api/invoices/next-number")
+        .then((r) => {
+          const n = r.data?.invoice_number || "";
+          setSuggestedNo(n);
+          setInvoiceNo((cur) => cur || n);
+        }).catch(() => undefined);
       crmGet<InvoicePreview>(`/api/timesheets/${timesheetId}/invoice-preview`)
         .then((r) => {
           setCalc(r.data);
@@ -2686,9 +2863,14 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
       if (li && Number.isFinite(rateN) && rateN > 0 && rateN !== Number(li.rate_per_unit)) {
         overrides.rate_per_unit = rateN;
       }
+      const typedNo = invoiceNo.trim();
       const res = await crmPost<{ invoice: any; timesheet_id: number }>(
         `/api/timesheets/${timesheetId}/generate-invoice`,
-        { ...(selected ? { po_id: selected.id } : {}), ...overrides },
+        {
+          ...(selected ? { po_id: selected.id } : {}),
+          ...(typedNo ? { invoice_number: typedNo } : {}),
+          ...overrides,
+        },
       );
       showToast(res.message || "Invoice generated");
       onGenerated();
@@ -2748,6 +2930,20 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
         <ErrorBox error={error} onRetry={load} />
       ) : (
         <div className="space-y-4">
+          {/* Invoice number FIRST (11 Sep 2026, user request) — the thing most
+              likely to need a change sits at the top, not below the PO card. */}
+          <div className="rounded-card border border-brand-200 bg-brand-50/60 px-4 py-3 dark:border-brand-800 dark:bg-brand-900/20">
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-muted">Invoice number</span>
+              <input className={`${inputCls} !w-72 text-sm font-semibold`} value={invoiceNo}
+                onChange={(e) => setInvoiceNo(e.target.value)} placeholder={suggestedNo || "INV-2026-001"}
+                maxLength={64} autoFocus />
+            </label>
+            <p className="mt-1 text-[11px] text-muted">
+              {suggestedNo ? `Next in sequence: ${suggestedNo}. ` : ""}
+              Keep it, or type the number the customer expects — it must be unique, and it can be changed later via a change request.
+            </p>
+          </div>
           {data?.rate && (
             <div className="rounded-card border border-subtle bg-surface-2/60 px-4 py-3">
               <div className="flex items-center justify-between gap-2">
@@ -3033,6 +3229,7 @@ function InvoiceDetailsSection({
   const [preview, setPreview] = useState<InvoicePreview | null>(null);
   const [selectingPo, setSelectingPo] = useState(false);
 
+  const [recalcBusy, setRecalcBusy] = useState(false);
   const loadPreview = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -3157,7 +3354,7 @@ function InvoiceDetailsSection({
                   </div>
                   <div className="mt-0.5 text-secondary">
                     {Number(li.working_days_in_period || 0) > 0 && (
-                      <>This period: {num(li.working_days_in_period)} working days{" · "}</>
+                      <>This period: {num(li.working_days_in_period)} billed days{" · "}</>
                     )}
                     {li.per_day_charge != null && <>{inr(li.per_day_charge)} / day</>}
                     {li.per_day_charge != null && li.per_hour_charge != null && " · "}
@@ -3316,7 +3513,30 @@ function InvoiceDetailsSection({
                     </table>
                   </div>
                   {canInvoice && (
-                    <div className="mt-4 flex items-center justify-end gap-3">
+                    <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+                      {/* Approved but not invoiced: re-freeze against the CURRENT
+                          policy after a branch-policy fix (11 Sep 2026). */}
+                      {preview.can_generate && (
+                        <button
+                          className={btnSecondary}
+                          disabled={recalcBusy}
+                          title="Recompute the frozen figures against the current Leave & Holiday Billing Policy"
+                          onClick={async () => {
+                            setRecalcBusy(true);
+                            try {
+                              const r = await crmPost<any>(`/api/timesheets/${timesheetId}/recalculate`, {});
+                              showToast(r.message || "Recalculated");
+                              await loadPreview();
+                            } catch (e: any) {
+                              showToast(e?.message || "Recalculate failed", "err");
+                            } finally {
+                              setRecalcBusy(false);
+                            }
+                          }}
+                        >
+                          <RefreshCw size={15} /> {recalcBusy ? "Recalculating…" : "Recalculate with current policy"}
+                        </button>
+                      )}
                       <span className="text-xs text-muted">
                         Opens a review popup: verify or edit Qty and Rate, pick the funding PO,
                         then confirm — nothing is created until you do.
@@ -3445,7 +3665,7 @@ function ActivityHistorySection({ timesheetId }: { timesheetId: number }) {
                         <tr key={a.id} className="border-b border-subtle">
                           <td className={`${cell} text-secondary`}>{a.comment || "—"}</td>
                           <td className={`${cell} whitespace-nowrap text-secondary`}>
-                            {a.timestamp ? new Date(a.timestamp).toLocaleString() : "—"}
+                            {fmtDateTime12(a.timestamp)}
                           </td>
                           <td className={cell}>
                             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-secondary ring-1 ring-inset ring-black/5 dark:ring-white/10">

@@ -164,9 +164,12 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
           <div className="truncate font-semibold text-primary">
             {r.opportunity_opp_id || `Opportunity #${r.opportunity_id}`}
           </div>
-          <div className="truncate text-xs text-muted" title={r.opportunity_title || undefined}>
-            {r.customer_name || r.opportunity_title || "—"}
-          </div>
+          {r.opportunity_title && (
+            <div className="truncate text-xs text-secondary" title={r.opportunity_title}>
+              {r.opportunity_title}
+            </div>
+          )}
+          <div className="truncate text-xs text-muted">{r.customer_name || "—"}</div>
         </div>
       ),
     },

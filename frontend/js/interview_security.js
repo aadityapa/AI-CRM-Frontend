@@ -38,6 +38,11 @@ const INTEGRITY_VIOLATION_TYPES = new Set([
   "visibility_hidden",
   "focus_lost",
   "multiple_faces",
+  // 15 Sep 2026 — logged, not only swallowed (the Integrity tab shows them).
+  "no_face",
+  "clipboard",
+  "context_menu",
+  "devtools",
 ]);
 
 const VIOLATION_LABELS = {
@@ -52,7 +57,15 @@ const VIOLATION_LABELS = {
   visibility_hidden: "Tab hidden",
   focus_lost: "Focus lost",
   multiple_faces: "Extra face",
+  no_face: "No face on camera",
+  clipboard: "Copy / paste",
+  context_menu: "Right-click menu",
+  devtools: "Developer tools",
 };
+
+/* Events that only inform the Integrity tab — they never raise the on-screen
+ * warning count. (The server decides termination from its own strike set.) */
+const SILENT_VIOLATION_TYPES = new Set(["no_face", "context_menu", "key_escape", "key_f11"]);
 
 const WARNING_COPY = {
   default: [
@@ -358,24 +371,32 @@ function mapProctorViolationType(type) {
 
 let lastIntegrityEventTime = 0;
 
-async function reportViolation(type, details = "") {
+/**
+ * @param {string} type      one of INTEGRITY_VIOLATION_TYPES
+ * @param {string} details   human text for the log
+ * @param {{evidence?: Blob}} [extra]  optional JPEG snapshot (camera events)
+ */
+async function reportViolation(type, details = "", extra = {}) {
   if (!INTEGRITY_VIOLATION_TYPES.has(type)) return;
+  const silent = SILENT_VIOLATION_TYPES.has(type);
   const now = Date.now();
-  if (now - lastIntegrityEventTime < BLUR_DEBOUNCE_MS) return;
-  lastIntegrityEventTime = now;
-  violationCount += 1;
-  violationCountsByType[type] = (violationCountsByType[type] || 0) + 1;
-  updateBadge();
+  if (!silent) {
+    if (now - lastIntegrityEventTime < BLUR_DEBOUNCE_MS) return;
+    lastIntegrityEventTime = now;
+    violationCount += 1;
+    violationCountsByType[type] = (violationCountsByType[type] || 0) + 1;
+    updateBadge();
+  }
 
-  const terminate = violationCount >= TERMINATE_AT;
+  const terminate = !silent && violationCount >= TERMINATE_AT;
   if (terminate) {
     showTerminationWarning();
-  } else {
+  } else if (!silent) {
     showWarning(violationCount);
     void restoreFullscreenAfterReturn();
   }
 
-  if (typeof window.__karnexReportProctorViolation === "function") {
+  if (!silent && typeof window.__karnexReportProctorViolation === "function") {
     try {
       window.__karnexReportProctorViolation(mapProctorViolationType(type), details);
     } catch (_) {
@@ -394,8 +415,13 @@ async function reportViolation(type, details = "") {
     fd.append("window_focus", ctx.window_focus ? "true" : "false");
     fd.append("interview_id", ctx.interview_id);
     fd.append("candidate_id", ctx.candidate_id);
+    if (extra && extra.evidence instanceof Blob && extra.evidence.size > 0) {
+      fd.append("evidence", extra.evidence, "evidence.jpg");
+    }
     const res = await apiFetch("/interview/violation", { method: "POST", body: fd });
     const data = await res.json();
+    // The server counts every strike type itself — honour its verdict even
+    // when the local counter (debounced, per-tab) has not reached the limit.
     if (data.auto_terminated || terminate) {
       triggerAutoTermination();
     }
@@ -404,9 +430,9 @@ async function reportViolation(type, details = "") {
   }
 }
 
-export function reportSecurityViolation(type, details = "") {
+export function reportSecurityViolation(type, details = "", extra = {}) {
   if (!securityActive) return;
-  reportViolation(type, details);
+  reportViolation(type, details, extra);
 }
 
 function triggerAutoTermination() {
@@ -484,6 +510,13 @@ function _namedViolationFor(e) {
   if (e.key === "F11") return "key_f11";
   if (e.altKey && e.key === "Tab") return "alt_tab";
   if (e.key === "Meta" || e.key === "OS") return "windows_key";
+  // Developer-tools / view-source attempts (15 Sep 2026): F12, Ctrl+Shift+I/J/C, Ctrl+U.
+  const k = String(e.key || "").toLowerCase();
+  if (e.key === "F12") return "devtools";
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (k === "i" || k === "j" || k === "c")) return "devtools";
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && k === "u") return "devtools";
+  // Clipboard via keyboard (the copy/cut/paste DOM events also log this).
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (k === "c" || k === "v" || k === "x")) return "clipboard";
   return null;
 }
 
@@ -542,12 +575,22 @@ function _noteKeyboardAttempt(e) {
   }
 }
 
-/** Swallow clipboard and context-menu actions for the same reason. */
+/** Swallow clipboard and context-menu actions for the same reason — and log
+ * them (15 Sep 2026), so the Integrity tab shows the attempt. */
+let _lastClipboardLogAt = 0;
 function onBlockedClipboardEvent(e) {
   if (!securityActive) return;
   if (_isEditableTarget(e.target)) return;
   e.preventDefault();
   e.stopPropagation();
+  const now = Date.now();
+  if (now - _lastClipboardLogAt < 3000) return; // one log per burst
+  _lastClipboardLogAt = now;
+  if (e.type === "contextmenu") {
+    void reportViolation("context_menu", "Right-click / context menu attempt");
+  } else {
+    void reportViolation("clipboard", `${e.type} attempt blocked`);
+  }
 }
 
 export function keyboardAttemptCount() {

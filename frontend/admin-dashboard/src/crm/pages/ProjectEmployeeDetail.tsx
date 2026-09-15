@@ -268,6 +268,176 @@ function PoDrawdownBar({ po }: { po?: PoSummary | null }) {
 }
 
 /* ---------------------------------------------------------------- apply leave (PE-scoped) */
+/** Leave ledger grouped by month (15 Sep 2026, user request): the flat list
+ * of every credit and debit since day one was unreadable. One section per
+ * month, newest first, with the month's net credits / debits in the header;
+ * the latest RECENT_MONTHS open, older months collapsed behind "Show older". */
+const RECENT_MONTHS = 2;
+
+function monthKey(iso?: string | null): string {
+  if (!iso) return "unknown";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "unknown" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabel(key: string): string {
+  if (key === "unknown") return "Undated";
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+}
+
+function PeLeaveLedgerByMonth({ rows, columns }: { rows: CreditHistoryRow[]; columns: Column<CreditHistoryRow>[] }) {
+  const groups = React.useMemo(() => {
+    const by = new Map<string, CreditHistoryRow[]>();
+    for (const r of rows) {
+      const k = monthKey(r.created_at);
+      if (!by.has(k)) by.set(k, []);
+      by.get(k)!.push(r);
+    }
+    return [...by.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [rows]);
+  const [showOlder, setShowOlder] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const visible = showOlder ? groups : groups.slice(0, RECENT_MONTHS);
+  const hidden = groups.length - visible.length;
+  const isOpen = (k: string, i: number) => (open[k] ?? i < RECENT_MONTHS);
+
+  return (
+    <div className="space-y-2">
+      {visible.map(([k, list], i) => {
+        const credits = list.reduce((n, r) => n + Math.max(0, Number(r.amount || 0)), 0);
+        const debits = list.reduce((n, r) => n + Math.min(0, Number(r.amount || 0)), 0);
+        const last = list[0];
+        return (
+          <div key={k} className="overflow-hidden rounded-card border border-subtle bg-surface-1">
+            <button
+              type="button"
+              className="flex w-full flex-wrap items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-2"
+              aria-expanded={isOpen(k, i)}
+              onClick={() => setOpen((p) => ({ ...p, [k]: !isOpen(k, i) }))}
+            >
+              <span className="text-xs font-bold text-muted" aria-hidden>{isOpen(k, i) ? "▾" : "▸"}</span>
+              <span className="text-sm font-bold text-primary">{monthLabel(k)}</span>
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-secondary">
+                {list.length} event{list.length === 1 ? "" : "s"}
+              </span>
+              <span className="ml-auto flex gap-4 text-xs tabular-nums">
+                {credits > 0 && <span className="font-semibold text-success">+{daysFmt(credits)}</span>}
+                {debits < 0 && <span className="font-semibold text-danger">{daysFmt(debits)}</span>}
+                {last?.balance_after != null && (
+                  <span className="text-muted">balance {daysFmt(last.balance_after)}</span>
+                )}
+              </span>
+            </button>
+            {isOpen(k, i) && (
+              <div className="border-t border-subtle">
+                <DataTable columns={columns} rows={list} loading={false} emptyMessage="No events" />
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {hidden > 0 && (
+        <button type="button" className={`${btnSecondary} w-full justify-center`} onClick={() => setShowOlder(true)}>
+          Show {hidden} older month{hidden === 1 ? "" : "s"}
+        </button>
+      )}
+      {showOlder && groups.length > RECENT_MONTHS && (
+        <button type="button" className="text-xs font-semibold text-muted hover:text-primary" onClick={() => setShowOlder(false)}>
+          Show recent only
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Previous-year carry-forward entered by hand (15 Sep 2026, user request):
+ * the customer hands over an employee's unused balance from last year; the
+ * Dec-31 job only carries what THIS system saw. The figure is booked as one
+ * Carry_Forward ledger event per (leave type, year) — re-posting the same
+ * year replaces it, so the balance never double-counts. */
+function PeCarryForwardModal({
+  pe, initialRow, onClose, onDone,
+}: {
+  pe: PeDetail; initialRow?: LeaveDetail | null; onClose: () => void; onDone: (m?: string) => void;
+}) {
+  const rows = (pe.leave_details || []).filter((d) => d.leave_type_name !== "Loss of Pay");
+  const [leaveId, setLeaveId] = useState<string>(initialRow ? String(initialRow.id) : (rows[0] ? String(rows[0].id) : ""));
+  const [fromYear, setFromYear] = useState<string>(String(new Date().getFullYear() - 1));
+  const [days, setDays] = useState<string>("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [apiError, setApiError] = useState("");
+  const row = rows.find((r) => String(r.id) === leaveId);
+  const thisYear = new Date().getFullYear();
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = Number(days);
+    if (!leaveId) return setApiError("Pick the leave type");
+    if (!Number.isFinite(n) || n < 0) return setApiError("Enter the days carried forward (0 or more)");
+    const y = Number(fromYear);
+    if (!Number.isFinite(y) || y >= thisYear) return setApiError("The year must be a previous year");
+    setApiError("");
+    setBusy(true);
+    try {
+      const res = await crmPost<any>(`/api/projects/employees/${pe.id}/leave/${leaveId}/carry-forward`, {
+        from_year: y, days: n, note: note.trim() || undefined,
+      });
+      onDone(res.message || "Carry forward saved");
+    } catch (err: any) {
+      setApiError(err?.message || "Could not save the carry forward");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Add previous-year carry forward" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <p className="text-sm text-muted">
+          Leave the customer carried over from a previous year for this mapping. It is added to the
+          balance, shown as <span className="font-semibold text-secondary">Carry fwd</span> in the table and as a
+          Carry_Forward entry in the history. Posting the same year again replaces the earlier figure.
+        </p>
+        <Field label="Leave type" required>
+          <select className={inputCls} value={leaveId} onChange={(e) => setLeaveId(e.target.value)}>
+            {rows.map((r) => (
+              <option key={r.id} value={r.id}>{r.leave_type_name || `Type #${r.leave_type_id}`}</option>
+            ))}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="From year" required>
+            <input className={inputCls} type="number" min={2000} max={thisYear - 1} value={fromYear}
+              onChange={(e) => setFromYear(e.target.value)} />
+          </Field>
+          <Field label="Days carried forward" required>
+            <input className={inputCls} type="number" min={0} max={365} step="0.5" value={days}
+              placeholder={row?.opening_balance ? String(row.opening_balance) : "e.g. 8"}
+              onChange={(e) => setDays(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Note (optional)">
+          <input className={inputCls} value={note} maxLength={200} placeholder="e.g. per Uno Minda HR mail of 3 Jan"
+            onChange={(e) => setNote(e.target.value)} />
+        </Field>
+        {row && (
+          <p className="text-xs text-muted">
+            Current balance {daysFmt(row.leave_balance)} · carry forward on record {daysFmt(row.opening_balance)}.
+          </p>
+        )}
+        {apiError && <p className="text-sm font-semibold text-danger" role="alert">{apiError}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
+          <button type="submit" className={btnPrimary} disabled={busy || !rows.length}>
+            {busy ? "Saving…" : "Save carry forward"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function PeApplyLeaveModal({
   pe, onClose, onDone,
 }: {
@@ -693,6 +863,7 @@ export function ProjectEmployeeDetailPage() {
   const [saving, setSaving] = useState(false);
   const [syncingLeave, setSyncingLeave] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [carryFor, setCarryFor] = useState<LeaveDetail | null | "any">(null);
 
   const [onboarding, setOnboarding] = useState("");
   const [experience, setExperience] = useState("");
@@ -811,6 +982,20 @@ export function ProjectEmployeeDetailPage() {
       ),
     },
     { key: "initial_balance", label: "Initial", render: (r) => daysFmt(r.initial_balance) },
+    {
+      key: "opening_balance", label: "Carry fwd",
+      render: (r) => (
+        <div className="flex items-center gap-2">
+          <span title="Leave carried in from a previous year">{daysFmt(r.opening_balance)}</span>
+          {canWrite && !pe.is_exit && r.leave_type_name !== "Loss of Pay" && (
+            <button type="button" className={`text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
+              onClick={() => setCarryFor(r)} title="Add or correct previous-year carry forward">
+              {Number(r.opening_balance || 0) > 0 ? "Edit" : "Add"}
+            </button>
+          )}
+        </div>
+      ),
+    },
     { key: "leave_accrual", label: "Period accrual", render: (r) => daysFmt(r.leave_accrual) },
     { key: "leave_consumed", label: "Consumed", render: (r) => daysFmt(r.leave_consumed) },
     {
@@ -1036,6 +1221,12 @@ export function ProjectEmployeeDetailPage() {
                   {syncingLeave ? "Syncing…" : "Sync from customer policy"}
                 </button>
               )}
+              {canWrite && !pe.is_exit && (pe.leave_details || []).length > 0 && (
+                <button type="button" className={btnSecondary} onClick={() => setCarryFor("any")}
+                  title="Add leave carried over from a previous year">
+                  <Plus size={14} /> Carry forward
+                </button>
+              )}
               <button type="button" className={btnSecondary} onClick={() => crmNavigate("leave-applications")}>
                 <CalendarDays size={14} /> All applications
               </button>
@@ -1107,18 +1298,13 @@ export function ProjectEmployeeDetailPage() {
           </div>
 
           <div className="space-y-2">
-            <SectionTitle title="Credit history" hint="PE-scoped ledger (seed · monthly credit · approvals)" />
+            <SectionTitle title="Leave history — credits & debits" hint="Month by month, newest first — the latest months are open, older ones fold away. Seed · monthly credit · comp-off earned · leave taken · expiry · carry-forward" />
             {(pe.credit_history || []).length === 0 ? (
               <div className="rounded-card border border-subtle bg-surface-1">
-                <EmptyState message="No credit events yet for this Project Employee. Seed and monthly credits appear here when they run." />
+                <EmptyState message="No leave events yet for this Project Employee. Credits and debits appear here as they happen." />
               </div>
             ) : (
-              <DataTable
-                columns={creditCols}
-                rows={pe.credit_history || []}
-                loading={false}
-                emptyMessage="No credit history"
-              />
+              <PeLeaveLedgerByMonth rows={pe.credit_history || []} columns={creditCols} />
             )}
           </div>
 
@@ -1211,6 +1397,14 @@ export function ProjectEmployeeDetailPage() {
         <InvoiceTab peId={pe.id} projectId={pe.project_id} />
       )}
 
+      {carryFor && (
+        <PeCarryForwardModal
+          pe={pe}
+          initialRow={carryFor === "any" ? null : carryFor}
+          onClose={() => setCarryFor(null)}
+          onDone={(m) => { setCarryFor(null); notify(m || "Carry forward saved"); load(); }}
+        />
+      )}
       {applying && (
         <PeApplyLeaveModal
           pe={pe}

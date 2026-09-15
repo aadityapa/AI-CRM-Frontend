@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Briefcase, Database, LayoutTemplate, Sigma, Users, Terminal, Shield } from "lucide-react";
 import { PlatformTopBar } from "./components/platform-nav/PlatformTopBar";
+import { SupportWidget } from "./components/support/SupportWidget";
 import { SessionKeeper } from "./components/SessionKeeper";
 import { useSpotlight } from "./crm/components/motion3d";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
@@ -408,6 +409,7 @@ export default function App() {
       <div aria-hidden className="fx-aurora" />
       <div aria-hidden className="fx-spotlight" />
       <SessionKeeper />
+      <SupportWidget />
       <PlatformTopBar
         navItems={navItems}
         view={view}

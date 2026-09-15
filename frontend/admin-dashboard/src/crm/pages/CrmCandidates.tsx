@@ -34,6 +34,7 @@ import {
   WizardTopBar, type StepStatus, type WizardStep,
 } from "../components/wizard";
 import { PhoneField } from "../components/PhoneField";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /** Local single-screen shell — applies the shared wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -62,6 +63,8 @@ const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--
 /* ------------------------------------------------------------------ types */
 
 type Candidate = {
+  created_by_id?: number | null;
+  created_by_name?: string | null;
   id: number;
   salutation?: string | null;
   first_name: string;
@@ -158,7 +161,7 @@ const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : "
 const fmtDateTime = (v?: string | null) => {
   if (!v) return "—";
   const d = new Date(v);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return isNaN(d.getTime()) ? "—" : fmtDateTime12(d);
 };
 const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
 /** CTC is stored in rupees; recruiters read and quote it in lakhs. 2200000 -> "22.00". */
@@ -243,6 +246,16 @@ export function CandidatesListPage() {
   const [skillId, setSkillId] = useState("");
   // "" = all, "yes" = resume on file, "no" = still missing a CV
   const [hasCv, setHasCv] = useState("");
+  /* "Added by" TA + added-date window (11 Sep 2026, TA request) — server-side. */
+  const [createdBy, setCreatedBy] = useState("");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
+  const [creators, setCreators] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    crmGet<{ id: string; name: string }[]>("/api/candidates/creators")
+      .then((r) => setCreators(r.data || []))
+      .catch(() => { /* degrades to "Added by — anyone" */ });
+  }, []);
   const [domain, setDomain] = useState("");
   const [debounced, setDebounced] = useState({ search: "", domain: "" });
   const [showCreate, setShowCreate] = useState(false);
@@ -281,6 +294,9 @@ export function CandidatesListPage() {
           skill_id: skillId,
           technical_domain: debounced.domain,
           has_cv: hasCv === "" ? undefined : hasCv === "yes",
+          created_by_id: createdBy || undefined,
+          created_from: createdFrom || undefined,
+          created_to: createdTo || undefined,
         })}`,
       );
       setRows(res.data || []);
@@ -290,7 +306,7 @@ export function CandidatesListPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debounced, skillId, hasCv]);
+  }, [page, debounced, skillId, hasCv, createdBy, createdFrom, createdTo]);
 
   useEffect(() => {
     load();
@@ -310,6 +326,8 @@ export function CandidatesListPage() {
     { key: "technical_domain", label: "Domain", render: (r) => r.technical_domain || "—" },
     { key: "current_ctc", label: "Current CTC (Lac)", align: "right", render: (r) => fmtLac(r.current_ctc) },
     { key: "expected_ctc", label: "Expected CTC (Lac)", align: "right", render: (r) => fmtLac(r.expected_ctc) },
+    { key: "created_by_name", label: "Added by", render: (r) => r.created_by_name || "—" },
+    { key: "created_at", label: "Added on", render: (r) => (r.created_at ? new Date(r.created_at).toLocaleDateString() : "—") },
     {
       key: "cv_url",
       label: "CV",
@@ -434,6 +452,29 @@ export function CandidatesListPage() {
                 onChange={(e) => setDomain(e.target.value)}
                 aria-label="Filter by technical domain"
               />
+              <select
+                className={`${inputCls} !w-48`}
+                value={createdBy}
+                onChange={(e) => { setCreatedBy(e.target.value); setPage(1); }}
+                aria-label="Filter by the TA who added the candidate"
+              >
+                <option value="">Added by — anyone</option>
+                {creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <div className="inline-flex items-center gap-1 text-xs text-muted" role="group" aria-label="Added between">
+                <span>Added</span>
+                <input type="date" aria-label="Added from" className={`${inputCls} !w-auto !py-1`}
+                  value={createdFrom} max={createdTo || undefined}
+                  onChange={(e) => { setCreatedFrom(e.target.value); setPage(1); }} />
+                <span>–</span>
+                <input type="date" aria-label="Added to" className={`${inputCls} !w-auto !py-1`}
+                  value={createdTo} min={createdFrom || undefined}
+                  onChange={(e) => { setCreatedTo(e.target.value); setPage(1); }} />
+                {(createdFrom || createdTo || createdBy) && (
+                  <button type="button" className="ml-1 text-brand-600 hover:underline"
+                    onClick={() => { setCreatedFrom(""); setCreatedTo(""); setCreatedBy(""); setPage(1); }}>Clear</button>
+                )}
+              </div>
             </>
           }
           emptyMessage={<TeachingEmpty page="candidates" />}

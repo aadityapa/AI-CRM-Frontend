@@ -10,6 +10,8 @@ import { useHasRole, useMe } from "../CrmApp";
 import { CrmLink } from "../routerHooks";
 import { FadeInUp, Stagger } from "../components/motion3d";
 import { EmptyState, ErrorBox, KpiCard, Modal, SkeletonText, Spinner, StatusBadge, btnSecondary, statusColor } from "../components/ui";
+import { QuickActions, TeamPanel, TodayStrip, UpcomingPanel } from "./dashboard/DeskWidgets";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /* ---------- Backend response shapes (services/dashboards.py) ---------- */
 
@@ -649,7 +651,7 @@ function TaSection() {
                         {q.requirement}
                       </CrmLink>
                     </td>
-                    <td className={tdCls}>{q.scheduled_at ? new Date(q.scheduled_at).toLocaleString() : "—"}</td>
+                    <td className={tdCls}>{fmtDateTime12(q.scheduled_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -761,14 +763,22 @@ function MyWorkPanel() {
       .catch(() => setItems([]));
   }, []);
 
-  if (items === null) return null; // no skeleton flash for a small panel
   return (
-    <FadeInUp>
-      <div className="rounded-card border border-subtle bg-surface-1 p-4 shadow-raised sm:p-5">
-        <h2 className="text-sm font-bold tracking-wide text-primary">Your work today</h2>
-        {items.length === 0 ? (
+    <FadeInUp className="h-full">
+      <div className="flex h-full flex-col rounded-card border border-subtle bg-surface-1 p-4 shadow-raised sm:p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold tracking-wide text-primary">My work</h2>
+          {items && items.length > 0 && (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-secondary">
+              {items.reduce((n, it) => n + it.count, 0)} waiting
+            </span>
+          )}
+        </div>
+        {items === null ? (
+          <div className="mt-3"><SkeletonText lines={3} /></div>
+        ) : items.length === 0 ? (
           <p className="mt-2 text-sm text-muted">
-            All clear — nothing is waiting on you right now.
+            All clear — nothing is waiting on you right now. Use the quick actions to start something.
           </p>
         ) : (
           <ul className="mt-3 space-y-1.5">
@@ -1000,25 +1010,56 @@ export function CrmDashboardPage() {
   // PO expiry warnings: Finance/Admin plus Sales & Sales Head (they own the
   // customer relationship and drive PO renewals before billing breaks).
   const showPoExpiry = useHasRole("Finance", "Sales", "Sales_Head");
-  // Upcoming interviews moved to the Interview Calendar tab (TA / RMG / Admin /
-  // CEO), which shows AI sessions and panel rounds together on a week grid
-  // rather than a flat 30-day list. Sales and Sales_Head lost it entirely —
-  // scheduling and running interviews is not their workflow.
   const showBench = useHasRole("RMG", "Sales_Head");
+  // The head's layer (14 Sep 2026): Sales Head, Admin and CEO see where the
+  // team / company is stuck and a per-person row for TA and Sales.
+  const showTeam = isAdmin || showExecutive;
   const nothing = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking;
+
+  const primaryRole = (["Admin", "CEO", "Sales_Head", "Sales", "RMG", "TA", "HR", "Finance"] as const)
+    .find((r) => me.roles.includes(r));
+  const roleLabel = primaryRole ? primaryRole.replace("_", " ") : "";
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <div className="space-y-6 xl:space-y-8">
+      {/* Zone 0 — who and when. The four desk zones follow. */}
       <FadeInUp>
-        <h1 className="text-display w-fit text-xl font-bold text-primary">
-          Dashboard
-        </h1>
-        <p className="mt-0.5 text-sm text-muted">
-          Welcome back, {me.full_name || me.username}
-        </p>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h1 className="text-display w-fit text-xl font-bold text-primary">
+            Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, {me.full_name || me.username}
+            {roleLabel && (
+              <span className="ml-2 align-middle rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold tracking-wide text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                {roleLabel}
+              </span>
+            )}
+          </h1>
+          <p className="text-sm text-muted">{today}</p>
+        </div>
       </FadeInUp>
       <StartHereCard />
-      <MyWorkPanel />
+
+      {/* Zone 1 — Today strip: the numbers this role is judged on. */}
+      <TodayStrip />
+
+      {/* Zone 2 + 3 — My work beside Coming up + Quick actions. Admin/CEO have
+          no personal queue, so their left column is the company's stuck points. */}
+      <div className="grid gap-4 lg:grid-cols-[2fr,1fr] lg:items-stretch">
+        <div className="min-w-0">{isAdmin && !showTa && !showFinance ? <TeamPanel isAdmin /> : <MyWorkPanel />}</div>
+        <div className="flex min-w-0 flex-col gap-4">
+          <UpcomingPanel days={7} />
+          <QuickActions />
+        </div>
+      </div>
+
+      {/* Zone 4 — team layer for heads (when not already in zone 2). */}
+      {showTeam && !(isAdmin && !showTa && !showFinance) && (
+        <Section title={isAdmin ? "Company" : "Team"}>
+          <TeamPanel isAdmin={isAdmin} />
+        </Section>
+      )}
+
+      {/* Zone 5 — my area: the role panels that existed before the redesign. */}
       {showPoExpiry && <PoExpiryWarnings />}
       {showBench && <BenchCard />}
       {showExecutive && <ExecutiveSection />}
@@ -1027,7 +1068,7 @@ export function CrmDashboardPage() {
       {showTa && <TaSection />}
       {showTaTracking && <TaTrackingSection mine={!isAdmin} />}
       {showFinance && <FinanceSection />}
-      {nothing && (
+      {nothing && !isAdmin && (
         <div className="rounded-card border border-subtle bg-surface-1 shadow-raised">
           <EmptyState
             message={`No dashboard widgets for your roles — nothing to show for ${me.roles.join(", ") || "your current roles"}. Use the sidebar to navigate.`}

@@ -26,6 +26,10 @@ const API_PROXY_PREFIXES = [
   "/hr-record",
   "/version",
   "/admin/hr-code",
+  // Public candidate pages served by the backend (P0, closed 14 Sep 2026):
+  // the recruiter-visible booking link is `${origin}/book/<token>`.
+  "/apply",
+  "/book",
 ];
 
 export default defineConfig(({ mode }) => {

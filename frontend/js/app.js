@@ -36,13 +36,27 @@ import {
   printManagementReport,
   unlockResult,
 } from "./results.js";
-import { initBackground, setInterviewMode } from "./scene.js";
+// The 3D background needs three.js from a CDN. It is decoration: on a network
+// that blocks cdn.jsdelivr.net a STATIC import here aborted the whole module
+// graph and the candidate saw a blank page (15 Sep 2026). Load it lazily and
+// carry on without it when it fails.
+let _scene = null;
+const _sceneReady = import("./scene.js")
+  .then((m) => { _scene = m; return m; })
+  .catch((err) => { console.warn("[BG] 3D background unavailable — continuing without it", err); return null; });
+function initBackground() {
+  void _sceneReady.then((m) => { try { m?.initBackground?.(); } catch (_) { /* decoration only */ } });
+}
+function setInterviewMode(isInterview) {
+  if (_scene) { try { _scene.setInterviewMode(isInterview); } catch (_) { /* ignore */ } return; }
+  void _sceneReady.then((m) => { try { m?.setInterviewMode?.(isInterview); } catch (_) { /* ignore */ } });
+}
 import { initAvatar } from "./avatar.js";
 import { apiFetch, handleJson } from "./core.js";
 import { switchAuthMode, switchAuthPane } from "./auth/sharedAuth.js";
 import { initAuthMotion, initAuthEnterSubmit } from "./auth/authMotion.js";
 import { initBrandLogoFallback } from "./brandLogo.js";
-import { initHrSetupUi } from "./hrSetupUi.js";
+import { formatHrDateTimeDisplay, initHrSetupUi } from "./hrSetupUi.js";
 import { initHrAccessDetailsUi } from "./hrAccessDetails.js";
 import { initAutoAdvanceBannerUi } from "./interview_auto_advance.js";
 import { createHrAuth } from "./auth/hrAuth.js";
@@ -103,14 +117,19 @@ async function maybeAutoClearCache(scope) {
     if (!ver) return;
     const prev = String(window.localStorage.getItem(key) || "").trim();
     if (prev && prev !== ver) {
+      // A redeploy while a candidate is mid-interview must NOT wipe their
+      // device id (the server binds the session to it) or their auth token —
+      // that locked candidates out as "active on another device" (15 Sep 2026).
+      const inviteInProgress = !!inviteTokenFromUrl;
       const keep = new Set([key]);
       for (let i = window.localStorage.length - 1; i >= 0; i--) {
         const k = window.localStorage.key(i);
         if (!k) continue;
         if (keep.has(k)) continue;
+        if (inviteInProgress && (k.startsWith("karnexInviteDevice") || k === "authToken" || k === "authUser" || k === "authTokenExpiryIst")) continue;
         window.localStorage.removeItem(k);
       }
-      clearAuthSession();
+      if (!inviteInProgress) clearAuthSession();
       if (window.caches && typeof window.caches.keys === "function") {
         try {
           const keys = await window.caches.keys();
@@ -670,9 +689,27 @@ function _writeInviteDeviceId(value) {
     /* ignore */
   }
 }
+function _newDeviceId() {
+  // crypto.randomUUID is missing on plain-HTTP (non-secure) origins — the LAN
+  // deployment this app documents — and used to throw inside the verify
+  // handler as a bare "Verification failed." (15 Sep 2026).
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  } catch (_) { /* fall through */ }
+  const bytes = new Uint8Array(16);
+  try {
+    crypto.getRandomValues(bytes);
+  } catch (_) {
+    for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function _ensureInviteDeviceId() {
   if (_verifiedDeviceId) return _verifiedDeviceId;
-  _verifiedDeviceId = _readInviteDeviceId() || crypto.randomUUID();
+  _verifiedDeviceId = _readInviteDeviceId() || _newDeviceId();
   _writeInviteDeviceId(_verifiedDeviceId);
   return _verifiedDeviceId;
 }
@@ -813,7 +850,7 @@ async function proceedWithInviteLogin() {
         const aiState = document.getElementById("aiState");
         const meta = document.getElementById("candidateMeta");
         if (meta) {
-          meta.innerText = `Name: ${schedule.candidate_name || "Candidate"} | Scheduled: ${schedule.scheduled_at_local || "-"} | Mode: Auto Start`;
+          meta.innerText = `Name: ${schedule.candidate_name || "Candidate"} | Scheduled: ${formatHrDateTimeDisplay(schedule.scheduled_at_local)} | Mode: Auto Start`;
         }
         if (q) q.innerText = "Interview starts in: 00:00:00";
         if (aiState) aiState.innerText = "Interview scheduled";
@@ -830,7 +867,7 @@ async function proceedWithInviteLogin() {
       const schedule = data.schedule || {};
       const meta = document.getElementById("candidateMeta");
       if (meta) {
-        meta.innerText = `Name: ${schedule.candidate_name || user.full_name || "Candidate"} | Scheduled: ${schedule.scheduled_at_local || "-"} | Mode: Invite Link`;
+        meta.innerText = `Name: ${schedule.candidate_name || user.full_name || "Candidate"} | Scheduled: ${formatHrDateTimeDisplay(schedule.scheduled_at_local)} | Mode: Invite Link`;
       }
       console.info("[STEP-7] Timer started");
       startInterviewTimer();
@@ -945,8 +982,8 @@ function showCandidateWelcome() {
           if (metaEl && schedule.scheduled_at_local) {
             metaEl.hidden = false;
             metaEl.textContent = candidate
-              ? `Interview scheduled for ${candidate}: ${schedule.scheduled_at_local}`
-              : `Interview scheduled: ${schedule.scheduled_at_local}`;
+              ? `Interview scheduled for ${candidate}: ${formatHrDateTimeDisplay(schedule.scheduled_at_local)}`
+              : `Interview scheduled: ${formatHrDateTimeDisplay(schedule.scheduled_at_local)}`;
           }
         })
         .catch(() => { /* ignore — welcome card stays generic */ });
@@ -987,6 +1024,26 @@ async function autoLoginFromInviteToken() {
 
     const schedule = lookup.schedule || {};
     const hasAccessKey = !!(schedule.access_key);
+
+    // Same device, already verified (a refresh mid-interview): the server lets
+    // us straight back in without the second factor — and without burning a
+    // verification attempt (15 Sep 2026).
+    if (hasAccessKey && _readInviteDeviceId() && ["verified", "active"].includes(String(schedule.session_status || ""))) {
+      try {
+        const vres = await apiFetch(`/candidate/invite/${encodeURIComponent(inviteTokenFromUrl)}/verify`, {
+          method: "POST",
+          body: new FormData(),
+          headers: { "x-device-id": _ensureInviteDeviceId() },
+        });
+        const vdata = await vres.json();
+        if (vres.ok && vdata && vdata.already_verified) {
+          await proceedWithInviteLogin();
+          return true;
+        }
+      } catch (_) {
+        /* fall back to the gate */
+      }
+    }
 
     if (hasAccessKey) {
       _hideInviteLoadingOverlay();

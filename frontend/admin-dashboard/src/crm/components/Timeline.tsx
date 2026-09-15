@@ -1,5 +1,6 @@
 /** Vertical activity-log timeline. */
 import React from "react";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 export type ActivityEntry = {
   id: number;
@@ -25,7 +26,7 @@ export function Timeline({ entries }: { entries: ActivityEntry[] }) {
           {/* Update entries carry one "field: old → new" diff per line. */}
           {e.comment && <div className="mt-0.5 whitespace-pre-line text-sm text-secondary">{e.comment}</div>}
           <div className="mt-0.5 text-xs text-muted">
-            {e.full_name || e.username || "system"} · {new Date(e.timestamp).toLocaleString()}
+            {e.full_name || e.username || "system"} · {fmtDateTime12(e.timestamp)}
           </div>
         </li>
       ))}
