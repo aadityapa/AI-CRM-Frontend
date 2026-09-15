@@ -4,11 +4,14 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
+import { CarryForwardField } from "./CarryForwardField";
 import { Modal, ConfirmModal, btnDanger, btnPrimary, btnSecondary, inputCls } from "./ui";
 import { FieldLabel } from "./wizard";
 import {
   LEAVE_CREDIT_TYPE_CHOICES,
   LEAVE_EXPIRE_CHOICES,
+  NEVER_EXPIRES,
+  leaveExpireLabel,
   chk,
   emptyLeaveRow,
   type LeaveRow,
@@ -83,9 +86,9 @@ export function LeaveBillingPolicyModal({
     if (form.leave_credit_balance !== "" && Number.isNaN(Number(form.leave_credit_balance))) {
       errs.leave_credit_balance = "Must be a number";
     }
-    const mcf = form.maximum_carry_forward === "" ? 0 : Number(form.maximum_carry_forward);
-    if (!Number.isInteger(mcf) || mcf < 0) {
-      errs.maximum_carry_forward = "Must be a whole number ≥ 0";
+    if (form.maximum_carry_forward !== "") {
+      const mcf = Number(form.maximum_carry_forward);
+      if (!Number.isInteger(mcf) || mcf < 0) errs.maximum_carry_forward = "Must be a whole number ≥ 0";
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -101,7 +104,8 @@ export function LeaveBillingPolicyModal({
         leave_expire_timing: form.leave_expire
           ? (form.leave_expire_timing || "End_Of_Period")
           : "",
-        maximum_carry_forward: form.maximum_carry_forward === "" ? "0" : String(Math.trunc(Number(form.maximum_carry_forward))),
+        // "" = carry forward ALL (null on the server); "0" = lapse; N = cap.
+        maximum_carry_forward: form.maximum_carry_forward === "" ? "" : String(Math.trunc(Number(form.maximum_carry_forward))),
       };
       await onSave(normalized);
     } finally {
@@ -263,26 +267,34 @@ export function LeaveBillingPolicyModal({
               const leave_expire = e.target.value;
               set({
                 leave_expire,
-                leave_expire_timing: leave_expire
+                leave_expire_timing: leave_expire && leave_expire !== NEVER_EXPIRES
                   ? (form.leave_expire_timing || "End_Of_Period")
                   : "",
+                ...(leave_expire === NEVER_EXPIRES ? { maximum_carry_forward: "" } : {}),
               });
             }}
           >
             <option value="">-Select-</option>
             {LEAVE_EXPIRE_CHOICES.map((o) => (
-              <option key={o} value={o}>{o}</option>
+              <option key={o} value={o}>{leaveExpireLabel(o)}</option>
             ))}
           </select>
           {errors.leave_expire && (
             <p className="mt-1 text-xs text-danger" role="alert">{errors.leave_expire}</p>
           )}
-          <PeriodTimingPicker
-            cycle={form.leave_expire}
-            value={form.leave_expire_timing}
-            verb="Expire"
-            onChange={(v) => set({ leave_expire_timing: v })}
-          />
+          {form.leave_expire === NEVER_EXPIRES ? (
+            <p className="mt-1 text-[11px] text-muted">
+              The unused balance is never written off — every 31 December it rolls into the next year and the
+              employee's leave ledger records the carry-forward.
+            </p>
+          ) : (
+            <PeriodTimingPicker
+              cycle={form.leave_expire}
+              value={form.leave_expire_timing}
+              verb="Expire"
+              onChange={(v) => set({ leave_expire_timing: v })}
+            />
+          )}
         </div>
 
         {/* 7. Is Max Limit */}
@@ -296,21 +308,15 @@ export function LeaveBillingPolicyModal({
           Is Max Limit
         </label>
 
-        {/* 8. Maximum Carry Forward */}
-        <div>
-          <FieldLabel label="Maximum Carry Forward" />
-          <input
-            type="number"
-            step={1}
-            min={0}
-            className={inputCls}
+        {/* 8. Carry forward at expiry */}
+        {form.leave_expire !== NEVER_EXPIRES && (
+          <CarryForwardField
             value={form.maximum_carry_forward}
-            onChange={(e) => set({ maximum_carry_forward: e.target.value })}
+            onChange={(v) => set({ maximum_carry_forward: v })}
+            error={errors.maximum_carry_forward}
+            expireCycle={form.leave_expire}
           />
-          {errors.maximum_carry_forward && (
-            <p className="mt-1 text-xs text-danger" role="alert">{errors.maximum_carry_forward}</p>
-          )}
-        </div>
+        )}
 
         {/* 10. System Fields — header only */}
         <div className="border-t border-subtle pt-3">

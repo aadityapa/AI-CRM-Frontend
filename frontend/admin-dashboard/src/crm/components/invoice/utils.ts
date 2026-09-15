@@ -179,6 +179,7 @@ export function mapApiInvoiceToData(raw: Record<string, unknown>): InvoiceData {
     sac_code: (raw.sac_code as string) || null,
     qty_label: (raw.qty_label as string) || null,
     rate_label: (raw.rate_label as string) || null,
+    billing: (raw.billing as InvoiceData["billing"]) ?? null,
     lines,
     seller,
     buyer,

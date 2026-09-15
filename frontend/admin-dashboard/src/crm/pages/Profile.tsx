@@ -9,6 +9,7 @@ import {
   ErrorBox, Field, Spinner, StatusBadge,
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 type Profile = {
   id: number;
@@ -48,7 +49,7 @@ function editableFrom(p: Profile): Editable {
 function fmtDate(v?: string | null): string {
   if (!v) return "—";
   const d = new Date(v);
-  return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  return isNaN(d.getTime()) ? String(v) : fmtDateTime12(d);
 }
 
 function notifyProfileChanged(patch: { full_name?: string; avatar_url?: string | null }) {

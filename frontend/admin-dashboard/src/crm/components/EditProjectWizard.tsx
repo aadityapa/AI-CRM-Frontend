@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CircleDot, Clock3, FolderKanban, GitBranch, Plus, Timer, Trash2, Users } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
-import { ConfirmModal, inputCls } from "./ui";
+import { ConfirmModal, btnSecondary, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
 import {
   SectionHeaderBanner,
@@ -110,6 +110,8 @@ type BranchPolicyPayload = {
   initial_no_billing_qty?: number | null;
   initial_no_billing_period?: string | null;
   leave_policies?: Record<string, unknown>[];
+  /** "branch" | "customer" | "none" — where the rows above came from (11 Sep 2026). */
+  leave_policies_source?: string;
 };
 
 const POLICY_SECTION_DEFS: SectionDef[] = [
@@ -244,10 +246,8 @@ function leaveRowsFromBranch(policies: Record<string, unknown>[] | undefined): L
     return expireMap[raw] || "";
   };
   return (policies || []).map((row) => {
-    const carry =
-      row.maximum_carry_forward != null
-        ? row.maximum_carry_forward
-        : row.max_limit;
+    // NULL = carry forward all (11 Sep 2026) — keep it as "" for the dialog.
+    const carry = row.maximum_carry_forward;
     return {
       key: uid(),
       // No project-policy id — POST as new rows on create.
@@ -260,7 +260,7 @@ function leaveRowsFromBranch(policies: Record<string, unknown>[] | undefined): L
       leave_expire: toExpire(String(row.leave_expire || "")),
       leave_expire_timing: String(row.leave_expire_timing || "End_Of_Period"),
       is_max_limit: !!row.is_max_limit,
-      maximum_carry_forward: carry != null ? String(carry) : "0",
+      maximum_carry_forward: carry != null ? String(carry) : "",
       effective_date: row.effective_date ? String(row.effective_date).slice(0, 10) : "",
     };
   });
@@ -299,7 +299,7 @@ function leaveRowPayload(row: LeaveRow) {
     leave_expire: row.leave_expire,
     leave_expire_timing: row.leave_expire ? (row.leave_expire_timing || "End_Of_Period") : null,
     is_max_limit: row.is_max_limit,
-    maximum_carry_forward: Math.trunc(numOrNull(row.maximum_carry_forward) ?? 0),
+    maximum_carry_forward: row.maximum_carry_forward === "" ? null : Math.trunc(numOrNull(row.maximum_carry_forward) ?? 0),
     effective_date: row.effective_date || null,
   };
 }
@@ -385,6 +385,7 @@ function ProjectWizard({
 
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [leaveRows, setLeaveRows] = useState<LeaveRow[]>([]);
+  const [leaveSource, setLeaveSource] = useState<string>("");
   const [removedLeaveIds, setRemovedLeaveIds] = useState<number[]>([]);
   const [addingType, setAddingType] = useState(false);
   const [policyUserEdited, setPolicyUserEdited] = useState(false);
@@ -441,7 +442,7 @@ function ProjectWizard({
           leave_expire: String(row.leave_expire || "Yearly"),
           leave_expire_timing: String(row.leave_expire_timing || "End_Of_Period"),
           is_max_limit: !!row.is_max_limit,
-          maximum_carry_forward: row.maximum_carry_forward != null ? String(row.maximum_carry_forward) : "0",
+          maximum_carry_forward: row.maximum_carry_forward != null ? String(row.maximum_carry_forward) : "",
           effective_date: row.effective_date ? String(row.effective_date).slice(0, 10) : "",
         }));
         setLeaveRows(rows);
@@ -702,10 +703,31 @@ function ProjectWizard({
       return;
     }
     setPol(polFromBranch(payload));
+    // Leave rows come from the branch, else the customer's defaults (server
+    // decides) — copied into the project as editable rows (11 Sep 2026).
     setLeaveRows(leaveRowsFromBranch(payload.leave_policies));
+    setLeaveSource(payload.leave_policies_source || ((payload.leave_policies || []).length ? "branch" : "none"));
     setRemovedLeaveIds([]);
     setBranchId(String(bid));
     setPolicyUserEdited(false);
+  };
+
+  /** Edit mode helper: pull the branch/customer leave rows into an existing
+   *  project (replaces the project's current rows after confirmation). */
+  const loadLeaveRowsFromBranch = async () => {
+    if (!branchId) return;
+    try {
+      const res = await crmGet<BranchPolicyPayload>(`/api/customers/branches/${branchId}/policy`);
+      const rows = leaveRowsFromBranch(res.data?.leave_policies);
+      if (!rows.length) { notify("The branch and customer have no leave policy rows to copy", "err"); return; }
+      if (leaveRows.length && !window.confirm(`Replace the project's ${leaveRows.length} leave row(s) with the ${rows.length} from the ${res.data?.leave_policies_source === "customer" ? "customer default" : "branch"} policy?`)) return;
+      setRemovedLeaveIds((ids) => [...ids, ...leaveRows.filter((r) => r.id).map((r) => Number(r.id))]);
+      setLeaveRows(rows);
+      setLeaveSource(res.data?.leave_policies_source || "branch");
+      setPolicyUserEdited(true);
+    } catch (e: any) {
+      notify(e?.message || "Failed to load the branch leave policy", "err");
+    }
   };
 
   const resolveAndPrefillBranch = async (
@@ -1105,7 +1127,21 @@ function ProjectWizard({
               />
             </div>
             <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-primary">Leave Billing Policy</h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-primary">Leave Billing Policy</h3>
+                {branchId && (
+                  <button type="button" className={btnSecondary} onClick={() => void loadLeaveRowsFromBranch()}
+                    title="Copy the branch's leave rows (or the customer defaults) into this project — then edit as needed">
+                    Load from branch policy
+                  </button>
+                )}
+              </div>
+              {leaveSource === "branch" || leaveSource === "customer" ? (
+                <p className="text-[11px] text-muted">
+                  Copied from the {leaveSource === "customer" ? "customer's default" : "branch's"} leave policy —
+                  these rows belong to this project now; edit or remove any of them.
+                </p>
+              ) : null}
               <LeaveBillingPolicySection
                 leaveRows={leaveRows}
                 leaveTypes={leaveTypes}

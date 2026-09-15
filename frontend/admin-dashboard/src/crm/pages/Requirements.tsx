@@ -46,6 +46,7 @@ import { InterviewRoundModal } from "./Profiles";
 import {
   SectionHeaderBanner, FieldLabel, WizardField, InfoChip, lockedInputCls,
 } from "../components/wizard";
+import { fmtDateTime12 } from "../../lib/datetime";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -684,7 +685,7 @@ function fmtDate(v?: string | null): string {
 function fmtDateTime(v?: string | null): string {
   if (!v) return "—";
   const d = new Date(v);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return isNaN(d.getTime()) ? "—" : fmtDateTime12(d);
 }
 
 function fmtRange(min: number | null, max: number | null, unit: string): string {
@@ -2749,6 +2750,10 @@ function ResumesTab({
   const [breakdownRow, setBreakdownRow] = useState<ResumeRow | null>(null);
   const [rejectRow, setRejectRow] = useState<ResumeRow | null>(null);
   const [scheduleRow, setScheduleRow] = useState<ResumeRow | null>(null);
+  // The interview time the TA agreed with the candidate (IST wall clock).
+  // Until 14 Sep 2026 this dialog sent no time and the server stamped "now",
+  // so the candidate's email named the moment the TA clicked, not the slot.
+  const [scheduleWhen, setScheduleWhen] = useState("");
   /* Profile-only rows schedule through the PROFILE modal — there is no
      resume record for the resume-based confirm path to act on. */
   const [profileScheduleRow, setProfileScheduleRow] = useState<ResumeRow | null>(null);
@@ -2764,6 +2769,9 @@ function ResumesTab({
    * from the opportunity's profiles (where attribution is stamped). */
   const [appliedBy, setAppliedBy] = useState("");
   const [taNames, setTaNames] = useState<string[]>([]);
+  /* Applied-date window (11 Sep 2026, TA request) — server-side like the TA filter. */
+  const [appliedFrom, setAppliedFrom] = useState("");
+  const [appliedTo, setAppliedTo] = useState("");
   /* Dismissed duplicates are hidden by default (0087) — this shows ONLY them. */
   const [showDismissed, setShowDismissed] = useState(false);
   /* Stage pills (28 Aug 2026, user request): one-click filter by the
@@ -2790,6 +2798,7 @@ function ResumesTab({
           // 10 a page (1 Sep 2026, user request) — the tab is a working list
           // the recruiter acts on row by row, not something to scroll.
           page, limit: 10, search: dq || undefined, applied_by: appliedBy || undefined,
+          applied_from: appliedFrom || undefined, applied_to: appliedTo || undefined,
           dismissed: showDismissed ? 1 : undefined,
           stage: stageCsv || undefined,
         })}`,
@@ -2801,9 +2810,9 @@ function ResumesTab({
     } finally {
       setLoading(false);
     }
-  }, [req.id, page, dq, appliedBy, showDismissed, stageCsv]);
+  }, [req.id, page, dq, appliedBy, appliedFrom, appliedTo, showDismissed, stageCsv]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [dq, appliedBy, showDismissed, stageCsv]);
+  useEffect(() => { setPage(1); }, [dq, appliedBy, appliedFrom, appliedTo, showDismissed, stageCsv]);
 
   /** Scan responses now flag auto_shortlisted / slot_invite_sent per resume.
    * Remember auto-shortlisted ids for this session (drives the "Auto" chip)
@@ -3204,7 +3213,8 @@ function ResumesTab({
     const r = scheduleRow;
     setBusyId(r.id);
     try {
-      const res = await crmPost<any>(`/api/resumes/${r.id}/schedule-ai-interview`);
+      const scheduled_at = scheduleWhen ? scheduleWhen.replace("T", " ").slice(0, 16) : undefined;
+      const res = await crmPost<any>(`/api/resumes/${r.id}/schedule-ai-interview`, { scheduled_at });
       toast(res.message || "AI L1 invite ready to share");
       if (res.data?.profile_id) {
         setProfileByResume((m) => ({ ...m, [r.id]: res.data.profile_id }));
@@ -3883,7 +3893,7 @@ function ResumesTab({
               (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled") &&
               !r.l1_manual_requested && !r.l1_manual_scheduled &&
               r.ai_overall_score_percent == null && (
-              <button className={smallAi} onClick={() => setScheduleRow(r)} disabled={busy}>
+              <button className={smallAi} onClick={() => { setScheduleWhen(""); setScheduleRow(r); }} disabled={busy}>
                 <Bot size={13} /> {busy ? "Scheduling…" : "Schedule AI L1 Interview"}
               </button>
             )}
@@ -4225,15 +4235,29 @@ function ResumesTab({
             onSearch={setSearch}
             onPage={setPage}
             filters={
-              <select
-                className={`${inputCls} !w-52`}
-                value={appliedBy}
-                onChange={(e) => setAppliedBy(e.target.value)}
-                title="Filter by the TA who applied the candidate"
-              >
-                <option value="">Applied by — anyone</option>
-                {taNames.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              <>
+                <select
+                  className={`${inputCls} !w-52`}
+                  value={appliedBy}
+                  onChange={(e) => setAppliedBy(e.target.value)}
+                  title="Filter by the TA who applied the candidate"
+                >
+                  <option value="">Applied by — anyone</option>
+                  {taNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <div className="inline-flex items-center gap-1 text-xs text-muted" role="group" aria-label="Applied between">
+                  <span>Applied</span>
+                  <input type="date" aria-label="Applied from" className={`${inputCls} !w-auto !py-1`}
+                    value={appliedFrom} max={appliedTo || undefined} onChange={(e) => setAppliedFrom(e.target.value)} />
+                  <span>–</span>
+                  <input type="date" aria-label="Applied to" className={`${inputCls} !w-auto !py-1`}
+                    value={appliedTo} min={appliedFrom || undefined} onChange={(e) => setAppliedTo(e.target.value)} />
+                  {(appliedFrom || appliedTo) && (
+                    <button type="button" className="ml-1 text-brand-600 hover:underline"
+                      onClick={() => { setAppliedFrom(""); setAppliedTo(""); }}>Clear</button>
+                  )}
+                </div>
+              </>
             }
             headerRight={
               <span className="flex items-center gap-4">
@@ -4588,7 +4612,7 @@ function ResumesTab({
             ) : (
               <p className="text-xs text-muted">
                 {invitePreview.open_slots} open slot(s) available
-                {invitePreview.next_slot_at ? ` — next: ${new Date(invitePreview.next_slot_at).toLocaleString()}` : ""}.
+                {invitePreview.next_slot_at ? ` — next: ${fmtDateTime12(invitePreview.next_slot_at)}` : ""}.
                 After the candidate confirms a slot, their AI L1 interview is scheduled automatically
                 and they receive the interview link and access key.
               </p>
@@ -4733,7 +4757,19 @@ function ResumesTab({
           message={
             <>
               This creates the candidate + profile and generates an AI L1 invite for{" "}
-              <span className="font-semibold">{scheduleRow.candidate_name}</span>. The link will be shown here (not auto-sent). Continue?
+              <span className="font-semibold">{scheduleRow.candidate_name}</span>. The link will be shown here (not auto-sent).
+              <label className="mt-3 block text-xs font-semibold text-secondary">
+                Interview date &amp; time (IST)
+                <input
+                  type="datetime-local"
+                  className={`${inputCls} mt-1`}
+                  value={scheduleWhen}
+                  onChange={(e) => setScheduleWhen(e.target.value)}
+                />
+              </label>
+              <span className="mt-1 block text-[11px] text-muted">
+                This exact time goes into the candidate's invite and gates the link. Leave blank to allow the candidate to start right away.
+              </span>
             </>
           }
           confirmLabel="Schedule"

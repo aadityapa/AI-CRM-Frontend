@@ -28,6 +28,14 @@ export function ProfileToolbar({
   taOwners,
   taOwnerId,
   onTaOwner,
+  customers,
+  customerId,
+  onCustomer,
+  appliedFrom,
+  appliedTo,
+  onApplied,
+  source,
+  onSource,
   view,
   onView,
   extra,
@@ -43,6 +51,15 @@ export function ProfileToolbar({
   taOwners: { id: number; name: string }[];
   taOwnerId: string;
   onTaOwner: (v: string) => void;
+  customers: { id: number; name: string }[];
+  customerId: string;
+  onCustomer: (v: string) => void;
+  /** Applied-on window (YYYY-MM-DD, inclusive). */
+  appliedFrom: string;
+  appliedTo: string;
+  onApplied: (from: string, to: string) => void;
+  source: string;
+  onSource: (v: string) => void;
   view: ViewMode;
   onView: (v: ViewMode) => void;
   /** Column customiser button and anything else the page wants to append. */
@@ -109,6 +126,56 @@ export function ProfileToolbar({
         {taOwners.map((o) => (
           <option key={o.id} value={String(o.id)}>{o.name}</option>
         ))}
+      </select>
+
+      <label className="sr-only" htmlFor="profile-customer-filter">Customer</label>
+      <select
+        id="profile-customer-filter"
+        className={`${inputCls} !w-auto max-w-[190px]`}
+        value={customerId}
+        onChange={(e) => onCustomer(e.target.value)}
+      >
+        <option value="">All customers</option>
+        {customers.map((c) => (
+          <option key={c.id} value={String(c.id)}>{c.name}</option>
+        ))}
+      </select>
+
+      {/* Applied-on window (11 Sep 2026, TA request): "who did I submit this
+          week / this month" is the recruiter's daily question. */}
+      <div className="inline-flex items-center gap-1 text-xs text-muted" role="group" aria-label="Applied between">
+        <span className="hidden sm:inline">Applied</span>
+        <input
+          type="date"
+          aria-label="Applied from"
+          className={`${inputCls} !w-auto !py-1`}
+          value={appliedFrom}
+          max={appliedTo || undefined}
+          onChange={(e) => onApplied(e.target.value, appliedTo)}
+        />
+        <span>–</span>
+        <input
+          type="date"
+          aria-label="Applied to"
+          className={`${inputCls} !w-auto !py-1`}
+          value={appliedTo}
+          min={appliedFrom || undefined}
+          onChange={(e) => onApplied(appliedFrom, e.target.value)}
+        />
+      </div>
+
+      <label className="sr-only" htmlFor="profile-source-filter">Source</label>
+      <select
+        id="profile-source-filter"
+        className={`${inputCls} !w-auto max-w-[150px]`}
+        value={source}
+        onChange={(e) => onSource(e.target.value)}
+      >
+        <option value="">All sources</option>
+        <option value="manual">Added by TA</option>
+        <option value="apply_link">Apply link</option>
+        <option value="resume_upload">Resume upload</option>
+        <option value="zoho_import">Zoho import</option>
       </select>
 
       {extra}

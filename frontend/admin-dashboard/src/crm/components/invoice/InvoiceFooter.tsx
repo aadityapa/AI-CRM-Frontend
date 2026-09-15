@@ -1,32 +1,26 @@
 import React from "react";
-import { Globe, Mail, MapPin, Phone } from "lucide-react";
+import { Globe } from "lucide-react";
 import type { SellerDetails } from "./types";
-import { displayOrDash } from "./utils";
 import styles from "./taxInvoice.module.css";
 
+/** Footer strip (11 Sep 2026, user decision): ONLY the website, as a link.
+    Email / phone / location moved out — they already sit in the header. */
 export function InvoiceFooter({ seller }: { seller: SellerDetails }) {
-  const location =
-    [seller.city, seller.state, seller.country].filter(Boolean).join(", ") ||
-    seller.address_line2;
-  const footerEmail = seller.contact_email || seller.email;
+  let url = (seller.footer_website_url || "").trim();
+  if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  const label = (seller.website || url.replace(/^https?:\/\//i, "")).trim() || "www.karnex.in";
+  const extra = (seller.footer_text || "").trim();
   return (
     <footer className={styles.footer}>
       <span className={styles.footerItem}>
         <Globe size={12} aria-hidden />
-        {displayOrDash(seller.website)}
+        {url ? (
+          <a className={styles.footerLink} href={url} target="_blank" rel="noreferrer">{label}</a>
+        ) : (
+          label
+        )}
       </span>
-      <span className={styles.footerItem}>
-        <Mail size={12} aria-hidden />
-        {displayOrDash(footerEmail)}
-      </span>
-      <span className={styles.footerItem}>
-        <Phone size={12} aria-hidden />
-        {displayOrDash(seller.phone)}
-      </span>
-      <span className={styles.footerItem}>
-        <MapPin size={12} aria-hidden />
-        {displayOrDash(location)}
-      </span>
+      {extra ? <span className={styles.footerItem}>{extra}</span> : null}
     </footer>
   );
 }

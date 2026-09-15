@@ -11,6 +11,7 @@ import { useCanAct } from "../useAccess";
 import { crmNavigate } from "../routerHooks";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import {
   ErrorBox, Field, Modal, StatusBadge, btnPrimary, btnSecondary, focusRing, inputCls, useToast,
@@ -637,6 +638,9 @@ export function ProjectEmployeesPage() {
 
   const [editing, setEditing] = useState<PeRow | null>(null);
   const [groupByEmployee, setGroupByEmployee] = useState(false);
+  // Customer-wise view (14 Sep 2026, like Purchase Orders): fetches the whole
+  // filter set so each customer's section is complete.
+  const [view, setView] = useGroupView();
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "exited">("active");
   const [projectFilter, setProjectFilter] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
@@ -656,13 +660,24 @@ export function ProjectEmployeesPage() {
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const params = new URLSearchParams({ page: String(page), limit: "50" });
+      const byCustomer = view === "customer" && !groupByEmployee;
+      const params = new URLSearchParams(byCustomer ? { page: "1", limit: "100" } : { page: String(page), limit: "50" });
       if (debounced) params.set("search", debounced);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (projectFilter) params.set("project_id", projectFilter);
       if (customerFilter) params.set("customer_id", customerFilter);
       if (groupByEmployee) params.set("group_by", "employee");
-      const res = await crmGet<any[]>(`/api/projects/all-employees?${params}`);
+      let res = await crmGet<any[]>(`/api/projects/all-employees?${params}`);
+      if (byCustomer && (res.meta?.pages || 1) > 1) {
+        // Server clamps limit to 100 — walk the remaining pages for the grouped view.
+        const all = [...(res.data || [])];
+        for (let pg = 2; pg <= (res.meta?.pages || 1); pg++) {
+          params.set("page", String(pg));
+          const more = await crmGet<any[]>(`/api/projects/all-employees?${params}`);
+          all.push(...(more.data || []));
+        }
+        res = { ...res, data: all };
+      }
       if (groupByEmployee) {
         setGroups((res.data || []) as EmpGroup[]);
         setRows([]);
@@ -676,7 +691,7 @@ export function ProjectEmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debounced, statusFilter, projectFilter, customerFilter, groupByEmployee]);
+  }, [page, debounced, statusFilter, projectFilter, customerFilter, groupByEmployee, view]);
   useEffect(() => { load(); }, [load]);
 
   const columns: Column<PeRow>[] = useMemo(() => [
@@ -760,11 +775,51 @@ export function ProjectEmployeesPage() {
           />
           Group by employee
         </label>
+        {!groupByEmployee && <div className="mb-1 ml-auto"><ViewToggle view={view} onChange={setView} /></div>}
       </div>
 
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       {groupByEmployee ? (
         <GroupedList groups={groups} loading={loading} />
+      ) : view === "customer" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input className={`${inputCls} !w-64`} placeholder="Search employee, project or client…" value={search}
+              onChange={(e) => setSearch(e.target.value)} aria-label="Search project employees" />
+            <span className="ml-auto text-xs text-muted">{rows.length} mapping{rows.length === 1 ? "" : "s"}</span>
+          </div>
+          <CustomerGroupedList<PeRow>
+            rows={rows}
+            loading={loading}
+            columns={columns.filter((c) => c.key !== "customer_name")}
+            customerId={(r) => r.customer_id}
+            customerName={(r) => r.customer_name}
+            noun="employee"
+            summary={(rs) => (
+              <>
+                <span>Active <span className="font-semibold text-primary tnum">{rs.filter((r) => !r.is_exit && r.is_active).length}</span></span>
+                <span>Exited <span className="font-semibold text-primary tnum">{rs.filter((r) => r.is_exit).length}</span></span>
+                <span>Projects <span className="font-semibold text-primary tnum">{new Set(rs.map((r) => r.project_id)).size}</span></span>
+              </>
+            )}
+            onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)}
+            rowKey={(r) => r.id}
+            empty={<TeachingEmpty page="project-employees" />}
+            rowActions={canWrite ? (r) => (
+              <RowActions
+                entity="project employee"
+                itemLabel={r.employee_name || r.project_name}
+                onView={() => crmNavigate(`project-employees/${r.id}`)}
+                onEdit={() => setEditing(r)}
+                deleteUrl={`/api/projects/employees/${r.id}`}
+                onDeleted={() => afterListDelete(r.id, setRows, load)}
+                notify={notify}
+                canEdit
+                canDelete
+              colored />
+            ) : undefined}
+          />
+        </div>
       ) : (
         <DataTable
           columns={columns}

@@ -426,9 +426,9 @@
 
 .sealImage {
   display: block;
-  width: 150px;
+  width: 112px;
   height: auto;
-  max-height: 110px;
+  max-height: 84px;
   object-fit: contain;
   object-position: center bottom;
 }
@@ -495,6 +495,32 @@
 
 .footerItem svg {
   color: #fff;
+}
+
+.footerLink {
+  color: #fff;
+  text-decoration: underline;
+  font-weight: 700;
+}
+
+.tableWide thead th {
+  font-size: 9px;
+  line-height: 1.2;
+  padding: 6px 4px;
+}
+
+.tableWide td {
+  font-size: 10.5px;
+}
+
+.periodNote {
+  margin-top: 2px;
+  font-size: 9.5px;
+  color: var(--inv-muted);
+}
+
+.amountCell {
+  font-weight: 700;
 }
 
 .btn {

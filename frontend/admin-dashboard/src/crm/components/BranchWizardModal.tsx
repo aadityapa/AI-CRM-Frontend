@@ -10,6 +10,8 @@
  * (Customers → BranchBillingPolicyModal) and holiday-years table
  * (BranchPolicy page). All endpoints / field wiring preserved.
  */
+import { CarryForwardField } from "./CarryForwardField";
+import { NEVER_EXPIRES, leaveExpireLabel } from "./ProjectPolicySections";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useReducedMotion } from "framer-motion";
 import { Building2, CalendarDays, Clock3, Pencil, Plus, Timer, Trash2 } from "lucide-react";
@@ -88,7 +90,7 @@ const LEAVE_CREDIT_TYPE_CHOICES = [
   "Yearly",
 ];
 /** Leave expire period — Monthly / Quarterly / Yearly (Days removed). */
-const LEAVE_EXPIRE_CHOICES = ["Monthly", "Quarterly", "Yearly"];
+const LEAVE_EXPIRE_CHOICES = ["Monthly", "Quarterly", "Yearly", NEVER_EXPIRES];
 
 type LeaveType = { id: number; name: string };
 
@@ -155,7 +157,7 @@ function leaveRowFromApi(r: Record<string, unknown>): LeaveRow {
     leave_expire_timing: (r.leave_expire_timing as string) || "End_Of_Period",
     is_max_limit: !!r.is_max_limit,
     max_limit: r.max_limit != null ? String(r.max_limit) : "",
-    maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "0",
+    maximum_carry_forward: r.maximum_carry_forward != null ? String(r.maximum_carry_forward) : "",
     effective_date: r.effective_date ? String(r.effective_date).slice(0, 10) : "",
     prorate_balance_credit: !!r.prorate_balance_credit,
     is_billable: r.is_billable == null ? true : !!r.is_billable,
@@ -231,9 +233,9 @@ function BranchLeaveBillingDialog({
     if (form.is_max_limit && form.max_limit !== "" && Number.isNaN(Number(form.max_limit))) {
       errs.max_limit = "Must be a number";
     }
-    const mcf = form.maximum_carry_forward === "" ? 0 : Number(form.maximum_carry_forward);
-    if (!Number.isFinite(mcf) || mcf < 0) {
-      errs.maximum_carry_forward = "Must be a number ≥ 0";
+    if (form.maximum_carry_forward !== "") {
+      const mcf = Number(form.maximum_carry_forward);
+      if (!Number.isFinite(mcf) || mcf < 0) errs.maximum_carry_forward = "Must be a number ≥ 0";
     }
     setDialogErrors(errs);
     return Object.keys(errs).length === 0;
@@ -247,7 +249,7 @@ function BranchLeaveBillingDialog({
       leave_expire_timing: form.leave_expire
         ? (form.leave_expire_timing || "End_Of_Period")
         : "",
-      maximum_carry_forward: form.maximum_carry_forward === "" ? "0" : String(form.maximum_carry_forward),
+      maximum_carry_forward: form.maximum_carry_forward === "" ? "" : String(form.maximum_carry_forward),
     });
   };
 
@@ -379,26 +381,34 @@ function BranchLeaveBillingDialog({
               const leave_expire = e.target.value;
               set({
                 leave_expire,
-                leave_expire_timing: leave_expire
+                leave_expire_timing: leave_expire && leave_expire !== NEVER_EXPIRES
                   ? (form.leave_expire_timing || "End_Of_Period")
                   : "",
+                ...(leave_expire === NEVER_EXPIRES ? { maximum_carry_forward: "" } : {}),
               });
             }}
           >
             <option value="">-Select-</option>
             {LEAVE_EXPIRE_CHOICES.map((o) => (
-              <option key={o} value={o}>{o}</option>
+              <option key={o} value={o}>{leaveExpireLabel(o)}</option>
             ))}
           </select>
           {dialogErrors.leave_expire && (
             <p className="mt-1 text-xs text-danger" role="alert">{dialogErrors.leave_expire}</p>
           )}
-          <PeriodTimingPicker
-            cycle={form.leave_expire}
-            value={form.leave_expire_timing}
-            verb="Expire"
-            onChange={(v) => set({ leave_expire_timing: v })}
-          />
+          {form.leave_expire === NEVER_EXPIRES ? (
+            <p className="mt-1 text-[11px] text-muted">
+              The unused balance is never written off — every 31 December it rolls into the next year and the
+              employee's leave ledger records the carry-forward.
+            </p>
+          ) : (
+            <PeriodTimingPicker
+              cycle={form.leave_expire}
+              value={form.leave_expire_timing}
+              verb="Expire"
+              onChange={(v) => set({ leave_expire_timing: v })}
+            />
+          )}
         </div>
 
         <label className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -427,20 +437,14 @@ function BranchLeaveBillingDialog({
           </div>
         )}
 
-        <div>
-          <FieldLabel label="Maximum Carry Forward" />
-          <input
-            type="number"
-            step={1}
-            min={0}
-            className={inputCls}
+        {form.leave_expire !== NEVER_EXPIRES && (
+          <CarryForwardField
             value={form.maximum_carry_forward}
-            onChange={(e) => set({ maximum_carry_forward: e.target.value })}
+            onChange={(v) => set({ maximum_carry_forward: v })}
+            error={dialogErrors.maximum_carry_forward}
+            expireCycle={form.leave_expire}
           />
-          {dialogErrors.maximum_carry_forward && (
-            <p className="mt-1 text-xs text-danger" role="alert">{dialogErrors.maximum_carry_forward}</p>
-          )}
-        </div>
+        )}
 
 
         <label className="flex items-center gap-2 text-sm font-medium text-primary">
@@ -889,7 +893,7 @@ export function EditBranchWizard({
         // Not editable in the form any more, but still sent so editing a policy
         // never silently zeroes a value an older record already carries.
         initial_credit_balance: numOrNull(row.initial_credit_balance) ?? 0,
-        maximum_carry_forward: numOrNull(row.maximum_carry_forward === "" ? "0" : row.maximum_carry_forward),
+        maximum_carry_forward: (row.maximum_carry_forward === "" ? null : numOrNull(row.maximum_carry_forward)),
         effective_date: row.effective_date || null,
       };
       if (row.id) {
@@ -1176,18 +1180,38 @@ export function EditBranchWizard({
                   value={pol.hours_required_full_day_comp_off} onChange={(e) => setP("hours_required_full_day_comp_off", e.target.value)} />
               </Field>
             </div>
-            <div className="flex flex-wrap gap-6 rounded-xl border border-subtle bg-surface-2/30 px-4 py-3">
-              {billableChk("holidays_billable", "Holidays Billable", defaults.holidays)}
-              {billableChk("weekoff_billable", "Weekoff Billable", defaults.weekoff)}
+            <div className="rounded-xl border border-subtle bg-surface-2/30 px-4 py-3">
+              <div className="flex flex-wrap gap-6">
+                {billableChk("holidays_billable", "Holidays Billable", defaults.holidays)}
+                {billableChk("weekoff_billable", "Weekoff Billable", defaults.weekoff)}
+              </div>
+              {(() => {
+                const hol = pol.holidays_billable === "" ? defaults.holidays : pol.holidays_billable === "yes";
+                const wo = pol.weekoff_billable === "" ? defaults.weekoff : pol.weekoff_billable === "yes";
+                if (!hol && !wo) {
+                  return (
+                    <p className="mt-2 text-[11px] text-muted">
+                      Off: weekends/holidays are NOT billed. Hours worked on them are billed only if Comp-Off Billable is on;
+                      otherwise the employee earns Comp-Off leave.
+                    </p>
+                  );
+                }
+                return (
+                  <p className="mt-2 rounded-control border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+                    <b>Ticked = the customer is billed for {wo && hol ? "every weekend and holiday" : wo ? "every weekend" : "every holiday"} of the month,
+                    even when nothing was worked</b> (calendar-month billing — e.g. 31 billed days in August). Hours worked
+                    on those days are billed as extra only when Comp-Off Billable is on; otherwise the employee earns Comp-Off
+                    leave. Untick if the customer only pays for days actually worked.
+                  </p>
+                );
+              })()}
             </div>
             <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
               {triSelect("leave_billable", "Leave Billable", defaults.leave)}
               {triSelect("comp_off_billable", "Comp-Off Billable", null)}
             </div>
             <InfoChip>
-              Blank hour fields inherit the customer default. Holidays/Weekoff Billable bill worked
-              holiday/weekend hours as normal (precedence over Comp-Off Billable). If both direct and
-              Comp-Off flags are off, Comp-Off leave is credited on submit.
+              Blank hour fields inherit the customer default. Holidays / Week Off Billable: the customer pays for those DAYS even when nothing was worked (calendar-month billing). Comp Off Billable: hours actually WORKED on a week-off/holiday are billed as extra; when it is off the employee earns Comp-Off leave instead.
             </InfoChip>
 
             <div className="rounded-control border border-subtle bg-surface-2/20 p-4">

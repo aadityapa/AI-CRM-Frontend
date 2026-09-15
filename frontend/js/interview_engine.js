@@ -60,6 +60,9 @@ export class InterviewEngine {
       this.hooks.setInterviewRuntimeConfig?.({
         timingMode: data.timing_mode,
         timeLimitSec: Number(data.time_limit_sec) || 0,
+        // Server-authoritative clock (15 Sep 2026): a reload used to restart
+        // the timer from zero; now the countdown resumes from what is left.
+        timeRemainingSec: data.time_remaining_sec,
         micAlwaysOn: !!data.mic_always_on,
         showSpokenText: data.enable_transcript_input === true || data.show_spoken_text === true,
         timeWarnings: data.time_warnings,

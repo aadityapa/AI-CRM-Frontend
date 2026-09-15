@@ -7,10 +7,11 @@ import {
 } from "lucide-react";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
-import { useHasRole } from "../CrmApp";
+import { useHasRole, useMe } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
+import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import {
   ActionError, btnDanger, btnPrimary, btnSecondary, ConfirmModal, ErrorBox, inputCls,
@@ -1957,22 +1958,29 @@ export function InvoicesPage() {
   const [customerFilter, setCustomerFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const customerNames = useNameMap("/api/customers/names");
+  // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch the whole
+  // status tab so every customer's section is complete.
+  const [view, setView] = useGroupView();
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     const t = window.setTimeout(() => {
-      crmGet<any[]>(`/api/invoices${qs({
-        payment_status: tab, search, page, limit: 20,
+      const params = {
+        payment_status: tab, search,
         customer_id: customerFilter || undefined,
         project_id: projectFilter || undefined,
-      })}`)
+      };
+      const req = view === "customer"
+        ? fetchAllMaster<any>("/api/invoices", params).then((all) => ({ data: all, meta: undefined }))
+        : crmGet<any[]>(`/api/invoices${qs({ ...params, page, limit: 20 })}`);
+      req
         .then((r) => { if (alive) { setRows(r.data || []); setMeta(r.meta); setError(""); } })
         .catch((e) => { if (alive) setError(e?.message || "Failed to load invoices"); })
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page, reloadKey, customerFilter, projectFilter]);
+  }, [tab, search, page, reloadKey, customerFilter, projectFilter, view]);
   useEffect(() => { setPage(1); }, [customerFilter, projectFilter]);
 
   const columns: Column<any>[] = [
@@ -2004,6 +2012,53 @@ export function InvoicesPage() {
       </div>
       <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
       {error && <ErrorBox error={error} />}
+      {view === "customer" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice number…"
+              value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search invoices" />
+            <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
+              value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} title="Filter by project">
+              <option value="">All projects</option>
+              {Object.entries(projects).sort((a, b) => a[1].localeCompare(b[1]))
+                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <ViewToggle view={view} onChange={setView} />
+            <span className="ml-auto text-xs text-muted">{rows.length} invoice{rows.length === 1 ? "" : "s"}</span>
+          </div>
+          <CustomerGroupedList<any>
+            rows={rows}
+            loading={loading}
+            columns={columns}
+            customerId={(r) => r.customer_id}
+            customerName={(r) => r.customer_name}
+            noun="invoice"
+            summary={(rs) => (
+              <>
+                <span>Total <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.grand_total || 0), 0))}</span></span>
+                <span>Paid <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.paid_amount || 0), 0))}</span></span>
+                <span>Balance <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.balance_amount || 0), 0))}</span></span>
+              </>
+            )}
+            onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
+            rowKey={(r) => r.id}
+            empty={<TeachingEmpty page="invoices" />}
+            rowActions={(r) => (
+              <RowActions
+                entity="invoice"
+                itemLabel={r.invoice_number}
+                onView={() => crmNavigate(`invoices/${r.id}`)}
+                onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
+                deleteUrl={`/api/invoices/${r.id}`}
+                onDeleted={() => afterListDelete(r.id, setRows, load)}
+                notify={showToast}
+                canEdit={canWrite}
+                canDelete={canWrite}
+              colored />
+            )}
+          />
+        </div>
+      ) : (
       <DataTable
         columns={columns}
         rows={rows}
@@ -2030,6 +2085,7 @@ export function InvoicesPage() {
               {Object.entries(projects).sort((a, b) => a[1].localeCompare(b[1]))
                 .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
             </select>
+            <ViewToggle view={view} onChange={setView} />
           </>
         }
         emptyMessage={<TeachingEmpty page="invoices" />}
@@ -2038,7 +2094,7 @@ export function InvoicesPage() {
             entity="invoice"
             itemLabel={r.invoice_number}
             onView={() => crmNavigate(`invoices/${r.id}`)}
-            onEdit={() => crmNavigate(`invoices/${r.id}`)}
+            onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
             deleteUrl={`/api/invoices/${r.id}`}
             onDeleted={() => afterListDelete(r.id, setRows, load)}
             notify={showToast}
@@ -2047,6 +2103,7 @@ export function InvoicesPage() {
           colored />
         )}
       />
+      )}
       {showNew && (
         <InvoiceFormModal
           onClose={() => setShowNew(false)}
@@ -2284,6 +2341,325 @@ function InvoiceFormModal({
  * INVOICE — detail
  * =================================================================== */
 
+/** Change request on a GENERATED invoice (11 Sep 2026, user flow): the
+ *  customer asked for a correction → Sales/Finance describe WHY, adjust the
+ *  header and/or the line qty/rate, and send it for approval. Sales / Sales
+ *  Head (Admin/CEO always) approve; only then the invoice changes. Every
+ *  request lands in the invoice's change history and Admin, CEO and Sales
+ *  Head are notified with the before → after. */
+type RevisionRow = {
+  id: number; status: string; reason: string; changes: Record<string, any>;
+  requested_by?: number | null; requested_by_name?: string | null; requested_at?: string | null;
+  decided_by?: number | null; decided_by_name?: string | null; decided_at?: string | null;
+  decision_note?: string | null;
+  snapshot_before?: any; snapshot_after?: any;
+};
+
+function describeChanges(ch: Record<string, any>): string[] {
+  const out: string[] = [];
+  const lab: Record<string, string> = {
+    invoice_number: "Invoice no.", invoice_date: "Invoice date", due_date: "Due date", buyer_state_code: "Buyer state code",
+  };
+  for (const k of Object.keys(lab)) {
+    if (ch[k]) out.push(`${lab[k]}: ${ch[k].from ?? "—"} → ${ch[k].to ?? "—"}`);
+  }
+  if (ch.po_id) out.push(`Purchase order: ${ch.po_id.from_label ?? "—"} → ${ch.po_id.to_label ?? "—"}`);
+  for (const lc of (ch.lines || []) as any[]) {
+    const parts: string[] = [];
+    if (lc.qty) parts.push(`qty ${lc.qty.from} → ${lc.qty.to}`);
+    if (lc.rate) parts.push(`rate ${inr(lc.rate.from)} → ${inr(lc.rate.to)}`);
+    if (lc.description_change) parts.push(`description "${lc.description_change.from}" → "${lc.description_change.to}"`);
+    out.push(`Line ${lc.s_no}: ${parts.join(", ")}`);
+  }
+  return out;
+}
+
+/** "Contract Staffing Service K Jyothish - Jul 2026" → "… — 01/07/2026 to 31/07/2026"
+ *  when the invoice carries its billing window (user preference: exact dates,
+ *  not the month label). */
+function periodDescription(desc: string, billing: any): string {
+  const ps = billing?.period_start; const pe = billing?.period_end;
+  const dmy = (iso: string) => { const [y, m, d] = String(iso).slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
+  if (!ps || !pe) return desc;
+  const stripped = desc.replace(/\s*[-–—]\s*[A-Za-z]{3,9}\s+\d{4}\s*$/, "");
+  return `${stripped} — ${dmy(ps)} to ${dmy(pe)}`;
+}
+
+function RequestChangeModal({ invoice, onClose, onSaved }: {
+  invoice: any;
+  onClose: () => void;
+  onSaved: (message?: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [number, setNumber] = useState<string>(String(invoice.invoice_number || ""));
+  const [invoiceDate, setInvoiceDate] = useState<string>(String(invoice.invoice_date || "").slice(0, 10));
+  // PO picker (11 Sep 2026): every PO of this customer, the ones raised for
+  // this employee first, so Sales can move the invoice to the right PO.
+  const [poId, setPoId] = useState<string>(invoice.po_id ? String(invoice.po_id) : "");
+  const [poOptions, setPoOptions] = useState<Array<{
+    id: number; po_number: string; status: string; employee_name?: string | null; for_this_employee: boolean;
+    balance_value?: number | null; total_value?: number | null; start_date?: string | null; end_date?: string | null; is_current: boolean;
+  }>>([]);
+  useEffect(() => {
+    crmGet<any[]>(`/api/invoices/${invoice.id}/po-options`)
+      .then((r) => setPoOptions(r.data || []))
+      .catch(() => setPoOptions([]));
+  }, [invoice.id]);
+  const [lines, setLines] = useState<Array<{ id: number; s_no: number; description: string; qty: string; rate: string }>>(
+    ((invoice.lines || []) as any[]).map((l) => ({
+      id: Number(l.id), s_no: Number(l.s_no), description: String(l.description || ""),
+      qty: String(l.qty ?? ""), rate: String(l.rate ?? ""),
+    })),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const origLines = (invoice.lines || []) as any[];
+  const lineChanges = lines.flatMap((l) => {
+    const o = origLines.find((x) => Number(x.id) === l.id);
+    if (!o) return [];
+    const q = Number(l.qty); const r = Number(l.rate);
+    const c: Record<string, unknown> = { id: l.id };
+    if (Number.isFinite(q) && q > 0 && Math.abs(q - Number(o.qty)) > 1e-9) c.qty = q;
+    if (Number.isFinite(r) && r > 0 && Math.abs(r - Number(o.rate)) > 1e-9) c.rate = r;
+    return Object.keys(c).length > 1 ? [c] : [];
+  });
+  const poChanged = !!poId && Number(poId) !== Number(invoice.po_id || 0);
+  const headerDirty = number.trim() !== String(invoice.invoice_number || "")
+    || invoiceDate !== String(invoice.invoice_date || "").slice(0, 10)
+    || poChanged;
+  const dirty = headerDirty || lineChanges.length > 0;
+  const previewSub = lines.reduce((acc, l) => {
+    const q = Number(l.qty); const r = Number(l.rate);
+    return acc + (Number.isFinite(q) && Number.isFinite(r) ? Math.round(q * r * 100) / 100 : 0);
+  }, 0);
+
+  const save = async () => {
+    setErr("");
+    if (reason.trim().length < 10) { setErr("Give a reason (at least 10 characters) — the approver and the history need it"); return; }
+    if (!dirty) { setErr("Nothing changed"); return; }
+    setBusy(true);
+    try {
+      const payload: Record<string, unknown> = { reason: reason.trim(), lines: lineChanges };
+      if (number.trim() && number.trim() !== invoice.invoice_number) payload.invoice_number = number.trim();
+      if (invoiceDate && invoiceDate !== String(invoice.invoice_date || "").slice(0, 10)) payload.invoice_date = invoiceDate;
+      if (poChanged) payload.po_id = Number(poId);
+      const res = await crmPost<any>(`/api/invoices/${invoice.id}/revisions`, payload);
+      onSaved(res.message);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to send the change request");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Request a change — ${invoice.invoice_number}`} onClose={onClose} dirty={dirty || !!reason} medium
+      footer={
+        <div className="flex justify-end gap-2">
+          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={btnPrimary} onClick={() => void save()} disabled={busy || !dirty}>
+            {busy ? "Sending…" : "Send for approval"}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        {err && <ActionError error={err} />}
+        <p className="text-xs text-secondary">
+          This invoice has been generated (and may already be with the customer), so changes are not applied
+          directly: Sales / Sales Head approve the request first, the change is kept in the invoice's history,
+          and Admin, CEO and Sales Head are notified with exactly what changed.
+        </p>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-secondary">Reason for the change *</span>
+          <textarea className={`${inputCls} min-h-[72px]`} value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Customer AP team asked for their PO reference as the invoice number and one LOP day deducted" />
+        </label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-secondary">Invoice number</span>
+            <input className={inputCls} value={number} onChange={(e) => setNumber(e.target.value)} maxLength={64} />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-secondary">Invoice date</span>
+            <input type="date" className={inputCls} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+          </label>
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold text-secondary">Purchase order</span>
+          <select className={inputCls} value={poId} onChange={(e) => setPoId(e.target.value)}>
+            {!poOptions.length && <option value={poId}>{invoice.po_number || "—"}</option>}
+            {poOptions.map((p) => (
+              <option key={p.id} value={String(p.id)}>
+                {p.po_number}{p.employee_name ? ` — ${p.employee_name}` : ""}
+                {p.for_this_employee ? " (this employee)" : ""}
+                {p.balance_value != null ? ` · balance ${inr(p.balance_value)}` : ""}
+                {p.is_current ? " · current" : ""}
+              </option>
+            ))}
+          </select>
+          {poChanged && (
+            <span className="mt-1 block text-[11px] text-warning">
+              On approval the amount is released from the current PO and drawn from the new one.
+            </span>
+          )}
+        </label>
+        <div className="rounded-card border border-subtle">
+          <div className="border-b border-subtle px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted">Lines</div>
+          <div className="divide-y divide-[color:var(--border-subtle)]">
+            {lines.map((l, i) => (
+              <div key={l.id} className="grid grid-cols-1 gap-2 px-3 py-2 sm:grid-cols-[1fr_120px_150px_130px] sm:items-end">
+                <div className="text-sm text-primary">
+                  <span className="mr-2 text-xs font-semibold text-muted">#{l.s_no}</span>
+                  {periodDescription(l.description, invoice.billing)}
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-muted">Qty</span>
+                  <input type="number" min={0} step="0.01" className={`${inputCls} text-xs`} value={l.qty}
+                    onChange={(e) => setLines((ls) => ls.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-muted">Rate</span>
+                  <input type="number" min={0} step="0.01" className={`${inputCls} text-xs`} value={l.rate}
+                    onChange={(e) => setLines((ls) => ls.map((x, j) => (j === i ? { ...x, rate: e.target.value } : x)))} />
+                </label>
+                <div className="pb-2 text-right text-sm font-semibold text-primary">
+                  {inr(Math.round(Number(l.qty) * Number(l.rate) * 100) / 100)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between border-t border-subtle px-3 py-2 text-sm">
+            <span className="font-semibold text-secondary">Sub-total after change (GST recomputed on approval)</span>
+            <span className="font-bold text-primary">{inr(previewSub)}</span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Pending request banner + the invoice's change history. */
+function InvoiceRevisionsCard({ invoiceId, meId, refreshKey, onChanged, notify }: {
+  invoiceId: number;
+  meId: number;
+  refreshKey: number;
+  onChanged: () => void;
+  notify: (m: string, kind?: "ok" | "err") => void;
+}) {
+  const [rows, setRows] = useState<RevisionRow[]>([]);
+  const [meta, setMeta] = useState<any>({});
+  const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState<RevisionRow | null>(null);
+  const [note, setNote] = useState("");
+
+  const load = useCallback(() => {
+    crmGet<RevisionRow[]>(`/api/invoices/${invoiceId}/revisions`)
+      .then((r) => { setRows(r.data || []); setMeta(r.meta || {}); })
+      .catch(() => { setRows([]); setMeta({}); });
+  }, [invoiceId]);
+  useEffect(load, [load, refreshKey]);
+
+  const pending = rows.find((r) => r.status === "Pending");
+  const canApprove = !!meta.can_approve && !!pending && pending.requested_by !== meId;
+
+  const act = async (path: string, body: Record<string, unknown>, okMsg: string) => {
+    setBusy(true);
+    try {
+      const res = await crmPost<any>(path, body);
+      notify(res.message || okMsg);
+      setRejecting(null); setNote("");
+      load(); onChanged();
+    } catch (e: any) {
+      notify(e?.message || "Failed", "err");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!rows.length) return null;
+  return (
+    <Card title="Change History">
+      {pending && (
+        <div className="mb-3 rounded-card border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-700 dark:bg-amber-900/20">
+          <div className="font-bold text-amber-800 dark:text-amber-200">Change request awaiting approval</div>
+          <div className="mt-1 text-secondary">
+            Requested by <b>{pending.requested_by_name || "—"}</b> on {fmtDate(pending.requested_at)} — “{pending.reason}”
+          </div>
+          <ul className="mt-1 list-disc pl-5 text-secondary">
+            {describeChanges(pending.changes).map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {canApprove && (
+              <>
+                <button className={btnPrimary} disabled={busy}
+                  onClick={() => void act(`/api/invoices/${invoiceId}/revisions/${pending.id}/approve`, {}, "Approved")}>
+                  Approve &amp; apply
+                </button>
+                <button className={btnDanger} disabled={busy} onClick={() => setRejecting(pending)}>Reject</button>
+              </>
+            )}
+            {pending.requested_by === meId && (
+              <button className={btnSecondary} disabled={busy}
+                onClick={() => void act(`/api/invoices/${invoiceId}/revisions/${pending.id}/cancel`, {}, "Withdrawn")}>
+                Withdraw my request
+              </button>
+            )}
+            {!canApprove && pending.requested_by !== meId && (
+              <span className="text-xs text-muted">Sales / Sales Head, Admin or CEO can approve this.</span>
+            )}
+            {pending.requested_by === meId && !meta.can_approve && (
+              <span className="text-xs text-muted">Waiting for Sales / Sales Head approval.</span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="divide-y divide-[color:var(--border-subtle)]">
+        {rows.map((r) => (
+          <div key={r.id} className="py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={r.status} />
+              <span className="text-secondary">
+                {r.requested_by_name || "—"} · {fmtDate(r.requested_at)}
+                {r.decided_by_name ? ` → ${r.status.toLowerCase()} by ${r.decided_by_name} on ${fmtDate(r.decided_at)}` : ""}
+              </span>
+            </div>
+            <div className="mt-0.5 text-secondary">Reason: {r.reason}</div>
+            <ul className="list-disc pl-5 text-secondary">
+              {describeChanges(r.changes).map((t, i) => <li key={i}>{t}</li>)}
+            </ul>
+            {r.decision_note && <div className="text-xs text-muted">Note: {r.decision_note}</div>}
+            {r.status === "Approved" && r.snapshot_before && r.snapshot_after && (
+              <div className="text-xs text-muted">
+                Grand total {inr(r.snapshot_before.grand_total)} → {inr(r.snapshot_after.grand_total)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {rejecting && (
+        <Modal title="Reject this change request" onClose={() => setRejecting(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button className={btnSecondary} onClick={() => setRejecting(null)} disabled={busy}>Cancel</button>
+              <button className={btnDanger} disabled={busy || note.trim().length < 10}
+                onClick={() => void act(`/api/invoices/${invoiceId}/revisions/${rejecting.id}/reject`, { note: note.trim() }, "Rejected")}>
+                Reject
+              </button>
+            </div>
+          }
+        >
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-secondary">Why? (sent to the requester) *</span>
+            <textarea className={`${inputCls} min-h-[72px]`} value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
 export function InvoiceDetailPage() {
   const { id } = useCrmParams();
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
@@ -2295,6 +2671,24 @@ export function InvoiceDetailPage() {
   const [taxPdfBusy, setTaxPdfBusy] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showTds, setShowTds] = useState(false);
+  // The list's pencil lands here with ?edit=1 (11 Sep 2026) — open the editor
+  // straight away, then drop the flag so Back/refresh does not reopen it.
+  const [showEdit, setShowEdit] = useState<boolean>(() => {
+    try {
+      const u = new URL(window.location.href);
+      if (u.searchParams.get("edit") === "1") {
+        u.searchParams.delete("edit");
+        window.history.replaceState(window.history.state, "", u.toString());
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  });
+  const [docxBusy, setDocxBusy] = useState(false);
+  const [revKey, setRevKey] = useState(0);
+  const me = useMe();
+  const salesRole = useHasRole("Sales", "Sales_Head");
+  const canRequestChange = canWrite || salesRole;
   const [toast, showToast] = useToast();
 
   const load = () => {
@@ -2360,26 +2754,38 @@ export function InvoiceDetailPage() {
     }
   };
 
-  const downloadTaxInvoicePdf = async () => {
+  // "Tax Invoice (PDF)" (11 Sep 2026): open the View and auto-download the
+  // SAME sheet the user sees (one renderer, one look), instead of the
+  // server's fallback PDF whose layout differed from the on-screen invoice.
+  const downloadTaxInvoicePdf = () => {
     setTaxPdfBusy(true);
+    crmNavigate(`invoices/${id}/tax-invoice?pdf=1`);
+  };
+
+  const downloadFile = async (path: string, fallbackName: string, label: string) => {
+    const res = await authFetch(path);
+    if (!res.ok) throw new Error(`${label} failed (${res.status})`);
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^"]+)"?/i.exec(cd);
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = m?.[1] || fallbackName;
+    a.click();
+    URL.revokeObjectURL(href);
+  };
+
+  const downloadTaxInvoiceDocx = async () => {
+    setDocxBusy(true);
     try {
-      const res = await authFetch(`/api/invoices/${id}/tax-invoice.pdf`);
-      if (!res.ok) throw new Error(`Tax Invoice PDF failed (${res.status})`);
-      const blob = await res.blob();
-      const cd = res.headers.get("Content-Disposition") || "";
-      const m = /filename="?([^"]+)"?/i.exec(cd);
-      const name = m?.[1] || `TaxInvoice_${inv.invoice_number || id}.pdf`;
-      const href = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = href;
-      a.download = name;
-      a.click();
-      URL.revokeObjectURL(href);
-      showToast("Tax Invoice PDF downloaded");
+      await downloadFile(`/api/invoices/${id}/tax-invoice.docx`,
+        `TaxInvoice_${inv.invoice_number || id}.docx`, "Word export");
+      showToast("Tax Invoice (Word) downloaded");
     } catch (e: any) {
-      showToast(e?.message || "Failed to download Tax Invoice PDF", "err");
+      showToast(e?.message || "Failed to download the Word file", "err");
     } finally {
-      setTaxPdfBusy(false);
+      setDocxBusy(false);
     }
   };
 
@@ -2399,13 +2805,27 @@ export function InvoiceDetailPage() {
         <h1 className="text-display text-lg font-bold text-primary">{inv.invoice_number}</h1>
         <StatusBadge status={inv.payment_status} />
         <div className="ml-auto flex flex-wrap gap-2">
+          {canRequestChange && (
+            <button type="button" className={btnSecondary} onClick={() => setShowEdit(true)}
+              title="Request a change (reason required; approved by Sales / Sales Head)">
+              <Pencil size={15} /> Edit
+            </button>
+          )}
           <button
             type="button"
             className={btnPrimary}
             disabled={taxPdfBusy}
-            onClick={() => void downloadTaxInvoicePdf()}
+            onClick={downloadTaxInvoicePdf}
           >
-            <FileDown size={15} /> {taxPdfBusy ? "Preparing…" : "Tax Invoice (PDF)"}
+            <FileDown size={15} /> {taxPdfBusy ? "Opening…" : "Tax Invoice (PDF)"}
+          </button>
+          <button
+            type="button"
+            className={btnSecondary}
+            disabled={docxBusy}
+            onClick={() => void downloadTaxInvoiceDocx()}
+          >
+            <FileText size={15} /> {docxBusy ? "Preparing…" : "Tax Invoice (Word)"}
           </button>
           <CrmLink
             to={`invoices/${inv.id}/tax-invoice`}
@@ -2459,6 +2879,9 @@ export function InvoiceDetailPage() {
         )}
       </Card>
 
+      <InvoiceRevisionsCard invoiceId={inv.id} meId={me.id} refreshKey={revKey}
+        onChanged={load} notify={(m, k) => showToast(m, k)} />
+
       <Card title="Payment History">
         <DataTable columns={paymentCols} rows={inv.payments || []} emptyMessage="No payments recorded" />
       </Card>
@@ -2474,6 +2897,13 @@ export function InvoiceDetailPage() {
         </Card>
       )}
 
+      {showEdit && (
+        <RequestChangeModal
+          invoice={inv}
+          onClose={() => setShowEdit(false)}
+          onSaved={(msg) => { setShowEdit(false); showToast(msg || "Change request sent"); setRevKey((k) => k + 1); load(); }}
+        />
+      )}
       {showPayment && (
         <RecordPaymentModal
           invoice={{ ...inv, grand_total: displayGrand, balance_amount: paymentBalance }}

@@ -660,6 +660,34 @@ function _setEndingOverlayText(message) {
   if (card) card.textContent = message || "Submitting your interview...";
 }
 
+/** The submit could not be confirmed: keep the candidate on the page with a
+ *  clear message and a Retry button instead of a false "Thank you". */
+function _showFinalizeRetry(onRetry) {
+  const overlay = document.getElementById("interviewEndingOverlay");
+  const card = overlay ? overlay.querySelector(".qc-ending-card") : null;
+  if (!overlay || !card) {
+    if (window.confirm("We could not save your interview. Check your connection and try again?")) onRetry();
+    return;
+  }
+  overlay.classList.add("is-active");
+  overlay.setAttribute("aria-hidden", "false");
+  card.textContent = "";
+  const msg = document.createElement("div");
+  msg.textContent = "We couldn't save your interview. Please check your internet connection and try again — your answers are kept.";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-primary";
+  btn.style.marginTop = "14px";
+  btn.textContent = "Retry submission";
+  btn.addEventListener("click", () => {
+    btn.disabled = true;
+    _setEndingOverlayText("Submitting your interview…");
+    onRetry();
+  });
+  card.appendChild(msg);
+  card.appendChild(btn);
+}
+
 export function showCandidateToast(message, durationMs = 1500) {
   return _showCandidateToast(message, durationMs);
 }
@@ -1869,6 +1897,13 @@ export async function submitInterview(options = {}) {
         });
       } catch (inner) {
         console.warn("[SUBMIT] Background finalize retry failed", inner);
+        // Do NOT redirect to "Thank you" when the server never confirmed the
+        // submission — the candidate would leave believing they are done while
+        // the CRM still shows the interview as pending (15 Sep 2026). Offer a
+        // retry; the keepalive backup still fires if they close the tab.
+        _submitInterviewInFlight = false;
+        _showFinalizeRetry(() => submitInterview({ timeExpired, exitTerminated }));
+        return;
       }
     } finally {
       _submitInterviewInFlight = false;
@@ -1931,6 +1966,7 @@ export function setLiveTranscriptVisible(show) {
 export function setInterviewRuntimeConfig({
   timingMode,
   timeLimitSec,
+  timeRemainingSec,
   micAlwaysOn,
   showSpokenText,
   timeWarnings,
@@ -1938,6 +1974,12 @@ export function setInterviewRuntimeConfig({
 } = {}) {
   if (timingMode) state.timingMode = String(timingMode);
   state.interviewLimitSec = Number(timeLimitSec) || 0;
+  // Re-anchor the local clock to the server's remaining time so a refresh or
+  // re-login does not hand out a fresh full limit (15 Sep 2026).
+  if (timeRemainingSec !== undefined && timeRemainingSec !== null && state.interviewLimitSec > 0) {
+    const remaining = Math.max(0, Number(timeRemainingSec) || 0);
+    state.interviewStartTs = Date.now() - (state.interviewLimitSec - remaining) * 1000;
+  }
   state.micAlwaysOn = !!micAlwaysOn;
   if (showSpokenText !== undefined) {
     setLiveTranscriptVisible(showSpokenText);

@@ -9,6 +9,8 @@ import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
+import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import {
@@ -76,7 +78,33 @@ type CommEntry = {
   type: string;
 };
 
+type EffectivePolicy = {
+  holidays_billable: boolean; weekoff_billable: boolean; leave_billable: boolean; comp_off_billable: boolean;
+  hours_required_half_day: number | null; hours_required_full_day: number | null; working_hours_per_day: number | null;
+  is_max_billable_hours_per_day: boolean; max_billable_hours_per_day: number | null;
+  is_max_billable_hours_per_month: boolean; max_billable_hours_per_month: number | null;
+  is_max_billable_days_per_month: boolean; max_billable_days_per_month: number | null;
+};
+
+/** A cap set on the project prints as-is; one inherited from the branch/customer
+ *  is labelled so nobody edits the project looking for it. */
+function capValue(own: number | null | undefined, inherited: number | null | undefined, enabled?: boolean | null) {
+  if (own != null) return String(own);
+  if (inherited != null && enabled !== false) return `${inherited} (from branch policy)`;
+  return "No cap";
+}
+
+function billableSummary(p: EffectivePolicy) {
+  const on = [
+    p.holidays_billable && "Holidays", p.weekoff_billable && "Week-offs",
+    p.leave_billable && "Leave", p.comp_off_billable && "Comp-off",
+  ].filter(Boolean) as string[];
+  return on.length ? on.join(", ") : "Worked days only";
+}
+
 type ProjectDetail = Project & {
+  /** Project override → branch → customer default, resolved server-side. */
+  effective_policy?: EffectivePolicy | null;
   customer_name?: string | null;
   opportunity_title?: string | null;
   branch_id?: number | null;
@@ -182,24 +210,34 @@ export function ProjectsListPage() {
       .catch(() => {});
   }, []);
 
+  // CUSTOMER-WISE VIEW (14 Sep 2026, user request — same as Purchase Orders):
+  // the grouped layout fetches the whole status tab so every customer's
+  // section is complete; the flat table stays server-paged.
+  const [view, setView] = useGroupView();
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await crmGet<Project[]>(`/api/projects${qs({
-        status: tab, page, limit: 20, search,
+      const params = {
+        status: tab, search,
         customer_id: customerFilter || undefined,
         opportunity_id: colFilters.opportunity?.value || undefined,
         billing_frequency: colFilters.billing_frequency?.value || undefined,
-      })}`);
-      setRows(res.data || []);
-      setMeta(res.meta);
+      };
+      if (view === "customer") {
+        setRows(await fetchAllMaster<Project>("/api/projects", params));
+        setMeta(undefined);
+      } else {
+        const res = await crmGet<Project[]>(`/api/projects${qs({ ...params, page, limit: 20 })}`);
+        setRows(res.data || []);
+        setMeta(res.meta);
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load projects");
     } finally {
       setLoading(false);
     }
-  }, [tab, page, search, customerFilter, colFilters]);
+  }, [tab, page, search, customerFilter, colFilters, view]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [customerFilter]);
 
@@ -304,6 +342,46 @@ export function ProjectsListPage() {
       </div>
       {error ? (
         <ErrorBox error={error} onRetry={load} />
+      ) : view === "customer" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search project or customer…"
+              value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search projects" />
+            <ViewToggle view={view} onChange={setView} />
+            <span className="ml-auto text-xs text-muted">{rows.length} project{rows.length === 1 ? "" : "s"}</span>
+          </div>
+          <CustomerGroupedList<Project>
+            rows={rows}
+            loading={loading}
+            columns={columns.filter((c) => c.key !== "customer")}
+            customerId={(r) => r.customer_id}
+            customerName={(r) => customerName(r.customer_id)}
+            noun="project"
+            summary={(rs) => (
+              <>
+                <span>Active <span className="font-semibold text-primary tnum">{rs.filter((r) => r.status === "Active").length}</span></span>
+                <span>Monthly <span className="font-semibold text-primary tnum">{rs.filter((r) => r.billing_frequency === "Monthly").length}</span></span>
+              </>
+            )}
+            onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
+            rowKey={(r) => r.id}
+            empty={<TeachingEmpty page="projects" />}
+            rowActions={canCreate ? (r) => (
+              <RowActions
+                entity="project"
+                itemLabel={r.name}
+                onView={() => crmNavigate(`projects/${r.id}`)}
+                onEdit={() => crmNavigate(`projects/${r.id}`)}
+                deleteUrl={`/api/projects/${r.id}`}
+                onDeleted={() => afterListDelete(r.id, setRows, load)}
+                notify={showToast}
+                canEdit
+                canDelete
+                colored
+              />
+            ) : undefined}
+          />
+        </div>
       ) : (
         <DataTable<Project>
           columns={columns}
@@ -317,12 +395,15 @@ export function ProjectsListPage() {
           columnFilters={columnFilterValues}
           onColumnFilter={onColumnFilter}
           filters={
-            <select className="input-recessed !w-52 rounded-control px-3 py-2 text-sm"
-              value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
-              title="Filter by customer">
-              <option value="">All customers</option>
-              {customerOpts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <>
+              <select className="input-recessed !w-52 rounded-control px-3 py-2 text-sm"
+                value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
+                title="Filter by customer">
+                <option value="">All customers</option>
+                {customerOpts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <ViewToggle view={view} onChange={setView} />
+            </>
           }
           headerRight={meta ? (
             <span className="whitespace-nowrap text-xs font-medium text-muted">
@@ -467,13 +548,17 @@ function OverviewTab({
       )}
       <div className="glass fx-gradient-border grid grid-cols-1 gap-4 rounded-card p-5 sm:grid-cols-2 xl:grid-cols-3">
         <Info label="Customer" value={project.customer_name || `#${project.customer_id}`} />
-        <Info label="Opportunity" value={project.opportunity_title || `#${project.opportunity_id}`} />
+        <Info label="Opportunity" value={project.opportunity_title || (project.opportunity_id ? `#${project.opportunity_id}` : "— (not linked to a sales opportunity)")} />
         <Info label="Status" value={<StatusBadge status={project.status} />} />
         <Info label="Billing cycle" value={`Day ${project.billing_cycle_start_day} – ${project.billing_cycle_end_day}`} />
         <Info label="Billing frequency" value={pretty(project.billing_frequency)} />
-        <Info label="Max billable hrs/day" value={project.max_billable_hours_day ?? "—"} />
-        <Info label="Max billable hrs/month" value={project.max_billable_hours_month ?? "—"} />
-        <Info label="Max billable days/month" value={project.max_billable_days_month ?? "—"} />
+        <Info label="Max billable hrs/day" value={capValue(project.max_billable_hours_day, project.effective_policy?.max_billable_hours_per_day, project.effective_policy?.is_max_billable_hours_per_day)} />
+        <Info label="Max billable hrs/month" value={capValue(project.max_billable_hours_month, project.effective_policy?.max_billable_hours_per_month, project.effective_policy?.is_max_billable_hours_per_month)} />
+        <Info label="Max billable days/month" value={capValue(project.max_billable_days_month, project.effective_policy?.max_billable_days_per_month, project.effective_policy?.is_max_billable_days_per_month)} />
+        <Info label="Working hrs/day" value={project.effective_policy?.working_hours_per_day ?? "—"} />
+        <Info label="Full / half day (hrs)" value={project.effective_policy ? `${project.effective_policy.hours_required_full_day ?? "—"} / ${project.effective_policy.hours_required_half_day ?? "—"}` : "—"} />
+        <Info label="Billable" value={project.effective_policy ? billableSummary(project.effective_policy) : "—"} />
+        {project.branch_name && <Info label="Branch policy" value={project.branch_name} />}
         <Info label="Created" value={fmtDate(project.created_at)} />
       </div>
       {showEdit && (

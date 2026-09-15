@@ -12,7 +12,11 @@ import { resolveInviteDeviceId } from "./invite_device.js";
 
 const FINALIZE_RETRY_MS = 1200;
 const MAX_FINALIZE_ATTEMPTS = 3;
+// The fast-finalize path answers in well under 12 s; a slow network gets one
+// longer attempt before we give up (15 Sep 2026 — a single timeout used to
+// abort the whole loop).
 const FINALIZE_TIMEOUT_MS = 12000;
+const FINALIZE_TIMEOUT_RETRY_MS = 30000;
 
 /**
  * POST /submit. The backend preserves compatibility with background_finalize,
@@ -35,9 +39,17 @@ export async function postInterviewFinalizeBackground({
 
   console.info("[REPORT] Generation Started");
   let lastErr = null;
+  let timedOutOnce = false;
   for (let attempt = 1; attempt <= MAX_FINALIZE_ATTEMPTS; attempt++) {
     try {
-      const res = await apiFetch("/submit", { method: "POST", body: fd }, { timeoutMs: FINALIZE_TIMEOUT_MS });
+      const timeoutMs = timedOutOnce ? FINALIZE_TIMEOUT_RETRY_MS : FINALIZE_TIMEOUT_MS;
+      const res = await apiFetch("/submit", { method: "POST", body: fd }, { timeoutMs });
+      if (res.status === 404 || res.status === 409 || res.status === 410) {
+        // Not retryable: no session (already finalized) or already closed.
+        const body = await res.json().catch(() => ({}));
+        if (body && body.status === "submitted") return body;
+        throw Object.assign(new Error(body.error || `Submit refused (${res.status})`), { fatal: true });
+      }
       const data = await handleJson(res);
       if (data && data.status === "submitted") {
         console.info("[FLOW] REPORT_COMPLETED", {
@@ -53,8 +65,10 @@ export async function postInterviewFinalizeBackground({
       lastErr = e;
       const timedOut = e && (e.name === "AbortError" || /abort/i.test(String(e.message || "")));
       console.warn("[REPORT] Generation Failed", { attempt, timedOut, message: String(e?.message || e) });
+      if (e && e.fatal) throw e;
       if (timedOut) {
-        throw new Error("REPORT_TIMEOUT");
+        if (timedOutOnce) throw new Error("REPORT_TIMEOUT");
+        timedOutOnce = true;
       }
       if (attempt < MAX_FINALIZE_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, FINALIZE_RETRY_MS * attempt));

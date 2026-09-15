@@ -18,6 +18,8 @@ import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import { DataTable } from "../components/DataTable";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
+import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
+import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { CrmLink } from "../routerHooks";
 import {
   ConfirmModal, ErrorBox, Field, Modal, StatusBadge, btnPrimary, btnSecondary, inputCls, useToast,
@@ -75,25 +77,34 @@ export function CustomerReceiptsPage() {
       .catch(() => {});
   }, []);
 
+  // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch every page
+  // of the current filters so each customer's section is complete.
+  const [view, setView] = useGroupView();
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await crmGet<Receipt[]>(`/api/customer-receipts${qs({
-        page, limit: 20, search: debounced, sort_by: sort.by, sort_dir: sort.dir,
+      const params = {
+        search: debounced, sort_by: sort.by, sort_dir: sort.dir,
         customer_id: colFilters.customer_name?.value || undefined,
         payment_mode: colFilters.payment_mode?.value || undefined,
         received_from: colFilters.received_date?.from || undefined,
         received_to: colFilters.received_date?.to || undefined,
-      })}`);
-      setRows(res.data || []);
-      setMeta(res.meta as any);
+      };
+      if (view === "customer") {
+        setRows(await fetchAllMaster<Receipt>("/api/customer-receipts", params));
+        setMeta(undefined);
+      } else {
+        const res = await crmGet<Receipt[]>(`/api/customer-receipts${qs({ ...params, page, limit: 20 })}`);
+        setRows(res.data || []);
+        setMeta(res.meta as any);
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load received amounts");
     } finally {
       setLoading(false);
     }
-  }, [page, debounced, sort, colFilters]);
+  }, [page, debounced, sort, colFilters, view]);
   useEffect(() => { load(); }, [load]);
 
   const columns: Column<Receipt>[] = useMemo(() => [
@@ -151,6 +162,42 @@ export function CustomerReceiptsPage() {
       </div>
       {error ? (
         <ErrorBox error={error} onRetry={load} />
+      ) : view === "customer" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <input className={`${inputCls} !w-64`} placeholder="Search reference, notes or customer…" value={search}
+              onChange={(e) => setSearch(e.target.value)} aria-label="Search received amounts" />
+            <ViewToggle view={view} onChange={setView} />
+            <span className="ml-auto text-xs text-muted">
+              {rows.length} receipt{rows.length === 1 ? "" : "s"} · total {inr(rows.reduce((a, r) => a + Number(r.amount || 0), 0))}
+            </span>
+          </div>
+          <CustomerGroupedList<Receipt>
+            rows={rows}
+            loading={loading}
+            columns={columns.filter((c) => c.key !== "customer_name")}
+            customerId={(r) => r.customer_id}
+            customerName={(r) => r.customer_name}
+            noun="receipt"
+            summary={(rs) => (
+              <>
+                <span>Received <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.amount || 0), 0))}</span></span>
+                <span>Unallocated <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.unallocated_amount || 0), 0))}</span></span>
+              </>
+            )}
+            onRowClick={(r) => setExpanded((cur) => (cur === r.id ? null : r.id))}
+            rowKey={(r) => r.id}
+            empty={<div className="rounded-card border border-subtle bg-surface-1 p-6 text-sm text-muted">No amounts received yet — Finance records the first one with “Add received amount”.</div>}
+            rowActions={canEdit ? (r) => (
+              <button type="button"
+                className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-danger-soft hover:!text-danger"
+                title="Remove this receipt and restore the invoice balances"
+                onClick={() => setRemoving(r)}>
+                <Trash2 size={15} />
+              </button>
+            ) : undefined}
+          />
+        </div>
       ) : (
         <DataTable<Receipt>
           columns={columns}
@@ -173,6 +220,7 @@ export function CustomerReceiptsPage() {
               {meta.total} receipt{meta.total === 1 ? "" : "s"}, page {meta.page}/{Math.max(1, meta.pages || 1)}
             </span>
           ) : undefined}
+          filters={<ViewToggle view={view} onChange={setView} />}
           emptyMessage="No amounts received yet — Finance records the first one with “Add received amount”."
           rowActions={canEdit ? (r) => (
             <button type="button"

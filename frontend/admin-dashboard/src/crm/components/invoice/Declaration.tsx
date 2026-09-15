@@ -6,6 +6,12 @@ import styles from "./taxInvoice.module.css";
 /** Bundled seal + authorized signature mark. Overridable via seller.seal_url. */
 const DEFAULT_SEAL = `${import.meta.env.BASE_URL}assets/karnex-seal-sign.png`;
 
+/** The statutory wording (11 Sep 2026, user text) — Settings ▸ Invoice overrides. */
+const DEFAULT_DECLARATION =
+  "Certified that all the particulars given above are true and correct. The amount indicated " +
+  "represents the price actually charged and there is no flow of additional consideration " +
+  "directly or indirectly from the Service Recipient.";
+
 export function Declaration({ seller, share }: { seller: SellerDetails; share?: ShareLinks | null }) {
   const sealSrc = (seller.seal_url || "").trim() || DEFAULT_SEAL;
 
@@ -13,7 +19,10 @@ export function Declaration({ seller, share }: { seller: SellerDetails; share?: 
     <section className={styles.declBox}>
       <div className={styles.sectionTitle}>Declaration</div>
       <p className={styles.bodyText} style={{ margin: 0 }}>
-        {displayOrDash(seller.declaration)}
+        {displayOrDash(seller.declaration || DEFAULT_DECLARATION)}
+      </p>
+      <p className={styles.bodyText} style={{ margin: "6px 0 0", fontWeight: 700 }}>
+        {seller.signatory_line || "For Karnex Software Solutions Pvt. Ltd."}
       </p>
       <div className={styles.sealRow}>
         {/* "Scan to view this invoice" (3 Sep 2026): the server renders the QR

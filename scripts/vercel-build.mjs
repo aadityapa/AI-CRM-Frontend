@@ -42,6 +42,8 @@ const apiPrefixes = [
   "hr-records",
   "hr-record",
   "version",
+  "apply",
+  "book",
 ];
 
 const rewrites = [];

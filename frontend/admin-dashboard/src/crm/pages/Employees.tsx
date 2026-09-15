@@ -594,6 +594,8 @@ export function EmployeesListPage() {
   }, [tab, search, deptFilter, typeFilter, page, reloadKey]);
 
   const columns: Column<any>[] = [
+    { key: "employee_code", label: "Emp ID", className: "whitespace-nowrap",
+      render: (r) => r.employee_code ? <span className="font-mono text-xs font-semibold text-secondary">{r.employee_code}</span> : <span className="text-muted">—</span> },
     { key: "full_name", label: "Name", render: (r) => <span className="font-semibold">{r.full_name}</span> },
     { key: "email", label: "Email" },
     { key: "department", label: "Department", render: (r) => (r.department_id ? departments[r.department_id] || `#${r.department_id}` : "—") },

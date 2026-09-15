@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Download, Printer } from "lucide-react";
+import { ArrowLeft, Download, FileText, Printer } from "lucide-react";
+import { authFetch } from "../../../api/client";
 import { crmGet } from "../../api";
 import { CrmLink, useCrmParams } from "../../routerHooks";
 import { ErrorBox, Spinner } from "../ui";
@@ -25,14 +26,14 @@ export function TaxInvoiceDocument({
   sheetRef?: React.Ref<HTMLDivElement>;
 }) {
   return (
-    <div className={styles.page} ref={sheetRef}>
+    <div className={styles.page} ref={sheetRef} data-invoice-sheet="1">
       <InvoiceHeader data={data} />
       <div className={styles.cardsRow}>
         <BuyerCard party={data.buyer} />
         <ShippingCard party={data.shipping} />
       </div>
       <InvoiceTable lines={data.lines} defaultSac={data.sac_code}
-        qtyLabel={data.qty_label} rateLabel={data.rate_label} />
+        qtyLabel={data.qty_label} rateLabel={data.rate_label} billing={data.billing} />
       <div className={styles.totalsRow}>
         <GSTSummary gst={data.gst} />
         <TotalsPanel gst={data.gst} />
@@ -53,7 +54,34 @@ export function InvoicePage() {
   const [data, setData] = useState<InvoiceData | null>(null);
   const [error, setError] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [docxBusy, setDocxBusy] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+
+  // Word export (11 Sep 2026): server-built .docx with the same sections and
+  // figures as this sheet, so Finance can edit wording without touching numbers.
+  const onDownloadDocx = async () => {
+    if (!data) return;
+    setDocxBusy(true);
+    try {
+      const res = await authFetch(`/api/invoices/${id}/tax-invoice.docx`);
+      if (!res.ok) throw new Error(`Word export failed (${res.status})`);
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="?([^"]+)"?/i.exec(cd);
+      const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
+      const name = m?.[1] || `TaxInvoice_${safe}.docx`;
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to download Word file");
+    } finally {
+      setDocxBusy(false);
+    }
+  };
 
   const load = () => {
     setError("");
@@ -91,8 +119,14 @@ export function InvoicePage() {
     const wantsPdf = new URLSearchParams(window.location.search).get("pdf") === "1";
     if (!wantsPdf) return;
     autoPdfDone.current = true;
-    // Let the A4 sheet paint before capturing.
-    const t = window.setTimeout(() => { void onDownloadPdf(); }, 400);
+    // Drop the flag from the URL so a refresh / Back does not re-download.
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("pdf");
+      window.history.replaceState(window.history.state, "", u.toString());
+    } catch { /* ignore */ }
+    // Let the A4 sheet paint (fonts + images) before capturing.
+    const t = window.setTimeout(() => { void onDownloadPdf(); }, 600);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
@@ -120,6 +154,15 @@ export function InvoicePage() {
         >
           <Download size={15} aria-hidden />
           {pdfBusy ? "Preparing PDF…" : "Download PDF"}
+        </button>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnSecondary}`}
+          onClick={() => void onDownloadDocx()}
+          disabled={docxBusy}
+        >
+          <FileText size={15} aria-hidden />
+          {docxBusy ? "Preparing Word…" : "Download Word"}
         </button>
         {error ? <span style={{ color: "#b91c1c", fontSize: 12 }}>{error}</span> : null}
       </div>

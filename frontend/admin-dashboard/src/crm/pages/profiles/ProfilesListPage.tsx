@@ -85,6 +85,7 @@ export function ProfilesListPage({
     { id: number; opp_id?: string | null; title?: string | null; customer_name?: string | null }[]
   >([]);
   const [taOwners, setTaOwners] = useState<{ id: number; name: string }[]>([]);
+  const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
   /** Header-funnel filters for columns with NO existing toolbar state
    * (AI score, experience, notice, applied date, submitted-by). Columns that
    * mirror a toolbar filter map onto that state instead — one truth per filter. */
@@ -114,6 +115,9 @@ export function ProfilesListPage({
     crmGet<{ id: number; name: string }[]>("/api/candidate-profiles/ta-owners")
       .then((r) => setTaOwners(r.data || []))
       .catch(() => { /* degrades to "All TA owners" */ });
+    crmGet<{ id: number; name: string }[]>("/api/candidate-profiles/customers")
+      .then((r) => setCustomers(r.data || []))
+      .catch(() => { /* degrades to "All customers" */ });
   }, []);
 
   /** Server-side export of the CURRENT filters, in the chosen format. */
@@ -127,14 +131,16 @@ export function ProfilesListPage({
         pipeline_status: filters.status || undefined,
         opportunity_id: filters.opportunityId || undefined,
         ta_owner_id: filters.taOwnerId || undefined,
+        customer_id: filters.customerId || undefined,
+        source: filters.source || undefined,
         search: filters.search || undefined,
         ai_min: colFilters.ai_interview?.min || undefined,
         ai_max: colFilters.ai_interview?.max || undefined,
         exp_min: colFilters.experience_years?.min || undefined,
         exp_max: colFilters.experience_years?.max || undefined,
         notice: colFilters.notice_period?.text || undefined,
-        applied_from: colFilters.applied_on?.from || undefined,
-        applied_to: colFilters.applied_on?.to || undefined,
+        applied_from: filters.appliedFrom || colFilters.applied_on?.from || undefined,
+        applied_to: filters.appliedTo || colFilters.applied_on?.to || undefined,
         submitted_by: colFilters.created_by_name?.text || undefined,
       })}`;
       const res = await authFetch(url);
@@ -167,14 +173,16 @@ export function ProfilesListPage({
         pipeline_status: filters.status,
         opportunity_id: filters.opportunityId || undefined,
         ta_owner_id: filters.taOwnerId || undefined,
+        customer_id: filters.customerId || undefined,
+        source: filters.source || undefined,
         search: filters.search || undefined,
         ai_min: colFilters.ai_interview?.min || undefined,
         ai_max: colFilters.ai_interview?.max || undefined,
         exp_min: colFilters.experience_years?.min || undefined,
         exp_max: colFilters.experience_years?.max || undefined,
         notice: colFilters.notice_period?.text || undefined,
-        applied_from: colFilters.applied_on?.from || undefined,
-        applied_to: colFilters.applied_on?.to || undefined,
+        applied_from: filters.appliedFrom || colFilters.applied_on?.from || undefined,
+        applied_to: filters.appliedTo || colFilters.applied_on?.to || undefined,
         submitted_by: colFilters.created_by_name?.text || undefined,
         sort: sortParam,
         page: filters.page,
@@ -187,7 +195,7 @@ export function ProfilesListPage({
       })
       .catch((e: any) => setError(e?.message || "Failed to load profiles"))
       .finally(() => setLoading(false));
-  }, [filters.bucket, filters.status, filters.opportunityId, filters.taOwnerId, filters.search, filters.page, sortParam, colFilters]);
+  }, [filters, sortParam, colFilters]);
 
   useEffect(load, [load]);
 
@@ -344,6 +352,19 @@ export function ProfilesListPage({
       onRemove: () => update({ taOwnerId: "" }),
     });
   }
+  if (filters.customerId) {
+    const c = customers.find((x) => String(x.id) === filters.customerId);
+    activeFilters.push({ key: "customer", label: `Customer: ${c?.name || `#${filters.customerId}`}`,
+      onRemove: () => update({ customerId: "" }) });
+  }
+  if (filters.appliedFrom || filters.appliedTo) {
+    activeFilters.push({ key: "applied", label: `Applied ${filters.appliedFrom || "…"} → ${filters.appliedTo || "…"}`,
+      onRemove: () => update({ appliedFrom: "", appliedTo: "" }) });
+  }
+  if (filters.source) {
+    activeFilters.push({ key: "source", label: `Source: ${filters.source.replace(/_/g, " ")}`,
+      onRemove: () => update({ source: "" }) });
+  }
   const COL_CHIP_LABEL: Record<string, string> = {
     ai_interview: "AI score", experience_years: "Exp (yrs)",
     notice_period: "Notice", applied_on: "Applied", created_by_name: "Submitted by",
@@ -453,6 +474,14 @@ export function ProfilesListPage({
                     taOwners={taOwners}
                     taOwnerId={filters.taOwnerId}
                     onTaOwner={(id) => update({ taOwnerId: id })}
+                    customers={customers}
+                    customerId={filters.customerId}
+                    onCustomer={(id) => update({ customerId: id })}
+                    appliedFrom={filters.appliedFrom}
+                    appliedTo={filters.appliedTo}
+                    onApplied={(from, to) => update({ appliedFrom: from, appliedTo: to })}
+                    source={filters.source}
+                    onSource={(v) => update({ source: v })}
                     view={view}
                     onView={setView}
                     extra={

@@ -34,6 +34,22 @@ export function BankDetails({ bank }: { bank: BankDetails }) {
           <span className={styles.label}>Account Type</span>
           <div className={styles.value}>{displayOrDash(bank.account_type)}</div>
         </div>
+        {(bank.swift_code || bank.upi_id) && (
+          <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {bank.swift_code ? (
+              <div>
+                <span className={styles.label}>SWIFT</span>
+                <div className={styles.value}>{bank.swift_code}</div>
+              </div>
+            ) : null}
+            {bank.upi_id ? (
+              <div>
+                <span className={styles.label}>UPI</span>
+                <div className={styles.value}>{bank.upi_id}</div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </section>
   );

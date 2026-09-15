@@ -30,9 +30,14 @@ export const NO_BILLING_QTY_UNITS = ["Hours", "Days", "Week", "Month", "Year"];
 export const LEAVE_CREDIT_TYPE_CHOICES = [
   "Monthly", "Quarterly", "Yearly",
 ];
+/** "Carry Forward" = never expires — the balance rolls into the next year
+ *  (11 Sep 2026, user request: Earned Leave at Uno Minda). */
 export const LEAVE_EXPIRE_CHOICES = [
-  "Monthly", "Quarterly", "Yearly",
+  "Monthly", "Quarterly", "Yearly", "Carry Forward",
 ];
+export const NEVER_EXPIRES = "Carry Forward";
+export const leaveExpireLabel = (v: string) =>
+  v === NEVER_EXPIRES ? "Never — carries forward to next year" : v;
 
 export type LeaveType = { id: number; name: string };
 
@@ -250,9 +255,7 @@ export function LeaveHolidayBillingSection({
         </label>
       </div>
       <p className="text-xs text-muted">
-        Holidays / Week Off Billable: bill worked holiday or weekend hours as normal (no Comp-Off credit).
-        Comp Off Billable (below, if set): bill as Comp-Off when the direct flag is off.
-        If both off: not billed; Comp-Off leave is credited on submit.
+        Holidays / Week Off Billable: the customer pays for those DAYS even when nothing was worked (calendar-month billing). Comp Off Billable: hours actually WORKED on a week-off/holiday are billed as extra; when it is off the employee earns Comp-Off leave instead.
       </p>
       <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
         <WizardField
@@ -354,7 +357,7 @@ export function LeaveBillingPolicySection({
               <th className={thCls}>Leave Credit Balance</th>
               <th className={thCls}>Leave Expire *</th>
               <th className={thCls}>Is Max Limit</th>
-              <th className={thCls}>Maximum Carry Forward</th>
+              <th className={thCls}>At Expiry</th>
               <th className={thCls} />
             </tr>
           </thead>
@@ -392,7 +395,7 @@ export function LeaveBillingPolicySection({
                     )}
                   </td>
                   <td className={tdCls}>{r.is_max_limit ? "Yes" : "No"}</td>
-                  <td className={tdCls}>{r.maximum_carry_forward || "0"}</td>
+                  <td className={tdCls}>{r.maximum_carry_forward === "" ? "Carry all" : Number(r.maximum_carry_forward) === 0 ? "Lapses" : `Carry up to ${r.maximum_carry_forward}`}</td>
                   <td className={tdCls}>
                     <button
                       type="button"

@@ -48,6 +48,8 @@ const EmployeeDetailPage = lazy(() => import("./pages/Employees").then((m) => ({
 const UsersAdminPage = lazy(() => import("./pages/UsersAdmin").then((m) => ({ default: m.UsersAdminPage })));
 const AccessTemplatesPage = lazy(() => import("./pages/AccessTemplates").then((m) => ({ default: m.AccessTemplatesPage })));
 const CrmSettingsPage = lazy(() => import("./pages/CrmSettings").then((m) => ({ default: m.CrmSettingsPage })));
+const SupportTicketsPage = lazy(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketsPage })));
+const SupportTicketDetailPage = lazy(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketDetailPage })));
 const CrmReportsPage = lazy(() => import("./pages/CrmReports").then((m) => ({ default: m.CrmReportsPage })));
 const TemplateRequestsPage = lazy(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
 const ProfilePage = lazy(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
@@ -91,6 +93,8 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "users", element: UsersAdminPage },
   { pattern: "access-templates", element: AccessTemplatesPage },
   { pattern: "settings", element: CrmSettingsPage },
+  { pattern: "support-tickets", element: SupportTicketsPage },
+  { pattern: "support-tickets/:id", element: SupportTicketDetailPage },
   { pattern: "reports", element: CrmReportsPage },
   { pattern: "template-requests", element: TemplateRequestsPage },
   { pattern: "profile", element: ProfilePage },

@@ -17,6 +17,10 @@ export type ProfileFilters = {
   status: string;
   opportunityId: string;
   taOwnerId: string;
+  customerId: string;
+  appliedFrom: string;
+  appliedTo: string;
+  source: string;
   search: string;
   page: number;
 };
@@ -26,6 +30,10 @@ const DEFAULTS: ProfileFilters = {
   status: "",
   opportunityId: "",
   taOwnerId: "",
+  customerId: "",
+  appliedFrom: "",
+  appliedTo: "",
+  source: "",
   search: "",
   page: 1,
 };
@@ -36,6 +44,10 @@ const PARAM = {
   status: "f_status",
   opportunityId: "f_opp",
   taOwnerId: "f_ta",
+  customerId: "f_cust",
+  appliedFrom: "f_from",
+  appliedTo: "f_to",
+  source: "f_src",
   search: "f_q",
   page: "f_page",
 } as const;
@@ -50,6 +62,10 @@ function read(): ProfileFilters {
     status: p.get(PARAM.status) || "",
     opportunityId: p.get(PARAM.opportunityId) || "",
     taOwnerId: p.get(PARAM.taOwnerId) || "",
+    customerId: p.get(PARAM.customerId) || "",
+    appliedFrom: p.get(PARAM.appliedFrom) || "",
+    appliedTo: p.get(PARAM.appliedTo) || "",
+    source: p.get(PARAM.source) || "",
     search: p.get(PARAM.search) || "",
     page: Number.isFinite(page) && page > 0 ? page : 1,
   };
@@ -107,6 +123,10 @@ export function useProfileFilters() {
       filters.status !== "" ||
       filters.opportunityId !== "" ||
       filters.taOwnerId !== "" ||
+      filters.customerId !== "" ||
+      filters.appliedFrom !== "" ||
+      filters.appliedTo !== "" ||
+      filters.source !== "" ||
       filters.search !== "" ||
       filters.bucket !== "active",
     [filters],

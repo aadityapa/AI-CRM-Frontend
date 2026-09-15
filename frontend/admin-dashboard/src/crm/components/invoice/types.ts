@@ -26,6 +26,12 @@ export interface SellerDetails extends PartyDetails {
   logo_url?: string | null;
   seal_url?: string | null;
   declaration?: string | null;
+  /** 11 Sep 2026 — Settings ▸ Invoice: service defaults + footer. */
+  sac_code?: string | null;
+  service_description?: string | null;
+  signatory_line?: string | null;
+  footer_website_url?: string | null;
+  footer_text?: string | null;
 }
 
 export interface BankDetails {
@@ -35,6 +41,12 @@ export interface BankDetails {
   ifsc?: string | null;
   branch?: string | null;
   account_type?: string | null;
+  swift_code?: string | null;
+  micr_code?: string | null;
+  upi_id?: string | null;
+  bank_address?: string | null;
+  /** customer (Sales' pick) · default · settings — where the account came from. */
+  source?: string | null;
 }
 
 export interface GSTBreakup {
@@ -61,6 +73,37 @@ export interface InvoiceLine {
   amount: number;
   billing_hours?: number | null;
   rate_per_hour?: number | null;
+  /** Billing breakdown (11 Sep 2026): present on the first line of a
+      timesheet-raised invoice. */
+  period_label?: string | null;
+  monthly_cost?: number | null;
+  leave_days?: number | null;
+  rate_per_day?: number | null;
+  qty_days?: number | null;
+}
+
+/** Column wording per billing unit — server-resolved (UNIT_COLUMNS). */
+export interface BillingColumns {
+  cost: string;
+  qty: string;
+  leave: string;
+  per_day: string;
+  amount: string;
+}
+
+export interface BillingBreakdown {
+  billing_unit: string;
+  columns: BillingColumns;
+  monthly_cost: number;
+  qty: number;
+  leave_days: number;
+  rate_per_day: number | null;
+  rate_per_unit: number;
+  working_days_in_period: number;
+  amount: number;
+  period_start?: string | null;
+  period_end?: string | null;
+  period_label?: string | null;
 }
 
 export interface InvoiceData {
@@ -85,6 +128,8 @@ export interface InvoiceData {
       matches the PDF. Absent on old cached payloads → hourly fallback. */
   qty_label?: string | null;
   rate_label?: string | null;
+  /** Billing-unit breakdown behind the line (null for manual invoices). */
+  billing?: BillingBreakdown | null;
   lines: InvoiceLine[];
   seller: SellerDetails;
   buyer: PartyDetails;

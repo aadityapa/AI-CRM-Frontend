@@ -192,7 +192,8 @@ export function Modal({
   /** Extra-wide POPUP (side-by-side layouts, e.g. the bulk verify wizard) —
    *  bigger than medium but still a rounded dialog, never a page takeover. */
   xl?: boolean;
-  /** Optional sticky footer action bar (shown only in full-page mode). */
+  /** Optional footer action bar — sticky in full-page mode, a plain bottom
+   *  bar in popup mode. */
   footer?: React.ReactNode;
   /** Extra classes for the scrollable body (e.g. flush padding for nested panes). */
   bodyClassName?: string;
@@ -321,9 +322,15 @@ export function Modal({
           */}
           <div className={isFullPage ? "relative flex h-full min-h-0 w-full max-w-none flex-col" : undefined}>{children}</div>
         </div>
-        {isFullPage && footer && (
+        {/* Footer renders in BOTH modes (11 Sep 2026, user report): popup
+            dialogs that passed `footer` (Edit invoice, Add bank account,
+            holiday detail) had no Save button at all — it was silently
+            dropped outside full-page mode. */}
+        {footer && (
           <div className={[
-            `wiz-chrome-footer sticky bottom-0 z-20 shrink-0 border-t border-subtle ${chromeBg} px-5 py-3 sm:px-8`,
+            isFullPage
+              ? `wiz-chrome-footer sticky bottom-0 z-20 shrink-0 border-t border-subtle ${chromeBg} px-5 py-3 sm:px-8`
+              : "shrink-0 border-t border-subtle bg-surface-1 px-4 py-3 sm:px-5",
             footerClassName || "",
           ].filter(Boolean).join(" ")}>
             {footer}
