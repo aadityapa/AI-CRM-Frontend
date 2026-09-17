@@ -267,8 +267,8 @@ function CustomizerModal({
           </ul>
         </section>
 
-        {/* ---- sort ---- */}
-        <section>
+        {/* ---- sort ---- (hidden for client-sorted lists with nothing sortable) */}
+        {sortable.length > 0 && <section>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-bold text-primary">Sort priority</h3>
             <span className="text-xs text-muted">
@@ -333,7 +333,7 @@ function CustomizerModal({
               <Plus size={14} /> Add sort level
             </button>
           )}
-        </section>
+        </section>}
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-subtle pt-4">
           <button type="button" className={btnSecondary} onClick={reset} disabled={busy}>

@@ -57,6 +57,7 @@ import { switchAuthMode, switchAuthPane } from "./auth/sharedAuth.js";
 import { initAuthMotion, initAuthEnterSubmit } from "./auth/authMotion.js";
 import { initBrandLogoFallback } from "./brandLogo.js";
 import { formatHrDateTimeDisplay, initHrSetupUi } from "./hrSetupUi.js";
+import { setRecordingBadge } from "./recording_badge.js";
 import { initHrAccessDetailsUi } from "./hrAccessDetails.js";
 import { initAutoAdvanceBannerUi } from "./interview_auto_advance.js";
 import { createHrAuth } from "./auth/hrAuth.js";
@@ -352,6 +353,7 @@ export function refreshSidebarProfileClock() {
 function logoutUser() {
   stopFaceMonitoring();
   deactivateInterviewSecurity();
+  setRecordingBadge(false);
   const bearer = getAuthToken();
   clearAuthSession();
   authUser = null;
@@ -731,6 +733,42 @@ function hideVerificationScreen() {
 }
 
 /** Full-screen thank-you or terminated state for finished invite links (not the HR login card). */
+/**
+ * "Come back at the scheduled time" screen. Counts down and re-runs the
+ * invite lookup when it reaches zero, so the candidate never has to reload.
+ */
+function showInviteNotYetScreen(schedule, secondsUntilStart) {
+  const screen = document.getElementById("screenInviteNotYet");
+  const whenEl = document.getElementById("inviteNotYetWhen");
+  const countEl = document.getElementById("inviteNotYetCountdown");
+  const auth = document.getElementById("screenAuth");
+  const startup = document.getElementById("screenStartup");
+  const layout = document.getElementById("mainLayout");
+  hideVerificationScreen();
+  if (auth) auth.classList.remove("active");
+  if (startup) startup.classList.remove("active");
+  if (layout) layout.classList.add("hidden");
+  document.body.classList.remove("interview-mode");
+  if (whenEl) whenEl.textContent = formatHrDateTimeDisplay(schedule?.scheduled_at_local) || "the scheduled time";
+  if (screen) screen.classList.add("active");
+
+  let left = Math.max(0, Number(secondsUntilStart) || 0);
+  if (_inviteNotYetHandle) clearInterval(_inviteNotYetHandle);
+  const render = () => { if (countEl) countEl.textContent = _formatHhMmSs(left); };
+  render();
+  _inviteNotYetHandle = setInterval(() => {
+    left -= 1;
+    render();
+    if (left <= 0) {
+      clearInterval(_inviteNotYetHandle);
+      _inviteNotYetHandle = null;
+      if (screen) screen.classList.remove("active");
+      void autoLoginFromInviteToken();
+    }
+  }, 1000);
+}
+let _inviteNotYetHandle = null;
+
 function showInviteTerminalState(state, extras = {}) {
   const done = document.getElementById("screenInviteCompleted");
   const term = document.getElementById("screenInviteTerminated");
@@ -744,6 +782,8 @@ function showInviteTerminalState(state, extras = {}) {
   document.body.classList.remove("interview-mode");
   if (done) done.classList.toggle("active", state === "completed");
   if (term) term.classList.toggle("active", state === "terminated");
+  const notYet = document.getElementById("screenInviteNotYet");
+  if (notYet) notYet.classList.remove("active");
   const personal = document.getElementById("inviteCompletedPersonal");
   const name = extras && extras.candidate_name ? String(extras.candidate_name).trim() : "";
   if (personal) {
@@ -788,6 +828,12 @@ async function handleVerifySubmit() {
       const st = data.invite_state;
       if (st === "completed" || st === "terminated") {
         showInviteTerminalState(st, { candidate_name: data.candidate_name });
+        if (btn) btn.disabled = false;
+        return;
+      }
+      if (data.status === "scheduled_wait") {
+        hideVerificationScreen();
+        showInviteNotYetScreen({ scheduled_at_local: data.starts_at_ist }, data.seconds_until_start || 0);
         if (btn) btn.disabled = false;
         return;
       }
@@ -876,8 +922,18 @@ async function proceedWithInviteLogin() {
       if (!fullscreenOk) {
         throw new Error("Fullscreen is required to start the interview. Click Enter Fullscreen to continue.");
       }
-      _setInviteStartupState("Loading first question...");
-      console.info("[STEP-4] Question loading started");
+      const resume = data.resume && typeof data.resume === "object" ? data.resume : null;
+      if (resume && resume.current > 0) {
+        // Reopened link mid-interview: say so, so the jump to question N
+        // does not look like the interview skipped ahead on its own.
+        const total = Number(resume.total) || 0;
+        const at = Math.min(Number(resume.current) + 1, total || Number(resume.current) + 1);
+        _setInviteStartupState(`Resuming your interview from question ${at}${total ? ` of ${total}` : ""}…`);
+        console.info("[STEP-4] Resuming interview", resume);
+      } else {
+        _setInviteStartupState("Loading first question...");
+        console.info("[STEP-4] Question loading started");
+      }
       const loaded = await loadQuestion({ throwOnError: true });
       if (!loaded) {
         throw new Error("Failed to load the first interview question.");
@@ -889,6 +945,7 @@ async function proceedWithInviteLogin() {
       });
       activateInterviewSecurity();
       startFaceMonitoring(() => document.getElementById("proctorCam"));
+      setRecordingBadge(true);
       console.info("[STEP-8] Candidate active");
       _setCandidateStartupControlsDisabled(false);
       const status = document.getElementById("candidateStatus");
@@ -1024,6 +1081,15 @@ async function autoLoginFromInviteToken() {
 
     const schedule = lookup.schedule || {};
     const hasAccessKey = !!(schedule.access_key);
+
+    // Not before the slot (16 Sep 2026 policy): the link is inert until the
+    // scheduled time, then usable once. Show the countdown and come back.
+    const access = lookup.access || {};
+    if (access.reason === "scheduled_wait") {
+      _hideInviteLoadingOverlay();
+      showInviteNotYetScreen(schedule, access.seconds_until_start || 0);
+      return true;
+    }
 
     // Same device, already verified (a refresh mid-interview): the server lets
     // us straight back in without the second factor — and without burning a

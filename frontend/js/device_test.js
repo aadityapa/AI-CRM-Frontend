@@ -233,6 +233,68 @@ async function _openMicStream() {
   throw lastErr || new Error("MIC_STREAM_OPEN_FAILED");
 }
 
+/** The guided mic script: what we ask for, how long we listen, and how we
+ *  decide we heard it. Voice = sustained energy; clap = one sharp transient. */
+const MIC_STEPS = [
+  { key: "one", prompt: "Say “one”", ms: 2200, kind: "voice" },
+  { key: "two", prompt: "Say “two”", ms: 2200, kind: "voice" },
+  { key: "clap", prompt: "Clap your hands once", ms: 2400, kind: "clap" },
+];
+const VOICE_PEAK_PCT = 4;      // peak deviation (% of full scale) that counts as speech
+const VOICE_RMS = 0.015;       // average RMS that counts as speech
+const CLAP_PEAK_PCT = 22;      // a clap is a short, loud transient
+const CLAP_RMS_MAX = 0.06;     // …that is NOT sustained (else it is just talking)
+
+function _setMicStep(key, state) {
+  const el = _qs(`#screenDeviceTest [data-mic-step="${key}"]`);
+  if (!el) return;
+  if (state) el.setAttribute("data-state", state);
+  else el.removeAttribute("data-state");
+}
+
+function _resetMicSteps() {
+  MIC_STEPS.forEach((st) => _setMicStep(st.key, ""));
+}
+
+/**
+ * Listen for one scripted step and return what the analyser saw.
+ * The meter animates the whole time so the candidate sees the mic reacting.
+ */
+function _listenForStep(analyser, data, ms) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + ms;
+    let peakPct = 0;
+    let rmsAccum = 0;
+    let samples = 0;
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      let max = 0;
+      for (let i = 0; i < data.length; i++) {
+        const dev = Math.abs(data[i] - 128);
+        if (dev > max) max = dev;
+        const norm = dev / 128;
+        sum += norm * norm;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      rmsAccum += rms;
+      samples += 1;
+      const pct = Math.min(100, (max / 64) * 100);
+      if (pct > peakPct) peakPct = pct;
+      _setMeter("mic", pct);
+      if (Date.now() < deadline) requestAnimationFrame(tick);
+      else resolve({ peakPct, avgRms: samples ? rmsAccum / samples : 0 });
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/**
+ * Guided microphone check (16 Sep 2026): "say one", "say two", "clap once".
+ * Each prompt is shown as a chip and marked heard/missed. The test passes when
+ * the voice was heard on at least one prompt OR the clap registered — the
+ * point is to prove the mic is live, not to grade the candidate.
+ */
 async function _sampleMicActivity(stream) {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) throw new Error("AudioContext unsupported");
@@ -242,49 +304,31 @@ async function _sampleMicActivity(stream) {
   analyser.fftSize = 1024;
   analyser.smoothingTimeConstant = 0.2;
   src.connect(analyser);
-
   const data = new Uint8Array(analyser.fftSize);
-  const deadline = Date.now() + 3400;
-  let peakNorm = 0;
-  let rmsAccum = 0;
-  let samples = 0;
+
+  const results = {};
+  _resetMicSteps();
   try {
-    await new Promise((resolve) => {
-      const tick = () => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        let max = 0;
-        for (let i = 0; i < data.length; i++) {
-          const dev = Math.abs(data[i] - 128);
-          if (dev > max) max = dev;
-          const norm = dev / 128;
-          sum += norm * norm;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        rmsAccum += rms;
-        samples += 1;
-        const normPct = Math.min(100, (max / 64) * 100);
-        if (normPct > peakNorm) peakNorm = normPct;
-        _setMeter("mic", normPct);
-        if (Date.now() < deadline) {
-          requestAnimationFrame(tick);
-        } else {
-          resolve();
-        }
-      };
-      requestAnimationFrame(tick);
-    });
+    for (const step of MIC_STEPS) {
+      _setMicStep(step.key, "active");
+      _setStatusMsg(`${step.prompt}…`);
+      const seen = await _listenForStep(analyser, data, step.ms);
+      const heard = step.kind === "clap"
+        ? seen.peakPct >= CLAP_PEAK_PCT || (seen.peakPct >= VOICE_PEAK_PCT && seen.avgRms < CLAP_RMS_MAX && seen.peakPct >= 12)
+        : seen.peakPct >= VOICE_PEAK_PCT || seen.avgRms >= VOICE_RMS;
+      results[step.key] = { ...seen, heard };
+      _setMicStep(step.key, heard ? "heard" : "missed");
+    }
   } finally {
     _setMeter("mic", 0);
     try { if (ctx && ctx.close) await ctx.close(); } catch (_) { /* ignore */ }
   }
 
-  const avgRms = samples > 0 ? rmsAccum / samples : 0;
-  return {
-    peakNorm,
-    avgRms,
-    active: peakNorm >= 4 || avgRms >= 0.015,
-  };
+  const voiceHeard = !!(results.one?.heard || results.two?.heard);
+  const clapHeard = !!results.clap?.heard;
+  const peakNorm = Math.max(...Object.values(results).map((r) => r.peakPct));
+  const avgRms = Object.values(results).reduce((n, r) => n + r.avgRms, 0) / MIC_STEPS.length;
+  return { peakNorm, avgRms, voiceHeard, clapHeard, active: voiceHeard || clapHeard, steps: results };
 }
 
 async function _runMicTest(tileState) {
@@ -330,18 +374,18 @@ async function _runMicTest(tileState) {
       throw Object.assign(new Error("AUDIO_TRACK_NOT_LIVE"), { name: "TrackStartError" });
     }
 
-    _setStatusMsg("Speak for 3 seconds...");
     const sampled = await _sampleMicActivity(stream);
     _deviceDebug("mic:activity_sample", sampled);
     _setStatusMsg("Verifying audio input...");
 
     if (!sampled.active) {
       _setTileStatus("mic", "error");
-      _setStatusMsg("Audio input level not detected. Please speak clearly and retry.");
+      _setStatusMsg("We could not hear you. Move closer to the microphone, speak clearly, and try again.");
     } else {
       tileState.mic = "ok";
       _setTileStatus("mic", "ok");
-      _setStatusMsg("Microphone working.");
+      const heard = [sampled.voiceHeard ? "your voice" : null, sampled.clapHeard ? "the clap" : null].filter(Boolean).join(" and ");
+      _setStatusMsg(`Microphone working — we heard ${heard}.`);
       if (stream) {
         _verifiedMicStream = stream;
         stream = null;
@@ -386,6 +430,16 @@ async function _runMicTest(tileState) {
 }
 
 let _speakerCtx = null;
+/** Length of the speaker test sound, in seconds. */
+const SPEAKER_TONE_SECONDS = 5;
+/** A rising four-note chime (C5 E5 G5 C6), played twice, then a held resolve. */
+const CHIME_NOTES = [523.25, 659.25, 783.99, 1046.5, 523.25, 659.25, 783.99, 1046.5];
+
+/**
+ * Play a pleasant 5-second chime instead of a bare beep (16 Sep 2026): a
+ * soft triangle-wave arpeggio with a little echo. Resolves when it ends so the
+ * "Yes, I hear it" button appears at the right moment.
+ */
 async function _playSpeakerTone() {
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -393,18 +447,62 @@ async function _playSpeakerTone() {
     if (!_speakerCtx || _speakerCtx.state === "closed") _speakerCtx = new AC();
     if (_speakerCtx.state === "suspended") await _speakerCtx.resume();
     const ctx = _speakerCtx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 660;
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.05);
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.4);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 1.45);
+    const t0 = ctx.currentTime + 0.05;
+
+    const master = ctx.createGain();
+    master.gain.value = 0.22;
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = 0.18;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.28;
+    delay.connect(feedback).connect(delay);
+    master.connect(ctx.destination);
+    master.connect(delay).connect(ctx.destination);
+
+    const noteLen = (SPEAKER_TONE_SECONDS - 1.2) / CHIME_NOTES.length;
+    CHIME_NOTES.forEach((freq, i) => {
+      const start = t0 + i * noteLen;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, start);
+      env.gain.linearRampToValueAtTime(1, start + 0.03);
+      env.gain.exponentialRampToValueAtTime(0.001, start + noteLen * 1.6);
+      osc.connect(env).connect(master);
+      osc.start(start);
+      osc.stop(start + noteLen * 1.7);
+    });
+    // Held final chord so the sound lands on something, not a cut-off.
+    const tail = t0 + CHIME_NOTES.length * noteLen;
+    [523.25, 783.99, 1046.5].forEach((freq) => {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, tail);
+      env.gain.linearRampToValueAtTime(0.7, tail + 0.05);
+      env.gain.exponentialRampToValueAtTime(0.001, tail + 1.15);
+      osc.connect(env).connect(master);
+      osc.start(tail);
+      osc.stop(tail + 1.2);
+    });
+
+    // Animate the tile meter for the duration so "is it playing?" is visible.
+    await new Promise((resolve) => {
+      const end = Date.now() + SPEAKER_TONE_SECONDS * 1000;
+      const tick = () => {
+        const left = end - Date.now();
+        if (left <= 0) { _setMeter("speaker", 0); resolve(); return; }
+        const phase = (Date.now() / 260) % 1;
+        _setMeter("speaker", 35 + Math.abs(Math.sin(phase * Math.PI)) * 55);
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
   } catch (err) {
-    _setStatusMsg("Speaker test failed to play tone. Please check the audio output device.");
+    _setMeter("speaker", 0);
+    _setStatusMsg("Speaker test failed to play the sound. Please check the audio output device.");
     throw err;
   }
 }
@@ -412,9 +510,10 @@ async function _playSpeakerTone() {
 async function _runSpeakerPlay(tileState) {
   const confirm = _qs('[data-action="speaker-confirm"]', _tile("speaker"));
   _setTileStatus("speaker", "testing");
-  _setStatusMsg("");
+  _setStatusMsg(`Playing the test sound (${SPEAKER_TONE_SECONDS} seconds)…`);
   try {
     await _playSpeakerTone();
+    _setStatusMsg("Did you hear the chime? Confirm below.");
     if (confirm) confirm.disabled = false;
   } catch (_) {
     _setTileStatus("speaker", "error");
@@ -584,6 +683,8 @@ function _resetGate(tileState) {
     _setTileStatus(k, "pending");
   });
   _setMeter("mic", 0);
+  _setMeter("speaker", 0);
+  _resetMicSteps();
   const speakerConfirm = _qs('[data-action="speaker-confirm"]', _tile("speaker"));
   if (speakerConfirm) speakerConfirm.disabled = true;
   const webcamConfirm = _qs('[data-action="webcam-confirm"]', _tile("webcam"));

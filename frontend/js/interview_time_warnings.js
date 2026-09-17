@@ -111,7 +111,11 @@ async function _speakTimeWarningOnce(text) {
     const fd = new FormData();
     fd.append("text", spoken);
     const res = await apiFetch("/candidate/tts", { method: "POST", body: fd });
-    if (!res.ok) return;
+    // A JSON body is the server's error report, not audio (16 Sep 2026).
+    if (!res.ok || String(res.headers.get("content-type") || "").includes("application/json")) {
+      console.warn("[TIME-WARNING] voice unavailable (HTTP %s) — banner only", res.status);
+      return;
+    }
     const blob = await res.blob();
     if (!blob.size) return;
     const audio = new Audio(URL.createObjectURL(blob));

@@ -11,6 +11,8 @@ export const state = {
   interviewStartTs: null,
   interviewTimerHandle: null,
   interviewLimitSec: 0,
+  /** False until /next reports time_remaining_sec (a resume must not show the full limit). */
+  interviewClockSynced: false,
   timingMode: "count",
   /** Timer warning banners (time-limited interviews). */
   timeWarningsEnabled: true,
