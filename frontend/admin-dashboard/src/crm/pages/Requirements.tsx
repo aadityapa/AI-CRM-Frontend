@@ -30,6 +30,7 @@ import { useCanAct, useCrmAccess } from "../useAccess";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
+import { TableCustomizerButton, useTableLayout } from "../components/TableCustomizer";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import { BulkVerifyModal } from "../components/BulkVerifyModal";
 import type { VerifyQueueItem } from "../components/BulkVerifyModal";
@@ -1109,6 +1110,201 @@ type FormState = {
 };
 
 type SkillRow = { skill_id: string; is_mandatory: boolean; min_rating: string };
+
+/** "Forgot the JD / skills" fix-up (15 Sep 2026): RMG, Sales, Sales Head and
+ *  Admin/CEO can fill or correct the description, RMG JD and the skill list at
+ *  any open status via `PATCH /api/requirements/{id}/jd-skills`. Deliberately
+ *  narrow — the full edit form stays creator-only and Draft/Rejected-only. */
+function JdSkillsModal({
+  req, onClose, onSaved, toast,
+}: {
+  req: Req;
+  onClose: () => void;
+  onSaved: (updated: Req) => void;
+  toast: ToastFn;
+}) {
+  const [description, setDescription] = useState(req.description || "");
+  const [rmgJdText, setRmgJdText] = useState(req.rmg_jd_text || "");
+  const [skillOpts, setSkillOpts] = useState<any[]>([]);
+  const [skillRows, setSkillRows] = useState<SkillRow[]>(
+    (req.skills || []).map((s) => ({
+      skill_id: String(s.skill_id),
+      is_mandatory: s.is_mandatory,
+      min_rating: s.min_rating != null ? String(s.min_rating) : "",
+    })),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAllMaster<any>("/api/skills").then((rows) => { if (!cancelled) setSkillOpts(rows); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const skillSelectOptions = useMemo(
+    () => skillOpts.map((s) => ({
+      value: String(s.id),
+      label: `${s.name}${s.category ? ` (${s.category})` : ""}`,
+    })),
+    [skillOpts],
+  );
+  const updateSkillRow = (i: number, patch: Partial<SkillRow>) =>
+    setSkillRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+
+  const createSkillForRow = async (rowIndex: number, typed: string) => {
+    const name = typed.trim();
+    if (!name) return;
+    const dup = skillOpts.find((o) => String(o.name).toLowerCase() === name.toLowerCase());
+    if (dup) { updateSkillRow(rowIndex, { skill_id: String(dup.id) }); return; }
+    try {
+      const res = await crmPost<any>("/api/skills", { name });
+      const created = res.data;
+      if (created?.id != null) {
+        setSkillOpts((opts) => (opts.some((o) => o.id === created.id) ? opts : [...opts, created]));
+        updateSkillRow(rowIndex, { skill_id: String(created.id) });
+        toast(`Skill "${created.name}" added`);
+      }
+    } catch (e: any) {
+      toast(e?.message || "Failed to create skill", "err");
+    }
+  };
+
+  const dirty =
+    description !== (req.description || "") ||
+    rmgJdText !== (req.rmg_jd_text || "") ||
+    JSON.stringify(skillRows) !== JSON.stringify((req.skills || []).map((s) => ({
+      skill_id: String(s.skill_id), is_mandatory: s.is_mandatory,
+      min_rating: s.min_rating != null ? String(s.min_rating) : "",
+    })));
+
+  const save = async () => {
+    setErr("");
+    if (skillRows.some((r) => !r.skill_id)) { setErr("Pick a skill on every row or remove the empty row."); return; }
+    const ids = skillRows.map((r) => r.skill_id);
+    if (new Set(ids).size !== ids.length) { setErr("A skill is listed twice."); return; }
+    setBusy(true);
+    try {
+      const res = await crmPatch<Req>(`/api/requirements/${req.id}/jd-skills`, {
+        description,
+        rmg_jd_text: rmgJdText,
+        skills: skillRows.map((r) => ({
+          skill_id: Number(r.skill_id),
+          is_mandatory: r.is_mandatory,
+          min_rating: r.min_rating ? Number(r.min_rating) : null,
+        })),
+      });
+      toast("JD & skills updated");
+      onSaved(res.data);
+      onClose();
+    } catch (e: any) {
+      setErr(e?.message || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Edit JD & skills" onClose={onClose} wide dirty={dirty}>
+      <div className="space-y-4">
+        <p className="text-xs text-muted">
+          {req.opportunity_opp_id || req.req_number} · {req.title} · status {req.status.replace(/_/g, " ")}. Budget, positions
+          and status are not editable here.
+        </p>
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-muted">Requirement description</label>
+          <textarea
+            className={`${inputCls} min-h-[90px]`}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What the customer needs — role summary, team, must-haves"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-muted">RMG job description (used by the ATS and AI interview)</label>
+          <textarea
+            className={`${inputCls} min-h-[160px]`}
+            value={rmgJdText}
+            onChange={(e) => setRmgJdText(e.target.value)}
+            placeholder="Paste the full JD text"
+          />
+        </div>
+        <div className="space-y-3 rounded-xl border border-subtle bg-surface-2 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-bold uppercase tracking-wide text-muted">Skill Evaluation Details</div>
+            <button
+              type="button"
+              className={`${btnSecondary} h-8 rounded-lg px-3 text-xs`}
+              onClick={() => setSkillRows((rs) => [...rs, { skill_id: "", is_mandatory: false, min_rating: "" }])}
+            >
+              <Plus size={14} /> Add skill
+            </button>
+          </div>
+          <p className="text-xs text-muted">Mandatory skills drive the ATS score. Set the required level per skill.</p>
+          {skillRows.length === 0 ? (
+            <p className="text-sm text-muted">No skills yet — add the skills TA should source against.</p>
+          ) : (
+            <div className="space-y-2">
+              {skillRows.map((r, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <div className="w-56">
+                    <SearchableSelect
+                      value={r.skill_id}
+                      options={skillSelectOptions}
+                      allowAdd
+                      searchable
+                      addLabel="Add new skill"
+                      placeholder="Search or add a skill…"
+                      onChange={(v) => updateSkillRow(i, { skill_id: v })}
+                      onOptionsChange={(next) => {
+                        const known = new Set(skillSelectOptions.map((o) => o.label.toLowerCase()));
+                        for (const o of next) {
+                          if (!known.has(o.label.toLowerCase())) void createSkillForRow(i, o.label);
+                        }
+                      }}
+                    />
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={r.is_mandatory}
+                      onChange={(e) => updateSkillRow(i, { is_mandatory: e.target.checked })}
+                      className="h-4 w-4 rounded border-strong"
+                    />
+                    Mandatory
+                  </label>
+                  <select
+                    className={`${inputCls} !w-32`}
+                    value={r.min_rating}
+                    onChange={(e) => updateSkillRow(i, { min_rating: e.target.value })}
+                  >
+                    <option value="">Required level —</option>
+                    {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} / 5</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-muted hover:bg-danger-soft hover:text-danger"
+                    onClick={() => setSkillRows((rs) => rs.filter((_, idx) => idx !== i))}
+                    aria-label="Remove skill"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {err && <p className="text-sm text-danger">{err}</p>}
+        <div className="flex justify-end gap-2 border-t border-subtle pt-3">
+          <button type="button" className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className={btnPrimary} onClick={save} disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 function RequirementFormModal({
   initial, onClose, onSaved, toast,
@@ -2604,6 +2800,23 @@ function EditResumeModal({
   );
 }
 
+/** Applied Candidates column keys — must match `TABLE_REGISTRY["requirement_resumes"]`
+ *  in the backend (`routers/crm/table_preferences.py`). */
+const RESUME_COLUMN_LABELS: Record<string, string> = {
+  candidate_name: "Candidate",
+  source_portal: "Source",
+  applied_by: "Applied by",
+  rmg_screening_status: "RMG Screening",
+  profile_pipeline_status: "Stage",
+  received_date: "Received",
+  ats_score: "ATS Score",
+  ats_status: "ATS Status",
+  ai_interview_status: "AI Interview",
+  rounds: "Rounds",
+  _actions: "Actions",
+};
+const RESUME_COLUMN_KEYS = Object.keys(RESUME_COLUMN_LABELS);
+
 function ResumesTab({
   req, toast, onRequirementChanged,
 }: {
@@ -2621,6 +2834,7 @@ function ResumesTab({
   const rmgRole = useHasRole("RMG");
   const rmgCanEdit = useCanAct("requirements", "edit", rmgRole);
   const isRmg = rmgRole && rmgCanEdit;
+  const { layout, setLayout } = useTableLayout("requirement_resumes", RESUME_COLUMN_KEYS);
   /* The Sales → Sales Head approval gate on this tab too (2 Sep 2026): the
      step must be offered wherever a candidate is worked, not only on the
      profile page. Same role-identity rule as RMG above. */
@@ -3774,6 +3988,15 @@ function ResumesTab({
             {/* RMG screening decision, right here where RMG reviews resumes. */}
             {isRmg && r.rmg_screening_status === "Pending" && profileId != null && (
               <>
+                {/* The CV, right where the decision is made (15 Sep 2026, user
+                    request): opens the inline preview — no trip to the profile. */}
+                {r.resume_file_url ? (
+                  <span className={`${smallBtn} !py-1`} title="Preview the candidate's resume / CV here">
+                    <FileLink url={r.resume_file_url} label="View resume" />
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted" title="No resume or CV file on this candidate">No CV on file</span>
+                )}
                 <button
                   className={smallPrimary}
                   onClick={() => { setScreenRow({ row: r, profileId, kind: "shortlist" }); setScreenNote(""); setScreenErr(""); }}
@@ -3871,7 +4094,14 @@ function ResumesTab({
             {/* PROFILE-ONLY ROW (28 Aug 2026): RMG cleared a candidate who was
                 applied from the Candidates page, so there is no resume and no
                 ATS score — scheduling runs through the profile instead. */}
-            {isTA && r.is_profile_only
+            {/* RMG too (15 Sep 2026, user decision): the interview ROUTE is
+                RMG's call on every row, including candidates applied from the
+                Candidates page (no resume). One gate for both route buttons —
+                RMG screening cleared, nothing scheduled yet. */}
+            {(isTA || isRmg) && r.is_profile_only
+              && r.rmg_screening_status !== "Pending" && r.rmg_screening_status !== "Rejected"
+              && (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled")
+              && r.ai_overall_score_percent == null
               && !r.l1_manual_requested && !r.l1_manual_scheduled && (
               <button
                 className={smallAi}
@@ -3889,7 +4119,13 @@ function ResumesTab({
             {/* RMG too (2 Sep 2026, user flow): choosing the interview ROUTE is
                 RMG's call, so both choices — AI L1 here, "Go manual" below —
                 sit side by side for RMG until one is taken. */}
-            {(isTA || isRmg) && !r.is_profile_only && r.ats_status === "Shortlisted" &&
+            {/* Gate = RMG screening cleared (15 Sep 2026): the ATS star is
+                information, not a precondition — RMG used to shortlist and
+                still see no AI button until TA had ATS-shortlisted the file. */}
+            {(isTA || isRmg) && !r.is_profile_only
+              && r.ats_status !== "Rejected"
+              && (r.ats_status === "Shortlisted" || r.rmg_screening_status === "Shortlisted")
+              && r.rmg_screening_status !== "Pending" && r.rmg_screening_status !== "Rejected" &&
               (!r.ai_interview_status || r.ai_interview_status === "Not_Scheduled") &&
               !r.l1_manual_requested && !r.l1_manual_scheduled &&
               r.ai_overall_score_percent == null && (
@@ -4139,6 +4375,19 @@ function ResumesTab({
     },
   ];
 
+  /* Excel-style column chooser (15 Sep 2026, RMG request): the saved layout
+     decides which columns show and in what order; Actions is always pinned
+     last so no layout can hide the buttons. */
+  const visibleColumns: Column<ResumeRow>[] = (() => {
+    const byKey = new Map(columns.map((c) => [c.key, c]));
+    const keys = layout.columns.filter((c) => c.visible && c.key !== "_actions").map((c) => c.key);
+    const chosen = keys.length === 0
+      ? columns.filter((c) => c.key !== "_actions")
+      : (keys.map((k) => byKey.get(k)).filter(Boolean) as Column<ResumeRow>[]);
+    const actions = byKey.get("_actions");
+    return actions ? [...chosen, actions] : chosen;
+  })();
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -4227,7 +4476,7 @@ function ResumesTab({
            animated AI border; it stops the moment the scan completes. */
         <div className={scanAllBusy ? "ai-generating rounded-2xl" : undefined}>
           <DataTable<ResumeRow>
-            columns={columns}
+            columns={visibleColumns}
             rows={rows}
             meta={meta}
             loading={loading}
@@ -4236,6 +4485,14 @@ function ResumesTab({
             onPage={setPage}
             filters={
               <>
+                <TableCustomizerButton
+                  tableKey="requirement_resumes"
+                  labels={RESUME_COLUMN_LABELS}
+                  layout={layout}
+                  onChange={setLayout}
+                  sortable={[]}
+                  maxSortLevels={0}
+                />
                 <select
                   className={`${inputCls} !w-52`}
                   value={appliedBy}
@@ -5352,6 +5609,7 @@ export function RequirementDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleTabKeys.join(","), tab]);
   const [showEdit, setShowEdit] = useState(false);
+  const [showJdSkills, setShowJdSkills] = useState(false);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
   const [decision, setDecision] = useState<{ stage: "sales-head" | "engineering"; kind: "approve" | "reject" } | null>(null);
   const [confirmTerminal, setConfirmTerminal] = useState<"close" | "cancel" | null>(null);
@@ -5427,6 +5685,11 @@ export function RequirementDetailPage() {
   const canSalesHeadDecide = isSalesHead && req.status === "Pending_Sales_Head_Approval";
   const canRmgDecide = isRMG && req.status === "Pending_Engineering_Review";
   const canTerminate = isSalesHead && !TERMINAL_STATUSES.includes(req.status);
+  /* JD & skills fix-up (15 Sep 2026): RMG / Sales / Sales Head / Admin at any
+     open status — the full edit form stays creator + Draft/Rejected only. */
+  const canEditJdSkills = !TERMINAL_STATUSES.includes(req.status) &&
+    (isAdmin || isRMG || isSalesHead || me.roles.includes("Sales"));
+  const jdSkillsMissing = !(req.rmg_jd_text || "").trim() || req.skills.length === 0;
   /* RMG sourcing controls (25 Aug 2026): Hold / Resume / Reject + priority. */
   const canHoldControl = isRMG || isSalesHead;
   const canHold = canHoldControl && SOURCING_STATUSES.includes(req.status);
@@ -5824,6 +6087,26 @@ export function RequirementDetailPage() {
         </CollapsibleCard>
       )}
 
+      {canEditJdSkills && (
+        <div className={`flex flex-wrap items-center justify-between gap-2 rounded-card border px-4 py-2.5 ${
+          jdSkillsMissing ? "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30" : "border-subtle bg-surface-1"
+        }`}>
+          <p className="text-sm text-secondary">
+            {jdSkillsMissing
+              ? <><AlertTriangle size={14} className="mr-1 inline text-amber-600" />
+                  {!(req.rmg_jd_text || "").trim() && req.skills.length === 0
+                    ? "RMG JD and skills are missing — the ATS and AI interview cannot score against this requirement yet."
+                    : !(req.rmg_jd_text || "").trim()
+                      ? "RMG JD text is missing — add it so the ATS and AI interview have something to score against."
+                      : "No skills defined — add the skills TA should source against."}</>
+              : "JD and skills can be corrected here at any open status."}
+          </p>
+          <button type="button" className={`${btnSecondary} !py-1.5 text-xs`} onClick={() => setShowJdSkills(true)}>
+            <Pencil size={13} /> Edit JD & skills
+          </button>
+        </div>
+      )}
+
       <CollapsibleCard title={`Skills (${req.skills.length})`} defaultOpen>
         {req.skills.length === 0 ? (
           <p className="text-sm text-muted">No skills defined</p>
@@ -5883,6 +6166,14 @@ export function RequirementDetailPage() {
       </>)}
 
       {/* modals */}
+      {showJdSkills && (
+        <JdSkillsModal
+          req={req}
+          toast={toast}
+          onClose={() => setShowJdSkills(false)}
+          onSaved={(u) => onChanged(u)}
+        />
+      )}
       {showEdit && (
         <RequirementFormModal
           initial={req}

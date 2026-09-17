@@ -12,8 +12,9 @@
  *
  * Backend: routers/crm/support.py.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronLeft, LifeBuoy, Send, ThumbsDown, ThumbsUp, TicketCheck, X } from "lucide-react";
+import { BOT_NAME, KarnexBot, type BotDock } from "./KarnexBot";
 
 import { crmGet, crmPatch, crmPost } from "../../crm/api";
 import { MarkdownLite } from "../ask-ai/markdownLite";
@@ -81,6 +82,9 @@ export function SupportWidget() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  /** Where the bot is docked — the panel opens beside it, on the same side. */
+  const [dock, setDock] = useState<BotDock>({ side: "right", bottom: 24 });
+  const onDockChange = useCallback((d: BotDock) => setDock(d), []);
 
   // ticket form
   const [subject, setSubject] = useState("");
@@ -262,25 +266,21 @@ export function SupportWidget() {
     </div>
   );
 
+  // Beside the bot, on its side; never off the top of the viewport.
+  const panelStyle: CSSProperties = {
+    [dock.side]: 20,
+    bottom: Math.min(dock.bottom + 76, Math.max(20, window.innerHeight - 620)),
+  };
+
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 rounded-full bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-modal transition-transform duration-micro hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
-        onClick={() => (open ? close() : setOpen(true))}
-        aria-expanded={open}
-        aria-controls="support-widget-panel"
-        title="Help & Support"
-      >
-        <LifeBuoy size={18} aria-hidden />
-        <span className="hidden sm:inline">Help &amp; Support</span>
-        {openCount > 0 && (
-          <span className="ml-1 rounded-full bg-white/20 px-1.5 text-[11px]" aria-label={`${openCount} open tickets`}>
-            {openCount}
-          </span>
-        )}
-      </button>
+      <KarnexBot
+        open={open}
+        openCount={openCount}
+        onToggle={() => (open ? close() : setOpen(true))}
+        onDockChange={onDockChange}
+        triggerRef={triggerRef}
+      />
 
       {open && (
         <div
@@ -289,11 +289,12 @@ export function SupportWidget() {
           role="dialog"
           aria-modal="false"
           aria-label="Help and Support"
-          className="fixed bottom-20 right-5 z-[60] flex h-[min(600px,calc(100vh-7rem))] w-[min(400px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-modal border border-subtle bg-surface-1 shadow-modal"
+          className="fixed z-[60] flex h-[min(600px,calc(100vh-7rem))] w-[min(400px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-modal border border-subtle bg-surface-1 shadow-modal"
+          style={panelStyle}
         >
           {view === "chat" && (
             <>
-              {header("Help & Support")}
+              {header(BOT_NAME)}
               <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
                 {turns.map((t, i) => (
                   <div key={i} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>

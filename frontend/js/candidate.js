@@ -1,5 +1,8 @@
 import { state } from "./state.js";
 import { apiFetch, handleJson, setAiState } from "./core.js";
+import { cancelQuestionVoice, speakQuestion } from "./question_voice.js";
+import { setRecordingBadge } from "./recording_badge.js";
+import { TranscribeUnavailableError, transcribeAudioBlob, transcriptionRecentlyDown } from "./speech_transcribe.js";
 import { loadHrRecords } from "./results.js";
 import { clearAuthSession, getAuthUserRaw } from "./auth/session.js";
 import {
@@ -47,13 +50,14 @@ let recorderStream = null;
 let recordedChunks = [];
 let isMicListening = false;
 let spokenAnswerText = "";
-let activeQuestionAudio = null;
 let lastSpokenQuestion = "";
 let lastSpeakTs = 0;
 let questionTypewriterHandle = null;
 const SKIPPED_ANSWER_TOKEN = "skip";
 let _toastHideHandle = null;
 let _answerSubmitInFlight = false;
+/** True from the moment Send/Skip is pressed until that press is fully handled. */
+let _pressInFlight = false;
 let _pendingManualSubmit = false;
 let _questionLoadSeq = 0;
 let _interviewFlowStopped = false;
@@ -142,14 +146,7 @@ let proctoringFullyStarted = false;
 let proctorFullscreenEntered = false;
 
 function _cancelActiveSpeech() {
-  if (activeQuestionAudio) {
-    try {
-      activeQuestionAudio.pause();
-    } catch (_) {
-      // ignore
-    }
-    activeQuestionAudio = null;
-  }
+  cancelQuestionVoice();
 }
 
 function _candidateHostSpeaking(isSpeaking) {
@@ -225,108 +222,6 @@ export function invalidatePrewarmedQuestion(text) {
 }
 
 /**
- * Build an <audio> for a question, starting playback as early as possible.
- *
- * Prefers MediaSource-free progressive streaming: pointing the element straight
- * at the response URL lets the browser start decoding on the first chunk. Falls
- * back to the blob path where that is not possible, so behaviour is unchanged
- * on anything that cannot stream.
- */
-async function _questionAudioElement(spoken) {
-  const fd = new FormData();
-  fd.append("text", spoken);
-  const res = await apiFetch("/candidate/tts", { method: "POST", body: fd });
-  if (!res.ok) throw new Error("TTS request failed");
-
-  // A JSON body means the server reported an error rather than sending audio.
-  const contentType = String(res.headers.get("content-type") || "");
-  if (contentType.includes("application/json")) {
-    throw new Error("TTS unavailable");
-  }
-
-  // Progressive path: consume the stream and hand each chunk to the browser as
-  // it lands, so audio begins while synthesis is still running server-side.
-  if (res.body && typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")) {
-    try {
-      return await _streamingAudioElement(res);
-    } catch (_) {
-      // fall through to the blob path below — correctness beats latency
-    }
-  }
-
-  const blob = await res.blob();
-  if (!blob.size) throw new Error("Empty TTS audio");
-  return new Audio(URL.createObjectURL(blob));
-}
-
-/** Feed a fetch stream into a MediaSource so playback can start on chunk 1. */
-function _streamingAudioElement(res) {
-  return new Promise((resolve, reject) => {
-    const mediaSource = new MediaSource();
-    const audio = new Audio();
-    audio.src = URL.createObjectURL(mediaSource);
-    let settled = false;
-
-    mediaSource.addEventListener("sourceopen", async () => {
-      let buffer;
-      try {
-        buffer = mediaSource.addSourceBuffer("audio/mpeg");
-      } catch (err) {
-        if (!settled) { settled = true; reject(err); }
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const queue = [];
-      let done = false;
-
-      const pump = () => {
-        if (buffer.updating) return;
-        if (queue.length) {
-          try {
-            buffer.appendBuffer(queue.shift());
-          } catch (err) {
-            if (!settled) { settled = true; reject(err); }
-          }
-          return;
-        }
-        if (done && mediaSource.readyState === "open") {
-          try { mediaSource.endOfStream(); } catch (_) { /* already ended */ }
-        }
-      };
-
-      buffer.addEventListener("updateend", pump);
-
-      try {
-        for (;;) {
-          const { value, done: finished } = await reader.read();
-          if (finished) break;
-          if (value && value.byteLength) {
-            queue.push(value);
-            // The first chunk is enough to start playing — resolve now so the
-            // caller can call play() while the rest is still downloading.
-            if (!settled) { settled = true; resolve(audio); }
-            pump();
-          }
-        }
-        done = true;
-        pump();
-      } catch (err) {
-        done = true;
-        if (!settled) { settled = true; reject(err); }
-      }
-
-      if (!settled) { settled = true; reject(new Error("Empty TTS stream")); }
-    });
-
-    // Don't hang forever if sourceopen never fires.
-    setTimeout(() => {
-      if (!settled) { settled = true; reject(new Error("TTS stream timeout")); }
-    }, 6000);
-  });
-}
-
-/**
  * Fetch and play TTS for a question.
  * Resolves when playback **ends** (not when play() starts) so mic can open after the AI finishes speaking.
  */
@@ -338,6 +233,8 @@ async function _speakQuestionAudioOnly(text) {
   }
   const now = Date.now();
   if (spoken === lastSpokenQuestion && now - lastSpeakTs < 1500) {
+    // Duplicate call for the same question within a moment (double render):
+    // the first call owns the speaking state; do not disturb it.
     return;
   }
   lastSpokenQuestion = spoken;
@@ -352,46 +249,39 @@ async function _speakQuestionAudioOnly(text) {
   _setMicUi(false);
   console.info("[INTERVIEW] AI speaking started");
   try {
-    const audio = await _questionAudioElement(spoken);
-    // Feature 5: hint the browser to buffer audio bytes ASAP so play() resolves
-    // instantly when we call it — eliminating the visible "question on screen
-    // but no voice yet" gap.
-    audio.preload = "auto";
-    activeQuestionAudio = audio;
-    const cleanup = () => {
-      _aiSpeaking = false;
-      _candidateHostSpeaking(false);
-      _setInterviewPhase("waiting_for_answer");
-      try {
-        URL.revokeObjectURL(audio.src);
-      } catch (_) {
-        // ignore
-      }
-      if (activeQuestionAudio === audio) activeQuestionAudio = null;
-    };
-    await new Promise((resolve) => {
-      const finish = () => {
-        cleanup();
-        // Flip mic chip back to idle as soon as AI audio ends; mic auto-start
-        // will then promote it to "Listening…".
-        _setMicUi(false);
-        resolve();
-      };
-      audio.onplaying = () => {
+    // question_voice.js tries the server voice (streamed, then whole clip) and
+    // finally the browser's own en-IN voice, and reports every fallback. It
+    // resolves when speech has ENDED, never rejects.
+    const { source } = await speakQuestion(spoken, {
+      onStart: () => {
         _aiSpeaking = true;
         _candidateHostSpeaking(true);
-        // Show the subtle "AI speaking…" state on the inline chip.
         _setMicUi(false);
-      };
-      audio.onended = () => finish();
-      audio.onerror = () => finish();
-      audio.play().catch(() => finish());
+      },
+      onStatus: (message) => _setVoiceNotice(message),
     });
-    console.info("[INTERVIEW] AI speaking completed");
-  } catch (_) {
+    if (source === "server-stream" || source === "server-blob") _setVoiceNotice("");
+    console.info(`[INTERVIEW] AI speaking completed (${source})`);
+  } finally {
     _aiSpeaking = false;
     _candidateHostSpeaking(false);
+    _setInterviewPhase("waiting_for_answer");
+    // Flip mic chip back to idle as soon as AI audio ends; mic auto-start
+    // will then promote it to "Listening…".
+    _setMicUi(false);
   }
+}
+
+/**
+ * One-line notice under the question when the AI voice had to fall back
+ * (browser voice) or is unavailable. Empty string hides it.
+ */
+function _setVoiceNotice(message) {
+  const el = document.getElementById("candidateVoiceNotice");
+  if (!el) return;
+  const text = String(message || "").trim();
+  el.textContent = text;
+  el.hidden = !text;
 }
 
 /**
@@ -581,10 +471,11 @@ function _onAutoAdvancePhase(phase, message) {
   if (statusEl && message) statusEl.innerText = message;
 }
 
-function _startAutoAdvanceForTurn(isWarmup) {
+function _startAutoAdvanceForTurn(isWarmup, options = {}) {
   if (!recorderStream) return;
   if (!state.autoAdvance?.enabled) return;
   beginAutoAdvanceTurn({
+    autoSkip: options.autoSkip !== false,
     audioStream: recorderStream,
     questionIndex: state.currentQuestionIndex,
     questionText: state.currentQuestion,
@@ -1124,8 +1015,25 @@ async function _transcribeRecordedChunksFallback() {
     return await _transcribeCapturedAudio(blob);
   } catch (err) {
     console.warn("[candidate-stt] blob_fallback_failed", err?.message || err);
+    if (err instanceof TranscribeUnavailableError) {
+      // The audio is still in `recordedChunks`; tell the candidate instead of
+      // pretending they said nothing.
+      _setStatusText("We couldn't transcribe your answer just now — tap Send Response to retry.");
+    }
     return "";
   }
+}
+
+/** Bytes of recorded audio that count as "the candidate said something". */
+const RECORDED_AUDIO_MIN_BYTES = 12 * 1024; // ≈ 1.5–2 s of webm/opus
+
+function _recordedAudioBytes() {
+  return recordedChunks.reduce((n, c) => n + (c?.size || 0), 0);
+}
+
+function _setStatusText(text) {
+  const st = document.getElementById("candidateStatus");
+  if (st) st.innerText = String(text || "");
 }
 
 /** Whisper segments first; fall back to recorded webm blob when empty. */
@@ -1392,11 +1300,8 @@ async function _pickAudioStream() {
   });
 }
 
-async function _transcribeCapturedAudio(blob) {
-  const fd = new FormData();
-  fd.append("audio_file", blob, "candidate-response.webm");
-  const data = await handleJson(await apiFetch("/candidate/transcribe", { method: "POST", body: fd }));
-  return String(data.text || "").trim();
+function _transcribeCapturedAudio(blob) {
+  return transcribeAudioBlob(blob, "candidate-response.webm");
 }
 
 export function setScreenNavigator(fn) {
@@ -1587,6 +1492,18 @@ async function _finalizeSkipTranscriptCapture() {
   return _collectPendingAnswerText();
 }
 
+/**
+ * An AUTOMATIC skip (silence timer) must not go through while the recorder
+ * holds audio that the transcription service failed to process. A manual
+ * Skip click is always honoured.
+ */
+function _autoSkipMustWaitForTranscription(autoAdvanceMeta) {
+  const trigger = String(autoAdvanceMeta?.trigger || "");
+  const automatic = trigger === "silent_no_response" || trigger === "no_response";
+  if (!automatic) return false;
+  return _recordedAudioBytes() >= RECORDED_AUDIO_MIN_BYTES && transcriptionRecentlyDown();
+}
+
 export async function submitCandidateAnswer(forceSkip = false, _retryAfterTranscription = false, options = {}) {
   const skipRequested = forceSkip === true;
   let autoAdvanceMeta = options.autoAdvanceMeta || null;
@@ -1595,6 +1512,20 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     console.warn("[SUBMIT] Ignored — interview busy or submit in flight");
     return;
   }
+  // One click is one action (16 Sep 2026): the Skip pre-work below can wait
+  // several seconds for a transcript, and a second press in that window used
+  // to post a second /answer and skip the NEXT question as well. Both buttons
+  // go dark on entry; every early return re-enables them via _releasePress().
+  // Internal continuations (`_retryAfterTranscription`) belong to the press
+  // that is already in flight and must pass through.
+  if (_pressInFlight && !_retryAfterTranscription) {
+    console.warn("[SUBMIT] Ignored — a press is already being handled");
+    return;
+  }
+  _pressInFlight = true;
+  const turnAtPress = Number(state.currentQuestionIndex);
+  _setSendResponseEnabled(false);
+  const _releasePress = () => { _pressInFlight = false; _setSendResponseEnabled(true); };
 
   if (skipRequested && !_retryAfterTranscription) {
     const finalized = await _finalizeSkipTranscriptCapture();
@@ -1604,6 +1535,17 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
         transcript_len: finalized.length,
         preview: finalized.slice(0, 120),
       });
+    } else if (_autoSkipMustWaitForTranscription(autoAdvanceMeta)) {
+      // The mic recorded real audio but the transcription service is down:
+      // an auto-skip here would store "skip" and delete the answer. Keep the
+      // turn open — the candidate can Send (retries) or Skip explicitly.
+      console.warn("[SKIP] Auto-skip refused — audio recorded but transcription unavailable", {
+        question_index: state.currentQuestionIndex,
+        recorded_bytes: _recordedAudioBytes(),
+      });
+      _setStatusText("We heard you but couldn't transcribe the answer — tap Send Response to retry, or Skip Question.");
+      _releasePress();
+      return;
     }
   }
 
@@ -1655,83 +1597,105 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
   });
   _pendingManualSubmit = false;
   _answerSubmitInFlight = true;
-  stopAutoAdvanceTurn();
-  const statusEl = document.getElementById("candidateStatus");
+  // Declared here, filled inside the guarded block, used by the POST below.
+  let ans = "";
+  let skipped = false;
+  let statusEl = null;
+  // Everything between taking the in-flight flag and the POST used to run
+  // unguarded: one throw here (a stopped recorder, a null element) left the
+  // flag set forever and every later Send/Skip was silently ignored.
+  try {
+    // Read the live capture BEFORE stopping the turn: stopAutoAdvanceTurn()
+    // resets the Whisper segment buffer, and anything only it held was lost.
+    const captured = _collectPendingAnswerText();
+    if (captured && !String(spokenAnswerText || "").trim()) _setSpokenAnswer(captured);
+    stopAutoAdvanceTurn();
+    statusEl = document.getElementById("candidateStatus");
 
-  if (explicitSkip) {
-    _logTurnEvent("action_taken", { action: "skip", skipped: true });
-    _stopMicWithoutTranscription();
-    _setInterviewPhase("generating_next");
-  } else {
-    _bypassTranscription = false;
-    _logTurnEvent("action_taken", { action: "send", skipped: false });
-    const existingTranscript = _collectPendingAnswerText();
-    const recorderActive = activeRecorder && activeRecorder.state !== "inactive";
-    const awaitingTranscript = isMicListening || recorderActive || _transcriptionInFlight;
-    if (existingTranscript) {
-      if (!String(spokenAnswerText || "").trim()) _setSpokenAnswer(existingTranscript);
-      if (recorderActive || isMicListening) {
-        // We already hold the answer — this only catches trailing words.
-        await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TAIL_GRACE_MS);
+    if (explicitSkip) {
+      _logTurnEvent("action_taken", { action: "skip", skipped: true });
+      _stopMicWithoutTranscription();
+      _setInterviewPhase("generating_next");
+    } else {
+      _bypassTranscription = false;
+      _logTurnEvent("action_taken", { action: "send", skipped: false });
+      const existingTranscript = _collectPendingAnswerText();
+      const recorderActive = activeRecorder && activeRecorder.state !== "inactive";
+      const awaitingTranscript = isMicListening || recorderActive || _transcriptionInFlight;
+      if (existingTranscript) {
+        if (!String(spokenAnswerText || "").trim()) _setSpokenAnswer(existingTranscript);
+        if (recorderActive || isMicListening) {
+          // We already hold the answer — this only catches trailing words.
+          await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TAIL_GRACE_MS);
+        }
+      } else if (awaitingTranscript) {
+        _pendingManualSubmit = true;
+        if (statusEl) statusEl.innerText = "Processing answer…";
+        _setResponseProcessingUi(true, "Processing answer…");
+        _setInterviewPhase("evaluating");
+        console.info("[SUBMIT] Processing answer — waiting for transcript");
+        // Nothing captured yet: this wait IS the answer, so keep it generous.
+        await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TRANSCRIPT_WAIT_MS);
+        if (!_pendingManualSubmit) {
+          _answerSubmitInFlight = false;
+          return;
+        }
+        _pendingManualSubmit = false;
       }
-    } else if (awaitingTranscript) {
-      _pendingManualSubmit = true;
-      if (statusEl) statusEl.innerText = "Processing answer…";
-      _setResponseProcessingUi(true, "Processing answer…");
-      _setInterviewPhase("evaluating");
-      console.info("[SUBMIT] Processing answer — waiting for transcript");
-      // Nothing captured yet: this wait IS the answer, so keep it generous.
-      await waitForMicTranscriptionIdleWithTimeout(SUBMIT_TRANSCRIPT_WAIT_MS);
-      if (!_pendingManualSubmit) {
-        _answerSubmitInFlight = false;
-        return;
-      }
-      _pendingManualSubmit = false;
     }
-  }
-  if (_interviewFlowStopped || state.endingInterview || state.redirecting) {
-    _answerSubmitInFlight = false;
-    return;
-  }
-
-  const spokenText = explicitSkip ? "" : _collectPendingAnswerText();
-  if (!explicitSkip && spokenText && !String(spokenAnswerText || "").trim()) _setSpokenAnswer(spokenText);
-  let ans = explicitSkip ? SKIPPED_ANSWER_TOKEN : spokenText || String(spokenAnswerText || "").trim();
-  const skipped = explicitSkip;
-
-  if (!explicitSkip && !ans) {
-    const stillBusy = isMicListening || _transcriptionInFlight || (activeRecorder && activeRecorder.state !== "inactive");
-    if (stillBusy && !_retryAfterTranscription) {
+    if (_interviewFlowStopped || state.endingInterview || state.redirecting) {
       _answerSubmitInFlight = false;
-      return submitCandidateAnswer(false, true);
+      _pressInFlight = false;
+      return;
     }
-    if (!stillBusy && (recordedChunks.length > 0 || autoAdvanceWhisperBusy())) {
-      const recovered = await _finalizeMicTranscription();
-      if (recovered) ans = recovered;
+
+    const spokenText = explicitSkip ? "" : _collectPendingAnswerText();
+    if (!explicitSkip && spokenText && !String(spokenAnswerText || "").trim()) _setSpokenAnswer(spokenText);
+    ans = explicitSkip ? SKIPPED_ANSWER_TOKEN : spokenText || String(spokenAnswerText || "").trim();
+    skipped = explicitSkip;
+
+    if (!explicitSkip && !ans) {
+      const stillBusy = isMicListening || _transcriptionInFlight || (activeRecorder && activeRecorder.state !== "inactive");
+      if (stillBusy && !_retryAfterTranscription) {
+        _answerSubmitInFlight = false;
+        return submitCandidateAnswer(false, true);
+      }
+      if (!stillBusy && (recordedChunks.length > 0 || autoAdvanceWhisperBusy())) {
+        const recovered = await _finalizeMicTranscription();
+        if (recovered) ans = recovered;
+      }
     }
-  }
-  if (!explicitSkip && !ans) {
-    _setResponseProcessingUi(false, "");
-    _setInterviewPhase("waiting_for_answer");
-    setLiveTranscriptVisible(state.showSpokenText);
-    _setSendResponseEnabled(true);
-    const emptyMsg = "No answer captured. Speak first, then tap Send Response.";
-    if (statusEl) statusEl.innerText = emptyMsg;
-    _showCandidateToast(emptyMsg);
+    if (!explicitSkip && !ans) {
+      _setResponseProcessingUi(false, "");
+      _setInterviewPhase("waiting_for_answer");
+      setLiveTranscriptVisible(state.showSpokenText);
+      const emptyMsg = "No answer captured. Speak first, then tap Send Response.";
+      if (statusEl) statusEl.innerText = emptyMsg;
+      _showCandidateToast(emptyMsg);
+      _answerSubmitInFlight = false;
+      _releasePress();
+      return;
+    }
+
+    if (explicitSkip) {
+      _showCandidateToast("Question skipped");
+    }
+
+    _logTurnEvent("transcript_received", {
+      action: skipped ? "skip" : "send",
+      skipped,
+      transcript_len: skipped ? 0 : String(ans || "").length,
+      transcript_preview: skipped ? SKIPPED_ANSWER_TOKEN : String(ans || "").slice(0, 120),
+    });
+
+  } catch (err) {
+    console.error("[SUBMIT] Failed before the answer was sent", err);
     _answerSubmitInFlight = false;
+    _setResponseProcessingUi(false, `Error: ${err.message}`);
+    _setInterviewPhase("waiting_for_answer");
+    _releasePress();
     return;
   }
-
-  if (explicitSkip) {
-    _showCandidateToast("Question skipped");
-  }
-
-  _logTurnEvent("transcript_received", {
-    action: skipped ? "skip" : "send",
-    skipped,
-    transcript_len: skipped ? 0 : String(ans || "").length,
-    transcript_preview: skipped ? SKIPPED_ANSWER_TOKEN : String(ans || "").slice(0, 120),
-  });
 
   const loadSeq = ++_questionLoadSeq;
   try {
@@ -1759,6 +1723,9 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     const params = new URLSearchParams({
       ans,
       action: skipped ? "skip" : "send",
+      // The turn this press belongs to — the server answers a stale one
+      // idempotently instead of consuming the next question.
+      turn: Number.isFinite(turnAtPress) ? String(turnAtPress) : "",
     });
     if (skipped) {
       params.set("skip_reason", options.skipReason || "Candidate skipped manually");
@@ -1780,13 +1747,20 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
         blocked = null;
       }
       if (blocked?.speech_blocked) {
-        console.info("[SKIP] Server blocked skip — resuming listen", { reason: blocked.reason });
-        _setResponseProcessingUi(false, "");
+        // The server heard speech evidence: the answer must be sent, not
+        // skipped. Re-arming the silence timer here looped skip→409→skip
+        // forever; instead keep listening with auto-skip OFF for this turn
+        // and let the candidate press Send (or the answer-complete detector).
+        console.info("[SKIP] Server blocked skip — resuming listen, auto-skip off for this turn", { reason: blocked.reason });
+        _setResponseProcessingUi(false, "We heard you speaking — please finish your answer and tap Send Response.");
         _setInterviewPhase("listening");
         setAiState("Listening...");
-        _startAutoAdvanceForTurn(!!state.isWarmupTurn);
+        _startAutoAdvanceForTurn(!!state.isWarmupTurn, { autoSkip: false });
         return;
       }
+      // The body is consumed — handleJson(res) would throw "body stream
+      // already read" instead of the server's message.
+      throw new Error(blocked?.error || `Request failed with status ${res.status}`);
     }
     const resp = await handleJson(res);
 
@@ -1835,6 +1809,7 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     _pendingManualSubmit = false;
     if (!_terminatingInterview) _bypassTranscription = false;
     _answerSubmitInFlight = false;
+    _pressInFlight = false;
   }
 }
 
@@ -1843,6 +1818,7 @@ export async function submitInterview(options = {}) {
   const timeExpired = !!(options && options.timeExpired);
   if (_submitInterviewInFlight) return;
   _submitInterviewInFlight = true;
+  setRecordingBadge(false);
 
   const exitTerminated = (() => {
     try {
@@ -1979,6 +1955,11 @@ export function setInterviewRuntimeConfig({
   if (timeRemainingSec !== undefined && timeRemainingSec !== null && state.interviewLimitSec > 0) {
     const remaining = Math.max(0, Number(timeRemainingSec) || 0);
     state.interviewStartTs = Date.now() - (state.interviewLimitSec - remaining) * 1000;
+    state.interviewClockSynced = true;
+    const timerEl = document.getElementById("interviewTimer");
+    if (timerEl) timerEl.title = "";
+  } else if (state.interviewLimitSec === 0) {
+    state.interviewClockSynced = true; // count-up mode has nothing to sync
   }
   state.micAlwaysOn = !!micAlwaysOn;
   if (showSpokenText !== undefined) {
@@ -1998,9 +1979,17 @@ export function startInterviewTimer() {
   resetTimeWarningUiState();
   resetAutoAdvanceUi();
   state.interviewStartTs = Date.now();
+  // Until the first /next tells us the server's remaining time, the clock is
+  // a guess (a resumed interview is NOT at the full limit). Show a neutral
+  // "syncing" face rather than a number that will jump (16 Sep 2026).
+  state.interviewClockSynced = false;
   console.info("[TIMER] Started");
   const timerEl = document.getElementById("interviewTimer");
-  if (timerEl) timerEl.classList.remove("countdown-active");
+  if (timerEl) {
+    timerEl.classList.remove("countdown-active");
+    timerEl.innerText = "--.--";
+    timerEl.title = "Syncing time with the server…";
+  }
   state.interviewTimerHandle = setInterval(() => {
     if (_interviewFlowStopped || state.endingInterview || state.redirecting) {
       stopInterviewTimer();
@@ -2008,6 +1997,8 @@ export function startInterviewTimer() {
     }
     const el = document.getElementById("interviewTimer");
     if (!el || !state.interviewStartTs) return;
+    const timed = String(state.timingMode || "").toLowerCase() === "time";
+    if (timed && !state.interviewClockSynced) return; // wait for the server's clock
     const elapsed = Math.max(0, Math.floor((Date.now() - state.interviewStartTs) / 1000));
     const limit = Math.max(0, Number(state.interviewLimitSec) || 0);
     const useLimit = String(state.timingMode || "").toLowerCase() === "time" && limit > 0;

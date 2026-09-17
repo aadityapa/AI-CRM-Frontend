@@ -2,7 +2,7 @@
  * Whisper STT — only for Silero VAD-confirmed speech segments (not continuous streaming).
  */
 
-import { apiFetch, handleJson } from "./core.js";
+import { transcribeAudioBlob } from "./speech_transcribe.js";
 
 let _pending = Promise.resolve();
 let _transcript = "";
@@ -54,12 +54,10 @@ export function float32ToWavBlob(samples, sampleRate = 16000) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-async function _transcribeBlob(blob) {
-  if (!blob || !blob.size) return "";
-  const fd = new FormData();
-  fd.append("audio_file", blob, "vad-segment.wav");
-  const data = await handleJson(await apiFetch("/candidate/transcribe", { method: "POST", body: fd }));
-  return String(data?.text || "").trim();
+function _transcribeBlob(blob) {
+  // Provider failures throw TranscribeUnavailableError and are recorded by
+  // speech_transcribe.js, so the submit path knows the silence was not real.
+  return transcribeAudioBlob(blob, "vad-segment.wav");
 }
 
 /**

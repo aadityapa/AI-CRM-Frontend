@@ -1,0 +1,128 @@
+/* Karnex Support Agent — floating support bot (16 Sep 2026). Tokens from styles/tokens.css. */
+
+.kx-bot-root {
+  position: fixed;
+  z-index: 60;
+  width: 64px;
+  height: 64px;
+  transition: left 220ms var(--ease-out, ease-out), right 220ms var(--ease-out, ease-out), bottom 220ms var(--ease-out, ease-out);
+  touch-action: none;
+  user-select: none;
+}
+.kx-bot-root--dragging { z-index: 61; }
+
+.kx-bot-bot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: grab;
+  color: #fff;
+  background: radial-gradient(120% 120% at 30% 25%, #60a5fa 0%, #2563eb 45%, #1e3a8a 100%);
+  box-shadow:
+    0 14px 30px rgba(37, 99, 235, 0.38),
+    0 0 0 3px rgba(255, 255, 255, 0.85),
+    0 0 0 5px rgba(37, 99, 235, 0.25);
+  animation: kxBotFloat 3.2s ease-in-out infinite;
+  transition: transform 150ms var(--ease-out, ease-out), box-shadow 150ms var(--ease-out, ease-out);
+}
+.kx-bot-bot:hover { transform: scale(1.06); }
+.kx-bot-bot:active, .kx-bot-root--dragging .kx-bot-bot { cursor: grabbing; animation-play-state: paused; transform: scale(1.02); }
+.kx-bot-bot--open { animation-play-state: paused; box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35), 0 0 0 3px rgba(255, 255, 255, 0.85), 0 0 0 6px rgba(37, 99, 235, 0.45); }
+.kx-bot-bot:focus-visible { outline: none; box-shadow: 0 0 0 3px #fff, 0 0 0 6px #2563eb; }
+.dark .kx-bot-bot { box-shadow: 0 14px 30px rgba(37, 99, 235, 0.45), 0 0 0 3px rgba(15, 23, 42, 0.9), 0 0 0 5px rgba(96, 165, 250, 0.35); }
+
+.kx-bot-halo {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(96, 165, 250, 0.55);
+  animation: kxBotHalo 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+.kx-bot-face { display: block; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25)); }
+.kx-bot-eyes { transform-origin: 32px 32px; animation: kxBotBlink 5.5s ease-in-out infinite; }
+.kx-bot-antenna { animation: kxBotAntenna 1.8s ease-in-out infinite; }
+
+.kx-bot-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+/* Greeting bubble — sits on the free side, points at the bot. */
+.kx-bot-bubble {
+  position: absolute;
+  top: 50%;
+  width: max-content;
+  max-width: 260px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  text-align: right;
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-50%) translateX(8px) scale(0.96);
+  transition: opacity 180ms var(--ease-out, ease-out), transform 180ms var(--ease-out, ease-out), visibility 0s linear 180ms;
+  pointer-events: none;
+}
+.kx-bot-bubble--left { right: calc(100% + 14px); }
+.kx-bot-bubble--right { left: calc(100% + 14px); text-align: left; transform: translateY(-50%) translateX(-8px) scale(0.96); }
+.kx-bot-bubble--show { opacity: 1; visibility: visible; transform: translateY(-50%) translateX(0) scale(1); transition-delay: 0s; }
+.kx-bot-bubble::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background: #0f172a;
+  transform: translateY(-50%) rotate(45deg);
+}
+.kx-bot-bubble--left::after { right: -5px; }
+.kx-bot-bubble--right::after { left: -5px; }
+.kx-bot-bubble-title { font-size: 14px; font-weight: 700; color: #fff; }
+.kx-bot-bubble-sub { margin-top: 2px; font-size: 12px; color: #cbd5e1; line-height: 1.35; }
+
+@keyframes kxBotFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+@keyframes kxBotHalo {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+@keyframes kxBotBlink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.12); }
+}
+@keyframes kxBotAntenna {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kx-bot-bot, .kx-bot-halo, .kx-bot-eyes, .kx-bot-antenna { animation: none; }
+  .kx-bot-root { transition: none; }
+}
+@media (max-width: 640px) {
+  .kx-bot-bubble { display: none; }
+}

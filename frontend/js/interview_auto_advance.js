@@ -51,6 +51,9 @@ export const AUTO_ADVANCE_PHASE = {
 };
 
 let _listenOnly = false;
+/** Per-turn override: the server refused a silence skip (speech evidence), so
+ *  this turn may auto-SUBMIT but never auto-SKIP again. */
+let _autoSkipOffForTurn = false;
 let _turnSeq = 0;
 let _audioCtx = null;
 let _analyser = null;
@@ -326,7 +329,7 @@ function _startInitialWaitTimers() {
     _initialWaitHandle = null;
     if (!_active || _listenOnly) return;
     if (_shouldBlockInitialSkip()) return;
-    if (!_cfg().auto_skip_enabled) {
+    if (!_cfg().auto_skip_enabled || _autoSkipOffForTurn) {
       _logInterview("Auto-skip disabled — staying on question");
       return;
     }
@@ -820,7 +823,7 @@ function _startSpeechRecognition() {
     const rec = new SR();
     rec.continuous = true;
     rec.interimResults = true;
-    rec.lang = "en-US";
+    rec.lang = "en-IN";
     rec.onresult = (event) => {
       let text = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -838,7 +841,12 @@ function _startSpeechRecognition() {
         }
       }
     };
-    rec.onerror = () => {};
+    rec.onerror = (ev) => {
+      // "no-speech" / "aborted" are routine; anything else is worth a line.
+      if (ev?.error && ev.error !== "no-speech" && ev.error !== "aborted") {
+        console.warn("[auto-advance] speech recognition error:", ev.error);
+      }
+    };
     rec.onend = () => {
       if (_active) {
         try {
@@ -963,6 +971,7 @@ export function beginAutoAdvanceTurn(opts = {}) {
   if (!_enabled()) return;
 
   _listenOnly = !!(opts.listenOnly || opts.isWarmup);
+  _autoSkipOffForTurn = opts.autoSkip === false;
   const turnSeq = ++_turnSeq;
   _active = true;
   _callbacks = opts;
@@ -1014,7 +1023,12 @@ export function beginAutoAdvanceTurn(opts = {}) {
     if (!_useVadWhisperPipeline()) {
       _startSpeechRecognition();
     }
-    void startSileroVad(stream, {
+    // Silero (jsDelivr) is the ONLY transcript source when the VAD/Whisper
+    // pipeline is on. When it cannot start — blocked CDN, WASM refused, old
+    // browser — the browser's own recogniser becomes the transcript source
+    // instead of nothing (16 Sep 2026: every answer of an interview came back
+    // "skip" because Silero never loaded and no other listener existed).
+    const sileroStarted = startSileroVad(stream, {
       onSpeechStart: () => {
         _sileroActive = true;
         const now = Date.now();
@@ -1053,6 +1067,14 @@ export function beginAutoAdvanceTurn(opts = {}) {
           }
         });
       },
+    });
+    void sileroStarted.then((ok) => {
+      if (ok || !_active || _speechRecognition) return;
+      console.warn("[auto-advance] Silero unavailable — using the browser's speech recogniser as the transcript source");
+      _startSpeechRecognition();
+    }).catch((err) => {
+      console.warn("[auto-advance] Silero start failed", err);
+      if (_active && !_speechRecognition) _startSpeechRecognition();
     });
   } catch (err) {
     console.warn("[auto-advance] VAD init failed", err);

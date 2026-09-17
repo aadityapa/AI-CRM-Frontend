@@ -4726,6 +4726,57 @@
       border-color: rgba(245, 158, 11, 0.4);
       background: rgba(245, 158, 11, 0.08);
     }
+    .device-test-mic-steps {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 10px;
+    }
+    .dt-mic-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(15, 23, 42, 0.55);
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      transition: background 150ms ease, color 150ms ease, border-color 150ms ease, transform 150ms ease;
+    }
+    .dt-mic-step::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.55;
+    }
+    .dt-mic-step[data-state="active"] {
+      color: #e2e8f0;
+      border-color: rgba(59, 130, 246, 0.75);
+      background: rgba(37, 99, 235, 0.22);
+      transform: translateY(-1px);
+      animation: dtStepPulse 1s ease-in-out infinite;
+    }
+    .dt-mic-step[data-state="heard"] {
+      color: #4ade80;
+      border-color: rgba(34, 197, 94, 0.55);
+      background: rgba(34, 197, 94, 0.14);
+    }
+    .dt-mic-step[data-state="missed"] {
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.5);
+      background: rgba(245, 158, 11, 0.12);
+    }
+    @keyframes dtStepPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35); }
+      50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+    }
+    .device-test-meter--speaker { margin-top: 10px; }
+    @media (prefers-reduced-motion: reduce) { .dt-mic-step[data-state="active"] { animation: none; } }
     .device-test-tile-head {
       display: flex;
       align-items: center;
@@ -4949,6 +5000,125 @@
       .device-test-footer { grid-template-columns: 1fr; }
       .device-test-spark { display: none; }
     }
+
+    /* =============================================================
+       Pre-interview screens v2 (16 Sep 2026, user request: "full size of
+       page, more attractive"). Both the Rules and the Device Check screens
+       now fill the viewport edge-to-edge as one glass panel, share the same
+       aurora backdrop, and get richer tiles. Everything below is an
+       OVERRIDE layer — the ids/classes the JS drives are unchanged.
+       ============================================================= */
+    .rules-screen,
+    .device-test-screen {
+      padding: 0;
+      justify-content: stretch;
+      background:
+        radial-gradient(60% 50% at 8% 0%, rgba(37, 99, 235, 0.22), transparent 60%),
+        radial-gradient(50% 45% at 100% 100%, rgba(14, 165, 233, 0.16), transparent 60%),
+        radial-gradient(40% 40% at 60% 40%, rgba(99, 102, 241, 0.10), transparent 70%),
+        linear-gradient(160deg, #070c17 0%, #0b1424 55%, #080f1c 100%);
+    }
+    .rules-screen::before,
+    .device-test-screen::before {
+      content: "";
+      position: absolute; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(80% 70% at 50% 40%, #000 30%, transparent 100%);
+    }
+    .rules-container,
+    .device-test-container {
+      width: 100%;
+      max-width: none;
+      min-height: 100dvh;
+      margin: 0;
+      padding: clamp(18px, 3vh, 36px) clamp(18px, 4vw, 64px);
+      display: flex;
+      align-items: stretch;
+    }
+    .rules-card,
+    .device-test-card {
+      flex: 1 1 auto;
+      max-height: none;
+      min-height: calc(100dvh - 2 * clamp(18px, 3vh, 36px));
+      padding: clamp(22px, 3vw, 40px) clamp(22px, 3.5vw, 48px);
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      background: linear-gradient(180deg, rgba(17, 25, 43, 0.82), rgba(12, 19, 33, 0.9));
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(14px);
+      position: relative;
+      overflow: hidden;
+    }
+    .rules-card::after,
+    .device-test-card::after {
+      content: "";
+      position: absolute; left: 0; right: 0; top: 0; height: 3px;
+      background: linear-gradient(90deg, #2563eb, #38bdf8 45%, #818cf8);
+      opacity: 0.9;
+    }
+    /* Rules: bigger, airier, two clean columns with hover lift. */
+    .rules-title { font-size: clamp(32px, 3.8vw, 48px); background: linear-gradient(90deg, #dbeafe, #93c5fd 60%, #c7d2fe); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .rules-sub { font-size: 15.5px; color: #9fb3c8; margin-top: 10px; }
+    .rules-steps { margin: 6px 0 0; }
+    .rules-format { gap: 16px; margin-bottom: 18px; }
+    .rules-stat {
+      padding: 18px 20px 16px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.75), rgba(17, 25, 43, 0.75));
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      position: relative; overflow: hidden;
+    }
+    .rules-stat::before {
+      content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+      background: linear-gradient(180deg, #3b82f6, #22d3ee);
+    }
+    .rules-stat-ico { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: rgba(37, 99, 235, 0.18); color: #93c5fd; margin-bottom: 10px; }
+    .rules-stat-value { font-size: 22px; }
+    .rules-list { gap: 12px; margin-bottom: 18px; }
+    .rules-item {
+      padding: 16px 18px;
+      border-radius: 14px;
+      font-size: 14px;
+      background: rgba(24, 33, 50, 0.7);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+    }
+    .rules-item:hover { transform: translateY(-1px); border-color: rgba(147, 197, 253, 0.35); background: rgba(30, 41, 59, 0.8); }
+    .rules-item--stop { background: rgba(127, 29, 29, 0.28); border-color: rgba(248, 113, 113, 0.35); }
+    .rules-item--stop:hover { border-color: rgba(248, 113, 113, 0.6); background: rgba(127, 29, 29, 0.36); }
+    .rules-icon { width: 34px; height: 34px; border-radius: 10px; display: inline-grid; place-items: center; background: rgba(148, 163, 184, 0.12); color: #cbd5e1; margin-top: 0; }
+    .rules-item--stop .rules-icon { background: rgba(248, 113, 113, 0.16); color: #fca5a5; }
+    .rules-ack { padding: 16px 20px; border-radius: 14px; font-size: 14px; background: rgba(37, 99, 235, 0.10); border: 1px solid rgba(96, 165, 250, 0.3); }
+    .rules-ack:hover { border-color: rgba(147, 197, 253, 0.55); }
+    .rules-actions button { padding: 15px 22px; font-size: 15px; border-radius: 14px; }
+    @media (min-width: 1200px) { .rules-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+    /* Device check: same shell; tiles become cards with a status halo. */
+    .device-test-title { font-size: clamp(30px, 3.6vw, 44px); background: linear-gradient(90deg, #dbeafe, #93c5fd 60%, #c7d2fe); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .device-test-sub { font-size: 15.5px; max-width: 820px; }
+    .device-test-grid { gap: 18px; padding-right: 0; overflow: visible; }
+    @media (min-width: 1280px) { .device-test-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .device-test-tile {
+      padding: 20px 22px;
+      border-radius: 18px;
+      gap: 12px;
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.66), rgba(15, 23, 42, 0.72));
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      transition: border-color 200ms ease, background 200ms ease, box-shadow 200ms ease, transform 150ms ease;
+    }
+    .device-test-tile:hover { transform: translateY(-1px); }
+    .device-test-tile[data-status="ok"] { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 12px 30px rgba(16, 185, 129, 0.10); }
+    .device-test-tile[data-status="error"] { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.25), 0 12px 30px rgba(244, 63, 94, 0.10); }
+    .device-test-tile[data-status="testing"] { border-color: rgba(59, 130, 246, 0.55); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 12px 30px rgba(59, 130, 246, 0.12); }
+    .device-test-tile-name { font-size: 12.5px; }
+    .device-test-tile-hint { font-size: 13.5px; line-height: 1.55; color: #9fb3c8; }
+    .device-test-meter { height: 10px; border-radius: 999px; }
+    .device-test-meter-bar { border-radius: 999px; background: linear-gradient(90deg, #22c55e, #a3e635 60%, #facc15); }
+    .device-test-status { font-size: 14px; }
 
     /* ================= AUTH SCREEN (July 2026 redesign) =================
        Bold glossy split-hero auth. Deep indigo -> violet aurora, glass card,
@@ -5637,6 +5807,20 @@
       background: rgba(245, 166, 35, 0.15);
       border: 1px solid rgba(245, 166, 35, 0.5);
       color: #fbc24a;
+    }
+    .invite-terminal-icon--wait {
+      background: rgba(37, 99, 235, 0.16);
+      border: 1px solid rgba(147, 197, 253, 0.35);
+      color: #93c5fd;
+    }
+    .invite-notyet-countdown {
+      margin: 14px 0 6px;
+      font-family: "Space Grotesk", Inter, system-ui, sans-serif;
+      font-size: 40px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      font-variant-numeric: tabular-nums;
+      color: #e2e8f0;
     }
     .invite-terminal-lead {
       margin: 0 0 12px;
@@ -6364,7 +6548,9 @@
       box-shadow: 0 20px 58px rgba(50, 132, 255, 0.34);
     }
 
-    .cand-question {
+    .cand-voice-notice { margin-top: 6px; font-size: 12px; color: #b45309; }
+      .cand-voice-notice[hidden] { display: none !important; }
+      .cand-question {
       margin-top: 0;
       background: rgba(244,248,252,0.92);
       border: 1px solid rgba(197,214,230,0.9);
@@ -6765,6 +6951,31 @@
     .qc-cam-card { position: relative; border-radius: 28px; overflow: hidden; border: 1px solid rgba(255,255,255,.1); background: #060d1f; }
     .qc-cam-card .cand-cam { width: 100%; height: 100%; object-fit: cover; border: 0; border-radius: 0; }
     .qc-cam-overlay { position: absolute; left: 14px; bottom: 14px; color: #fff; font-weight: 800; background: rgba(2,6,23,.45); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 6px 10px; }
+    /* "REC" badge (16 Sep 2026): shown from the first question until the
+       interview ends, like a broadcast recording indicator. */
+    .qc-rec-badge {
+      position: absolute; left: 12px; bottom: 12px; z-index: 3;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 12px 6px 10px; border-radius: 999px;
+      background: rgba(2, 6, 23, 0.72); border: 1px solid rgba(248, 113, 113, 0.45);
+      color: #fecaca; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+    }
+    .qc-rec-badge[hidden] { display: none !important; }
+    .qc-rec-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: #ef4444;
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
+      animation: qcRecBlink 1.2s ease-in-out infinite;
+    }
+    .qc-rec-label { color: #f87171; letter-spacing: 0.14em; }
+    .qc-rec-text { color: #e2e8f0; font-weight: 600; letter-spacing: 0.01em; }
+    @keyframes qcRecBlink {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+      50% { opacity: 0.35; box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) { .qc-rec-dot { animation: none; } }
+    @media (max-width: 640px) { .qc-rec-text { display: none; } }
     .qc-mic-ind { position: absolute; top: 14px; right: 14px; display: inline-flex; gap: 4px; }
     .qc-mic-ind span { width: 4px; border-radius: 999px; background: rgba(129,140,248,0.9); box-shadow: 0 0 10px rgba(129,140,248,0.35); display: inline-block; animation: qcBar 900ms ease-in-out infinite; }
     .qc-mic-ind span:nth-child(1) { height: 10px; animation-delay: 0ms; }
@@ -7493,6 +7704,16 @@
     </div>
   </section>
 
+  <section id="screenInviteNotYet" class="auth-screen invite-terminal-screen" aria-labelledby="inviteNotYetTitle">
+    <div class="auth-card invite-terminal-card" role="status" aria-live="polite">
+      <div class="invite-terminal-icon invite-terminal-icon--wait" aria-hidden="true">&#9201;</div>
+      <h1 id="inviteNotYetTitle" class="auth-title">Your interview hasn't started yet</h1>
+      <p class="invite-terminal-lead">This link opens at <strong id="inviteNotYetWhen">the scheduled time</strong>.</p>
+      <p class="invite-notyet-countdown" id="inviteNotYetCountdown">--:--:--</p>
+      <p class="auth-sub">Keep this page open — it will let you in automatically when the time comes. The link works once, so please finish the interview in one sitting.</p>
+    </div>
+  </section>
+
   <section id="screenStartup" class="startup-screen active" aria-labelledby="landingTitle">
     <div class="lp-bg" aria-hidden="true">
       <!-- Far → near: deeper layers move less with the pointer. -->
@@ -7784,6 +8005,16 @@
         <header class="rules-head">
           <span class="rules-chip">Before you begin</span>
           <h1 id="interviewRulesTitle" class="rules-title">Interview rules</h1>
+          <div class="device-test-steps rules-steps" aria-label="Setup steps">
+            <span class="device-test-steps-label">Setup Steps:</span>
+            <span class="dstep dstep--done">1. Welcome</span>
+            <span class="dstep-arrow dstep-arrow--active" aria-hidden="true">⟶</span>
+            <span class="dstep dstep--active">2. Rules</span>
+            <span class="dstep-arrow" aria-hidden="true">⟶</span>
+            <span class="dstep">3. Device Check</span>
+            <span class="dstep-arrow" aria-hidden="true">⟶</span>
+            <span class="dstep">4. Interview</span>
+          </div>
           <p class="rules-sub">
             This interview is monitored. Please read these rules — they are enforced automatically.
           </p>
@@ -7918,7 +8149,12 @@
               <div class="device-test-meter" aria-hidden="true">
                 <div class="device-test-meter-bar" data-meter-bar></div>
               </div>
-              <p class="device-test-tile-hint">Click to start the test and speak for 3 seconds. We need to detect your voice.</p>
+              <div class="device-test-mic-steps" data-mic-steps aria-live="polite">
+                <span class="dt-mic-step" data-mic-step="one">Say “one”</span>
+                <span class="dt-mic-step" data-mic-step="two">Say “two”</span>
+                <span class="dt-mic-step" data-mic-step="clap">Clap once</span>
+              </div>
+              <p class="device-test-tile-hint" data-mic-hint>Click <strong>Test microphone</strong>, then follow the prompts: say “one”, say “two”, and clap your hands once.</p>
             </div>
             <div class="device-test-tile-actions">
               <button class="cand-btn ghost" type="button" data-action="mic-test">Test microphone</button>
@@ -7931,10 +8167,13 @@
               <span class="device-test-tile-badge">Pending</span>
             </div>
             <div class="device-test-tile-body">
-              <p class="device-test-tile-hint">Click to play the test tone and confirm you can hear a soft beep.</p>
+              <p class="device-test-tile-hint">Click <strong>Play test sound</strong> — you will hear a short 5-second chime. Confirm once you hear it.</p>
+              <div class="device-test-meter device-test-meter--speaker" aria-hidden="true">
+                <div class="device-test-meter-bar" data-meter-bar></div>
+              </div>
             </div>
             <div class="device-test-tile-actions">
-              <button class="cand-btn ghost" type="button" data-action="speaker-play">Play test tone</button>
+              <button class="cand-btn ghost" type="button" data-action="speaker-play">Play test sound</button>
               <button class="cand-btn cand-media-primary" type="button" data-action="speaker-confirm" disabled>Yes, I hear it</button>
             </div>
           </div>
@@ -8508,6 +8747,7 @@
             <div class="qc-question-card">
               <div class="qc-q-k">Assessment Query <span id="progressPill"></span></div>
               <div class="cand-question" id="candidateQuestion">Waiting for HR setup...</div>
+              <div class="cand-mini muted cand-voice-notice" id="candidateVoiceNotice" role="status" aria-live="polite" hidden></div>
             </div>
           </section>
 
@@ -8515,6 +8755,11 @@
             <div class="qc-cam-card">
               <video id="proctorCam" autoplay playsinline muted class="cand-cam"></video>
               <div class="qc-cam-overlay">Candidate Feed</div>
+              <div class="qc-rec-badge" id="recordingBadge" role="status" aria-live="polite" hidden>
+                <span class="qc-rec-dot" aria-hidden="true"></span>
+                <span class="qc-rec-label">REC</span>
+                <span class="qc-rec-text">This interview is being recorded</span>
+              </div>
               <div class="qc-cam-icons" aria-hidden="true">
                 <span><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
                 <span><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
@@ -8631,7 +8876,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=24"></script>
+  <script type="module" src="js/app.js?v=28"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

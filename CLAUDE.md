@@ -90,6 +90,20 @@ the server stamped the click time. `ScheduleAiInterviewModal` and the manual-rou
 typed wall clock; never `toISOString()` a datetime-local value on these paths (the interview-rounds form in
 `Profiles.tsx:3655` does, deliberately — the server converts it back with `ist_naive`).
 
+**16 Sep 2026 — candidate runtime voice + answer capture (see B-V2 `CLAUDE.md` for the server half):** new
+`js/question_voice.js` (`speakQuestion(text, {onStart, onStatus})` — server stream → server blob → browser
+`speechSynthesis` en-IN; resolves when speech ENDS; `cancelQuestionVoice()`), new `js/speech_transcribe.js` (the one
+`/candidate/transcribe` client; throws `TranscribeUnavailableError` on 5xx so callers can tell "service down" from
+"silence"), `#candidateVoiceNotice` under the question shows any fallback. `interview_auto_advance.js`: browser
+`SpeechRecognition` (en-IN) starts whenever Silero fails to load. `candidate.js`: auto-skip refused while recorded audio
+exists and transcription is down; capture snapshot read before `stopAutoAdvanceTurn()`; pre-POST section of
+`submitCandidateAnswer` guarded so `_answerSubmitInFlight` cannot wedge; 409 body no longer read twice.
+`index.html` `app.js?v=26`.
+**16 Sep 2026 (later) — pre-interview polish:** `#screenInviteNotYet` + `showInviteNotYetScreen()` (app.js; countdown, auto re-lookup); `resume` banner in `proceedWithInviteLogin`; `device_test.js` guided mic script (`MIC_STEPS`) + 5 s chime (`_playSpeakerTone`); `js/recording_badge.js` → `#recordingBadge`; Rules/Device Check full-page override CSS block "Pre-interview screens v2" placed AFTER the original rules (order matters — same specificity). `app.js?v=27`.
+**16 Sep 2026 (evening) — one-click Send/Skip + resume clock:** `candidate.js` `_pressInFlight` entry lock + `_releasePress()`, `turn` form field on `/answer`, `speech_blocked` 409 → `_startAutoAdvanceForTurn(isWarmup, {autoSkip:false})`; `interview_auto_advance.js` `_autoSkipOffForTurn`; `state.interviewClockSynced` gates the countdown until `time_remaining_sec` arrives. `app.js?v=28`.
+
+**16 Sep 2026 — Karnex Support Agent bot:** `components/support/KarnexBot.tsx` + `karnex-bot.css` (classes `kx-bot-*`) replace the pill trigger in `SupportWidget.tsx`: original inline-SVG robot avatar, float/halo/blink animations (reduced-motion aware), hover greeting bubble on the free side ("Hi! I'm your Karnex Support Agent"; `BOT_NAME`/`BOT_TAGLINE` are the one place to rename), pointer-drag anywhere with snap to the nearest edge (`DRAG_THRESHOLD_PX` 6 separates click from drag), dock persisted in `localStorage["support.bot.dock"]` (`{side, bottom}`), and the chat panel opens on the docked side (`panelStyle`). `triggerRef` still points at the bot button so Esc/focus-return is unchanged.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
