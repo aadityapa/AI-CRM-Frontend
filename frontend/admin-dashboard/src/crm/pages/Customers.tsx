@@ -4,6 +4,7 @@
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Banknote, Building2, Eye, Lock, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
@@ -30,6 +31,7 @@ import {
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
+import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -154,8 +156,8 @@ export function CustomersListPage() {
   const [meta, setMeta] = useState<Meta | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  const [page, setPage] = useSessionState("cust.page", 1);
+  const [search, setSearch] = useSessionState("cust.search", "");
   // Default to Active customers (inactive/archived ones stay one click away).
   const [status, setStatus] = useState("Active");
   const [sort, setSort] = useState<{ by: string; dir: "asc" | "desc" }>({ by: "created_at", dir: "desc" });
@@ -181,7 +183,7 @@ export function CustomersListPage() {
   }, [page, dSearch, status, sort]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [dSearch, status]);
+  useChangeEffect(() => { setPage(1); }, [dSearch, status]);
 
   // Client-side entity filter over the loaded page (list is small; usually 1 page).
   const displayRows = useMemo(() => {
@@ -218,16 +220,23 @@ export function CustomersListPage() {
           View-only access — you can browse customers but cannot create or edit.
         </p>
       )}
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-display text-xl font-bold text-primary">Customers</h1>
-          <p className="mt-1 text-sm text-muted">Manage and view all your customer organizations.</p>
-        </div>
-        {canWrite && (
-          <button className={btnPrimary} onClick={() => setShowNew(true)}>
-            <Plus size={15} /> New Customer
-          </button>
-        )}
+      <div className="mb-4">
+        <PageHeader
+          icon={Building2}
+          accent="ocean"
+          eyebrow="Accounts"
+          title="Customers"
+          subtitle="Manage and view all your customer organizations — branches, billing policy, contacts, POs and projects live on each customer."
+          stats={meta ? [
+            { label: meta.total === 1 ? "customer" : "customers", value: meta.total },
+            { label: "status", value: status || "All" },
+          ] : undefined}
+          actions={canWrite ? (
+            <button className={HERO_BTN_SOLID} onClick={() => setShowNew(true)}>
+              <Plus size={15} /> New Customer
+            </button>
+          ) : undefined}
+        />
       </div>
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
@@ -242,7 +251,7 @@ export function CustomersListPage() {
         sort={sort}
         onSort={(by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "asc" ? "desc" : "asc" }))}
         onPage={setPage}
-        onRowClick={(r) => crmNavigate(`customers/${r.id}`)}
+        onRowClick={(r) => crmNavigate(`customers/${r.id}`)} rowHref={(r: any) => `customers/${r.id}`}
         emptyMessage={<TeachingEmpty page="customers" />}
         filters={
           <>
@@ -1425,11 +1434,13 @@ type HubFilter = {
 };
 
 export function CustomerScopedTable<T extends { id: number }>({
-  base, columns, onRow, emptyMessage, searchable = true, filters, rowActions,
+  base, columns, onRow, href, emptyMessage, searchable = true, filters, rowActions,
 }: {
   base: string;                       // e.g. /api/opportunities?customer_id=7
   columns: Column<T>[];
   onRow?: (r: T) => void;
+  /** Where a row leads — right-click / Ctrl+click open it in a new tab (29 Sep 2026). */
+  href?: (r: T) => string;
   emptyMessage: string;
   searchable?: boolean;
   /** Server-side filters rendered as a select bar above the table. */
@@ -1499,6 +1510,7 @@ export function CustomerScopedTable<T extends { id: number }>({
           onPage={setPage}
           {...(searchable ? { search, onSearch: (q: string) => { setSearch(q); setPage(1); } } : {})}
           onRowClick={onRow}
+          rowHref={href}
           emptyMessage={emptyMessage}
           rowActions={rowActions ? (r) => rowActions(r, reload) : undefined}
         />
@@ -1549,7 +1561,7 @@ function CustomerOpportunitiesTab({ customerId }: { customerId: number }) {
       )}
       <CustomerScopedTable key={reloadKey}
         base={`/api/opportunities?customer_id=${customerId}`} columns={cols}
-        onRow={(r) => crmNavigate(`opportunities/${r.id}`)}
+        onRow={(r) => crmNavigate(`opportunities/${r.id}`)} href={(r: any) => `opportunities/${r.id}`}
         filters={[
           { key: "pipeline_stage", label: "Stage",
             options: optsFromValues(["New", "Active", "On_Hold", "Sales_Hold", "Closed_Won",
@@ -1580,7 +1592,7 @@ function CustomerProjectsTab({ customerId }: { customerId: number }) {
         </button>
       </div>
       <CustomerScopedTable base={`/api/projects?customer_id=${customerId}`} columns={cols}
-        onRow={(r) => crmNavigate(`projects/${r.id}`)}
+        onRow={(r) => crmNavigate(`projects/${r.id}`)} href={(r: any) => `projects/${r.id}`}
         filters={[
           { key: "status", label: "Status",
             options: optsFromValues(["Active", "Completed", "On_Hold"]) },
@@ -1614,7 +1626,7 @@ export function ProjectEmployeesScopedTab({
     <div>
       {hint && <p className="mb-3 text-xs text-muted">{hint}</p>}
       <CustomerScopedTable base={base} columns={cols}
-        onRow={(r) => crmNavigate(`project-employees/${r.id}`)}
+        onRow={(r) => crmNavigate(`project-employees/${r.id}`)} href={(r: any) => `project-employees/${r.id}`}
         filters={[
           { key: "status", label: "Status",
             options: [
@@ -1647,7 +1659,7 @@ function CustomerPosTab({ customerId }: { customerId: number }) {
         </div>
       )}
     <CustomerScopedTable base={`/api/purchase-orders?customer_id=${customerId}`} columns={cols}
-      onRow={(r) => crmNavigate(`pos/${r.id}`)}
+      onRow={(r) => crmNavigate(`pos/${r.id}`)} href={(r: any) => `pos/${r.id}`}
       filters={[
         { key: "status", label: "Status",
           options: optsFromValues(["Active", "Exhausted", "Cancelled"]) },
@@ -1676,7 +1688,7 @@ function CustomerInvoicesTab({ customerId }: { customerId: number }) {
         </div>
       )}
     <CustomerScopedTable base={`/api/invoices?customer_id=${customerId}`} columns={cols}
-      onRow={(r) => crmNavigate(`invoices/${r.id}`)}
+      onRow={(r) => crmNavigate(`invoices/${r.id}`)} href={(r: any) => `invoices/${r.id}`}
       filters={[
         { key: "payment_status", label: "Payment",
           options: optsFromValues(["Unpaid", "Partially_Paid", "Paid"]) },
@@ -1868,7 +1880,7 @@ export function CustomerDetailPage() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("branches");
+  const [tab, setTab] = usePageTab<string>("tab", "branches");
   const [showEdit, setShowEdit] = useState(false);
 
   const load = useCallback(async () => {
@@ -1896,23 +1908,19 @@ export function CustomerDetailPage() {
         { label: "Customers", to: "customers" },
         { label: customer.name },
       ]} />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-display text-xl font-bold text-primary">{customer.name}</h1>
-            <StatusBadge status={customer.status} />
-          </div>
-          <div className="mt-0.5 text-sm text-muted">
-            {customer.legal_entity_name || "No legal entity name"} · Created {fmtDate(customer.created_at)}
-          </div>
-        </div>
-        {canWrite && (
-          <button className={btnSecondary} onClick={() => setShowEdit(true)}>
+      <PageHeader
+        icon={Building2}
+        accent="ocean"
+        eyebrow="Customer"
+        title={customer.name}
+        subtitle={<>{customer.legal_entity_name || "No legal entity name"} · Created {fmtDate(customer.created_at)}</>}
+        stats={[{ label: "status", value: customer.status || "—" }]}
+        actions={canWrite ? (
+          <button className={HERO_BTN} onClick={() => setShowEdit(true)}>
             <Pencil size={15} /> Edit
           </button>
-        )}
-      </div>
-
+        ) : undefined}
+      >
       <Tabs
         tabs={[
           { key: "branches", label: "Branches" },
@@ -1930,6 +1938,7 @@ export function CustomerDetailPage() {
         active={tab}
         onChange={setTab}
       />
+      </PageHeader>
       <div className="mt-4">
         {tab === "branches" && <BranchesTab customerId={customerId} customerName={customer?.name} canWrite={canWrite} notify={notify} />}
         {tab === "billing" && <BillingPolicyTab customerId={customerId} canWrite={canWrite} notify={notify} />}

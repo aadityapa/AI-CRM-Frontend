@@ -12,19 +12,26 @@ import {
 } from "../components/ui";
 import { crmNavigate } from "../router";
 import { useHasRole } from "../CrmApp";
+import { ApprovalGrants, ApprovalGrantsHeading, type ApprovalDef } from "../components/ApprovalGrants";
 
 type RegField = { key: string; label: string };
 type RegTab = { key: string; label: string; fields: RegField[] };
-type Registry = { modes: string[]; tabs: RegTab[] };
+/** `role_tags` = built-in operational roles + every ACTIVE custom role (GM,
+ *  Sales Manager, …) — the server's list, so a new custom role appears here
+ *  without a frontend change. `approvals` = the approval-button catalogue. */
+type Registry = { modes: string[]; tabs: RegTab[]; role_tags?: string[]; approvals?: ApprovalDef[] };
 type Template = {
   id: number; name: string; description?: string | null; role?: string | null;
   department_id?: number | null; is_active: boolean;
   tab_access: Record<string, string>; field_access: Record<string, Record<string, string>>;
+  /** null = approvals never configured (role lists decide); list = explicit. */
+  action_access?: string[] | null;
 };
 type User = { id: number; full_name?: string; email?: string; username?: string };
 type Dept = { id: number; name: string };
 
-const ROLES = ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"];
+/** Used only if an older server sends no `role_tags`. */
+const FALLBACK_ROLES = ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"];
 
 /** Module grouping (25 Aug 2026) — the flat 25-tab list read as a wall; this
  * mirrors how people think about the app. Unknown keys fall into "Other" so a
@@ -77,13 +84,6 @@ function ModeSegments({ value, onChange, compact }: {
     </div>
   );
 }
-/** Tab modes are a ladder: each level includes everything below it. */
-const MODE_OPTS = [
-  { value: "", label: "No access" },
-  { value: "view", label: "View" },
-  { value: "edit", label: "View + Edit" },
-  { value: "create", label: "View + Edit + Create" },
-];
 /** Field grants stop at edit — creating happens at record level, not per field.
  * "Hidden" (25 Aug 2026) removes the field — or, for `tab:*` entries, the whole
  * SUB-TAB — from the templated user's view. */
@@ -98,12 +98,21 @@ type Form = {
   id: number | null; name: string; description: string; role: string;
   department_id: string; is_active: boolean;
   tabAccess: Record<string, string>; fieldAccess: Record<string, Record<string, string>>;
+  actions: string[];
+  /** The stored template has no Approvals list yet (role lists decide today). */
+  actionsUnset: boolean;
 };
 
 const emptyForm = (): Form => ({
   id: null, name: "", description: "", role: "", department_id: "", is_active: true,
-  tabAccess: {}, fieldAccess: {},
+  tabAccess: {}, fieldAccess: {}, actions: [], actionsUnset: false,
 });
+
+/** Approvals whose default names this role — what a template tagged with it
+ *  starts from (mirrors `action_permissions.default_actions_for_role`). */
+function defaultApprovalsFor(role: string, approvals: ApprovalDef[]): string[] {
+  return role ? approvals.filter((a) => a.default_roles.includes(role)).map((a) => a.key) : [];
+}
 
 export function AccessTemplatesPage() {
   // Admin/CEO only — this page EDITS access. The server already 403s every
@@ -145,6 +154,10 @@ export function AccessTemplatesPage() {
       department_id: t.department_id ? String(t.department_id) : "", is_active: t.is_active,
       tabAccess: { ...(t.tab_access || {}) },
       fieldAccess: JSON.parse(JSON.stringify(t.field_access || {})),
+      // Never configured → show what the role tag's default would grant, so
+      // saving writes an explicit list that matches what the user already had.
+      actions: t.action_access ?? defaultApprovalsFor(t.role || "", registry?.approvals || []),
+      actionsUnset: t.action_access == null,
     });
     setEditing(true);
     setErr("");
@@ -188,6 +201,7 @@ export function AccessTemplatesPage() {
       name: form.name.trim(), description: form.description || null, role: form.role || null,
       department_id: form.department_id ? Number(form.department_id) : null,
       is_active: form.is_active, tab_access: form.tabAccess, field_access: form.fieldAccess,
+      action_access: form.actions,
     };
     try {
       if (form.id) {
@@ -221,14 +235,26 @@ export function AccessTemplatesPage() {
   const assign = async () => {
     if (!form.id || !assignUser) return;
     try {
-      await crmPost("/api/access-templates/assign", { user_id: Number(assignUser), template_id: form.id });
-      notify("Template assigned to user");
+      const res = await crmPost<{ role_added?: string | null }>(
+        "/api/access-templates/assign", { user_id: Number(assignUser), template_id: form.id });
+      // A user needs a ROLE to open the CRM; the server adds the template's
+      // built-in role tag when they had none — say so.
+      notify(res.data?.role_added
+        ? `Template assigned — role ${res.data.role_added.replace(/_/g, " ")} added so they can open the CRM`
+        : "Template assigned to user");
       setAssignUser("");
     } catch (e: any) { setErr(String(e?.message || e)); }
   };
 
   const tabs = registry?.tabs || [];
   const tabCount = Object.keys(form.tabAccess).length;
+  const allTags = registry?.role_tags?.length ? registry.role_tags : FALLBACK_ROLES;
+  const roleTags = {
+    all: allTags,
+    builtin: allTags.filter((r) => FALLBACK_ROLES.includes(r)),
+    custom: allTags.filter((r) => !FALLBACK_ROLES.includes(r)),
+  };
+  const approvalDefs = registry?.approvals || [];
 
   if (!isAdminUser) {
     return <EmptyState message="Access Templates are managed by Admin/CEO only." />;
@@ -295,9 +321,28 @@ export function AccessTemplatesPage() {
                 <input className={inputCls} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Sales" />
               </Field>
               <Field label="Role tag">
-                <select className={inputCls} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
+                <select className={inputCls} value={form.role} onChange={(e) => {
+                  const role = e.target.value;
+                  // A NEW template starts from what its role approves by default;
+                  // an existing one keeps the Approvals the admin already set.
+                  setForm((f) => ({
+                    ...f, role,
+                    actions: f.id ? f.actions : defaultApprovalsFor(role, approvalDefs),
+                  }));
+                }}>
                   <option value="">—</option>
-                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  {roleTags.builtin.length > 0 && (
+                    <optgroup label="Built-in roles">
+                      {roleTags.builtin.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
+                    </optgroup>
+                  )}
+                  {roleTags.custom.length > 0 && (
+                    <optgroup label="Custom roles">
+                      {roleTags.custom.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </optgroup>
+                  )}
+                  {/* A tag that is no longer offered (a deactivated custom role) stays visible. */}
+                  {form.role && !roleTags.all.includes(form.role) && <option value={form.role}>{form.role} (inactive)</option>}
                 </select>
               </Field>
               <Field label="Department">
@@ -429,6 +474,20 @@ export function AccessTemplatesPage() {
                 })}
               </div>
             </div>
+
+            {approvalDefs.length > 0 && (
+              <div>
+                <ApprovalGrantsHeading count={form.actions.length} total={approvalDefs.length} />
+                {form.actionsUnset && (
+                  <p className="mb-2 rounded-control border border-subtle bg-surface-2 px-3 py-2 text-xs text-secondary">
+                    Approvals were never set on this template, so today its users follow their role's
+                    defaults. The ticks below are those defaults — saving makes them this template's rule.
+                  </p>
+                )}
+                <ApprovalGrants approvals={approvalDefs} value={form.actions}
+                  onChange={(actions) => setForm((f) => ({ ...f, actions }))} />
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex gap-2">

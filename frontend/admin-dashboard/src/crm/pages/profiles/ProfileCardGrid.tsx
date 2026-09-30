@@ -6,12 +6,14 @@
  * they half-remember rather than ranking a shortlist, the card's avatar,
  * score ring and status together are faster than eight aligned columns.
  */
+import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
 import { Avatar } from "../../components/Avatar";
 import { ScoreIndicator } from "../../components/ScoreIndicator";
-import { StatusBadge, EmptyState } from "../../components/ui";
-import { displayEmail } from "../../lib/candidateEmail";
+import { EmptyState } from "../../components/ui";
+import { RowLinkMenu, openCrmInNewTab, rowLinkHandlers, wantsNewTab, type RowMenuState } from "../../components/RowLinkMenu";
+import { CandidateStatusBadge } from "../../components/CandidateStatusBadge";
 import type { ProfileColumnRow } from "./profileColumns";
 
 export function ProfileCardGrid({
@@ -32,6 +34,7 @@ export function ProfileCardGrid({
   fmtDate: (v?: string | null) => string;
 }) {
   const reduce = useReducedMotion();
+  const [menu, setMenu] = useState<RowMenuState>(null);
 
   if (loading && rows.length === 0) {
     return (
@@ -64,6 +67,7 @@ export function ProfileCardGrid({
 
   return (
     <div className="elev-1 grid grid-cols-1 gap-3 rounded-panel p-3 sm:grid-cols-2 xl:grid-cols-3">
+      <RowLinkMenu menu={menu} onClose={() => setMenu(null)} />
       {rows.map((r, i) => {
         const name = r.candidate_name || `Candidate #${r.candidate_id}`;
         const selected = selectedIds.has(r.id);
@@ -77,7 +81,8 @@ export function ProfileCardGrid({
               ${selected
                 ? "border-brand-400 bg-brand-50 dark:border-brand-500/60 dark:bg-brand-900/20"
                 : "border-subtle bg-surface-1 hover:border-strong hover:bg-surface-2"}`}
-            onClick={() => onOpen(r)}
+            onClick={(e) => { if (wantsNewTab(e)) openCrmInNewTab(`profiles/${r.id}`); else onOpen(r); }}
+            {...rowLinkHandlers(`profiles/${r.id}`, setMenu)}
           >
             <div className="flex items-start gap-3">
               <Avatar name={name} size={32} />
@@ -99,7 +104,8 @@ export function ProfileCardGrid({
 
             <div className="mt-3 flex items-center justify-between gap-2">
               <ScoreIndicator score={r.ai_overall_score_percent} size="md" />
-              <StatusBadge status={r.pipeline_status} />
+              <CandidateStatusBadge status={r.candidate_status} stage={r.pipeline_status}
+                withdrawnFrom={r.withdrawn_from_status} />
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-subtle pt-3">

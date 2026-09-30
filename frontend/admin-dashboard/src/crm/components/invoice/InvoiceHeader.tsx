@@ -42,7 +42,9 @@ export function InvoiceHeader({ data }: { data: InvoiceData }) {
       </div>
 
       <div className={styles.invoiceMeta}>
-        <div className={styles.heading}>TAX INVOICE</div>
+        <div className={`${styles.heading} ${data.kind === "Proforma" ? styles.headingProforma : ""}`}>
+          {data.kind === "Proforma" ? "PROFORMA INVOICE" : "TAX INVOICE"}
+        </div>
         <div className={styles.invoiceMetaBody}>
           <div className={styles.invoiceMetaGrid}>
             <span className={styles.metaLabel}>Invoice No.</span>

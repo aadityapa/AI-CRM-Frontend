@@ -2,6 +2,7 @@
  * skills, locations, document types, leave policy types) + app settings. */
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Power, Settings } from "lucide-react";
+import { PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -17,6 +18,7 @@ import { BackupTab } from "./settings/BackupTab";
 import { SupportTicketsPage } from "./SupportTickets";
 import { EmailDraftsTab } from "./settings/EmailDraftsTab";
 import { fmtDateTime12 } from "../../lib/datetime";
+import { usePageTab } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -382,6 +384,12 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
       { key: "scheduler.recurring_invoices", label: "Recurring invoice drafts", type: "bool" },
       { key: "scheduler.pe_leave_credit", label: "Monthly leave credit", type: "bool",
         hint: "Credits project-employee leave and replays any month it missed. Turning this off stops accrual — balances drift with no error anywhere." },
+      { key: "scheduler.project_closures", label: "Close projects after their last working day", type: "bool",
+        hint: "Moves a closed project's team to the bench the day after its last working day. Off means scheduled closes never happen." },
+      { key: "scheduler.prompt_log_retention", label: "AI call log retention", type: "bool",
+        hint: "Drops the stored prompt and response text from AI call logs past the retention window and purges the expired response cache. Tokens, audio minutes and cost are kept, so AI Costs history is never lost." },
+      { key: "scheduler.interview_feedback_due", label: "Interview feedback reminders", type: "bool",
+        hint: "When an interview's time is over and no verdict is recorded, reminds whoever owns the round (RMG / GM, HR or Sales) — then once a day until it is recorded. Runs on every scheduler pass, not at the run hour." },
       { key: "scheduler.pe_leave_credit_lookback", label: "Leave repair window (months)",
         hint: "How far back the leave job will repair a month it never ran. Longer gaps should be backfilled deliberately with run_pe_leave_credit.py --from.",
         placeholder: "12" },
@@ -1339,7 +1347,7 @@ export function CrmSettingsPage() {
   const isAdmin = useHasRole();
   const [toast, notify] = useToast();
   // Deep link: settings?tab=<key> (e.g. the Support Tickets back-link and bell notifications).
-  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "departments");
+  const [tab, setTab] = usePageTab<string>("tab", "departments");
   const [deptOptions, setDeptOptions] = useState<Option[]>([]);
 
   useEffect(() => {
@@ -1358,7 +1366,13 @@ export function CrmSettingsPage() {
   return (
     <div>
       {toast}
-      <h1 className="text-display mb-4 text-xl font-bold text-primary">Settings</h1>
+      <PageHeader
+        icon={Settings}
+        accent="slate"
+        eyebrow="Admin"
+        title="Settings"
+        subtitle="Masters, organisation and invoice details, scheduled jobs, email wording, backup and support — everything the application reads its defaults from."
+      >
       <Tabs
         tabs={[
           { key: "departments", label: "Departments" },
@@ -1381,6 +1395,7 @@ export function CrmSettingsPage() {
         active={tab}
         onChange={setTab}
       />
+      </PageHeader>
       <div className="mt-4">
         {tab === "departments" && (
           <MasterTab

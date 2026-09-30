@@ -10,15 +10,19 @@
  * reviewer's question is "is this a yes?" — everything else is evidence they
  * only need once the answer is "maybe".
  */
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, CalendarClock, UserRound } from "lucide-react";
 
 import type { Column } from "../../components/DataTable";
 import { FileLink } from "../../components/FileUpload";
-import { StatusBadge, selfWithdrewLabel } from "../../components/ui";
+import { StatusBadge } from "../../components/ui";
+import { CandidateStageBadge, CandidateStatusBadge } from "../../components/CandidateStatusBadge";
+import type { CandidateStatus } from "../../components/CandidateStatusBadge";
 import { Avatar } from "../../components/Avatar";
 import { ScoreIndicator } from "../../components/ScoreIndicator";
 import { AiInterviewCell } from "../../components/AiInterviewCell";
 import { displayEmail } from "../../lib/candidateEmail";
+import { roundResultTone } from "../../lib/interviewRounds";
+import { fmtDateTime12 } from "../../../lib/datetime";
 
 /** Row shape is owned by Profiles.tsx; this module only reads from it. */
 export type ProfileColumnRow = {
@@ -37,7 +41,9 @@ export type ProfileColumnRow = {
   opportunity_exp_max?: number | null;
   customer_name?: string | null;
   pipeline_status: string;
-  stage?: string | null;
+  /** The derived status every screen shows (server-side). */
+  candidate_status?: CandidateStatus | null;
+  withdrawn_from_status?: string | null;
   current_ctc: number | null;
   expected_ctc: number | null;
   candidate_current_ctc?: number | null;
@@ -56,6 +62,9 @@ export type ProfileColumnRow = {
   ai_hr_decision_label?: string | null;
   ai_is_overridden?: boolean;
   ai_report_link?: string | null;
+  /** Resume ATS score for this opportunity (latest resume on its requirements). */
+  ats_score?: number | null;
+  ats_status?: string | null;
   resume_url?: string | null;
   resignation_certificate_url?: string | null;
   resignation_status?: boolean;
@@ -65,7 +74,66 @@ export type ProfileColumnRow = {
   ta_owner_name?: string | null;
   applied_on?: string | null;
   created_at?: string | null;
+  /** One entry per round column (B-V2 `candidate_profiles.round_ladder`). */
+  rounds?: Partial<Record<RoundKey, RoundEntry>>;
+  next_interview?: NextInterview | null;
 };
+
+export type RoundKey = "tech_l1" | "tech_l2" | "tech_l3" | "cust_l1" | "cust_l2" | "hr";
+export type RoundEntry = {
+  event_id: number; when: string | null; result: string | null; status: string | null;
+  interviewer: string | null; mode: string | null; feedback: string | null; upcoming: boolean;
+};
+export type NextInterview = {
+  round: string; round_key: RoundKey | null; when: string; interviewer: string | null;
+  event_id: number; meeting_link: boolean;
+};
+
+/** The round columns, in interview order — mirror of B-V2 `ROUND_COLUMNS`. */
+export const ROUND_COLUMNS: { key: RoundKey; label: string; family: "karnex" | "customer" | "hr" }[] = [
+  { key: "tech_l1", label: "Technical L1", family: "karnex" },
+  { key: "tech_l2", label: "Technical L2", family: "karnex" },
+  { key: "tech_l3", label: "Technical L3 / L4", family: "karnex" },
+  { key: "cust_l1", label: "Customer L1", family: "customer" },
+  { key: "cust_l2", label: "Customer L2", family: "customer" },
+  { key: "hr", label: "HR round", family: "hr" },
+];
+
+/** "in 3 h", "in 2 days", "2 days ago" — the reviewer's clock. */
+function relativeWhen(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const mins = Math.round((t - Date.now()) / 60_000);
+  const abs = Math.abs(mins);
+  const span = abs < 60 ? `${abs} min` : abs < 48 * 60 ? `${Math.round(abs / 60)} h` : `${Math.round(abs / 1440)} days`;
+  return mins >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+/** One round in a cell: verdict chip, date & time, panel, and the feedback
+ *  (two lines, the whole text on hover). An upcoming round says so. */
+function RoundCell({ entry }: { entry?: RoundEntry }) {
+  if (!entry) return <span className="text-xs text-muted">—</span>;
+  const verdict = entry.result || (entry.upcoming ? "Upcoming" : entry.when ? "Awaiting feedback" : entry.status || "Booked");
+  const tone = entry.result ? roundResultTone(entry.result)
+    : entry.upcoming ? "bg-info-soft text-info" : "bg-warning-soft text-warning";
+  const when = entry.when ? fmtDateTime12(entry.when, entry.when) : null;
+  return (
+    <div className="min-w-[170px] max-w-[240px] space-y-0.5">
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{verdict}</span>
+      {when && (
+        <div className="flex items-center gap-1 whitespace-nowrap text-[11px] text-secondary" title={entry.when || undefined}>
+          <CalendarClock size={11} aria-hidden /> {when}
+        </div>
+      )}
+      {entry.interviewer && (
+        <div className="flex items-center gap-1 truncate text-[11px] text-muted"><UserRound size={11} aria-hidden /> {entry.interviewer}</div>
+      )}
+      {entry.feedback && (
+        <p className="line-clamp-2 text-[11px] italic leading-snug text-secondary" title={entry.feedback}>“{entry.feedback}”</p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Columns shown until a user saves their own layout.
@@ -78,15 +146,21 @@ export type ProfileColumnRow = {
 export const DEFAULT_PROFILE_COLUMNS = [
   "candidate_name",
   "opportunity",
-  "ai_interview",
+  "phase",
   "pipeline_status",
-  "interview_round",
+  "next_interview",
+  "ai_interview",
+  "ats_score",
+  "round_tech_l1",
+  "round_tech_l2",
+  "round_cust_l1",
+  "round_cust_l2",
+  "round_hr",
   "experience_years",
   "opportunity_exp",
   "notice_period",
   "applied_on",
   "ta_owner_name",
-  "created_by_name",
 ];
 
 /**
@@ -209,11 +283,67 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
         ),
     },
     {
+      // Resume ↔ requirement match (25 Sep 2026, user request: visible to
+      // everyone). Same ring as the AI score so the two read side by side;
+      // the server scores uploads on arrival and the Screening Desk fills
+      // any gaps, so a dash means "no CV / not scored yet", not zero.
+      key: "ats_score",
+      label: "ATS score",
+      sortable: true,
+      align: "right",
+      render: (r) =>
+        r.ats_score == null ? (
+          <span className="text-xs text-muted" title={r.ats_status === "Pending_Scan" ? "Resume not scored yet" : "No resume on this opportunity"}>
+            {r.ats_status === "Pending_Scan" ? "Not scored" : "—"}
+          </span>
+        ) : (
+          <ScoreIndicator score={r.ats_score} size="sm" showLabel={false} />
+        ),
+    },
+    {
+      // The derived candidate status (25 Sep 2026): "Manual L1 – Scheduled",
+      // "Customer L2 – Failed", "HR Discussion"… Sorts by pipeline stage.
       key: "pipeline_status",
       label: "Status",
       sortable: true,
-      render: (r) => <StatusBadge status={r.pipeline_status} label={selfWithdrewLabel(r.pipeline_status, (r as any).withdrawn_from_status)} />,
+      render: (r) => (
+        <CandidateStatusBadge status={r.candidate_status} stage={r.pipeline_status}
+          withdrawnFrom={r.withdrawn_from_status} />
+      ),
     },
+    {
+      // The stage (29 Sep 2026): the same phase the stage strip above counts.
+      key: "phase",
+      label: "Stage",
+      render: (r) => <CandidateStageBadge status={r.candidate_status} />,
+    },
+    {
+      // The next interview due — round, date & time, and how soon.
+      key: "next_interview",
+      label: "Next interview",
+      className: "min-w-[170px]",
+      render: (r) => {
+        const n = r.next_interview;
+        if (!n) return <span className="text-xs text-muted">None booked</span>;
+        const soon = new Date(n.when).getTime() - Date.now() < 24 * 3600_000;
+        return (
+          <div className="space-y-0.5">
+            <div className="text-xs font-semibold text-primary">{n.round}</div>
+            <div className="flex items-center gap-1 whitespace-nowrap text-[11px] text-secondary">
+              <CalendarClock size={11} aria-hidden /> {fmtDateTime12(n.when)}
+            </div>
+            <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold ${soon ? "bg-warning-soft text-warning" : "bg-info-soft text-info"}`}>
+              {relativeWhen(n.when)}{n.meeting_link ? "" : " · no link"}
+            </span>
+          </div>
+        );
+      },
+    },
+    ...ROUND_COLUMNS.map((c) => ({
+      key: `round_${c.key}`,
+      label: c.label,
+      render: (r: ProfileColumnRow) => <RoundCell entry={r.rounds?.[c.key]} />,
+    })),
     {
       key: "interview_round",
       label: "Round",
@@ -275,7 +405,6 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
     },
     { key: "technical_domain", label: "Domain", render: (r) => r.technical_domain || dash },
     { key: "customer", label: "Customer", render: (r) => r.customer_name || dash },
-    { key: "stage", label: "Stage", render: (r) => r.stage || dash },
     {
       key: "current_ctc",
       label: "Current CTC (Lac)",

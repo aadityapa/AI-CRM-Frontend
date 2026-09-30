@@ -3,7 +3,8 @@
  * GET /api/projects/all-employees. Map new via POST /api/projects/{id}/employees.
  * Group-by-employee collapses to one expandable card per person (UC-12). */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, Network, UserPlus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Network, UserPlus, UsersRound, X } from "lucide-react";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmGet, crmPost, crmPut } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -19,6 +20,8 @@ import {
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
+import { toDateKey } from "../lib/calendarDates";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -110,13 +113,6 @@ export const LOCATIONS = [
   { value: "Remote", label: "Remote" },
 ] as const;
 
-const UNITS = [
-  { value: "Hourly", label: "Per Hour" },
-  { value: "Daily", label: "Per Day" },
-  { value: "Monthly", label: "Per Month" },
-  { value: "Yearly", label: "Per Year" },
-] as const;
-
 type RateDraft = { effective_from: string; rate: string };
 
 /** Derive each rate's expiry from the NEXT row's start — never stored, so the
@@ -130,7 +126,9 @@ export function deriveRateSchedule(drafts: RateDraft[]): Array<{
     .map((d, index) => ({ ...d, index }))
     .filter((d) => d.effective_from)
     .sort((a, b) => a.effective_from.localeCompare(b.effective_from));
-  const today = new Date().toISOString().slice(0, 10);
+  // LOCAL calendar dates throughout: toISOString() is UTC, so in IST every
+  // derived expiry came out one day early (and "today" was yesterday before 5:30 AM).
+  const today = toDateKey(new Date());
   // Current = latest start <= today; if every start is in the future, the earliest.
   let currentIdx = -1;
   dated.forEach((d, i) => { if (d.effective_from <= today) currentIdx = i; });
@@ -140,7 +138,7 @@ export function deriveRateSchedule(drafts: RateDraft[]): Array<{
     if (i + 1 < dated.length) {
       const next = new Date(`${dated[i + 1].effective_from}T00:00:00`);
       next.setDate(next.getDate() - 1);
-      expiry = next.toISOString().slice(0, 10);
+      expiry = toDateKey(next);
     }
     return { index: d.index, effective_from: d.effective_from, rate: d.rate, expiry, isCurrent: i === currentIdx };
   });
@@ -172,7 +170,7 @@ export function RateHistory({ rates, unit, compact = false }: {
     .filter((r) => r.effective_from)
     .sort((a, b) => (a.effective_from! < b.effective_from! ? -1 : 1));
   if (!rows.length) return <span className="text-muted">—</span>;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toDateKey(new Date());
   let currentIdx = -1;
   rows.forEach((r, i) => { if (r.effective_from! <= today) currentIdx = i; });
   if (currentIdx === -1) currentIdx = 0;
@@ -212,7 +210,7 @@ function MapModal({ onClose, onSaved, notify }: {
   const [employees, setEmployees] = useState<any[]>([]);
   const [projectId, setProjectId] = useState("");
   const [employeeId, setEmployeeId] = useState("");
-  const [unit, setUnit] = useState("Monthly");
+  const [unit, setUnit] = useState("");   // no default — see lib/billingUnits
   const [location, setLocation] = useState("Onsite");
   const [onboarding, setOnboarding] = useState("");
   const [billingDate, setBillingDate] = useState("");
@@ -243,6 +241,7 @@ function MapModal({ onClose, onSaved, notify }: {
     const errs: Record<string, string> = {};
     if (!projectId) errs.project = "Select a project";
     if (!employeeId) errs.employee = "Select an employee";
+    if (!unit) errs.unit = BILLING_UNIT_REQUIRED;
     const complete = rates.filter((r) => r.effective_from && r.rate && Number(r.rate) > 0);
     if (!complete.length) errs.rates = "Add at least one rate with an Effective From date";
     else if (rates.some((r) => (r.effective_from || r.rate) && !(r.effective_from && r.rate && Number(r.rate) > 0)))
@@ -355,9 +354,11 @@ function MapModal({ onClose, onSaved, notify }: {
 
           <h3 className={sectionTitle}>Commercial Details</h3>
           <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
-            <WizardField label="Unit" icon="hash">
-              <select className={inputCls} value={unit} onChange={(e) => setUnit(e.target.value)}>
-                {UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+            <WizardField label="Rate is priced per" required error={errors.unit} icon="hash" filled={!!unit}>
+              <select className={inputCls} value={unit} aria-invalid={!!errors.unit}
+                onChange={(e) => setUnit(e.target.value)}>
+                <option value="">Select unit…</option>
+                {BILLING_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
               </select>
             </WizardField>
           </div>
@@ -610,7 +611,9 @@ function GroupedList({ groups, loading }: { groups: EmpGroup[]; loading: boolean
 }
 
 /* ---------------------------------------------------------------- list page */
-export function ProjectEmployeesPage() {
+/** `embedded` — rendered as a tab of the Projects hub: the hub already carries
+ *  the page header, so only a compact title row is shown. */
+export function ProjectEmployeesPage({ embedded = false }: { embedded?: boolean } = {}) {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   // Template-aware: for templated users the template alone decides.
   const canWrite = useCanAct("project-employees", "edit", useHasRole("Sales_Head", "Finance", "HR"));
@@ -733,21 +736,36 @@ export function ProjectEmployeesPage() {
   return (
     <div>
       {toast}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-display text-xl font-bold text-primary">Project Employees</h1>
-          <p className="mt-0.5 text-sm text-muted">
+      {embedded ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted">
             One row per employee × project. Leave, holidays, timesheet and rate live on the mapping.
           </p>
+          {canWrite && (
+            <button type="button" className={btnPrimary} onClick={() => setMapping(true)}>
+              <UserPlus size={15} /> Map employee
+            </button>
+          )}
         </div>
-        {canWrite && (
-          <button type="button" className={btnPrimary} onClick={() => setMapping(true)}>
-            <UserPlus size={15} /> Map employee
-          </button>
-        )}
-      </div>
+      ) : (
+        <div className="mb-4">
+          <PageHeader
+            icon={UsersRound}
+            accent="teal"
+            eyebrow="Deployment"
+            title="Project Employees"
+            subtitle="One row per employee × project. Leave, holidays, timesheet and rate live on the mapping."
+            stats={meta ? [{ label: meta.total === 1 ? "mapping" : "mappings", value: meta.total }] : undefined}
+            actions={canWrite ? (
+              <button type="button" className={HERO_BTN_SOLID} onClick={() => setMapping(true)}>
+                <UserPlus size={15} /> Map employee
+              </button>
+            ) : undefined}
+          />
+        </div>
+      )}
 
-      <div className="mb-3 flex flex-wrap items-end gap-3 rounded-card border border-subtle bg-surface-1 p-3">
+      <div className="mb-3 flex flex-wrap items-end gap-3 rounded-card border border-subtle bg-surface-1 p-3 shadow-raised">
         <Field label="Project">
           <select className={inputCls} value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }}>
             <option value="">All projects</option>
@@ -802,7 +820,7 @@ export function ProjectEmployeesPage() {
                 <span>Projects <span className="font-semibold text-primary tnum">{new Set(rs.map((r) => r.project_id)).size}</span></span>
               </>
             )}
-            onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)}
+            onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)} rowHref={(r: any) => `project-employees/${r.id}`}
             rowKey={(r) => r.id}
             empty={<TeachingEmpty page="project-employees" />}
             rowActions={canWrite ? (r) => (
@@ -830,7 +848,7 @@ export function ProjectEmployeesPage() {
           search={search}
           onSearch={setSearch}
           onPage={setPage}
-          onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`project-employees/${r.id}`)} rowHref={(r: any) => `project-employees/${r.id}`}
           /* Header filters (4 Sep 2026) mirror the toolbar's — one state, two
              handles, so a pick in either place shows in both. */
           columnFilters={{

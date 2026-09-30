@@ -42,18 +42,20 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   // Label only: the stored values stay L1_Feedback / L2_Feedback.
   L1_Feedback: "Customer L1 Interview",
   L2_Feedback: "Customer L2 Interview",
-  // "Shortlisted" on its own was ambiguous — we shortlist internally too. This
-  // stage specifically means the CUSTOMER shortlisted them. Label only: the
-  // stored value stays `Shortlisted`, so no migration and no data rewrite.
+  // The CUSTOMER selected them (25 Sep 2026 vocabulary, was "Customer
+  // Shortlisted"). Label only: the stored value stays `Shortlisted`. An ATS
+  // "Shortlisted" resume passes its own label — this is the pipeline stage.
   Shortlisted: "Customer Shortlisted",
   // This stage is the OFFER TERMS awaiting Sales Head (user decision,
   // 2 Sep 2026) — "Customer Approved" made it read as the customer's yes,
   // which is the stage before (Shortlisted). Label only; value unchanged.
   Customer_Approval: "Pending Sales Head Approval",
-  HR_Screening: "HR Screening",
-  HR_Interviewing: "HR Interviewing",
-  // The team says "Pre Onboarding"; the column has always stored "Preboarding".
-  Preboarding: "Pre Onboarding",
+  // 25 Sep 2026 vocabulary (the business status sheet). Labels only — the
+  // stored stages stay HR_Screening / HR_Interviewing / Preboarding. Keep in
+  // step with B-V2 services/candidate_status.STAGE_LABELS.
+  HR_Screening: "HR Discussion",
+  HR_Interviewing: "HR Round",
+  Preboarding: "Pre-Onboarding",
   // Vocabulary pass (Aug 2026): say WHO the ball is with, in plain words.
   // Label only — stored values unchanged, no migration.
   Pending_Sales_Head_Approval: "Awaiting Sales Head approval",
@@ -154,6 +156,16 @@ export const btnDanger =
   "btn-depth inline-flex min-h-[40px] items-center gap-1.5 rounded-control bg-danger px-3.5 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed";
 
 /* ---------- Modal + ConfirmModal ---------- */
+/** Did this click happen inside the element's OWN DOM? (28 Sep 2026)
+ *  A `Modal` is portalled to <body>, but React bubbles its events through the
+ *  COMPONENT tree — so a click on a dialog opened from a table cell (its Close
+ *  button, the backdrop, anything inside) reached the row's `onClick` and
+ *  navigated to the profile, taking the user "outside" the page they were on.
+ *  Clickable containers (DataTable rows, grouped-list rows) call this first. */
+export function isOwnDomClick(e: React.MouseEvent<Element>): boolean {
+  return e.currentTarget.contains(e.target as Node);
+}
+
 export function Modal({
   title,
   onClose,
@@ -180,6 +192,7 @@ export function Modal({
    * button confirm before discarding. Explicit Cancel/Save buttons inside the
    * modal call onClose directly and are NOT affected. */
   dirty,
+  hero,
 }: {
   title: React.ReactNode;
   onClose: () => void;
@@ -206,6 +219,10 @@ export function Modal({
   footerClassName?: string;
   ariaLabel?: string;
   dirty?: boolean;
+  /** A full-bleed header (30 Sep 2026, `dialogKit.DialogHero`) shown INSTEAD of
+   *  the title bar; the close button floats on it. `title` still names the
+   *  dialog for screen readers when it is a string. */
+  hero?: React.ReactNode;
 }) {
   const reduce = useReducedMotion();
   const guardedClose = React.useCallback(() => {
@@ -291,6 +308,18 @@ export function Modal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 28 }}
       >
+        {hero ? (
+          <div className={`relative z-20 shrink-0 ${isFullPage ? "" : "rounded-t-modal"} overflow-hidden`}>
+            {hero}
+            <button
+              onClick={guardedClose}
+              className={`absolute right-3 top-3 rounded-full bg-white/15 p-1.5 text-white transition-all duration-fast ease-smooth hover:bg-white/25 active:scale-90 ${focusRing}`}
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        ) : (
         <div className={[
           `sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-subtle ${chromeBg} px-4 py-3.5 sm:px-8 ${isFullPage ? "" : "rounded-t-modal"}`,
           headerClassName || "",
@@ -304,6 +333,7 @@ export function Modal({
             <X size={18} />
           </button>
         </div>
+        )}
         <div
           className={[
             isFullPage
@@ -426,10 +456,13 @@ export function Tabs({
   const reduce = useReducedMotion();
   const uid = useId();
   return (
-    <div className="flex flex-wrap gap-1 border-b border-subtle">
+    <div className="flex flex-wrap gap-1 border-b border-subtle" role="tablist">
       {tabs.map((t) => (
         <button
           key={t.key}
+          type="button"
+          role="tab"
+          aria-selected={active === t.key}
           onClick={() => onChange(t.key)}
           className={`relative -mb-px rounded-t-control px-3.5 py-2 text-sm font-semibold transition-colors duration-base ease-smooth ${focusRing} ${
             active === t.key ? "text-brand-600 dark:text-brand-300" : "text-muted hover:text-primary"
@@ -536,7 +569,7 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
    * property of their role. Rendering the backend's raw "Requires one of
    * roles: Admin, CEO, TA" as a red failure box (with a useless Retry) read
    * as something being broken. One check here fixes every screen. */
-  if (/requires one of roles|not permitted|permission denied|access denied/i.test(error)) {
+  if (/requires one of roles|not permitted|permission denied|access denied|cannot view/i.test(error)) {
     return (
       <div className="flex items-start gap-3 rounded-card border border-subtle bg-surface-1 px-5 py-4">
         <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-muted" aria-hidden>
@@ -550,6 +583,35 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
             You don&rsquo;t currently have access to this area. If you need it for your work,
             ask your administrator to grant it from Access Control.
           </div>
+        </div>
+      </div>
+    );
+  }
+  /* A record the server will not show this user answers 404 "… not found"
+   * (existence is never leaked). A link from a bell or an email can land on
+   * one; a red box with Retry read as the app being broken (29 Sep 2026, a
+   * Sales user's "Requirement not found"). Say what it means and offer the
+   * way back — on every screen at once. */
+  if (/^[\w\s-]{1,40} not found\.?$/i.test(error.trim())) {
+    return (
+      <div className="flex items-start gap-3 rounded-card border border-subtle bg-surface-1 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-soft text-warning" aria-hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+          </svg>
+        </span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-primary">{error.trim().replace(/\.$/, "")}</div>
+          <div className="mt-0.5 text-sm text-secondary">
+            It may have been removed, or it is not shared with your role. If a link brought you here and
+            you need it, ask your administrator.
+          </div>
+          {typeof window !== "undefined" && window.history.length > 1 && (
+            <button type="button" onClick={() => window.history.back()}
+              className={`mt-2 rounded-control text-sm font-semibold text-brand-600 hover:underline ${focusRing}`}>
+              ← Go back
+            </button>
+          )}
         </div>
       </div>
     );

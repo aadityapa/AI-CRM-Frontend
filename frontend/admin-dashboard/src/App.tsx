@@ -27,7 +27,7 @@ const CandidateInterviewsPage = lazy(() =>
   import("./pages/CandidateInterviews").then((m) => ({ default: m.CandidateInterviewsPage })),
 );
 const CandidateReportPage = lazy(() => import("./pages/CandidateReportPage").then((m) => ({ default: m.CandidateReportPage })));
-const PromptLogsPage = lazy(() => import("./pages/PromptLogs").then((m) => ({ default: m.PromptLogsPage })));
+const AiCostsPage = lazy(() => import("./pages/InterviewCosts").then((m) => ({ default: m.AiCostsPage })));
 const IntegrityLogsPage = lazy(() => import("./pages/IntegrityLogs").then((m) => ({ default: m.IntegrityLogsPage })));
 const UpcomingInterviewsPage = lazy(() => import("./pages/UpcomingInterviews").then((m) => ({ default: m.UpcomingInterviewsPage })));
 const QuestionBankPage = lazy(() => import("./pages/QuestionBank").then((m) => ({ default: m.QuestionBankPage })));
@@ -47,7 +47,8 @@ const NAV_DEFS: Record<Exclude<View, "templateForm" | "candidateReport" | "candi
   templates: { target: "templates", label: "Templates", icon: LayoutTemplate, active: (v) => v === "templates" || v === "templateForm" },
   candidates: { target: "candidates", label: "Reports", icon: Users, active: (v) => v === "candidates" || v === "candidateReport" },
   ats: { target: "ats", label: "ATS", icon: Sigma, active: (v) => v === "ats" },
-  promptLogs: { target: "promptLogs", label: "AI Logs", icon: Terminal, active: (v) => v === "promptLogs" },
+  // View key stays `promptLogs` (saved tab grants + bookmarks); the page is the AI cost report since 28 Sep 2026.
+  promptLogs: { target: "promptLogs", label: "AI Costs", icon: Terminal, active: (v) => v === "promptLogs" },
   integrityLogs: { target: "integrityLogs", label: "Integrity", icon: Shield, active: (v) => v === "integrityLogs" },
   questionBank: { target: "questionBank", label: "Question Bank", icon: Database, active: (v) => v === "questionBank" },
   crm: { target: "crm", label: "CRM", icon: Briefcase, active: (v) => v === "crm" },
@@ -475,7 +476,7 @@ export default function App() {
             ) : showViewInBody === "templateForm" ? (
               <TemplateFormPage jobId={editingJobId} onDone={() => setView("templates")} onOpenHrSetup={() => openHrFlow("template")} />
             ) : showViewInBody === "promptLogs" ? (
-              <PromptLogsPage />
+              <AiCostsPage roles={effRoles} />
             ) : showViewInBody === "integrityLogs" ? (
               <IntegrityLogsPage />
             ) : showViewInBody === "questionBank" ? (

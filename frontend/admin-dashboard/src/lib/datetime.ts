@@ -32,6 +32,34 @@ export function fmtTime12(v: string | number | Date | null | undefined, fallback
   return d ? d.toLocaleTimeString("en-IN", T_OPTS) : fallback;
 }
 
+/**
+ * A stored interview time → the value an `<input type="datetime-local">` shows,
+ * as the IST wall clock the team typed (28 Sep 2026 bug).
+ *
+ * The API returns aware instants (`2026-09-28T05:24:00+00:00` = 10:54 AM IST).
+ * The round editors used to `slice(0, 16)` that string, so the field showed the
+ * UTC clock (05:24); saving it back (read by the server as IST) moved the
+ * interview 5h30 EARLIER on every edit — "Technical L1, 28 Sep, 5:24 am".
+ * An aware value is converted to Asia/Kolkata; a naive stamp ("2026-09-28
+ * 10:54", already IST) is only reshaped. Unparseable input gives "".
+ */
+export function isoToIstInput(v: string | null | undefined): string {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  const aware = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  if (!aware) {
+    const m = s.replace(" ", "T").match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    return m ? m[0] : "";
+  }
+  const d = toDate(s);
+  if (!d) return "";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(d).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
 /** "15 Sep 2026" */
 export function fmtDateShort(v: string | number | Date | null | undefined, fallback = "—"): string {
   const d = toDate(v);

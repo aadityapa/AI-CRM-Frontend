@@ -75,7 +75,7 @@ export function toLocalStamp(d: Date): string {
 }
 
 /** Backend stamp -> the value a <input type="datetime-local"> expects. */
-export function toInputValue(stamp?: string | null): string {
+function toInputValue(stamp?: string | null): string {
   const s = String(stamp || "").trim();
   if (!s) return "";
   return s.includes("T") ? s.slice(0, 16) : s.replace(" ", "T").slice(0, 16);

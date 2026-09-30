@@ -7,10 +7,11 @@ import React, { Suspense, createContext, useCallback, useContext, useEffect, use
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
+  ArrowLeft, ArrowRight, Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
 } from "lucide-react";
+import { APP_NAME } from "../lib/brand";
 import { crmGet, crmPost, CrmApiError } from "./api";
-import { CrmLink, CrmRouter, crmNavigate, readCrmPath } from "./routerHooks";
+import { CrmLink, CrmRouter, crmNavigate, isPushNavigation, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
 import { CRM_NAV, type CrmNavItem } from "./nav";
 import { ErrorBox, Spinner } from "./components/ui";
@@ -18,7 +19,7 @@ import { MOTION_DUR, MOTION_EASE_OUT } from "./components/motion3d";
 import { SidebarUserBlock } from "./components/SidebarUserBlock";
 import { isSuperAdmin } from "../lib/rbac";
 import { performAdminLogout } from "../lib/adminLogout";
-import { crmTabVisibleFromMe, type EffectiveAccess } from "./useAccess";
+import { canApprove, crmTabVisibleFromMe, type EffectiveAccess } from "./useAccess";
 import { fmtDateTime12 } from "../lib/datetime";
 
 export { CRM_NAV } from "./nav";
@@ -73,9 +74,37 @@ export type Me = {
   tab_access?: string[] | null;
   field_access?: Record<string, string[]> | null;
   access?: EffectiveAccess;
+  /** Approval actions this user may perform (server-computed by the same
+   *  function the gate uses — see useCanApprove). */
+  approvals?: string[];
   is_superadmin?: boolean;
   is_ceo?: boolean;
+  /** The roles the user actually HOLDS — no implied ones (29 Sep 2026). A Sales
+   *  Manager's `roles` carry "Sales" for role checks; the chips print this. */
+  display_roles?: string[];
+  /** A manager rung (Sales Manager) / Sales Head / Admin — works the whole team. */
+  sees_team?: boolean;
 };
+
+const BUILT_IN_ROLES = ["CEO", "Admin", "Sales_Head", "Sales", "RMG", "TA", "HR", "Finance"];
+
+/** The role chips: what the user holds, highest rung first. */
+export function displayRoles(me: Pick<Me, "roles" | "display_roles">): string[] {
+  const held = me.display_roles?.length ? me.display_roles : me.roles;
+  const rank = (r: string) => {
+    const i = ["CEO", "Admin", "Sales_Head"].indexOf(r);
+    if (i >= 0) return i;
+    if (!BUILT_IN_ROLES.includes(r)) return 3;          // custom roles (Sales Manager, GM) come next
+    return 4 + BUILT_IN_ROLES.indexOf(r);
+  };
+  return [...held].sort((a, b) => rank(a) - rank(b));
+}
+
+/** The one role the greeting names — the highest rung held. */
+export function roleTitle(me: Pick<Me, "roles" | "display_roles">): string {
+  const top = displayRoles(me)[0];
+  return top ? top.replace(/_/g, " ") : "";
+}
 const MeCtx = createContext<Me | null>(null);
 
 /** Test / story helper — wrap CRM pages that call useMe / useHasRole. */
@@ -153,6 +182,36 @@ function playChime(soft = false) {
 }
 
 type Popup = { key: string; title: string; message?: string; link?: string; summary?: boolean };
+
+/** In-app Back / Forward (29 Sep 2026): the same as the browser's buttons —
+ *  every page, tab and filter chip is in the address, so each step returns to
+ *  exactly what was on screen. Alt + ← / → work too (the browser's own keys).
+ *  Where the Navigation API exists the buttons also know when there is nowhere
+ *  to go; elsewhere they stay enabled and simply do nothing at the ends. */
+function HistoryButtons() {
+  const nav = (window as unknown as { navigation?: { canGoBack?: boolean; canGoForward?: boolean } }).navigation;
+  const [, rerender] = useState(0);
+  useEffect(() => {
+    const bump = () => rerender((n) => n + 1);
+    window.addEventListener("popstate", bump);
+    return () => window.removeEventListener("popstate", bump);
+  }, []);
+  const canBack = nav?.canGoBack ?? true;
+  const canForward = nav?.canGoForward ?? true;
+  const cls = "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-subtle bg-surface-1 text-primary shadow-e1 transition-colors duration-base ease-smooth hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40";
+  return (
+    <span className="crm-print-hide inline-flex items-center gap-1" role="group" aria-label="History">
+      <button type="button" className={cls} onClick={() => window.history.back()} disabled={!canBack}
+        title="Back (Alt + ←)" aria-label="Back">
+        <ArrowLeft size={17} strokeWidth={2.25} />
+      </button>
+      <button type="button" className={cls} onClick={() => window.history.forward()} disabled={!canForward}
+        title="Forward (Alt + →)" aria-label="Forward">
+        <ArrowRight size={17} strokeWidth={2.25} />
+      </button>
+    </span>
+  );
+}
 
 function NotificationsBell() {
   const reduce = useReducedMotion();
@@ -325,7 +384,12 @@ function NotificationsBell() {
       if (rawQ) {
         try { q = decodeURIComponent(rawQ).slice(0, 120); } catch { q = ""; }
       }
-      const extra = [tab ? `tab=${tab}` : "", q ? `q=${encodeURIComponent(q)}` : ""].filter(Boolean);
+      // Screening Desk deep links (28 Sep 2026): `task` = a task category key,
+      // `focus` = the candidate profile id — both validated to their shape.
+      const task = (link.match(/[?&]task=([a-z_]{1,32})(?:&|$)/) || [])[1];
+      const focus = (link.match(/[?&]focus=(\d{1,10})(?:&|$)/) || [])[1];
+      const extra = [tab ? `tab=${tab}` : "", q ? `q=${encodeURIComponent(q)}` : "",
+        task ? `task=${task}` : "", focus ? `focus=${focus}` : ""].filter(Boolean);
       if (extra.length) path += `?${extra.join("&")}`;
       crmNavigate(path);
       return;
@@ -621,6 +685,71 @@ export default function CrmApp() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  /* Scroll memory (29 Sep 2026, "Back must work properly"): the scroll offset of
+   * every address is remembered while you read it; the browser's Back / Forward
+   * puts you back where you were (retrying while the page's data loads), and a
+   * NEW page opens at the top. Desktop scrolls <main>, phones scroll the window. */
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const positions = new Map<string, number>();
+    const scroller = (): { get: () => number; set: (y: number) => void; height: () => number } => {
+      // Decided by CSS, not by the current height: while a page is still loading
+      // its data <main> is short, yet it is still the element that will scroll.
+      const m = mainRef.current;
+      const y = m ? getComputedStyle(m).overflowY : "visible";
+      if (m && (y === "auto" || y === "scroll")) {
+        return { get: () => m.scrollTop, set: (y) => { m.scrollTop = y; }, height: () => m.scrollHeight - m.clientHeight };
+      }
+      return {
+        get: () => window.scrollY,
+        set: (y) => window.scrollTo(0, y),
+        height: () => document.documentElement.scrollHeight - window.innerHeight,
+      };
+    };
+    let frame = 0;
+    // Keyed by the address AT the moment of scrolling: a tab switch changes it
+    // with pushState (no event), and each tab keeps its own offset.
+    const remember = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; positions.set(window.location.search, scroller().get()); });
+    };
+    let restoreTimer = 0;
+    const onPop = () => {
+      window.clearInterval(restoreTimer);
+      if (isPushNavigation()) {
+        const s = scroller();
+        requestAnimationFrame(() => s.set(0));
+        return;
+      }
+      // Read BEFORE the new page renders — its layout change fires scroll events.
+      const target = positions.get(window.location.search);
+      if (target == null) return;
+      const started = Date.now();
+      restoreTimer = window.setInterval(() => {
+        const s = scroller();
+        s.set(target);
+        // Stop once we got there, or after the page had 2.5 s to load its data.
+        if (Math.abs(s.get() - target) < 2 || Date.now() - started > 2500) window.clearInterval(restoreTimer);
+      }, 80);
+    };
+    // Capture phase on the document: element scrolls do not bubble, and <main>
+    // does not exist yet while the shell is still loading the login.
+    document.addEventListener("scroll", remember, { capture: true, passive: true });
+    window.addEventListener("popstate", onPop);
+    // A user scroll ends a pending restore (never fight the reader).
+    const stop = () => window.clearInterval(restoreTimer);
+    window.addEventListener("wheel", stop, { passive: true });
+    window.addEventListener("touchstart", stop, { passive: true });
+    return () => {
+      document.removeEventListener("scroll", remember, { capture: true });
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("wheel", stop);
+      window.removeEventListener("touchstart", stop);
+      window.clearInterval(restoreTimer);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
   // Admin-authored copy overrides (status tooltips, empty-state text).
   // Fire-and-forget: the built-in copy is already correct, overrides just
   // customise it, so nothing waits on this request.
@@ -693,15 +822,17 @@ export default function CrmApp() {
   if (error) {
     return (
       <div className="p-6">
-        <ErrorBox error={`Karnex CRM unavailable: ${error}`} onRetry={() => window.location.reload()} />
+        <ErrorBox error={`${APP_NAME} unavailable: ${error}`} onRetry={() => window.location.reload()} />
       </div>
     );
   }
-  if (!me) return <Spinner label="Loading Karnex CRM…" />;
+  if (!me) return <Spinner label={`Loading ${APP_NAME}…`} />;
   if (!me.roles.length) {
     return (
       <div className="p-6">
-        <ErrorBox error="No CRM role is assigned to your account. Ask an Admin to assign one (Users page or assign_crm_role.py)." />
+        <ErrorBox error={me.access?.template_id
+          ? "Your account has an access template but no CRM role. The template decides which tabs you see; a role (built-in or custom) is what lets you into the CRM. Ask an Admin to add one in Access Control ▸ Users ▸ Edit Roles."
+          : "No CRM role is assigned to your account. Ask an Admin to add one in Access Control ▸ Users ▸ Edit Roles."} />
       </div>
     );
   }
@@ -735,6 +866,9 @@ export default function CrmApp() {
     // Applicants, 26 Aug 2026) — their sidebar entry hides. TA/RMG keep it:
     // for them it is a primary work queue, not an oversight view.
     if (n.path === "template-requests" && isSuperAdmin(me.roles)) return false;
+    // The Screening Desk follows the approval the server gates it on, so a GM
+    // (custom role) sees it and a templated RMG without the approval does not.
+    if (n.path === "screening-desk") return canApprove(me, "profile.rmg_screening");
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (
@@ -848,9 +982,10 @@ export default function CrmApp() {
               >
                 {sidebarCollapsed ? <PanelLeftOpen size={18} strokeWidth={2.25} /> : <PanelLeftClose size={18} strokeWidth={2.25} />}
               </button>
-              <span className="truncate">Karnex CRM</span>
+              <HistoryButtons />
+              <span className="truncate">{APP_NAME}</span>
               <span className="hidden flex-wrap items-center gap-1 lg:flex">
-                {me.roles.map((r) => (
+                {displayRoles(me).map((r) => (
                   <span
                     key={r}
                     className="rounded-full border border-subtle bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900 dark:text-brand-200"
@@ -889,7 +1024,7 @@ export default function CrmApp() {
                   transition={reduce ? { duration: MOTION_DUR.base } : { duration: MOTION_DUR.slow, ease: MOTION_EASE_OUT }}
                 >
                   <div className="flex items-center justify-between border-b border-subtle px-4 py-3">
-                    <span className="text-sm font-bold text-primary">Karnex CRM</span>
+                    <span className="text-sm font-bold text-primary">{APP_NAME}</span>
                     <button
                       type="button"
                       onClick={() => setDrawerOpen(false)}
@@ -910,7 +1045,7 @@ export default function CrmApp() {
             )}
           </AnimatePresence>
 
-          <main className="min-w-0 overflow-x-hidden p-3 sm:p-4 xl:p-5 md:min-h-0 md:flex-1 md:overflow-y-auto">
+          <main ref={mainRef} className="min-w-0 overflow-x-hidden p-3 sm:p-4 xl:p-5 md:min-h-0 md:flex-1 md:overflow-y-auto">
             <Suspense fallback={<Spinner />}>
               <motion.div
                 key={path}

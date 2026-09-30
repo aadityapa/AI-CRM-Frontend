@@ -26,6 +26,7 @@ import {
   cancelAutoAdvance,
   submitAutoAdvanceNow,
   showCandidateToast,
+  getProctorStream,
 } from "./candidate.js";
 import {
   downloadLatestReportExcel,
@@ -74,7 +75,8 @@ import {
   requireFullscreenBeforeInterview,
 } from "./interview_security.js";
 import { startFaceMonitoring, stopFaceMonitoring } from "./face_detection.js";
-import { runDeviceTestGate, hideDeviceTestGate, readPersistedDeviceTestState } from "./device_test.js";
+import { startSessionRecording, stopSessionRecording } from "./session_recorder.js";
+import { runDeviceTestGate, hideDeviceTestGate, readPersistedDeviceTestState, getVerifiedMicStream } from "./device_test.js";
 import {
   applyRulesConfig,
   bindKeyboardBlockedNotice,
@@ -353,6 +355,9 @@ export function refreshSidebarProfileClock() {
 function logoutUser() {
   stopFaceMonitoring();
   deactivateInterviewSecurity();
+  // No finalize call: logging out is not the end of an interview, and the
+  // server joins whatever chunks arrived when the report is built.
+  void stopSessionRecording({ finalize: false }).catch(() => {});
   setRecordingBadge(false);
   const bearer = getAuthToken();
   clearAuthSession();
@@ -946,6 +951,13 @@ async function proceedWithInviteLogin() {
       activateInterviewSecurity();
       startFaceMonitoring(() => document.getElementById("proctorCam"));
       setRecordingBadge(true);
+      // Whole-session recording (22 Sep 2026). Fire-and-forget on purpose:
+      // every failure inside is swallowed, so nothing here can delay or break
+      // the first question. ⚠️ It records CLONES of the Candidate Feed's own
+      // tracks (23 Sep 2026) — opening the webcam a second time blanked the
+      // feed on Windows laptops. Getters, not streams: the feed is usually
+      // still opening at this point.
+      void startSessionRecording(getProctorStream, getVerifiedMicStream).catch(() => {});
       console.info("[STEP-8] Candidate active");
       _setCandidateStartupControlsDisabled(false);
       const status = document.getElementById("candidateStatus");

@@ -4,7 +4,7 @@
  * Sales submitted the candidate's rate and the customer onboarding date.
  * Sales Head has one decision to make, so it gets a banner rather than being
  * buried in a generic status dropdown. Three outcomes (2 Sep 2026): approve
- * (→ Pre Onboarding, HR notified), send the terms BACK to Sales to redo (a
+ * (→ HR Discussion, HR notified), send the terms BACK to Sales to redo (a
  * wrong rate is not a rejected candidate), or reject.
  *
  * The terms are shown here because that is what is being approved — sending
@@ -58,7 +58,7 @@ export function SalesHeadApprovalBanner({
             <h2 className="text-base font-bold text-primary">Offer terms awaiting your approval</h2>
             <p className="mt-0.5 text-sm text-secondary">
               Sales has proposed terms for <span className="font-semibold">{candidateName}</span>.
-              Approve to move them into Pre Onboarding and hand over to HR, send the terms back
+              Approve to move them into HR Discussion and hand over to HR, send the terms back
               to Sales to redo, or reject.
             </p>
 

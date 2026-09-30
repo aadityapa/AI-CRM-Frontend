@@ -22,6 +22,7 @@ import {
   BranchProjectsTab, BranchTimesheetsTab,
 } from "../components/BranchHubTabs";
 import { BranchRateCardEditor } from "./RateCards";
+import { usePageTab } from "../lib/pageState";
 
 const OBSERVANCE = ["Mandatory", "Optional"];
 const fmtDate = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString() : "—");
@@ -97,7 +98,7 @@ export function BranchPolicyPage() {
   const [form, setForm] = useState<Partial<BranchPolicy>>({});
   const [saving, setSaving] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
-  const [tab, setTab] = useState("policy");
+  const [tab, setTab] = usePageTab<string>("tab", "policy");
 
   // Branch hub tabs (Aug 2026): everything under this customer's branch —
   // Projects / Timesheets / Invoices / POs / Employees. Gating mirrors the

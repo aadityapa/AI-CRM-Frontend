@@ -43,10 +43,13 @@ export function transcriptionRecentlyDown(withinMs = 60000) {
  * @returns {Promise<string>} the text ("" for silence / too-short clips)
  * @throws {TranscribeUnavailableError} when the service itself failed
  */
-export async function transcribeAudioBlob(blob, filename = "candidate-response.webm") {
+export async function transcribeAudioBlob(blob, filename = "candidate-response.webm", { durationMs = 0 } = {}) {
   if (!blob || !blob.size) return "";
   const fd = new FormData();
   fd.append("audio_file", blob, filename);
+  // Transcription is billed per minute and only the browser knows the true
+  // length of the clip (28 Sep 2026 — per-interview AI cost).
+  if (durationMs > 0) fd.append("duration_ms", String(Math.round(durationMs)));
 
   let res;
   try {

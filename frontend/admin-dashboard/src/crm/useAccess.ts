@@ -31,8 +31,36 @@ export type EffectiveAccess = {
   tabs?: Record<string, AccessMode>;
   fields?: Record<string, Record<string, AccessMode>>;
   visible_tabs?: string[] | null;
+  /** Approval actions the template / custom role grants; null = role lists decide. */
+  actions?: string[] | null;
   source?: string;
 };
+
+/** Approval action keys — mirror of `services/action_permissions.APPROVAL_ACTIONS`. */
+export type ApprovalAction =
+  | "timesheet.approve" | "timesheet.reject" | "timesheet.generate_invoice"
+  | "invoice.convert_proforma" | "invoice.revision.approve" | "credit_note.approve"
+  | "opportunity.approve" | "requirement.sales_head_approve" | "requirement.engineering_approve"
+  | "requirement.positions.approve" | "profile.rmg_screening" | "profile.sales_head_decision"
+  | "profile.budget_resolve" | "profile.fast_track_internal" | "leave.approve" | "leave.reject";
+
+/** May this user press an APPROVAL button? (25 Sep 2026)
+ *
+ * A tab grant never answers this — Timesheets: Edit is what Sales needs to
+ * FILL a sheet, and it used to show them Approve too. The server computes
+ * `me.approvals` with the very function its gate uses (template / custom-role
+ * Approvals list, else the action's role list), so the button appears exactly
+ * when the click would be accepted. Admin/CEO always may.
+ */
+export function canApprove(me: Me, action: ApprovalAction): boolean {
+  if (isSuperAdmin(me.roles) || me.access?.full) return true;
+  return (me.approvals ?? []).includes(action);
+}
+
+export function useCanApprove(action: ApprovalAction): boolean {
+  const me = useMe();
+  return canApprove(me, action);
+}
 
 function bareTabKey(pathOrKey: string): string {
   if (pathOrKey.startsWith("crm:")) return pathOrKey.slice(4) || "dashboard";
@@ -182,4 +210,12 @@ export function useCanEditTab(tabPath: string): boolean {
 export function useCanAct(tabPath: string, mode: AccessMode, rolePermitted: boolean): boolean {
   const me = useMe();
   return canAct(me.access, me.roles, tabPath || "dashboard", mode, rolePermitted);
+}
+
+/** Is this user's access GRANT-driven (a template or a custom role such as GM)
+ *  rather than role defaults? Pages whose layout depends on built-in roles use
+ *  it to fall back to the grants instead of rendering nothing. */
+export function useIsTemplated(): boolean {
+  const me = useMe();
+  return isTemplated(me.access, me.roles);
 }

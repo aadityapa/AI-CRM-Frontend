@@ -11,7 +11,23 @@ import { state } from "./state.js";
 import { getAuthUserRaw, getAuthToken } from "./auth/session.js";
 
 const MAX_WARNINGS = 3;
-const TERMINATE_AT = 3;
+/**
+ * 22 Sep 2026 — this was 3, while the server terminates only past
+ * `MAX_WARNINGS` (i.e. on the 4th strike, `main.py::interview_violation`).
+ * The browser was therefore ending interviews the server would have allowed,
+ * and doing it on the strike that should have been the THIRD WARNING — the
+ * candidate saw "Warning 2 of 3" and then a red "Interview Ended", with no
+ * third warning ever shown. Combined with the 15 Sep widening of the strike
+ * set (window blur, tab hidden and fullscreen exit all became strikes), three
+ * ordinary focus events were enough to kill an interview a minute in.
+ *
+ * The server is the authority on termination and always has been: it counts
+ * every strike type itself and returns `auto_terminated`, which
+ * `reportViolation` already honours. This local number is now only the
+ * offline fallback for when that POST cannot be delivered, so it matches the
+ * server's rule exactly.
+ */
+const TERMINATE_AT = MAX_WARNINGS + 1;
 const BLUR_DEBOUNCE_MS = 1500;
 
 let violationCount = 0;
@@ -299,10 +315,17 @@ function createViolationBadge() {
 
 function showWarning(level) {
   if (!warningModal) createWarningModal();
+  // The copy has two entries; the third warning (the last one before
+  // termination) reuses the sterner of them rather than being skipped — a
+  // candidate must never be ended on a strike they were not warned about.
   const warn = WARNING_COPY.default[Math.min(Math.max(level, 1), 2) - 1] || WARNING_COPY.default[0];
   document.getElementById("secWarnTitle").textContent = warn.title;
   document.getElementById("secWarnMsg").textContent = warn.message;
-  document.getElementById("secWarnCounter").textContent = `Warning ${Math.min(level, 2)} of ${MAX_WARNINGS}`;
+  const shown = Math.min(Math.max(level, 1), MAX_WARNINGS);
+  const last = shown >= MAX_WARNINGS;
+  document.getElementById("secWarnCounter").textContent = last
+    ? `Final warning — ${shown} of ${MAX_WARNINGS}. One more will end the interview.`
+    : `Warning ${shown} of ${MAX_WARNINGS}`;
   document.getElementById("secWarnIcon").textContent = level >= 2 ? "🔴" : "⚠️";
   const btn = document.getElementById("secWarnBtn");
   btn.textContent = "I Understand";
@@ -374,9 +397,8 @@ let lastIntegrityEventTime = 0;
 /**
  * @param {string} type      one of INTEGRITY_VIOLATION_TYPES
  * @param {string} details   human text for the log
- * @param {{evidence?: Blob}} [extra]  optional JPEG snapshot (camera events)
  */
-async function reportViolation(type, details = "", extra = {}) {
+async function reportViolation(type, details = "") {
   if (!INTEGRITY_VIOLATION_TYPES.has(type)) return;
   const silent = SILENT_VIOLATION_TYPES.has(type);
   const now = Date.now();
@@ -415,9 +437,6 @@ async function reportViolation(type, details = "", extra = {}) {
     fd.append("window_focus", ctx.window_focus ? "true" : "false");
     fd.append("interview_id", ctx.interview_id);
     fd.append("candidate_id", ctx.candidate_id);
-    if (extra && extra.evidence instanceof Blob && extra.evidence.size > 0) {
-      fd.append("evidence", extra.evidence, "evidence.jpg");
-    }
     const res = await apiFetch("/interview/violation", { method: "POST", body: fd });
     const data = await res.json();
     // The server counts every strike type itself — honour its verdict even
@@ -430,9 +449,9 @@ async function reportViolation(type, details = "", extra = {}) {
   }
 }
 
-export function reportSecurityViolation(type, details = "", extra = {}) {
+export function reportSecurityViolation(type, details = "") {
   if (!securityActive) return;
-  reportViolation(type, details, extra);
+  reportViolation(type, details);
 }
 
 function triggerAutoTermination() {

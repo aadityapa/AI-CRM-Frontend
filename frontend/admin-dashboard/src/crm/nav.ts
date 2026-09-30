@@ -5,6 +5,7 @@ import {
   Building2,
   CalendarClock,
   CalendarOff,
+  ClipboardCheck,
   Clock,
   FileSpreadsheet,
   History,
@@ -37,6 +38,10 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "candidates", label: "Candidates", icon: Users, roles: ["Admin", "TA", "Sales", "Sales_Head"] },
   { path: "template-requests", label: "Template Requests", icon: FileText, roles: ["Admin", "TA", "RMG"] },
   { path: "profiles", label: "Candidate Profiles", icon: UsersRound, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
+  // Screening Desk (25 Sep 2026): RMG / GM screen every TA-applied candidate
+  // across opportunities. Visibility is the APPROVAL (`profile.rmg_screening`,
+  // see CrmApp), not this role list — a GM custom role has no built-in role.
+  { path: "screening-desk", label: "Screening Desk", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
   // Interview calendar. Deliberately NOT Sales/Sales_Head: booking and running
   // interviews is not their workflow, which is also why the upcoming-interviews
   // widget was removed from their dashboard.

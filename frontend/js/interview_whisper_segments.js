@@ -54,10 +54,10 @@ export function float32ToWavBlob(samples, sampleRate = 16000) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-function _transcribeBlob(blob) {
+function _transcribeBlob(blob, durationMs = 0) {
   // Provider failures throw TranscribeUnavailableError and are recorded by
   // speech_transcribe.js, so the submit path knows the silence was not real.
-  return transcribeAudioBlob(blob, "vad-segment.wav");
+  return transcribeAudioBlob(blob, "vad-segment.wav", { durationMs });
 }
 
 /**
@@ -68,11 +68,12 @@ export function enqueueWhisperSegment(float32Audio, { sampleRate = 16000 } = {})
   if (!float32Audio || !float32Audio.length) return _pending;
   const blob = float32ToWavBlob(float32Audio, sampleRate);
   if (blob.size < 1200) return _pending;
+  const durationMs = (float32Audio.length / sampleRate) * 1000;
   _inFlight += 1;
   _pending = _pending
     .then(async () => {
       try {
-        const text = await _transcribeBlob(blob);
+        const text = await _transcribeBlob(blob, durationMs);
         if (text) {
           _transcript = _merge(_transcript, text);
           console.info("[INTERVIEW] whisper_segment", { len: text.length, preview: text.slice(0, 80) });

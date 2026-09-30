@@ -2,6 +2,7 @@
  * are branch-scoped so they stay in sync with branch Holiday Billing Policy. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Building2, CalendarDays, Eye, FilterX, Pencil, Plus, Power, Search, Trash2 } from "lucide-react";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { HolidayNameField } from "../components/HolidayNameField";
 import { FilterChips } from "../components/FilterChips";
@@ -92,6 +93,11 @@ export function HolidaysPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [customers, setCustomers] = useState<CustomerLite[]>([]);
+  /* Every customer's NAME, for labels (28 Sep 2026). `customers` above is the
+     Active-only picker list from /api/customers, which is gated to the
+     Customers tab — HR without it, or a holiday on an inactive account, read
+     "Customer #60". /names is open to every CRM role. */
+  const [customerNames, setCustomerNames] = useState<Map<number, string>>(new Map());
   const [allBranches, setAllBranches] = useState<BranchLite[]>([]);
   const [modal, setModal] = useState<{ initial?: Holiday } | null>(null);
   // Deep-link create (hub "New …" buttons): ?create=1 opens the dialog once,
@@ -117,6 +123,9 @@ export function HolidaysPage() {
     // Inactive duplicates (e.g. old legal-name rows) otherwise clutter the filter.
     fetchAllMaster<CustomerLite>("/api/customers", { status: "Active" })
       .then((rows) => setCustomers(rows.sort((a, b) => a.name.localeCompare(b.name))))
+      .catch(() => {});
+    crmGet<{ id: number; name: string }[]>("/api/customers/names")
+      .then((r) => setCustomerNames(new Map((r.data || []).map((c) => [c.id, c.name]))))
       .catch(() => {});
     fetchAllMaster<BranchLite>("/api/customers/all-branches")
       .then(setAllBranches)
@@ -168,10 +177,10 @@ export function HolidaysPage() {
   useEffect(() => { load(); }, [load]);
 
   const customerName = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<number, string>(customerNames);
     customers.forEach((c) => m.set(c.id, c.name));
     return (id?: number | null) => (id == null ? null : m.get(id) || `#${id}`);
-  }, [customers]);
+  }, [customers, customerNames]);
 
   const branchName = useMemo(() => {
     const m = new Map<number, string>();
@@ -347,7 +356,7 @@ export function HolidaysPage() {
   const hasExtraFilters = activeFilters.length > 0;
 
   const renderTable = (list: Holiday[], showCustomerCol: boolean) => (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-max text-sm lg:min-w-0">
         <thead>
           <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
@@ -430,20 +439,23 @@ export function HolidaysPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-display text-xl font-bold text-primary">Holidays</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Browse customer-wise calendars. Customer holidays must pick a branch so they appear in
-            that branch’s Holiday Billing Policy.
-          </p>
-        </div>
-        {canWrite && (
-          <button className={btnPrimary} onClick={() => setModal({})}>
+      <PageHeader
+        icon={CalendarDays}
+        accent="teal"
+        eyebrow="Calendars"
+        title="Holidays"
+        subtitle={<>Browse customer-wise calendars. Customer holidays must pick a branch so they appear in
+            that branch’s Holiday Billing Policy.</>}
+        stats={loading ? undefined : [
+          { label: filtered.length === 1 ? "holiday" : "holidays", value: filtered.length },
+          { label: "year", value: year },
+        ]}
+        actions={canWrite ? (
+          <button className={HERO_BTN_SOLID} onClick={() => setModal({})}>
             <Plus size={15} /> Add Holiday
           </button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       <div className="overflow-hidden rounded-card border border-subtle bg-surface-1">
         <div className="flex flex-wrap items-center gap-2 p-3">

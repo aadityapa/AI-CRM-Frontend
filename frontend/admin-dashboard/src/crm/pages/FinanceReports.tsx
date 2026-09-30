@@ -3,11 +3,13 @@
  * Read access mirrors Invoices (Admin/Finance; Sales_Head read). CSV export is
  * client-side. Token-only styling — works in Dune day + dark. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { FileDown, Search } from "lucide-react";
+import { FileDown, LineChart, Search } from "lucide-react";
+import { PageHeader } from "../components/PageHeader";
 import { crmGet, qs } from "../api";
 import {
   EmptyState, ErrorBox, Spinner, Tabs, btnSecondary, inputCls, useToast,
 } from "../components/ui";
+import { usePageTab } from "../lib/pageState";
 
 const inr = (v?: number | null) =>
   v == null ? "—" : `₹ ${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -312,26 +314,48 @@ function ReceivablesTab() {
 /** `embedded` — rendered as an inner tab (Reports → Financial Reports): the
  * host page owns the h1, so the header block collapses to the description. */
 export function FinanceReportsPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const [tab, setTab] = useState("ledger");
+  const [tab, setTab] = usePageTab<string>("tab", "ledger");
   const [toast] = useToast();
   return (
     <div>
-      <div className={embedded ? "mb-4" : "mb-6"}>
-        {!embedded && <h1 className="text-display text-xl font-bold text-primary">Financial Reports</h1>}
-        <p className="mt-1 text-sm text-muted">
-          Customer-wise complete ledger and payment receivables with aging.
-        </p>
-      </div>
-      <div className="mb-4">
-        <Tabs
-          tabs={[
-            { key: "ledger", label: "Customer Ledger" },
-            { key: "receivables", label: "Receivables (Aging)" },
-          ]}
-          active={tab}
-          onChange={setTab}
-        />
-      </div>
+      {embedded ? (
+        <>
+          <div className="mb-4">
+            <p className="mt-1 text-sm text-muted">
+              Customer-wise complete ledger and payment receivables with aging.
+            </p>
+          </div>
+          <div className="mb-4">
+            <Tabs
+              tabs={[
+                { key: "ledger", label: "Customer Ledger" },
+                { key: "receivables", label: "Receivables (Aging)" },
+              ]}
+              active={tab}
+              onChange={setTab}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="mb-4">
+          <PageHeader
+            icon={LineChart}
+            accent="violet"
+            eyebrow="Finance"
+            title="Financial Reports"
+            subtitle="Customer-wise complete ledger and payment receivables with aging."
+          >
+            <Tabs
+              tabs={[
+                { key: "ledger", label: "Customer Ledger" },
+                { key: "receivables", label: "Receivables (Aging)" },
+              ]}
+              active={tab}
+              onChange={setTab}
+            />
+          </PageHeader>
+        </div>
+      )}
       {tab === "ledger" ? <CustomerLedgerTab /> : <ReceivablesTab />}
       {toast}
     </div>

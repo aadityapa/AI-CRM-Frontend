@@ -21,7 +21,7 @@
  * actions and the create modal.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Users } from "lucide-react";
 
 import { crmGet, qs } from "../../api";
 import { authFetch } from "../../../api/client";
@@ -36,27 +36,30 @@ import { TableCustomizerButton, sortToQuery, useTableLayout } from "../../compon
 import { BulkActionBar } from "../../components/BulkActionBar";
 import { FilterChips } from "../../components/FilterChips";
 import type { ActiveFilter } from "../../components/FilterChips";
-import { ErrorBox, btnPrimary, btnSecondary, statusLabel, useToast } from "../../components/ui";
+import { ErrorBox, btnSecondary, useToast } from "../../components/ui";
+import { candidateStatusOptions, useCandidateStatusCatalogue } from "../../components/CandidateStatusBadge";
 
 import { DEFAULT_PROFILE_COLUMNS, buildProfileColumns } from "./profileColumns";
 import type { ProfileColumnRow } from "./profileColumns";
 import { ProfileCardGrid } from "./ProfileCardGrid";
-import { ProfileSummaryStrip } from "./ProfileSummaryStrip";
+import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE, bucketPhase } from "../../lib/candidateStageBuckets";
 import { ProfileToolbar } from "./ProfileToolbar";
 import type { ViewMode } from "./ProfileToolbar";
 import { useProfileFilters } from "./useProfileFilters";
 
 const PAGE_SIZE = 20;
 
-/** Score first — the reviewer's question is "is this a yes?". */
-const DEFAULT_SORT = "ai_interview:desc";
+/** Latest change first (29 Sep 2026, user ask): the candidacy something just
+ *  happened to — a stage move, a screening call, a round verdict, a note — sits
+ *  on top. The server sorts by the newest activity row (`last_activity`). */
+const LATEST_SORT_KEY = "last_activity";
+const DEFAULT_SORT = `${LATEST_SORT_KEY}:desc`;
 
 type Props = {
   title?: string;
   subtitle?: string;
   /** Formatting helpers owned by Profiles.tsx, passed in to avoid duplication. */
   helpers: Parameters<typeof buildProfileColumns>[0];
-  statuses: { active: readonly string[]; rejected: readonly string[] };
   /** Rendered when the create button is pressed; owned by Profiles.tsx. */
   renderCreateModal: (close: () => void, onCreated: (id: number) => void) => React.ReactNode;
 };
@@ -65,7 +68,6 @@ export function ProfilesListPage({
   title = "Candidate Profiles",
   subtitle = "Candidates in the pipeline, per opportunity.",
   helpers,
-  statuses,
   renderCreateModal,
 }: Props) {
   const canCreate = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
@@ -80,7 +82,8 @@ export function ProfilesListPage({
   const [showCreate, setShowCreate] = useState(false);
   const [view, setView] = useState<ViewMode>("table");
   const [selected, setSelected] = useState<Set<string | number>>(new Set());
-  const [activeMetric, setActiveMetric] = useState<string | null>(null);
+  /** Stage strip counts (server `meta.phase_counts`) — kept while a page reloads. */
+  const [phaseCounts, setPhaseCounts] = useState<Record<string, number> | null>(null);
   const [opportunities, setOpportunities] = useState<
     { id: number; opp_id?: string | null; title?: string | null; customer_name?: string | null }[]
   >([]);
@@ -94,6 +97,18 @@ export function ProfilesListPage({
   const [exporting, setExporting] = useState("");
 
   const { layout, setLayout, meta: prefMeta } = useTableLayout("candidate_profiles", DEFAULT_PROFILE_COLUMNS);
+
+  /* The Status filter speaks the derived candidate status (server catalogue),
+     offering only what can appear under the current In pipeline / Closed view. */
+  const statusCatalogue = useCandidateStatusCatalogue();
+  const statusOptions = useMemo(
+    () => candidateStatusOptions(statusCatalogue, filters.bucket),
+    [statusCatalogue, filters.bucket],
+  );
+  const statusLabelOf = useCallback(
+    (key: string) => statusCatalogue?.statuses.find((s) => s.key === key)?.label || key,
+    [statusCatalogue],
+  );
 
   // Debounce typing so a search is one request, not one per keystroke. Written
   // to the URL with replaceState so Back does not step through every letter.
@@ -128,7 +143,8 @@ export function ProfilesListPage({
       const url = `/api/candidate-profiles/export${qs({
         format: fmt,
         bucket: filters.bucket,
-        pipeline_status: filters.status || undefined,
+        phase: bucketPhase(filters.phase),
+        status_key: filters.status || undefined,
         opportunity_id: filters.opportunityId || undefined,
         ta_owner_id: filters.taOwnerId || undefined,
         customer_id: filters.customerId || undefined,
@@ -136,6 +152,8 @@ export function ProfilesListPage({
         search: filters.search || undefined,
         ai_min: colFilters.ai_interview?.min || undefined,
         ai_max: colFilters.ai_interview?.max || undefined,
+        ats_min: colFilters.ats_score?.min || undefined,
+        ats_max: colFilters.ats_score?.max || undefined,
         exp_min: colFilters.experience_years?.min || undefined,
         exp_max: colFilters.experience_years?.max || undefined,
         notice: colFilters.notice_period?.text || undefined,
@@ -170,7 +188,9 @@ export function ProfilesListPage({
     crmGet<ProfileColumnRow[]>(
       `/api/candidate-profiles${qs({
         bucket: filters.bucket,
-        pipeline_status: filters.status,
+        phase: bucketPhase(filters.phase),
+        with_phase_counts: true,
+        status_key: filters.status || undefined,
         opportunity_id: filters.opportunityId || undefined,
         ta_owner_id: filters.taOwnerId || undefined,
         customer_id: filters.customerId || undefined,
@@ -178,6 +198,8 @@ export function ProfilesListPage({
         search: filters.search || undefined,
         ai_min: colFilters.ai_interview?.min || undefined,
         ai_max: colFilters.ai_interview?.max || undefined,
+        ats_min: colFilters.ats_score?.min || undefined,
+        ats_max: colFilters.ats_score?.max || undefined,
         exp_min: colFilters.experience_years?.min || undefined,
         exp_max: colFilters.experience_years?.max || undefined,
         notice: colFilters.notice_period?.text || undefined,
@@ -192,6 +214,8 @@ export function ProfilesListPage({
       .then((r) => {
         setRows(r.data || []);
         setMeta(r.meta);
+        const pc = (r.meta as { phase_counts?: Record<string, number> } | undefined)?.phase_counts;
+        if (pc) setPhaseCounts(pc);
       })
       .catch((e: any) => setError(e?.message || "Failed to load profiles"))
       .finally(() => setLoading(false));
@@ -201,7 +225,7 @@ export function ProfilesListPage({
 
   // Selection is per-page and clearing it on navigation avoids acting on rows
   // the reviewer can no longer see.
-  useEffect(() => setSelected(new Set()), [filters.bucket, filters.status, filters.opportunityId, filters.taOwnerId, filters.search, filters.page, colFilters]);
+  useEffect(() => setSelected(new Set()), [filters.bucket, filters.phase, filters.status, filters.opportunityId, filters.taOwnerId, filters.search, filters.page, colFilters]);
 
   const columns = useMemo(() => buildProfileColumns(helpers), [helpers]);
   const columnByKey = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns]);
@@ -233,11 +257,8 @@ export function ProfilesListPage({
       })),
     },
     ai_interview: { type: "number-range", minLabel: "Min %", maxLabel: "Max %" },
-    pipeline_status: {
-      type: "select",
-      options: (filters.bucket === "active" ? statuses.active : statuses.rejected)
-        .map((v) => ({ value: v, label: statusLabel(v) })),
-    },
+    ats_score: { type: "number-range", minLabel: "Min", maxLabel: "Max" },
+    pipeline_status: { type: "select", options: statusOptions },
     experience_years: { type: "number-range", step: 0.5 },
     notice_period: { type: "text", placeholder: "e.g. 30, immediate" },
     applied_on: { type: "date-range" },
@@ -246,7 +267,7 @@ export function ProfilesListPage({
       options: taOwners.map((o) => ({ value: String(o.id), label: o.name })),
     },
     created_by_name: { type: "text", placeholder: "Submitted by…" },
-  }), [opportunities, taOwners, filters.bucket, statuses]);
+  }), [opportunities, taOwners, statusOptions]);
 
   const columnsWithFilters = useMemo(
     () => visibleColumns.map((c) =>
@@ -293,28 +314,10 @@ export function ProfilesListPage({
     }
   };
 
-  /** Metric tiles narrow the visible rows client-side; they describe this page. */
-  const visibleRows = useMemo(() => {
-    if (!activeMetric) return rows;
-    if (activeMetric === "awaiting") {
-      return rows.filter((r) =>
-        ["Technical_Screening", "RMG_Review", "Sales_Screening"].includes(r.pipeline_status));
-    }
-    if (activeMetric === "advanced") {
-      return rows.filter((r) =>
-        ["Customer_Screening", "Customer_Interview", "Shortlisted", "Customer_Approval", "HR_Screening", "HR_Interviewing", "Preboarding", "Joined"]
-          .includes(r.pipeline_status));
-    }
-    if (activeMetric === "strong") {
-      return rows.filter((r) => (r.ai_overall_score_percent ?? -1) >= 85);
-    }
-    return rows;
-  }, [rows, activeMetric]);
-
   /** One-click header sort, expressed through the existing multi-level model. */
   const currentSort = layout.sort[0]
     ? { by: layout.sort[0].by, dir: layout.sort[0].dir }
-    : { by: "ai_interview", dir: "desc" as const };
+    : { by: LATEST_SORT_KEY, dir: "desc" as const };
 
   const onSort = (key: string) => {
     const flip = currentSort.by === key && currentSort.dir === "desc" ? "asc" : "desc";
@@ -322,16 +325,13 @@ export function ProfilesListPage({
   };
 
   const activeFilters: ActiveFilter[] = [];
-  if (filters.bucket === "rejected") {
-    activeFilters.push({ key: "bucket", label: "Closed", onRemove: () => update({ bucket: "active" }) });
-  }
   // One chip per selected status, each removable on its own — a single
   // "3 statuses" chip would force an all-or-nothing reset.
   const selectedStatuses = filters.status ? filters.status.split(",").filter(Boolean) : [];
   for (const s of selectedStatuses) {
     activeFilters.push({
       key: `status:${s}`,
-      label: statusLabel(s),
+      label: statusLabelOf(s),
       onRemove: () => update({ status: selectedStatuses.filter((x) => x !== s).join(",") }),
     });
   }
@@ -366,7 +366,7 @@ export function ProfilesListPage({
       onRemove: () => update({ source: "" }) });
   }
   const COL_CHIP_LABEL: Record<string, string> = {
-    ai_interview: "AI score", experience_years: "Exp (yrs)",
+    ai_interview: "AI score", ats_score: "ATS score", experience_years: "Exp (yrs)",
     notice_period: "Notice", applied_on: "Applied", created_by_name: "Submitted by",
   };
   for (const [key, v] of Object.entries(colFilters)) {
@@ -393,7 +393,11 @@ export function ProfilesListPage({
     });
   }
 
-  const sortLabel = columnLabels[currentSort.by] || currentSort.by;
+  const sortIsLatest = currentSort.by === LATEST_SORT_KEY;
+  const sortLabel = sortIsLatest ? "Latest change" : (columnLabels[currentSort.by] || currentSort.by);
+  const sortDirWord = sortIsLatest
+    ? (currentSort.dir === "desc" ? "newest first" : "oldest first")
+    : (currentSort.dir === "desc" ? "high to low" : "low to high");
   const emptyMessage = isFiltered
     ? "No candidates match these filters. Try widening the status or opportunity, or clear the filters."
     : filters.bucket === "active"
@@ -406,34 +410,58 @@ export function ProfilesListPage({
     <div>
       {toast}
 
-      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-display text-xl font-bold text-primary">{title}</h1>
-          <p className="mt-0.5 text-sm text-muted">
-            {meta?.total != null ? (
-              <>
-                <span className="tnum font-semibold text-secondary">{meta.total}</span>
-                {" "}candidate{meta.total === 1 ? "" : "s"}
-                {activeFilters.length > 0 && " matching these filters"}
-              </>
-            ) : (
-              subtitle
-            )}
-          </p>
+      {/* Header (29 Sep 2026 redesign): who, how many, and the stage strip —
+          the pipeline as the Opportunities page shows its stages, each chip a
+          filter with the server's exact count. */}
+      <section className="mb-4 overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-5 py-4 text-white">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/20 ring-1 ring-white/30" aria-hidden>
+              <Users size={20} />
+            </span>
+            <div className="min-w-0">
+              <h1 className="text-display text-xl font-bold">{title}</h1>
+              <p className="text-sm text-white/85">
+                {meta?.total != null ? (
+                  <><b className="tnum">{meta.total}</b> candidate{meta.total === 1 ? "" : "s"}
+                    {filters.phase ? ` in ${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === filters.phase)?.label || "this stage"}` : ""}
+                    {activeFilters.length > 0 ? " · filtered" : ""}</>
+                ) : subtitle}
+              </p>
+            </div>
+          </div>
+          {canCreate && (
+            <button className="inline-flex items-center gap-1.5 rounded-control bg-white px-3.5 py-2 text-sm font-bold text-indigo-700 shadow-raised hover:bg-indigo-50"
+              onClick={() => setShowCreate(true)}>
+              <Plus size={15} aria-hidden /> New profile
+            </button>
+          )}
         </div>
-        {canCreate && (
-          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-            <Plus size={15} aria-hidden /> New profile
-          </button>
-        )}
-      </header>
-
-      <ProfileSummaryStrip
-        rows={rows}
-        total={meta?.total}
-        activeMetric={activeMetric}
-        onSelectMetric={setActiveMetric}
-      />
+        <div className="flex gap-1.5 overflow-x-auto px-3 py-2.5" role="tablist" aria-label="Stages">
+          {CANDIDATE_STAGE_BUCKETS.map((b) => {
+            const selectedKey = filters.phase || (filters.bucket === "rejected" ? "closed" : "all");
+            const on = selectedKey === b.key;
+            const count = phaseCounts
+              ? b.key === "all" ? (phaseCounts.all ?? 0) - (phaseCounts.closed ?? 0) : phaseCounts[b.key] ?? 0
+              : null;
+            return (
+              <button key={b.key} type="button" role="tab" aria-selected={on}
+                onClick={() => update({
+                  phase: b.key === "all" || b.key === "closed" ? "" : b.key,
+                  bucket: b.key === "closed" ? "rejected" : "active",
+                  status: "",
+                })}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-shadow duration-micro ${
+                  on ? "bg-brand-600 text-white ring-brand-600 shadow-raised" : `${STAGE_TONE[b.key] || STAGE_TONE.all} ring-subtle hover:shadow-raised`}`}>
+                {b.key === "all" ? "In pipeline" : b.label}
+                {count != null && (
+                  <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${on ? "bg-white/25" : "bg-surface-1/80"}`}>{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {error ? (
         <ErrorBox error={error} onRetry={load} />
@@ -441,7 +469,7 @@ export function ProfilesListPage({
         <>
           <DataTable<ProfileColumnRow>
             columns={columnsWithFilters}
-            rows={view === "table" ? visibleRows : []}
+            rows={view === "table" ? rows : []}
             meta={meta}
             headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "profile" : "profiles"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
             loading={loading}
@@ -452,6 +480,7 @@ export function ProfilesListPage({
             onSort={onSort}
             onPage={(p) => update({ page: p })}
             onRowClick={openProfile}
+            rowHref={(r) => `profiles/${r.id}`}
             selectable
             selectedIds={selected}
             onSelectionChange={setSelected}
@@ -463,11 +492,9 @@ export function ProfilesListPage({
               <div className="flex w-full flex-col gap-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <ProfileToolbar
-                    bucket={filters.bucket}
-                    onBucket={(b) => update({ bucket: b, status: "" })}
                     status={filters.status}
                     onStatus={(s) => update({ status: s })}
-                    statusOptions={filters.bucket === "active" ? statuses.active : statuses.rejected}
+                    statusOptions={statusOptions}
                     opportunityId={filters.opportunityId}
                     onOpportunity={(id) => update({ opportunityId: id })}
                     opportunities={opportunities}
@@ -537,7 +564,21 @@ export function ProfilesListPage({
                 <FilterChips
                   filters={activeFilters}
                   onClearAll={() => { setSearchDraft(""); setColFilters({}); clearAll(); }}
-                  trailing={<>Sorted by <b className="text-secondary">{sortLabel}</b>, {currentSort.dir === "desc" ? "high to low" : "low to high"}</>}
+                  trailing={
+                    <>
+                      Sorted by <b className="text-secondary">{sortLabel}</b>, {sortDirWord}
+                      {!(sortIsLatest && currentSort.dir === "desc") && (
+                        <button
+                          type="button"
+                          className="ml-2 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 hover:bg-brand-100"
+                          onClick={() => setLayout({ ...layout, sort: [{ by: LATEST_SORT_KEY, dir: "desc" }] })}
+                          title="Show the candidates with the most recent change first"
+                        >
+                          Latest first
+                        </button>
+                      )}
+                    </>
+                  }
                 />
               </div>
             }
@@ -563,7 +604,7 @@ export function ProfilesListPage({
           {view === "cards" && (
             <div className="mt-3">
               <ProfileCardGrid
-                rows={visibleRows}
+                rows={rows}
                 loading={loading}
                 emptyMessage={emptyMessage}
                 onOpen={openProfile}

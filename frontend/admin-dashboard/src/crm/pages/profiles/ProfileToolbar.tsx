@@ -6,19 +6,14 @@
  */
 import { LayoutGrid, Rows3 } from "lucide-react";
 
-import { inputCls, statusLabel } from "../../components/ui";
+import { inputCls } from "../../components/ui";
 import { MultiSelectFilter } from "../../components/MultiSelectFilter";
 
 export type ViewMode = "table" | "cards";
 
-const segBtn =
-  "rounded-[4px] px-3 py-1 text-sm font-semibold text-muted transition-colors duration-micro ease-smooth " +
-  "hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500";
 const segActive = "bg-surface-1 text-primary shadow-raised";
 
 export function ProfileToolbar({
-  bucket,
-  onBucket,
   status,
   onStatus,
   statusOptions,
@@ -40,11 +35,10 @@ export function ProfileToolbar({
   onView,
   extra,
 }: {
-  bucket: "active" | "rejected";
-  onBucket: (b: "active" | "rejected") => void;
   status: string;
   onStatus: (s: string) => void;
-  statusOptions: readonly string[];
+  /** Derived candidate statuses (grouped), from the status catalogue. */
+  statusOptions: { value: string; label: string; group?: string }[];
   opportunityId: string;
   onOpportunity: (id: string) => void;
   opportunities: { id: number; opp_id?: string | null; title?: string | null; customer_name?: string | null }[];
@@ -67,35 +61,12 @@ export function ProfileToolbar({
 }) {
   return (
     <>
-      {/* Saved views. Two buckets today (active / rejected) — the segmented
-          control is here so adding "Shortlisted" later is a data change. */}
-      <div className="inline-flex gap-0.5 rounded-control bg-surface-2 p-0.5" role="tablist" aria-label="Saved views">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={bucket === "active"}
-          className={`${segBtn} ${bucket === "active" ? segActive : ""}`}
-          onClick={() => onBucket("active")}
-        >
-          In pipeline
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={bucket === "rejected"}
-          className={`${segBtn} ${bucket === "rejected" ? segActive : ""}`}
-          onClick={() => onBucket("rejected")}
-        >
-          Closed
-        </button>
-      </div>
-
       {/* Multi-select: reviewers work across several stages at once, so
           "everything waiting on me" should be one filter, not four visits. */}
       <MultiSelectFilter
         label="Status"
         allLabel="All statuses"
-        options={statusOptions.map((s) => ({ value: s, label: statusLabel(s) }))}
+        options={statusOptions}
         selected={status ? status.split(",").filter(Boolean) : []}
         onChange={(next) => onStatus(next.join(","))}
       />

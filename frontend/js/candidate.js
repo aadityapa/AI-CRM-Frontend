@@ -36,6 +36,8 @@ import {
   stopAutoAdvanceTurn,
 } from "./interview_auto_advance.js";
 import { createQuestionProvider, InterviewEngine } from "./interview_engine.js";
+import { stopSessionRecording } from "./session_recorder.js";
+import { startWarmupCountdown, stopWarmupCountdown } from "./warmup_timer.js";
 
 /**
  * Candidate live interview voice + submission flow (2026):
@@ -49,6 +51,7 @@ let activeRecorder = null;
 let recorderStream = null;
 let recordedChunks = [];
 let isMicListening = false;
+let _recordingStartedAt = 0;   // ms epoch; the clip's true length for per-minute STT costing
 let spokenAnswerText = "";
 let lastSpokenQuestion = "";
 let lastSpeakTs = 0;
@@ -60,6 +63,13 @@ let _answerSubmitInFlight = false;
 let _pressInFlight = false;
 let _pendingManualSubmit = false;
 let _questionLoadSeq = 0;
+/**
+ * One-shot: a "questions_exhausted" completion is retried once, because
+ * `/next` refills the rolling pool before deciding. Without the latch a pool
+ * that genuinely cannot grow (no API key, manual question set) would loop
+ * between the client and the server instead of finishing the interview.
+ */
+let _premCompletionRetried = false;
 let _interviewFlowStopped = false;
 
 /** Resolves when in-flight mic stop + transcription finishes (auto-submit / flush paths). */
@@ -493,6 +503,32 @@ function _startAutoAdvanceForTurn(isWarmup, options = {}) {
     onAutoSkip: (reason, meta) => {
       submitCandidateAnswer(true, false, { skipReason: reason, autoAdvanceMeta: meta, autoSkipped: true });
     },
+  });
+}
+
+/**
+ * Warm-up only (23 Sep 2026): start the visible per-question clock the moment
+ * the candidate can speak. At zero the turn is submitted as a SKIP carrying
+ * whatever was transcribed — the server converts a skip with speech into the
+ * stored answer, and the warm-up is never scored either way, so nothing is
+ * lost. Scored questions are untouched: they keep the auto-advance rules.
+ */
+function _startWarmupCountdownIfNeeded() {
+  if (!state.isWarmupTurn) return;
+  const limit = Number(state.warmupTimeLimitSec) || 0;
+  if (limit <= 0) return;
+  const turn = Number(state.currentQuestionIndex);
+  startWarmupCountdown(limit, () => {
+    if (!state.isWarmupTurn || Number(state.currentQuestionIndex) !== turn) return;
+    if (_pressInFlight || _answerSubmitInFlight || _interviewFlowStopped || state.endingInterview) return;
+    _logTurnEvent("warmup_time_limit", { question_index: turn, limit_sec: limit });
+    const st = document.getElementById("candidateStatus");
+    if (st) st.innerText = "Time is up for the introduction — moving to the first question.";
+    void submitCandidateAnswer(true, false, {
+      skipReason: `Introduction time limit (${limit} s) reached`,
+      autoAdvanceMeta: { trigger: "warmup_time_limit", limit_sec: limit },
+      autoSkipped: true,
+    });
   });
 }
 
@@ -1112,8 +1148,10 @@ async function startMicRecordingAuto() {
   try {
     recorderStream = await _pickAudioStream();
     recordedChunks = [];
+    _recordingStartedAt = 0;
     const rec = new MediaRecorder(recorderStream, { mimeType: "audio/webm" });
     rec.onstart = () => {
+      _recordingStartedAt = Date.now();
       _cancelActiveSpeech();
       isMicListening = true;
       notifyAutoAdvanceAnswerActivity("mic_active");
@@ -1129,6 +1167,7 @@ async function startMicRecordingAuto() {
           : "Listening… speak your answer, then tap Send Response.";
       }
       _startAutoAdvanceForTurn(!!state.isWarmupTurn);
+      _startWarmupCountdownIfNeeded();
     };
     rec.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
@@ -1301,7 +1340,8 @@ async function _pickAudioStream() {
 }
 
 function _transcribeCapturedAudio(blob) {
-  return transcribeAudioBlob(blob, "candidate-response.webm");
+  const durationMs = _recordingStartedAt ? Date.now() - _recordingStartedAt : 0;
+  return transcribeAudioBlob(blob, "candidate-response.webm", { durationMs });
 }
 
 export function setScreenNavigator(fn) {
@@ -1338,6 +1378,7 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
 
   stopAutoAdvanceTurn();
+  stopWarmupCountdown();
   _cancelActiveSpeech();
   _stopMicInputInternal();
   _resetQuestionTurnState("next_question_loaded");
@@ -1353,8 +1394,18 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   if (!state.currentQuestion && data.message === "Interview completed") {
     const idx = Number(data.index) || 0;
     const total = Number(data.total) || 0;
-    if (total > 0 && idx < total) {
-      console.warn("[FLOW] Premature completion — fetching next question", { idx, total });
+    // 22 Sep 2026 — this guard used to read `idx < total`, which can NEVER be
+    // true: the server's completed payload sets index and total to the same
+    // number (`next_question_payload`), so the retry was unreachable and every
+    // premature completion went straight to submit. The real signal is the
+    // reason: "questions_exhausted" means the rolling pool ran dry, and `/next`
+    // tops it up before deciding, so one more fetch genuinely recovers. A
+    // "time_limit"/"question_limit" completion is the interview ending
+    // properly and must submit immediately.
+    const reason = String(data.completion_reason || "");
+    if (reason === "questions_exhausted" && !_premCompletionRetried) {
+      _premCompletionRetried = true;
+      console.warn("[FLOW] Premature completion — refilling question pool", { idx, total, reason });
       await loadQuestion({ fastTransition: true });
       return;
     }
@@ -1523,6 +1574,9 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     return;
   }
   _pressInFlight = true;
+  // A press (manual or auto) owns the turn now; the warm-up clock must not
+  // fire a second submit into it.
+  stopWarmupCountdown();
   const turnAtPress = Number(state.currentQuestionIndex);
   _setSendResponseEnabled(false);
   const _releasePress = () => { _pressInFlight = false; _setSendResponseEnabled(true); };
@@ -1819,6 +1873,18 @@ export async function submitInterview(options = {}) {
   if (_submitInterviewInFlight) return;
   _submitInterviewInFlight = true;
   setRecordingBadge(false);
+  stopWarmupCountdown();
+
+  // Flush and finalize the session recording here rather than in the
+  // `window.submitInterview` wrapper: the timer-expiry, premature-completion
+  // and proctor-termination paths all call this function directly and skip
+  // that wrapper entirely. Those are exactly the interviews whose recording
+  // matters most. `stopSessionRecording` caps its own wait and never throws.
+  try {
+    await stopSessionRecording();
+  } catch (_) {
+    /* recording is evidence, never a blocker on submit */
+  }
 
   const exitTerminated = (() => {
     try {
@@ -2127,6 +2193,15 @@ function _releaseProctorStream() {
   proctorStream = null;
   const video = document.getElementById("proctorCam");
   if (video) video.srcObject = null;
+}
+
+/**
+ * The live camera stream behind the Candidate Feed, or null before it opens.
+ * The session recorder CLONES its tracks rather than opening the webcam a
+ * second time — see session_recorder.js for why.
+ */
+export function getProctorStream() {
+  return proctorStream && proctorStream.active ? proctorStream : null;
 }
 
 export async function endProctorSession() {

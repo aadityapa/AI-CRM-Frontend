@@ -8,7 +8,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, Filter, Search } from "lucide-react";
 import type { Meta } from "../api";
-import { EmptyState, btnPrimary, btnSecondary, focusRing, inputCls } from "./ui";
+import { EmptyState, btnPrimary, btnSecondary, focusRing, inputCls, isOwnDomClick } from "./ui";
+import { RowLinkMenu, openCrmInNewTab, rowLinkHandlers, wantsNewTab, type RowMenuState } from "./RowLinkMenu";
+import { crmNavigate } from "../router";
 
 /** Per-column filter (Aug 2026) — OPT-IN. A column that declares `filter` gets
  * a funnel in its header; the page receives the value and re-queries the
@@ -173,6 +175,7 @@ export function DataTable<T extends { id?: number | string }>({
   onSort,
   onPage,
   onRowClick,
+  rowHref,
   rowActions,
   filters,
   emptyMessage = "No records found",
@@ -195,6 +198,11 @@ export function DataTable<T extends { id?: number | string }>({
   onSort?: (by: string) => void;
   onPage?: (page: number) => void;
   onRowClick?: (row: T) => void;
+  /** Where the row leads (a CRM path, e.g. `profiles/42`). Gives the row a
+   *  right-click menu (open / new tab / new window / copy link) and
+   *  Ctrl+click / middle-click → new tab (29 Sep 2026). Without `onRowClick`
+   *  a plain click navigates there. */
+  rowHref?: (row: T) => string | null | undefined;
   /** Optional last column (right-aligned). Clicks inside stopPropagation from row navigation. */
   rowActions?: (row: T) => React.ReactNode;
   filters?: React.ReactNode;
@@ -217,6 +225,7 @@ export function DataTable<T extends { id?: number | string }>({
   headerRight?: React.ReactNode;
 }) {
   const reduce = useReducedMotion();
+  const [rowMenu, setRowMenu] = useState<RowMenuState>(null);
 
   const selected = selectedIds ?? new Set<string | number>();
   const pageIds = rows.map((r) => r.id).filter((id): id is string | number => id != null);
@@ -258,6 +267,7 @@ export function DataTable<T extends { id?: number | string }>({
   const colCount = allColumns.length;
   return (
     <div className="elev-1 min-w-0 overflow-hidden rounded-panel">
+      <RowLinkMenu menu={rowMenu} onClose={() => setRowMenu(null)} />
       {(onSearch || filters || headerRight) && (
         <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 py-3">
           {onSearch && (
@@ -373,9 +383,16 @@ export function DataTable<T extends { id?: number | string }>({
                   /* v3: .row-hover = subtle brand-tinted row glow (bg tint
                      only — no shadows/filters on dense tables). */
                   className={`row-hover border-b border-subtle transition-colors duration-micro ease-smooth ${
-                    onRowClick ? "cursor-pointer active:bg-surface-0" : ""
+                    onRowClick || rowHref ? "cursor-pointer active:bg-surface-0" : ""
                   } ${row.id != null && selected.has(row.id) ? "bg-brand-50 dark:bg-brand-900/20" : ""}`}
-                  onClick={() => onRowClick && onRowClick(row)}
+                  onClick={(e) => {
+                    if (!isOwnDomClick(e)) return;
+                    const href = rowHref?.(row);
+                    if (href && wantsNewTab(e)) { openCrmInNewTab(href); return; }
+                    if (onRowClick) onRowClick(row);
+                    else if (href) crmNavigate(href);
+                  }}
+                  {...rowLinkHandlers(rowHref?.(row), setRowMenu)}
                 >
                   {selectable && (
                     /* stopPropagation: ticking a checkbox must not also open

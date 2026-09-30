@@ -16,6 +16,7 @@ import { CircleDot, Clock3, FolderKanban, GitBranch, Plus, Timer, Trash2, Users 
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { ConfirmModal, btnSecondary, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
+import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
 import {
   SectionHeaderBanner,
   WizardField,
@@ -146,14 +147,8 @@ const MAP_EMPLOYEES_SECTION: SectionDef = {
   icon: <Users size={18} />,
 };
 
-/* Values mirror ProjectEmployees.tsx (LOCATIONS / UNITS) — same enum values
- * the mapping endpoint stores. */
-const MAP_UNITS = [
-  { value: "Hourly", label: "Per Hour" },
-  { value: "Daily", label: "Per Day" },
-  { value: "Monthly", label: "Per Month" },
-  { value: "Yearly", label: "Per Year" },
-] as const;
+/* Values mirror ProjectEmployees.tsx (LOCATIONS) — same enum values the
+ * mapping endpoint stores. Units come from lib/billingUnits (shared). */
 const MAP_LOCATIONS = [
   { value: "Onsite", label: "On Site" },
   { value: "Off-Shore", label: "Off-Shore" },
@@ -162,7 +157,7 @@ const MAP_LOCATIONS = [
 
 type EmpMapRow = { employeeId: string; onboarding: string; rate: string; unit: string; location: string };
 const emptyEmpRow = (): EmpMapRow =>
-  ({ employeeId: "", onboarding: "", rate: "", unit: "Monthly", location: "Onsite" });
+  ({ employeeId: "", onboarding: "", rate: "", unit: "", location: "Onsite" });
 
 function polFromInitial(initial: ProjectWizardInitial): PolicyFormState {
   return {
@@ -565,6 +560,7 @@ function ProjectWizard({
         else if (seen.has(r.employeeId)) errs[`emp_who_${i}`] = "Already added above";
         seen.add(r.employeeId);
         if (!(Number(r.rate) > 0)) errs[`emp_rate_${i}`] = "Rate above zero required";
+        if (!r.unit) errs[`emp_unit_${i}`] = BILLING_UNIT_REQUIRED;
       });
     }
     setErrors(errs);
@@ -998,9 +994,12 @@ function ProjectWizard({
                         placeholder="e.g. 85000"
                         onChange={(e) => setEmpRow(i, { rate: e.target.value })} />
                     </WizardField>
-                    <WizardField label="Billing unit" filled>
-                      <select className={inputCls} value={r.unit} onChange={(e) => setEmpRow(i, { unit: e.target.value })}>
-                        {MAP_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                    <WizardField label="Rate is priced per" required={!!r.employeeId}
+                      error={errors[`emp_unit_${i}`]} filled={!!r.unit}>
+                      <select className={inputCls} value={r.unit} aria-invalid={!!errors[`emp_unit_${i}`]}
+                        onChange={(e) => setEmpRow(i, { unit: e.target.value })}>
+                        <option value="">Select unit…</option>
+                        {BILLING_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                       </select>
                     </WizardField>
                     <WizardField label="Location" filled>

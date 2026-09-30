@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { CRM_NAV, CrmMeProvider, crmNavItemActive, type Me } from "../CrmApp";
 import {
@@ -27,6 +27,14 @@ function me(roles: string[]): Me {
     roles,
   };
 }
+
+
+/* The workspace keeps its tab in the address and in the session (29 Sep 2026,
+   crm/lib/pageState.ts) — reset both so one test's tab never opens the next. */
+beforeEach(() => {
+  window.history.replaceState({}, "", "/admin/?view=crm&p=opportunities");
+  window.sessionStorage.clear();
+});
 
 describe("CRM Opportunities nav merge", () => {
   it("has a single Opportunities sidebar entry (no Requirements sibling)", () => {
@@ -101,5 +109,76 @@ describe("OpportunitiesWorkspace sub-tabs", () => {
       </CrmMeProvider>,
     );
     expect(screen.getByTestId("applicants-view")).toBeTruthy();
+  });
+});
+
+/* 26 Sep 2026: a GM is a CUSTOM role — no built-in role at all — so every
+   role-list gate here said no and the page read "You do not have access to
+   Opportunities". For a grant-driven user the tab GRANTS decide. */
+function gm(tabs: Record<string, "view" | "edit" | "create">): Me {
+  return {
+    ...me(["GM"]),
+    access: { full: false, tabs, visible_tabs: Object.keys(tabs), source: "custom_role" },
+  };
+}
+
+describe("OpportunitiesWorkspace for a custom role (GM)", () => {
+  it("shows Pipeline, a Requirements button and Applicants from the grants", () => {
+    render(
+      <CrmMeProvider value={gm({ opportunities: "view", requirements: "edit", profiles: "edit" })}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.getByText("Pipeline T&M")).toBeTruthy();
+    expect(screen.getByText("Requirements")).toBeTruthy();
+    expect(screen.getByText("Applicants")).toBeTruthy();
+    expect(screen.queryByText("Template Requests")).toBeNull();
+    expect(screen.getByTestId("pipeline-view")).toBeTruthy();
+  });
+
+  it("renders the Requirements list full-page when that is the only grant", () => {
+    render(
+      <CrmMeProvider value={gm({ requirements: "view" })}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.getByTestId("requirements-view")).toBeTruthy();
+    expect(screen.queryByText("Pipeline T&M")).toBeNull();
+  });
+
+  it("still refuses when no relevant tab is granted", () => {
+    render(
+      <CrmMeProvider value={gm({ timesheets: "edit" })}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.getByText("You do not have access to Opportunities.")).toBeTruthy();
+  });
+
+  it("keeps the role-based strip for an untemplated Sales user (no Requirements button)", () => {
+    render(
+      <CrmMeProvider value={me(["Sales"])}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.queryByText("Requirements")).toBeNull();
+  });
+
+  it("keeps the TA layout for a templated TA whose template grants Opportunities (28 Sep 2026)", () => {
+    // Reported with screenshots: a TA template granting the Opportunities tab
+    // turned TA's page into the Sales pipeline. A built-in role keeps its layout.
+    const ta: Me = {
+      ...me(["TA"]),
+      access: { full: false, tabs: { opportunities: "view", requirements: "edit", profiles: "edit" },
+                visible_tabs: ["opportunities", "requirements", "profiles"], source: "template" },
+    };
+    render(
+      <CrmMeProvider value={ta}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.getByTestId("requirements-view")).toBeTruthy();
+    expect(screen.queryByText("Pipeline T&M")).toBeNull();
+    expect(screen.queryByTestId("pipeline-view")).toBeNull();
   });
 });

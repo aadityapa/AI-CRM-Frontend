@@ -1,6 +1,7 @@
 /** Interview-template request workflow (TA raises → RMG fulfils → TA prepares L1). */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, FileText, LayoutTemplate, RefreshCw, Send, X } from "lucide-react";
+import { PageHeader } from "../components/PageHeader";
 import { apiGet } from "../../api/client";
 import { crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
@@ -15,6 +16,7 @@ import {
   btnDanger, btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
+import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 
 /** Same debounce as the Requirements list — one fetch per pause, not per key. */
 function useDebounced(value: string, ms = 350): string {
@@ -124,10 +126,10 @@ export function TemplateRequestsPage() {
   const isRMG = useHasRole("RMG");
   const isTA = useHasRole("TA");
   const canWrite = useCanAct("template-requests", "edit", isRMG || isTA);
-  const [tab, setTab] = useState("Pending_RMG");
+  const [tab, setTab] = usePageTab<string>("status", "Pending_RMG", TABS.map((t) => t.key));
   const [rows, setRows] = useState<TR[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useSessionState("tr.page", 1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, showToast] = useToast();
@@ -138,7 +140,7 @@ export function TemplateRequestsPage() {
 
   /* Filters (25 Aug 2026): search by role/TR number — server-side, the list
    * is paginated. */
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useSessionState("tr.search", "");
   const dq = useDebounced(search);
 
   const load = useCallback(async () => {
@@ -160,7 +162,7 @@ export function TemplateRequestsPage() {
     }
   }, [tab, page, dq]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [tab, dq]);
+  useChangeEffect(() => { setPage(1); }, [tab, dq]);
 
   const confirmCancel = async () => {
     if (!cancelRow) return;
@@ -265,14 +267,16 @@ export function TemplateRequestsPage() {
   return (
     <div>
       <div className="mb-4">
-        <h1 className="text-display text-xl font-bold text-primary">Template Requests</h1>
-        <p className="text-sm text-muted">
-          TA requests an interview template → RMG links a real template to the opportunity → TA triggers AI L1 (link shown, not auto-sent).
-        </p>
-      </div>
-
-      <div className="mb-4">
-        <Tabs tabs={TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+        <PageHeader
+          icon={LayoutTemplate}
+          accent="violet"
+          eyebrow="TA · RMG"
+          title="Template Requests"
+          subtitle="TA requests an interview template → RMG links a real template to the opportunity → TA triggers AI L1 (link shown, not auto-sent)."
+          stats={meta ? [{ label: meta.total === 1 ? "request" : "requests", value: meta.total }] : undefined}
+        >
+          <Tabs tabs={TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+        </PageHeader>
       </div>
 
       {error ? (

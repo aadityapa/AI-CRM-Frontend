@@ -13,6 +13,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Wallet } from "lucide-react";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmGet } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
@@ -152,18 +153,37 @@ export function PayrollPage({ embedded = false }: { embedded?: boolean } = {}) {
   return (
     <div>
       {toast}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          {!embedded && <h1 className="text-display text-xl font-bold text-primary">Payroll</h1>}
-          <p className="mt-0.5 text-sm text-muted">
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted">
             Monthly attendance extract for salary processing — days worked, leave, loss of pay
             and comp-off per employee, straight from approved timesheets.
           </p>
+          <button className={btnPrimary} onClick={exportCsv} disabled={!rows.length}>
+            <Download size={15} /> Export CSV
+          </button>
         </div>
-        <button className={btnPrimary} onClick={exportCsv} disabled={!rows.length}>
-          <Download size={15} /> Export CSV
-        </button>
-      </div>
+      ) : (
+        <div className="mb-4">
+          <PageHeader
+            icon={Wallet}
+            accent="teal"
+            eyebrow="HR · Finance"
+            title="Payroll"
+            subtitle="Monthly attendance extract for salary processing — days worked, leave, loss of pay
+            and comp-off per employee, straight from approved timesheets."
+            stats={loading ? undefined : [
+              { label: rows.length === 1 ? "employee" : "employees", value: rows.length },
+              { label: "period", value: `${MONTHS[month - 1]} ${year}` },
+            ]}
+            actions={
+              <button className={HERO_BTN_SOLID} onClick={exportCsv} disabled={!rows.length}>
+                <Download size={15} /> Export CSV
+              </button>
+            }
+          />
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-end gap-3 rounded-card border border-subtle bg-surface-1 p-3">
         <Field label="Month">

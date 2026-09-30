@@ -12,8 +12,6 @@ const CACHEABLE_PATTERNS = [
   /^\/job\/configs(\?|$)/,
   /^\/hr\/schedules(\?|$)/,
   /^\/interview\/integrity-logs(\?|$)/,
-  /^\/api\/prompt-logs\/filters(\?|$)/,
-  /^\/api\/prompt-logs\/stats(\?|$)/,
 ];
 
 function shouldCache(path: string): boolean {
@@ -71,9 +69,7 @@ export async function apiGet<T>(path: string, opts: { force?: boolean; ttlMs?: n
       ? CONFIGS_TTL_MS
       : /^\/interview\/integrity-logs(\?|$)/.test(path)
         ? 20_000
-        : /^\/api\/prompt-logs\/(filters|stats)(\?|$)/.test(path)
-          ? 30_000
-          : DEFAULT_TTL_MS);
+        : DEFAULT_TTL_MS);
   if (!opts.force && shouldCache(path)) {
     const cached = _cache.get(path) as CacheEntry<T> | undefined;
     if (cached && Date.now() - cached.ts < ttl) {

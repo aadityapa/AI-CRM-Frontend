@@ -17,6 +17,12 @@ import type { InvoiceData } from "./types";
 import { mapApiInvoiceToData } from "./utils";
 import styles from "./taxInvoice.module.css";
 
+/** Download file name stem: `ProformaInvoice_PI-2026-003` / `TaxInvoice_INV-2026-041`. */
+function fileStem(data: InvoiceData, id: string | number): string {
+  const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
+  return `${data.kind === "Proforma" ? "ProformaInvoice" : "TaxInvoice"}_${safe}`;
+}
+
 /** Presentational A4 tax invoice document (white print surface). */
 export function TaxInvoiceDocument({
   data,
@@ -68,8 +74,7 @@ export function InvoicePage() {
       const blob = await res.blob();
       const cd = res.headers.get("Content-Disposition") || "";
       const m = /filename="?([^"]+)"?/i.exec(cd);
-      const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
-      const name = m?.[1] || `TaxInvoice_${safe}.docx`;
+      const name = m?.[1] || `${fileStem(data, id)}.docx`;
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
@@ -101,8 +106,7 @@ export function InvoicePage() {
     if (!sheetRef.current || !data) return;
     setPdfBusy(true);
     try {
-      const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
-      await exportTaxInvoicePdf(sheetRef.current, `TaxInvoice_${safe}.pdf`);
+      await exportTaxInvoicePdf(sheetRef.current, `${fileStem(data, id)}.pdf`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to download PDF";
       setError(msg);

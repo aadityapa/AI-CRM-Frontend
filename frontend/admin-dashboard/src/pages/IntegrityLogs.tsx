@@ -4,15 +4,18 @@
  * Every interview the platform ran — HR-screen and CRM-scheduled alike — with
  * an integrity SCORE (0–100), per-family event counts, a "needs review" flag,
  * CRM context (customer · requirement · profile link) and, on expand, the full
- * timeline with the question it happened on and any camera evidence.
+ * timeline with the question it happened on, plus the session recording —
+ * streamed LIVE while the interview runs (23 Sep 2026), replayed afterwards.
  *
  * Data: GET /interview/integrity-logs (all rows + summary),
- *       GET /interview/integrity-logs/{token} (timeline), …/export (CSV).
+ *       GET /interview/integrity-logs/{token} (timeline + recording), …/export (CSV),
+ *       GET /interview/recording/{token}/live?after=N + …/part/{seq} (live stream).
  */
-import { useState, useEffect, useMemo, memo, useCallback } from "react";
+import { useState, useEffect, useMemo, memo, useCallback, useRef } from "react";
 import {
   Shield, AlertTriangle, CheckCircle2, XCircle, Clock, Monitor, ChevronDown, ChevronUp,
   Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, ExternalLink, RefreshCw,
+  Video, Radio,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
 
@@ -41,7 +44,11 @@ interface IntegrityRow {
   active_device_id: string;
   reason?: string;
   template_name?: string;
-  has_evidence?: boolean;
+  /** "" · "recording" (chunks arriving — watchable live) · "ready" · "missing". */
+  recording_status?: string;
+  /** 22 Sep 2026 — a finished whole-session recording exists for this interview. */
+  has_recording?: boolean;
+  recording_bytes?: number;
   shared_with?: string[];
   // CRM enrichment (present when the interview was scheduled from the CRM)
   profile_id?: number | null;
@@ -60,8 +67,13 @@ interface Summary {
 
 interface TimelineEvent {
   type: string; label: string; details: string; timestamp: string; question: string;
-  ip: string; user_agent: string; evidence_url: string; is_strike: boolean;
+  ip: string; user_agent: string; is_strike: boolean;
 }
+
+/** Statuses in which the candidate's browser may still be uploading. Mirrors
+ *  `interview_recording.LIVE_SESSION_STATUSES`. */
+const LIVE_SESSION_STATUSES = new Set(["active", "verified", "pending", "scheduled"]);
+const isLiveRecording = (row: IntegrityRow) => row.recording_status === "recording" && LIVE_SESSION_STATUSES.has(row.session_status);
 
 /* ---------- presentation helpers ---------- */
 
@@ -156,22 +168,34 @@ function crmProfileHref(profileId?: number | null): string {
   return u.toString();
 }
 
-/* ---------- detail (timeline + evidence) ---------- */
+/* ---------- detail (timeline + recording) ---------- */
 
 const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
   const [events, setEvents] = useState<TimelineEvent[] | null>(null);
   const [reason, setReason] = useState(row.reason || "");
   const [error, setError] = useState("");
-  const [lightbox, setLightbox] = useState<string>("");
+  const [recording, setRecording] = useState<Recording | null>(null);
+  // Bumped when the live stream ends, so the detail re-fetches and the
+  // ordinary player takes over with the finalized file.
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     if (!row.invite_token) { setEvents([]); return; }
-    apiGet<{ violations_log: TimelineEvent[]; reason?: string }>(`/interview/integrity-logs/${encodeURIComponent(row.invite_token)}`, { force: true })
-      .then((d) => { if (cancelled) return; setEvents(Array.isArray(d.violations_log) ? d.violations_log : []); if (d.reason) setReason(d.reason); })
+    apiGet<{ violations_log: TimelineEvent[]; reason?: string; recording?: Recording }>(`/interview/integrity-logs/${encodeURIComponent(row.invite_token)}`, { force: true })
+      .then((d) => {
+        if (cancelled) return;
+        setEvents(Array.isArray(d.violations_log) ? d.violations_log : []);
+        if (d.reason) setReason(d.reason);
+        // The detail endpoint finalizes a half-uploaded recording on demand
+        // (never while the session is live), so this is also what repairs an
+        // interview that crashed mid-way.
+        setRecording(d.recording || { available: false, reason: "not_recorded" });
+      })
       .catch((e: any) => { if (!cancelled) { setEvents([]); setError(e?.message || "Could not load the timeline"); } });
     return () => { cancelled = true; };
-  }, [row.invite_token]);
+  }, [row.invite_token, reloadTick]);
+  const reload = useCallback(() => setReloadTick((t) => t + 1), []);
 
   const facts: { label: string; value: React.ReactNode }[] = [
     { label: "Integrity score", value: <span className={scoreTone(row.integrity_score, row.session_status).text}>{row.integrity_score} / 100 · {scoreTone(row.integrity_score, row.session_status).word}</span> },
@@ -207,6 +231,10 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
         <FamilyChips row={row} />
       </div>
       <div>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Session recording</div>
+        <RecordingPanel recording={recording} sessionStatus={row.session_status} token={row.invite_token} onLiveEnded={reload} />
+      </div>
+      <div>
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Timeline</div>
         {events === null ? (
           <div className="text-xs text-muted">Loading timeline…</div>
@@ -222,47 +250,337 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
                 <span className="w-32 shrink-0 font-semibold text-secondary">{v.label}</span>
                 <span className="min-w-0 flex-1 truncate text-muted" title={v.details}>{v.details}</span>
                 {v.question && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">Q{v.question}</span>}
-                {v.evidence_url && (
-                  <button type="button" className="inline-flex shrink-0 items-center gap-1 text-brand-600 hover:underline dark:text-brand-300" onClick={() => setLightbox(v.evidence_url)}>
-                    <Camera className="h-3 w-3" /> View
-                  </button>
-                )}
                 <span className="shrink-0 whitespace-nowrap text-muted">{fmtTime(v.timestamp)}</span>
               </li>
             ))}
           </ol>
         )}
       </div>
-      {lightbox && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-backdrop p-6" role="dialog" aria-label="Camera evidence" onClick={() => setLightbox("")}>
-          <div className="max-w-2xl rounded-card bg-surface-1 p-3 shadow-modal" onClick={(e) => e.stopPropagation()}>
-            <EvidenceImage url={lightbox} />
-            <div className="mt-2 flex justify-end">
-              <button type="button" className="text-xs font-semibold text-secondary hover:text-primary" onClick={() => setLightbox("")}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 });
 
-/** Evidence is served behind the bearer token, so fetch it to a blob URL. */
-function EvidenceImage({ url }: { url: string }) {
-  const [src, setSrc] = useState("");
+/* ---------- session recording (22 Sep 2026) ---------- */
+
+interface Recording {
+  available: boolean;
+  url?: string;
+  download_url?: string;
+  size_bytes?: number;
+  mime?: string;
+  /** "s3" in production, "local" in development. Decides how we fetch it. */
+  backend?: string;
+  /** Why there is nothing to play, when available is false. */
+  reason?: string;
+  parts?: number;
+  /** 23 Sep 2026 — the session is still running: stream the parts instead. */
+  live?: boolean;
+}
+
+const RECORDING_ABSENCE: Record<string, string> = {
+  not_recorded:
+    "No recording was captured. Interviews taken before 22 Sep 2026, and any run with recording turned off, have none.",
+  not_finalized: "The recording is still being assembled. Reopen this row in a moment.",
+  storage_error: "The recording store could not be reached. Check the S3 configuration in Settings.",
+  no_token: "This interview has no invite token, so nothing was recorded.",
+};
+
+interface LiveManifest {
+  live: boolean;
+  reason?: string;
+  finalized?: boolean;
+  parts: { seq: number; bytes: number }[];
+  next_after: number;
+  chunk_seconds?: number;
+  session_status?: string;
+}
+
+const LIVE_MIME = 'video/webm; codecs="vp8,opus"';
+const LIVE_RETRY_MS = 8000;
+
+/**
+ * Watches an interview WHILE it runs.
+ *
+ * The candidate's browser uploads a ~15 s WebM slice at a time; this polls the
+ * manifest for slices it has not seen and appends each one to a MediaSource
+ * buffer, so the reviewer runs about one slice behind real time. The first
+ * slice carries the WebM header and every later one is a run of clusters with
+ * absolute timecodes, so appending them in sequence IS the stream — a lost
+ * slice shows as a jump, not a failure. Browsers without MediaSource (or a
+ * buffer that rejects a slice) fall back to re-building one Blob from every
+ * slice so far, keeping the playhead where it was.
+ *
+ * Parts are fetched through the app (`/part/{seq}`), never straight from S3:
+ * a cross-origin `fetch()` would need bucket CORS for every dashboard origin.
+ */
+function LiveRecordingPlayer({ token, onEnded }: { token: string; onEnded: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [phase, setPhase] = useState<"connecting" | "waiting" | "streaming" | "ended" | "error">("connecting");
   const [err, setErr] = useState("");
+  const [parts, setParts] = useState(0);
+  const [behind, setBehind] = useState(0);
+  const [atLive, setAtLive] = useState(true);
+
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !token) return;
+    let alive = true;
+    let after = -1;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let mediaSource: MediaSource | null = null;
+    let sourceBuffer: SourceBuffer | null = null;
+    let objectUrl = "";
+    let useBlob = false;
+    let seekedToLive = false;
+    const queue: ArrayBuffer[] = [];
+    const all: ArrayBuffer[] = [];
+
+    const bufferedEnd = () => {
+      try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; } catch { return 0; }
+    };
+    const jumpToLive = () => {
+      const end = bufferedEnd();
+      if (end > 1) video.currentTime = Math.max(0, end - 0.5);
+      void video.play().catch(() => { /* autoplay may need a click; controls are visible */ });
+    };
+    const refreshBlob = () => {
+      if (!alive || !all.length) return;
+      const pos = video.currentTime;
+      const wasPlaying = !video.paused;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(new Blob(all, { type: "video/webm" }));
+      video.src = objectUrl;
+      const first = !seekedToLive;
+      seekedToLive = true;
+      // Nothing is seekable until the new source has metadata.
+      video.addEventListener("loadedmetadata", () => {
+        if (!alive) return;
+        if (first) { jumpToLive(); return; }
+        // Re-building the Blob resets the element; put the reviewer back where
+        // they were rather than yanking them to the live edge every refresh.
+        video.currentTime = pos;
+        if (wasPlaying) void video.play().catch(() => { /* ignore */ });
+      }, { once: true });
+    };
+    const fallbackToBlob = () => {
+      if (useBlob) return;
+      useBlob = true;
+      sourceBuffer = null;
+      try { if (mediaSource && mediaSource.readyState === "open") mediaSource.endOfStream(); } catch { /* ignore */ }
+      mediaSource = null;
+      refreshBlob();
+    };
+    const pump = () => {
+      if (useBlob || !sourceBuffer || sourceBuffer.updating || !queue.length) return;
+      try { sourceBuffer.appendBuffer(queue.shift()!); } catch { fallbackToBlob(); }
+    };
+
+    const mseOk = typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(LIVE_MIME);
+    if (mseOk) {
+      mediaSource = new MediaSource();
+      objectUrl = URL.createObjectURL(mediaSource);
+      video.src = objectUrl;
+      mediaSource.addEventListener("sourceopen", () => {
+        if (!alive || !mediaSource) return;
+        try {
+          sourceBuffer = mediaSource.addSourceBuffer(LIVE_MIME);
+          sourceBuffer.addEventListener("updateend", () => {
+            if (!seekedToLive && bufferedEnd() > 0) { seekedToLive = true; jumpToLive(); }
+            pump();
+          });
+          sourceBuffer.addEventListener("error", fallbackToBlob);
+          pump();
+        } catch { fallbackToBlob(); }
+      });
+    } else {
+      useBlob = true;
+    }
+
+    const onTime = () => {
+      const gap = Math.max(0, bufferedEnd() - video.currentTime);
+      setBehind(Math.round(gap));
+      setAtLive(gap < 20);
+    };
+    video.addEventListener("timeupdate", onTime);
+
+    const poll = async () => {
+      if (!alive) return;
+      try {
+        const res = await authFetch(`/interview/recording/${encodeURIComponent(token)}/live?after=${after}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const m = (await res.json()) as LiveManifest;
+        if (!m.live) {
+          setErr(RECORDING_ABSENCE[m.reason || ""] || "The live stream is not available.");
+          setPhase("error");
+          return;
+        }
+        for (const p of m.parts || []) {
+          if (!alive) return;
+          const pr = await authFetch(`/interview/recording/${encodeURIComponent(token)}/part/${p.seq}`);
+          if (!pr.ok) continue; // a lost slice is a gap, not a failure
+          const buf = await pr.arrayBuffer();
+          all.push(buf); queue.push(buf);
+          after = p.seq;
+        }
+        if (!alive) return;
+        if (m.parts?.length) {
+          setParts(after + 1);
+          setPhase("streaming");
+          if (useBlob) refreshBlob(); else pump();
+        } else if (after < 0) {
+          setPhase("waiting");
+        }
+        const sessionLive = LIVE_SESSION_STATUSES.has(String(m.session_status || "")) && !m.finalized;
+        if (!sessionLive) {
+          setPhase("ended");
+          // Give the server a moment to join the parts, then hand over to the
+          // ordinary player via the detail re-fetch.
+          timer = setTimeout(() => alive && onEnded(), 3000);
+          return;
+        }
+        timer = setTimeout(poll, Math.max(4000, ((m.chunk_seconds || 15) * 1000) / 2));
+      } catch {
+        if (alive) timer = setTimeout(poll, LIVE_RETRY_MS);
+      }
+    };
+    void poll();
+
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      video.removeEventListener("timeupdate", onTime);
+      try { video.pause(); } catch { /* ignore */ }
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [token, onEnded]);
+
+  const jump = () => {
+    const v = videoRef.current;
+    if (!v || !v.buffered.length) return;
+    v.currentTime = Math.max(0, v.buffered.end(v.buffered.length - 1) - 0.5);
+    void v.play().catch(() => { /* ignore */ });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="relative w-full max-w-xl">
+        {/* A proctoring capture has no caption track to offer — the interview's
+            transcript lives on the candidate report. */}
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video ref={videoRef} controls autoPlay playsInline className="w-full rounded-control bg-black" aria-label="Live view of this interview" />
+        <span className="absolute left-2 top-2 inline-flex items-center gap-1.5 rounded-full bg-danger px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-raised">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-white" aria-hidden /> Live
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
+        {phase === "connecting" && <span>Connecting to the live stream…</span>}
+        {phase === "waiting" && <span>Interview is starting — waiting for the first slice from the candidate's camera.</span>}
+        {phase === "streaming" && (
+          <span>
+            Streaming · {parts} slice{parts === 1 ? "" : "s"} received · about {behind}s behind the candidate.
+          </span>
+        )}
+        {phase === "ended" && <span>The interview has ended — loading the full recording…</span>}
+        {phase === "error" && <span className="text-danger">{err}</span>}
+        {phase === "streaming" && !atLive && (
+          <button type="button" onClick={jump} className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300">
+            <Radio className="h-3 w-3" /> Jump to live
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function fmtBytes(n?: number): string {
+  const bytes = Number(n) || 0;
+  if (!bytes) return "";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Plays the whole-session recording.
+ *
+ * Two fetch paths on purpose. In production `media_storage` hands back a
+ * PRESIGNED S3 URL, which carries its own credentials and must go straight
+ * into <video src> — putting our bearer token on it would break the
+ * signature. The local driver serves through `/interview/media/...` behind the
+ * dashboard's own auth, which <video> cannot send, so that one is fetched to a
+ * blob first. `backend` tells us which we have.
+ */
+function RecordingPanel({ recording, sessionStatus, token, onLiveEnded }: {
+  recording: Recording | null; sessionStatus: string; token: string; onLiveEnded: () => void;
+}) {
+  const [blobUrl, setBlobUrl] = useState("");
+  const [err, setErr] = useState("");
+  const isLocal = recording?.backend === "local";
+  const remoteUrl = recording?.url || "";
+
+  useEffect(() => {
+    setErr("");
+    if (!recording?.available || !isLocal || !remoteUrl) { setBlobUrl(""); return; }
     let alive = true; let obj = "";
-    authFetch(url).then(async (r) => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      obj = URL.createObjectURL(await r.blob());
-      if (alive) setSrc(obj);
-    }).catch((e) => alive && setErr(e?.message || "Could not load the image"));
+    authFetch(remoteUrl)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        obj = URL.createObjectURL(await r.blob());
+        if (alive) setBlobUrl(obj);
+      })
+      .catch((e) => alive && setErr(e?.message || "Could not load the recording"));
     return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
-  }, [url]);
-  if (err) return <div className="p-6 text-sm text-danger">{err}</div>;
-  if (!src) return <div className="p-6 text-sm text-muted">Loading snapshot…</div>;
-  return <img src={src} alt="Camera snapshot captured at the moment of the event" className="max-h-[70vh] rounded-control" />;
+  }, [recording?.available, isLocal, remoteUrl]);
+
+  if (!recording) return <div className="text-xs text-muted">Checking for a recording…</div>;
+  if (recording.live && !recording.available) {
+    // The session is still running: stream the slices as they land.
+    return <LiveRecordingPlayer token={token} onEnded={onLiveEnded} />;
+  }
+  if (!recording.available) {
+    const reason = RECORDING_ABSENCE[recording.reason || ""] || "No recording is available for this interview.";
+    return (
+      <div className="flex items-start gap-2 rounded-control border border-subtle bg-surface-1 px-3 py-2 text-xs text-muted">
+        <Video className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>{reason}</span>
+      </div>
+    );
+  }
+  const src = isLocal ? blobUrl : remoteUrl;
+  return (
+    <div className="space-y-2">
+      {err ? (
+        <div className="text-xs text-danger">{err}</div>
+      ) : !src ? (
+        <div className="text-xs text-muted">Loading recording…</div>
+      ) : (
+        // eslint-disable-next-line jsx-a11y/media-has-caption -- proctoring capture; the transcript is on the report
+        <video
+          src={src}
+          controls
+          preload="metadata"
+          className="w-full max-w-xl rounded-control bg-black"
+          aria-label="Full session recording of this interview"
+        />
+      )}
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
+        <span>
+          Camera and microphone for the whole interview
+          {sessionStatus === "terminated" ? ", up to the moment it was terminated" : ""}.
+        </span>
+        {recording.size_bytes ? <span className="tabular-nums">{fmtBytes(recording.size_bytes)}</span> : null}
+        {recording.download_url && (
+          <a
+            className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300"
+            href={recording.download_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Download className="h-3 w-3" /> Download
+          </a>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ---------- page ---------- */
@@ -296,6 +614,16 @@ export function IntegrityLogsPage() {
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
   }, [tick]);
+
+  // While an interview is running, keep the list fresh so the "Watch live"
+  // chip appears when the first slice lands and the row settles to "recording"
+  // when the session ends. Nothing polls when nothing is live.
+  const anyLive = useMemo(() => rows.some((r) => LIVE_SESSION_STATUSES.has(r.session_status) && r.session_status !== "pending"), [rows]);
+  useEffect(() => {
+    if (!anyLive) return;
+    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, [anyLive]);
 
   const customers = useMemo(() => [...new Set(rows.map((r) => r.customer_name).filter(Boolean) as string[])].sort(), [rows]);
 
@@ -351,7 +679,7 @@ export function IntegrityLogsPage() {
           </div>
           <div>
             <h2 className="text-display text-xl font-bold tracking-tight text-primary">Interview Integrity</h2>
-            <p className="text-sm text-muted">Every AI interview, scored — tab switches, focus loss, camera, clipboard and dev-tools attempts.</p>
+            <p className="text-sm text-muted">Every AI interview, scored — tab switches, focus loss, camera, clipboard and dev-tools attempts. Watch a live interview or replay its recording from the row.</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -438,7 +766,12 @@ export function IntegrityLogsPage() {
                       {row.shared_with && row.shared_with.length > 0 && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-bold text-danger ring-1 ring-inset ring-subtle" title={`Shared device/IP with ${row.shared_with.join(", ")}`}><Users className="h-3 w-3" /> Shared device</span>
                       )}
-                      {row.has_evidence && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted"><Camera className="h-3 w-3" /> evidence</span>}
+                      {isLiveRecording(row) && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-danger px-2 py-0.5 text-[11px] font-bold text-white" title="Open the row to watch the interview live">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" aria-hidden /> Watch live
+                        </span>
+                      )}
+                      {row.has_recording && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted"><Video className="h-3 w-3" /> recording</span>}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted">
                       {row.candidate_email}
