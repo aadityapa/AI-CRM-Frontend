@@ -91,9 +91,26 @@ export interface BillingColumns {
   amount: string;
 }
 
+/** Client-specific column choice (B-V2 `services/invoice_format.py`, 23 Sep 2026):
+    false hides that optional column on every output. */
+export interface InvoiceFormat {
+  sac?: boolean;
+  leave?: boolean;
+  per_day?: boolean;
+}
+
+export const INVOICE_FORMAT_COLUMNS: { key: keyof InvoiceFormat; label: string; hint: string }[] = [
+  { key: "sac", label: "SAC Code", hint: "Service accounting code column" },
+  { key: "leave", label: "Leave (Days)", hint: "Leave deducted in the period" },
+  { key: "per_day", label: "Rate Per Day", hint: "Rate/Hour × Hours/Day (or Monthly Cost ÷ days)" },
+];
+
+export type InvoiceKind = "Proforma" | "Tax";
+
 export interface BillingBreakdown {
   billing_unit: string;
   columns: BillingColumns;
+  invoice_format?: InvoiceFormat | null;
   monthly_cost: number;
   qty: number;
   leave_days: number;
@@ -115,6 +132,13 @@ export interface InvoiceData {
   tax_amount: number;
   grand_total: number;
   payment_status?: string | null;
+  /** Proforma → Tax lifecycle (23 Sep 2026). Absent on old payloads = Tax. */
+  kind?: InvoiceKind | null;
+  proforma_number?: string | null;
+  invoice_format?: InvoiceFormat | null;
+  returned_reason?: string | null;
+  returned_at?: string | null;
+  timesheet_id?: number | null;
   po_id?: number | null;
   po_number?: string | null;
   po_date?: string | null;

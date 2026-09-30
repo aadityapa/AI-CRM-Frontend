@@ -2,7 +2,12 @@
  * education, experience, skills and linked candidate-profiles tabs. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Briefcase, FileText, GraduationCap, Linkedin, ListChecks, Mail, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Trash2 } from "lucide-react";
+import {
+  Briefcase, Building2, CalendarDays, Check, ChevronRight, Clock, FileBadge, FileText, GraduationCap, IndianRupee, Linkedin,
+  ListChecks, Mail, MapPin, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Sparkles, Trash2,
+  UserRound, Users, Wallet, Wand2,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
@@ -10,7 +15,8 @@ import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
 import { useCanAct, useCrmAccess } from "../useAccess";
-import { crmNavigate, useCrmParams } from "../routerHooks";
+import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -22,19 +28,22 @@ import {
   Modal,
   Spinner,
   StatusBadge,
-  Tabs,
   btnPrimary,
   btnSecondary,
   inputCls,
   useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
+import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
+import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import {
-  SectionHeaderBanner, WizardField, WizardFooter, WizardShell, WizardStepCard,
+  SectionHeaderBanner, WizardField, WizardFooter, WizardGroup, WizardShell, WizardStepCard,
   WizardTopBar, type StepStatus, type WizardStep,
 } from "../components/wizard";
+import { Chips, NOTICE_CHIPS, ResumeDropZone } from "../components/UploadResumeModal";
 import { PhoneField } from "../components/PhoneField";
 import { fmtDateTime12 } from "../../lib/datetime";
+import { usePageTab, useSessionState } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -130,6 +139,8 @@ type LinkedProfile = {
   opportunity_title: string;
   customer_name?: string | null;
   pipeline_status: string;
+  /** The derived status every screen shows (server-side). */
+  candidate_status?: CandidateStatus | null;
   expected_ctc?: number | null;
   applied_on?: string | null;
   ta_owner_name?: string | null;
@@ -163,7 +174,6 @@ const fmtDateTime = (v?: string | null) => {
   const d = new Date(v);
   return isNaN(d.getTime()) ? "—" : fmtDateTime12(d);
 };
-const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
 /** CTC is stored in rupees; recruiters read and quote it in lakhs. 2200000 -> "22.00". */
 const LAKH = 100000;
 const fmtLac = (v?: number | null) =>
@@ -241,8 +251,8 @@ export function CandidatesListPage() {
   const [meta, setMeta] = useState<Meta | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  const [page, setPage] = useSessionState("cand.page", 1);
+  const [search, setSearch] = useSessionState("cand.search", "");
   const [skillId, setSkillId] = useState("");
   // "" = all, "yes" = resume on file, "no" = still missing a CV
   const [hasCv, setHasCv] = useState("");
@@ -381,26 +391,37 @@ export function CandidatesListPage() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Candidates</h1>
-        {canWrite && (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Bulk pool intake (31 Aug 2026, user request): one ZIP of CVs →
-                many candidates, details extracted per resume. No opportunity —
-                TA applies them later from each record. */}
-            <label className={`${btnSecondary} ${zipBusy ? "pointer-events-none opacity-60" : "cursor-pointer"}`}>
-              <input type="file" accept=".zip" className="hidden" disabled={zipBusy}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadCandidateZip(f); e.target.value = ""; }} />
-              <FileText size={15} />
-              {zipBusy
-                ? (zipProgress ? `Processing ${zipProgress.done}/${zipProgress.total}…` : "Uploading…")
-                : "Bulk upload (ZIP)"}
-            </label>
-            <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-              <Plus size={15} /> New Candidate
-            </button>
-          </div>
-        )}
+      <div className="mb-4">
+        <PageHeader
+          icon={Users}
+          accent="ocean"
+          eyebrow="Talent pool"
+          title="Candidates"
+          subtitle="Everyone in the talent pool — search by skill or domain, open a record, or apply someone to an opportunity."
+          stats={meta ? [
+            { label: meta.total === 1 ? "candidate" : "candidates", value: meta.total.toLocaleString() },
+            ...(debounced.search || debounced.domain || skillId || hasCv || createdBy || createdFrom || createdTo
+              ? [{ label: "filtered", value: "●" }] : []),
+          ] : undefined}
+          actions={canWrite ? (
+            <>
+              {/* Bulk pool intake (31 Aug 2026, user request): one ZIP of CVs →
+                  many candidates, details extracted per resume. No opportunity —
+                  TA applies them later from each record. */}
+              <label className={`${HERO_BTN} ${zipBusy ? "pointer-events-none opacity-60" : "cursor-pointer"}`}>
+                <input type="file" accept=".zip" className="hidden" disabled={zipBusy}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadCandidateZip(f); e.target.value = ""; }} />
+                <FileText size={15} />
+                {zipBusy
+                  ? (zipProgress ? `Processing ${zipProgress.done}/${zipProgress.total}…` : "Uploading…")
+                  : "Bulk upload (ZIP)"}
+              </label>
+              <button className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+                <Plus size={15} /> New Candidate
+              </button>
+            </>
+          ) : undefined}
+        />
       </div>
 
       {error ? (
@@ -415,7 +436,7 @@ export function CandidatesListPage() {
           search={search}
           onSearch={setSearch}
           onPage={setPage}
-          onRowClick={(r) => crmNavigate(`candidates/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`candidates/${r.id}`)} rowHref={(r: any) => `candidates/${r.id}`}
           filters={
             <>
               <select
@@ -607,7 +628,7 @@ export function CandidatesListPage() {
 
 /* ------------------------------------------------------------------ create / edit modal */
 
-function CandidateFormModal({
+export function CandidateFormModal({
   initial,
   onClose,
   onSaved,
@@ -662,6 +683,7 @@ function CandidateFormModal({
      links, and the file attaches as the candidate's CV on Create (which also
      auto-fills skills/education/experience history server-side). */
   const [cvFile, setCvFile] = useState<File | null>(null);
+  const cvInput = useRef<HTMLInputElement>(null);
   const [parsing, setParsing] = useState(false);
   const [parseDup, setParseDup] = useState<any | null>(null);
   const [parseNameNote, setParseNameNote] = useState<any | null>(null);
@@ -808,7 +830,6 @@ function CandidateFormModal({
   const wizardSteps: WizardStep[] = STEPS.map((s) => ({
     key: s.key,
     title: s.title,
-    sublabel: s.description.split(".")[0],
     status: stepStatus(s.key),
   }));
 
@@ -940,7 +961,6 @@ function CandidateFormModal({
     }
   };
 
-  const grid = "grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2";
 
   /* The duplicate banner sits ABOVE the step body, not inside a step: the
      email check fires on blur (step 1) but the full name/phone check fires on
@@ -986,28 +1006,40 @@ function CandidateFormModal({
     </div>
   ) : null;
 
+  /* Step bodies (30 Sep 2026 redesign): each step is split into titled groups
+     (`WizardGroup`) — Name · Contact · About · Address, Experience · Where &
+     who, Pay · Resignation — with one-tap chips and unit suffixes. Every field,
+     payload key and rule is unchanged. */
+  const suffix = (unit: string) => (
+    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-semibold text-[color:var(--wiz-muted)]">{unit}</span>
+  );
+  const cur = Number(form.current_ctc);
+  const exp = Number(form.expected_ctc);
+  const hike = form.current_ctc !== "" && form.expected_ctc !== "" && cur > 0 ? Math.round(((exp - cur) / cur) * 100) : null;
+
   const renderStep = () => {
     switch (currentStep.key) {
       case "resume":
         return (
-          <div className={grid}>
-            <div className="sm:col-span-2">
-              <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-card border border-dashed border-strong bg-surface-2/50 px-4 py-3 hover:bg-surface-2">
-                <input type="file" className="hidden" accept=".pdf,.docx,.txt"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void parseResume(f); e.target.value = ""; }} />
-                <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">
-                  {parsing ? "Reading resume…" : cvFile ? "Choose a different resume" : "Choose resume (.pdf / .docx / .txt)"}
-                </span>
-                {cvFile && !parsing && (
-                  <span className="text-xs text-secondary">{cvFile.name} — the next steps are prefilled; correct anything wrong</span>
-                )}
-                {!cvFile && !parsing && (
-                  <span className="text-xs text-muted">Details are extracted automatically and the CV attaches on Create — or skip and type manually.</span>
-                )}
-              </label>
-            </div>
+          <div className="space-y-5">
+            <input ref={cvInput} type="file" className="sr-only" accept=".pdf,.docx,.txt" tabIndex={-1} aria-label="Resume file"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void parseResume(f); e.target.value = ""; }} />
+            <ResumeDropZone
+              file={cvFile}
+              parsing={parsing}
+              busy={busy}
+              hint="Drop the CV — the next steps fill themselves and it attaches on Create"
+              onBrowse={() => cvInput.current?.click()}
+              onDropFile={(f) => void parseResume(f)}
+              onClear={() => { setCvFile(null); setParseDup(null); setParseNameNote(null); }}
+              status={
+                <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" role="status">
+                  <Sparkles size={12} aria-hidden /> Read — the next steps are prefilled; correct anything wrong
+                </p>
+              }
+            />
             {parseDup && (
-              <div className="sm:col-span-2 rounded-card border border-warning/40 bg-warning-soft px-4 py-3" role="alert">
+              <div className="rounded-card border border-warning/40 bg-warning-soft px-4 py-3" role="alert">
                 <p className="text-sm font-bold text-warning">
                   This resume matches an existing candidate — don&rsquo;t create a duplicate
                 </p>
@@ -1038,7 +1070,7 @@ function CandidateFormModal({
               </div>
             )}
             {parseNameNote && !parseDup && (
-              <p className="sm:col-span-2 text-xs text-muted">
+              <p className="text-xs text-muted">
                 Note: same name as existing candidate{" "}
                 <button type="button" className="font-semibold underline"
                   onClick={() => { onClose(); crmNavigate(`candidates/${parseNameNote.candidate_id}`); }}>
@@ -1047,148 +1079,219 @@ function CandidateFormModal({
                 (different email/phone — likely a different person).
               </p>
             )}
-            <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
-              <input className={inputCls} type="email" value={form.email} autoFocus
-                placeholder="Enter the candidate's email first"
-                onChange={(e) => { set("email", e.target.value); if (dupes) setDupes(null); }}
-                onBlur={() => void checkEmailDuplicate()} />
-              {isPlaceholderEmail(form.email) && (
-                <p className="mt-1 text-xs text-warning">
-                  Placeholder address — replace it with the candidate&rsquo;s real one.
-                </p>
-              )}
-            </WizardField>
+            <WizardGroup icon={Mail} title="The candidate's email" accent="from-indigo-500 to-purple-600"
+              hint="Their unique key — checked for duplicates as soon as you leave the field" done={!!form.email.trim() && !emailBlocked} cols={1}>
+              <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
+                <input className={inputCls} type="email" value={form.email}
+                  placeholder="Enter the candidate's email first"
+                  onChange={(e) => { set("email", e.target.value); if (dupes) setDupes(null); }}
+                  onBlur={() => void checkEmailDuplicate()} />
+                {isPlaceholderEmail(form.email) && (
+                  <p className="mt-1 text-xs text-warning">
+                    Placeholder address — replace it with the candidate&rsquo;s real one.
+                  </p>
+                )}
+              </WizardField>
+            </WizardGroup>
           </div>
         );
 
       case "personal":
         return (
-          <div className={grid}>
-            <WizardField label="Salutation">
-              <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
-                <option value="">—</option>
-                {["Mr", "Ms", "Mrs", "Dr", "Mx"].map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </WizardField>
-            <WizardField label="First name" required icon="user" filled={!!form.first_name.trim()}>
-              <input className={inputCls} value={form.first_name} disabled={locked("name")} onChange={(e) => set("first_name", e.target.value)} />
-            </WizardField>
-            <WizardField label="Middle name" icon="user">
-              <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
-            </WizardField>
-            <WizardField label="Last name" icon="user">
-              <input className={inputCls} value={form.last_name} onChange={(e) => set("last_name", e.target.value)} />
-            </WizardField>
-            {/* Email is captured on step 1 when creating; on edit it stays here so it can be replaced. */}
-            {isEdit && (
-              <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
-                <input className={inputCls} type="email" value={form.email} disabled={locked("email")}
-                  onChange={(e) => set("email", e.target.value)} />
-                {isPlaceholderEmail(form.email) && (
-                  <p className="mt-1 text-xs text-warning">
-                    Placeholder address — this candidate had no email in Zoho. Replace it with
-                    their real one.
-                  </p>
-                )}
+          <div className="space-y-4">
+            <WizardGroup icon={UserRound} title="Name" accent="from-indigo-500 to-purple-600"
+              hint="As it should appear on the invites and the offer" done={!!form.first_name.trim()} cols={4}>
+              <WizardField label="Salutation">
+                <select className={inputCls} value={form.salutation} onChange={(e) => set("salutation", e.target.value)}>
+                  <option value="">—</option>
+                  {["Mr", "Ms", "Mrs", "Dr", "Mx"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
               </WizardField>
-            )}
-            <WizardField className="sm:col-span-2" label="Phone">
-              <PhoneField
-                value={form.phone}
-                disabled={locked("phone")}
-                onChange={(v) => set("phone", v)}
-              />
-            </WizardField>
-            <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
-              <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
-            </WizardField>
-            <WizardField label="Gender">
-              <select className={inputCls} value={form.gender} onChange={(e) => set("gender", e.target.value)}>
-                <option value="">Select…</option>
-                {["Male", "Female", "Other", "Prefer not to say"].map((g) => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </WizardField>
-            <WizardField label="City">
-              <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="e.g. Bangalore" />
-            </WizardField>
-            <WizardField className="sm:col-span-2" label="Current address">
-              <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
-            </WizardField>
-            <WizardField className="sm:col-span-2" label="Permanent address">
-              <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
-            </WizardField>
+              <WizardField label="First name" required filled={!!form.first_name.trim()}>
+                <input className={inputCls} value={form.first_name} disabled={locked("name")} onChange={(e) => set("first_name", e.target.value)} />
+              </WizardField>
+              <WizardField label="Middle name">
+                <input className={inputCls} value={form.middle_name} onChange={(e) => set("middle_name", e.target.value)} />
+              </WizardField>
+              <WizardField label="Last name">
+                <input className={inputCls} value={form.last_name} onChange={(e) => set("last_name", e.target.value)} />
+              </WizardField>
+            </WizardGroup>
+
+            <WizardGroup icon={Phone} title="Contact" accent="from-sky-500 to-cyan-600"
+              hint="How TA and the interview invites reach them" done={!!form.email.trim() && !!form.phone.trim()}>
+              {/* Email is captured on step 1 when creating; on edit it stays here so it can be replaced. */}
+              {isEdit && (
+                <WizardField label="Email" required icon="mail" filled={!!form.email.trim()}>
+                  <input className={inputCls} type="email" value={form.email} disabled={locked("email")}
+                    onChange={(e) => set("email", e.target.value)} />
+                  {isPlaceholderEmail(form.email) && (
+                    <p className="mt-1 text-xs text-warning">
+                      Placeholder address — this candidate had no email in Zoho. Replace it with
+                      their real one.
+                    </p>
+                  )}
+                </WizardField>
+              )}
+              <WizardField className={isEdit ? "" : "sm:col-span-2"} label="Phone">
+                <PhoneField value={form.phone} disabled={locked("phone")} onChange={(v) => set("phone", v)} />
+              </WizardField>
+            </WizardGroup>
+
+            <WizardGroup icon={CalendarDays} title="About" accent="from-emerald-500 to-teal-600"
+              hint="Optional — useful for HR later" done={!!(form.date_of_birth && form.gender && form.city.trim())}>
+              <WizardField label="Date of birth" icon="calendar" filled={!!form.date_of_birth}>
+                <input className={inputCls} type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} />
+              </WizardField>
+              <WizardField label="City" icon="map" filled={!!form.city.trim()}>
+                <input className={inputCls} value={form.city} onChange={(e) => set("city", e.target.value)} placeholder="Where they live today, e.g. Pune" />
+              </WizardField>
+              <div className="sm:col-span-2">
+                <span className="wiz-field-label mb-1.5 block text-[11px] font-semibold text-[color:var(--wiz-label)]">Gender</span>
+                <Chips label="Gender" options={["Male", "Female", "Other", "Prefer not to say"]} value={form.gender}
+                  onPick={(v) => set("gender", v)} />
+              </div>
+            </WizardGroup>
+
+            <WizardGroup icon={MapPin} title="Address" accent="from-orange-500 to-rose-500"
+              hint="Current and permanent" done={!!(form.current_address.trim() && form.permanent_address.trim())}
+              action={form.current_address.trim() && form.permanent_address.trim() !== form.current_address.trim() ? (
+                <button type="button" onClick={() => set("permanent_address", form.current_address)}
+                  className="rounded-full border border-[color:var(--wiz-border-strong)] px-2.5 py-1 text-[11px] font-semibold text-[color:var(--wiz-text)] hover:border-indigo-400">
+                  Permanent = current
+                </button>
+              ) : undefined}>
+              <WizardField label="Current address">
+                <textarea className={inputCls} rows={2} value={form.current_address} onChange={(e) => set("current_address", e.target.value)} />
+              </WizardField>
+              <WizardField label="Permanent address">
+                <textarea className={inputCls} rows={2} value={form.permanent_address} onChange={(e) => set("permanent_address", e.target.value)} />
+              </WizardField>
+            </WizardGroup>
           </div>
         );
 
       case "professional":
         return (
-          <div className={grid}>
-            <WizardField label="Experience (years)" icon="hash" filled={form.experience_years !== ""}>
-              <input className={inputCls} type="number" step="0.5" min={0} value={form.experience_years} disabled={locked("experience_years")} onChange={(e) => set("experience_years", e.target.value)} />
-            </WizardField>
-            <WizardField label="Notice period">
-              <input className={inputCls} value={form.notice_period} disabled={locked("notice_period")} onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
-            </WizardField>
-            <WizardField label="Technical domain">
-              <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Backend, Data Engineering" />
-            </WizardField>
-            <WizardField
-              label="Recruiter"
-              icon="mail"
-              filled={!!form.recruiter_email.trim()}
-              info={!isEdit && form.recruiter_email === (me.email || "") && form.recruiter_email
-                ? <p className="mt-1 text-xs text-muted">
-                    You ({me.full_name || me.username}) — change it if you are adding this
-                    candidate on a colleague&rsquo;s behalf.
-                  </p>
-                : undefined}
-            >
-              <input className={inputCls} value={form.recruiter_email} onChange={(e) => set("recruiter_email", e.target.value)} placeholder="recruiter@karnex.in" />
-            </WizardField>
-            <WizardField label="Roles">
-              <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
-            </WizardField>
-            <WizardField label="Designation">
-              <select className={inputCls} value={form.designation_id} onChange={(e) => set("designation_id", e.target.value)}>
-                <option value="">None</option>
-                {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </WizardField>
-            {/* Free-text "Preferred locations" removed 3 Sep 2026 (user decision) —
-                the master-data dropdown below is the only location field. The
-                form key is kept so existing values still round-trip on edit. */}
-            <WizardField label="Preferred location" icon="map">
-              <select className={inputCls} value={form.preferred_location_id} onChange={(e) => set("preferred_location_id", e.target.value)}>
-                <option value="">None</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{locLabel(l)}</option>)}
-              </select>
-            </WizardField>
-            <WizardField className="sm:col-span-2" label="LinkedIn URL" icon={<Linkedin size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
-              <input className={inputCls} value={form.linkedin_url} onChange={(e) => set("linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/…" />
-            </WizardField>
+          <div className="space-y-4">
+            <WizardGroup icon={Briefcase} title="Experience" accent="from-sky-500 to-indigo-600"
+              hint="How senior, what they work on, how soon they can join"
+              done={form.experience_years !== "" && !!form.notice_period.trim() && !!form.technical_domain.trim()}>
+              <WizardField label="Total experience">
+                <div className="relative">
+                  <input className={`${inputCls} pr-12`} type="number" step="0.5" min={0} value={form.experience_years}
+                    disabled={locked("experience_years")} onChange={(e) => set("experience_years", e.target.value)} placeholder="e.g. 4.5" />
+                  {suffix("yrs")}
+                </div>
+              </WizardField>
+              <WizardField label="Notice period">
+                <input className={inputCls} value={form.notice_period} disabled={locked("notice_period")}
+                  onChange={(e) => set("notice_period", e.target.value)} placeholder="e.g. 30 days / Immediate" />
+                {!locked("notice_period") && (
+                  <Chips label="Notice period" options={NOTICE_CHIPS} value={form.notice_period} onPick={(v) => set("notice_period", v)} />
+                )}
+              </WizardField>
+              <WizardField label="Technical domain" filled={!!form.technical_domain.trim()}>
+                <input className={inputCls} value={form.technical_domain} onChange={(e) => set("technical_domain", e.target.value)} placeholder="e.g. Embedded / AUTOSAR, Backend" />
+              </WizardField>
+              <WizardField label="Designation">
+                <select className={inputCls} value={form.designation_id} onChange={(e) => set("designation_id", e.target.value)}>
+                  <option value="">None</option>
+                  {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </WizardField>
+              <WizardField className="sm:col-span-2" label="Roles">
+                <input className={inputCls} value={form.roles} onChange={(e) => set("roles", e.target.value)} placeholder="e.g. Backend Engineer, Tech Lead" />
+              </WizardField>
+            </WizardGroup>
+
+            <WizardGroup icon={Users} title="Where & who" accent="from-purple-500 to-fuchsia-600"
+              hint="Where they want to work, who is recruiting them, their LinkedIn"
+              done={!!form.preferred_location_id && !!form.recruiter_email.trim()}>
+              {/* Free-text "Preferred locations" removed 3 Sep 2026 (user decision) —
+                  the master-data dropdown is the only location field. The form key
+                  is kept so existing values still round-trip on edit. */}
+              <WizardField label="Preferred location" icon="map">
+                <select className={inputCls} value={form.preferred_location_id} onChange={(e) => set("preferred_location_id", e.target.value)}>
+                  <option value="">None</option>
+                  {locations.map((l) => <option key={l.id} value={l.id}>{locLabel(l)}</option>)}
+                </select>
+              </WizardField>
+              <WizardField
+                label="Recruiter"
+                icon="mail"
+                filled={!!form.recruiter_email.trim()}
+                info={!isEdit && form.recruiter_email === (me.email || "") && form.recruiter_email
+                  ? <p className="mt-1 text-xs text-muted">
+                      You ({me.full_name || me.username}) — change it if you are adding this
+                      candidate on a colleague&rsquo;s behalf.
+                    </p>
+                  : undefined}
+              >
+                <input className={inputCls} value={form.recruiter_email} onChange={(e) => set("recruiter_email", e.target.value)} placeholder="recruiter@karnex.in" />
+              </WizardField>
+              <WizardField className="sm:col-span-2" label="LinkedIn URL" icon={<Linkedin size={15} className="text-[color:var(--wiz-muted)]" aria-hidden />}>
+                <input className={inputCls} value={form.linkedin_url} onChange={(e) => set("linkedin_url", e.target.value)} placeholder="https://linkedin.com/in/…" />
+              </WizardField>
+            </WizardGroup>
           </div>
         );
 
       case "compensation":
         return (
-          <div className={grid}>
-            <WizardField label="Current CTC (Lac)" icon="hash" filled={form.current_ctc !== ""}>
-              <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.current_ctc} disabled={locked("current_ctc")} onChange={(e) => set("current_ctc", e.target.value)} />
-            </WizardField>
-            <WizardField label="Expected CTC (Lac)" icon="hash" filled={form.expected_ctc !== ""}>
-              <input className={inputCls} type="number" min={0} step={0.01} placeholder="e.g. 22.00" value={form.expected_ctc} disabled={locked("expected_ctc")} onChange={(e) => set("expected_ctc", e.target.value)} />
-            </WizardField>
-            <div className="sm:col-span-2 flex items-end gap-4 pb-1">
-              <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-secondary">
-                <input type="checkbox" checked={form.resignation_status} disabled={locked("resignation")} onChange={(e) => set("resignation_status", e.target.checked)} />
-                Resigned / serving notice
-              </label>
-            </div>
-            {form.resignation_status && (
-              <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
-                <input className={inputCls} type="date" value={form.last_working_day} disabled={locked("resignation")} onChange={(e) => set("last_working_day", e.target.value)} />
+          <div className="space-y-4">
+            <WizardGroup icon={IndianRupee} title="Pay" accent="from-emerald-500 to-teal-600"
+              hint="In lakhs a year — saved as rupees" done={form.current_ctc !== "" && form.expected_ctc !== ""}>
+              <WizardField label="Current CTC">
+                <div className="relative">
+                  <input className={`${inputCls} pr-14`} type="number" min={0} step={0.01} placeholder="e.g. 12"
+                    value={form.current_ctc} disabled={locked("current_ctc")} onChange={(e) => set("current_ctc", e.target.value)} />
+                  {suffix("Lac")}
+                </div>
               </WizardField>
-            )}
+              <WizardField label="Expected CTC">
+                <div className="relative">
+                  <input className={`${inputCls} pr-14`} type="number" min={0} step={0.01} placeholder="e.g. 16"
+                    value={form.expected_ctc} disabled={locked("expected_ctc")} onChange={(e) => set("expected_ctc", e.target.value)} />
+                  {suffix("Lac")}
+                </div>
+              </WizardField>
+              {hike != null && (
+                <p className={`sm:col-span-2 inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
+                  hike > 50 ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                    : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"}`}>
+                  <Wallet size={13} aria-hidden /> {hike >= 0 ? "+" : ""}{hike}% hike asked
+                </p>
+              )}
+            </WizardGroup>
+
+            <WizardGroup icon={Clock} title="Resignation" accent="from-amber-500 to-orange-600" cols={1}
+              hint="Have they already resigned? Sales plans the joining date around it">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={form.resignation_status}
+                disabled={locked("resignation")}
+                onClick={() => set("resignation_status", !form.resignation_status)}
+                className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                  form.resignation_status ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40" : "border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)]"}`}
+              >
+                <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${form.resignation_status ? "bg-amber-500" : "bg-slate-300 dark:bg-slate-600"}`} aria-hidden>
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-[#fff] shadow transition-all ${form.resignation_status ? "left-[22px]" : "left-0.5"}`} />
+                </span>
+                <span>
+                  <span className="block text-sm font-semibold text-[color:var(--wiz-text)]">Resigned / serving notice</span>
+                  <span className="block text-xs text-[color:var(--wiz-muted)]">
+                    {form.resignation_status ? "Add the last working day below" : "Not resigned yet"}
+                  </span>
+                </span>
+              </button>
+              {form.resignation_status && (
+                <WizardField label="Last working day" icon="calendar" filled={!!form.last_working_day}>
+                  <input className={inputCls} type="date" value={form.last_working_day} disabled={locked("resignation")} onChange={(e) => set("last_working_day", e.target.value)} />
+                </WizardField>
+              )}
+            </WizardGroup>
           </div>
         );
 
@@ -1219,6 +1322,12 @@ function CandidateFormModal({
       topBar={
         <WizardTopBar
           title={isEdit ? `Edit Candidate — ${[form.first_name, form.last_name].filter(Boolean).join(" ")}` : "New Candidate"}
+          eyebrow={isEdit ? "Edit candidate" : "New candidate"}
+          subtitle={isEdit
+            ? [displayEmail(form.email), form.phone].filter((x) => x && x !== "—").join(" · ") || "Update the candidate's record"
+            : "Drop the CV and the form fills itself — then check each step"}
+          icon={UserRound}
+          steps={wizardSteps}
           stepIndex={clampedStep}
           totalSteps={totalSteps}
           stepPct={stepPct}
@@ -1239,6 +1348,8 @@ function CandidateFormModal({
           onSubmit={onSubmitClick}
           submitLabel={submitLabel}
           submitBusyLabel={isEdit ? "Saving…" : "Creating…"}
+          nextTitle={STEPS[clampedStep + 1]?.title}
+          prevTitle={STEPS[clampedStep - 1]?.title}
         />
       }
       steps={wizardSteps}
@@ -1254,11 +1365,13 @@ function CandidateFormModal({
           if (!isLastStep) goNext();
         }}
       >
-        <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+        <WizardStepCard stepKey={currentStep.key} stepDir={stepDir} width="narrow">
           <SectionHeaderBanner
             title={currentStep.title}
             description={currentStep.description}
             headingRef={stepHeadingRef}
+            stepKey={currentStep.key}
+            step={{ index: clampedStep, total: totalSteps }}
           />
           {error && <div className="mb-4"><ErrorBox error={error} /></div>}
           {dupBanner}
@@ -1284,7 +1397,7 @@ export function CandidateDetailPage() {
 
   const [data, setData] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("personal");
+  const [tab, setTab] = usePageTab<string>("tab", "personal");
   const [showEdit, setShowEdit] = useState(false);
   const [eduModal, setEduModal] = useState<{ open: boolean; item?: Education }>({ open: false });
   const [expModal, setExpModal] = useState<{ open: boolean; item?: Experience }>({ open: false });
@@ -1346,58 +1459,32 @@ export function CandidateDetailPage() {
     }
   };
 
-  const eduCols: Column<Education>[] = [
-    { key: "course", label: "Course", render: (r) => <span className="font-semibold">{r.course}</span> },
-    { key: "institution", label: "Institution", render: (r) => r.institution || "—" },
-    { key: "start_date", label: "From", render: (r) => fmtDate(r.start_date) },
-    { key: "end_date", label: "To", render: (r) => fmtDate(r.end_date) },
-    { key: "certificate_url", label: "Certificate", render: (r) => <FileLink url={r.certificate_url} label="View" /> },
-    ...(canWrite ? [rowActionsCol<Education>(
-      (r) => setEduModal({ open: true, item: r }),
-      (r) => setDeleting({ kind: "education", id: r.id, label: r.course }),
-    )] : []),
+  const firstLine = [
+    data.technical_domain,
+    data.experience_years != null ? `${data.experience_years} yrs experience` : null,
+    data.city,
+  ].filter(Boolean).join(" · ");
+  const shownEmail = isPlaceholderEmail(data.email) ? null : displayEmail(data.email);
+  const liveApps = data.profiles.filter((p) => !REJECTION_STAGES.has(p.pipeline_status)).length;
+  const summaryChips: { icon: LucideIcon; label: string }[] = [
+    { icon: Briefcase, label: `${data.profiles.length} linked ${data.profiles.length === 1 ? "opportunity" : "opportunities"}${data.profiles.length ? ` · ${liveApps} active` : ""}` },
+    { icon: Sparkles, label: `${data.skills.length} ${data.skills.length === 1 ? "skill" : "skills"}` },
+    { icon: Building2, label: `${data.experience.length} ${data.experience.length === 1 ? "role" : "roles"}` },
+    { icon: GraduationCap, label: `${data.education.length} education` },
+    ...(data.notice_period ? [{ icon: Clock, label: `Notice: ${data.notice_period}` }] : []),
+    ...(data.expected_ctc != null ? [{ icon: Wallet, label: `Expects ${fmtLac(data.expected_ctc)} L` }] : []),
   ];
 
-  const expCols: Column<Experience>[] = [
-    { key: "company_name", label: "Company", render: (r) => <span className="font-semibold">{r.company_name}</span> },
-    { key: "job_title", label: "Title", render: (r) => r.job_title || "—" },
-    { key: "start_date", label: "From", render: (r) => fmtDate(r.start_date) },
-    { key: "end_date", label: "To", render: (r) => (r.is_current ? "Present" : fmtDate(r.end_date)) },
-    { key: "certificate_url", label: "Certificate", render: (r) => <FileLink url={r.certificate_url} label="View" /> },
-    ...(canWrite ? [rowActionsCol<Experience>(
-      (r) => setExpModal({ open: true, item: r }),
-      (r) => setDeleting({ kind: "experience", id: r.id, label: r.company_name }),
-    )] : []),
-  ];
-
-  const profileCols: Column<LinkedProfile>[] = [
-    {
-      key: "opportunity_title",
-      label: "Opportunity",
-      render: (r) => (
-        <div className="min-w-0">
-          <div className="font-semibold truncate">{r.opportunity_title}</div>
-          {r.opportunity_opp_id && (
-            <div className="font-mono text-xs opacity-60">{r.opportunity_opp_id}</div>
-          )}
-        </div>
-      ),
-    },
-    { key: "customer_name", label: "Customer", render: (r) => r.customer_name || "—" },
-    { key: "pipeline_status", label: "Pipeline Status", render: (r) => <StatusBadge status={r.pipeline_status} /> },
-    {
-      key: "interview_rounds",
-      label: "Rounds",
-      align: "right",
-      render: (r) => (r.interview_rounds ? String(r.interview_rounds) : "—"),
-    },
-    { key: "expected_ctc", label: "Expected CTC (Lac)", align: "right", render: (r) => fmtLac(r.expected_ctc) },
-    { key: "ta_owner_name", label: "TA", render: (r) => r.ta_owner_name || "—" },
-    {
-      key: "applied_on",
-      label: "Applied",
-      render: (r) => (r.applied_on ? new Date(r.applied_on).toLocaleDateString() : "—"),
-    },
+  const detailTabs: { key: string; label: string; icon: LucideIcon; count?: number }[] = [
+    { key: "personal", label: "Personal Info", icon: UserRound },
+    { key: "education", label: "Education", icon: GraduationCap, count: data.education.length },
+    { key: "experience", label: "Experience", icon: Building2, count: data.experience.length },
+    { key: "skills", label: "Skills", icon: Sparkles, count: data.skills.length },
+    // "Linked Opportunities" (2 Sep 2026, user request): each row IS an
+    // opportunity this candidate was put forward for. Key unchanged.
+    { key: "profiles", label: "Linked Opportunities", icon: Briefcase, count: data.profiles.length },
+    { key: "outreach", label: "Outreach", icon: MessageCircle },
+    { key: "emails", label: "Emails", icon: Mail },
   ];
 
   return (
@@ -1406,38 +1493,97 @@ export function CandidateDetailPage() {
         ← Back to candidates
       </button>
 
-      <div className="glass fx-gradient-border rounded-card p-5 shadow-raised">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-display text-xl font-bold text-primary">{candName(data)}</h1>
-            <div className="mt-1 text-sm text-muted">
-              {displayEmail(data.email)}
-              {data.phone ? ` · ${data.phone}` : ""}
+      {/* ---------- Identity band (29 Sep 2026 redesign, UI only) ---------- */}
+      <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+        <div className="relative bg-gradient-to-r from-brand-700 via-indigo-700 to-violet-700 px-4 py-5 text-white sm:px-6">
+          <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-white/10 blur-2xl" />
+          <div className="relative flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+              <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-base font-bold ring-2 ring-white/40 sm:h-14 sm:w-14 sm:text-lg" aria-hidden>
+                {initialsFor(candName(data))}
+              </span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-white/70">Candidate #{data.id}</div>
+                <h1 className="text-display break-words text-xl font-bold leading-tight sm:text-2xl">{candName(data)}</h1>
+                {firstLine && <p className="mt-1 text-sm text-white/85">{firstLine}</p>}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 ring-1 ring-inset ring-white/20">
+                    <Mail size={12} aria-hidden />
+                    <span className="truncate">{shownEmail || displayEmail(data.email)}</span>
+                  </span>
+                  {data.phone && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 ring-1 ring-inset ring-white/20">
+                      <Phone size={12} aria-hidden /> {data.phone}
+                    </span>
+                  )}
+                  {data.linkedin_url && (
+                    <a href={data.linkedin_url} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 ring-1 ring-inset ring-white/20 hover:bg-white/25">
+                      <Linkedin size={12} aria-hidden /> LinkedIn
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {canApplyHere && (
+                <button
+                  type="button"
+                  className={HERO_BTN_SOLID}
+                  onClick={() => setApplyOpen(true)}
+                  title="Apply this candidate to an opportunity — creates their pipeline profile at Sourcing"
+                >
+                  <Briefcase size={15} /> Apply to Opportunity
+                </button>
+              )}
+              {canWrite && (
+                <button type="button" className={HERO_BTN} onClick={() => setShowEdit(true)}>
+                  <Pencil size={14} /> Edit details
+                </button>
+              )}
+              {canWrite && data.cv_url && (
+                <button
+                  type="button"
+                  className={HERO_BTN}
+                  onClick={parseCv}
+                  disabled={parsing}
+                  title="Extract domain, experience, skills, education and CTC from the CV into the fields below"
+                >
+                  <Wand2 size={14} /> {parsing ? "Parsing CV…" : "Auto-fill from CV"}
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <FileLink url={data.cv_url} label="View CV" />
-            {canApplyHere && (
-              <button
-                type="button"
-                className={`${btnPrimary} h-10 rounded-xl`}
-                onClick={() => setApplyOpen(true)}
-                title="Apply this candidate to an opportunity — creates their pipeline profile at Sourcing"
-              >
-                <Briefcase size={15} /> Apply to Opportunity
-              </button>
+          <div className="relative mt-4 flex flex-wrap gap-2">
+            {summaryChips.map((s) => (
+              <span key={s.label} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold ring-1 ring-inset ring-white/20">
+                <s.icon size={12} /> {s.label}
+              </span>
+            ))}
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+              data.cv_url ? "bg-emerald-400/25 ring-1 ring-inset ring-emerald-200/40" : "bg-amber-400/25 ring-1 ring-inset ring-amber-200/40"}`}>
+              <FileText size={12} /> {data.cv_url ? "CV on file" : "No CV yet"}
+            </span>
+            {data.resignation_status && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold ring-1 ring-inset ring-white/20">
+                Resigned{data.last_working_day ? ` · LWD ${fmtDate(data.last_working_day)}` : ""}
+              </span>
             )}
-            {canWrite && data.cv_url && (
-              <button
-                type="button"
-                className={`${btnSecondary} h-10 rounded-xl`}
-                onClick={parseCv}
-                disabled={parsing}
-                title="Extract domain, experience, skills, education and CTC from the CV into the fields below"
-              >
-                {parsing ? "Parsing CV…" : "Auto-fill from CV"}
-              </button>
-            )}
+          </div>
+        </div>
+
+        {/* Documents strip — the CV and the resignation certificate, with their uploads. */}
+        <div className="grid gap-3 px-4 py-3 sm:grid-cols-2 sm:px-6">
+          <div className="flex flex-wrap items-center gap-3 rounded-control border border-subtle bg-surface-2 px-3 py-2">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-control bg-gradient-to-br from-sky-500 to-indigo-600 text-white" aria-hidden>
+              <FileText size={16} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Resume / CV</div>
+              <div className="truncate text-sm">
+                {data.cv_url ? <FileLink url={data.cv_url} label="View CV" /> : <span className="text-muted">Not uploaded yet</span>}
+              </div>
+            </div>
             {canWrite && (
               <FileUploadButton
                 path={`/api/candidates/${data.id}/cv`}
@@ -1451,12 +1597,22 @@ export function CandidateDetailPage() {
                 onError={(m) => showToast(m, "err")}
               />
             )}
-            {/* Resignation / relieving certificate — TA attaches it here when the
-                candidate hands it over. Stored on the candidate, so it shows on
-                every Candidate Profile for them (Sales / Sales Head can open it). */}
-            {data.resignation_certificate_url && (
-              <FileLink url={data.resignation_certificate_url} label="Resignation certificate" />
-            )}
+          </div>
+          {/* Resignation / relieving certificate — TA attaches it here when the
+              candidate hands it over. Stored on the candidate, so it shows on
+              every Candidate Profile for them (Sales / Sales Head can open it). */}
+          <div className="flex flex-wrap items-center gap-3 rounded-control border border-subtle bg-surface-2 px-3 py-2">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-control bg-gradient-to-br from-teal-500 to-emerald-600 text-white" aria-hidden>
+              <FileBadge size={16} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Resignation certificate</div>
+              <div className="truncate text-sm">
+                {data.resignation_certificate_url
+                  ? <FileLink url={data.resignation_certificate_url} label="Resignation certificate" />
+                  : <span className="text-muted">Not uploaded</span>}
+              </div>
+            </div>
             {canWrite && (
               <FileUploadButton
                 path={`/api/candidates/${data.id}/resignation-certificate`}
@@ -1477,102 +1633,207 @@ export function CandidateDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Tab strip with icons (same keys, same ?tab= deep links). */}
+        <div className="overflow-x-auto border-t border-subtle px-2 sm:px-4">
+          <div className="flex min-w-max gap-1" role="tablist" aria-label="Candidate sections">
+            {detailTabs.map((t) => {
+              const active = tab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setTab(t.key)}
+                  className={`relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-3 text-sm font-semibold transition-colors ${focusRing} ${
+                    active ? "text-brand-600 dark:text-brand-300" : "text-muted hover:text-primary"}`}
+                >
+                  <t.icon size={15} />
+                  {t.label}
+                  {t.count !== undefined && (
+                    <span className={`rounded-full px-1.5 py-0.5 text-[11px] tabular-nums ${
+                      active ? "bg-brand-600 text-white" : "bg-surface-2 text-secondary ring-1 ring-inset ring-subtle"}`}>
+                      {t.count}
+                    </span>
+                  )}
+                  {active && <span aria-hidden className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand-500" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      <Tabs
-        tabs={[
-          { key: "personal", label: "Personal Info" },
-          { key: "education", label: "Education", count: data.education.length },
-          { key: "experience", label: "Experience", count: data.experience.length },
-          { key: "skills", label: "Skills", count: data.skills.length },
-          // "Linked Opportunities" (2 Sep 2026, user request): each row IS an
-          // opportunity this candidate was put forward for. Key unchanged.
-          { key: "profiles", label: "Linked Opportunities", count: data.profiles.length },
-          { key: "outreach", label: "Outreach" },
-          { key: "emails", label: "Emails" },
-        ]}
-        active={tab}
-        onChange={setTab}
-      />
-
       {tab === "personal" && (
-        <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-raised">
-          <div className="fx-hairline-b mb-3 flex items-center justify-between pb-3">
-            <h2 className="text-base font-bold text-primary">Personal information</h2>
-            {canWrite && (
-              <button className={btnSecondary} onClick={() => setShowEdit(true)}>
-                <Pencil size={14} /> Edit
-              </button>
-            )}
-          </div>
-          <PersonalInfoGrid c={data} />
-        </div>
+        <PersonalInfoGrid
+          c={data}
+          action={canWrite ? (
+            <button className={btnSecondary} onClick={() => setShowEdit(true)}>
+              <Pencil size={14} /> Edit
+            </button>
+          ) : null}
+        />
       )}
 
       {tab === "education" && (
-        <div>
-          {canWrite && (
-            <div className="mb-3 flex justify-end">
-              <button className={btnPrimary} onClick={() => setEduModal({ open: true })}>
-                <Plus size={15} /> Add education
-              </button>
-            </div>
+        <SectionCard
+          icon={GraduationCap}
+          accent="from-violet-500 to-indigo-600"
+          title="Education"
+          subtitle={`${data.education.length} record${data.education.length === 1 ? "" : "s"}`}
+          action={canWrite ? (
+            <button className={btnPrimary} onClick={() => setEduModal({ open: true })}>
+              <Plus size={15} /> Add education
+            </button>
+          ) : null}
+        >
+          {data.education.length === 0 ? (
+            <EmptyState message="No education records" icon={<GraduationCap size={22} />} />
+          ) : (
+            <Timeline
+              items={data.education.map((r) => ({
+                key: r.id,
+                title: r.course,
+                subtitle: r.institution || "—",
+                from: fmtDate(r.start_date),
+                to: fmtDate(r.end_date),
+                current: false,
+                certificate: r.certificate_url,
+                onEdit: canWrite ? () => setEduModal({ open: true, item: r }) : undefined,
+                onDelete: canWrite ? () => setDeleting({ kind: "education", id: r.id, label: r.course }) : undefined,
+              }))}
+              dot="bg-violet-500"
+            />
           )}
-          <DataTable<Education> columns={eduCols} rows={data.education} emptyMessage="No education records" />
-        </div>
+        </SectionCard>
       )}
 
       {tab === "experience" && (
-        <div>
-          {canWrite && (
-            <div className="mb-3 flex justify-end">
-              <button className={btnPrimary} onClick={() => setExpModal({ open: true })}>
-                <Plus size={15} /> Add experience
-              </button>
-            </div>
+        <SectionCard
+          icon={Building2}
+          accent="from-sky-500 to-brand-600"
+          title="Experience"
+          subtitle={`${data.experience.length} role${data.experience.length === 1 ? "" : "s"}${data.experience_years != null ? ` · ${data.experience_years} yrs in total` : ""}`}
+          action={canWrite ? (
+            <button className={btnPrimary} onClick={() => setExpModal({ open: true })}>
+              <Plus size={15} /> Add experience
+            </button>
+          ) : null}
+        >
+          {data.experience.length === 0 ? (
+            <EmptyState message="No experience records" icon={<Building2 size={22} />} />
+          ) : (
+            <Timeline
+              items={data.experience.map((r) => ({
+                key: r.id,
+                title: r.job_title || "—",
+                subtitle: r.company_name,
+                from: fmtDate(r.start_date),
+                to: r.is_current ? "Present" : fmtDate(r.end_date),
+                current: !!r.is_current,
+                certificate: r.certificate_url,
+                onEdit: canWrite ? () => setExpModal({ open: true, item: r }) : undefined,
+                onDelete: canWrite ? () => setDeleting({ kind: "experience", id: r.id, label: r.company_name }) : undefined,
+              }))}
+              dot="bg-sky-500"
+            />
           )}
-          <DataTable<Experience> columns={expCols} rows={data.experience} emptyMessage="No experience records" />
-        </div>
+        </SectionCard>
       )}
 
       {tab === "skills" && (
-        <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-raised">
-          <div className="fx-hairline-b mb-3 flex items-center justify-between pb-3">
-            <h2 className="text-base font-bold text-primary">Skills</h2>
-            {canWrite && (
-              <button className={btnSecondary} onClick={() => setSkillsModal(true)}>
-                <Pencil size={14} /> Edit skills
-              </button>
-            )}
-          </div>
+        <SectionCard
+          icon={Sparkles}
+          accent="from-amber-500 to-rose-500"
+          title="Skills"
+          subtitle={`${data.skills.length} recorded${data.technical_domain ? ` · ${data.technical_domain}` : ""}`}
+          action={canWrite ? (
+            <button className={btnSecondary} onClick={() => setSkillsModal(true)}>
+              <Pencil size={14} /> Edit skills
+            </button>
+          ) : null}
+        >
           {data.skills.length === 0 ? (
-            <div className="text-sm text-muted">No skills recorded</div>
+            <EmptyState message="No skills recorded" icon={<Sparkles size={22} />} />
           ) : (
             <div className="flex flex-wrap gap-2">
-              {data.skills.map((s) => (
+              {data.skills.map((s, i) => (
                 <span
                   key={s.skill_id}
-                  className="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300"
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset ${SKILL_TONES[i % SKILL_TONES.length]}`}
                 >
-                  {s.name}
+                  <Check size={12} aria-hidden /> {s.name}
                 </span>
               ))}
             </div>
           )}
-        </div>
+        </SectionCard>
       )}
 
       {tab === "profiles" && (
-        <DataTable<LinkedProfile>
-          columns={profileCols}
-          rows={data.profiles}
-          onRowClick={(r) => crmNavigate(`profiles/${r.id}`)}
-          emptyMessage="Not applied to any opportunity yet"
-        />
+        <SectionCard
+          icon={Briefcase}
+          accent="from-indigo-500 to-violet-600"
+          title="Linked Opportunities"
+          subtitle={data.profiles.length ? `${data.profiles.length} application${data.profiles.length === 1 ? "" : "s"} · ${liveApps} active` : "Every opportunity this candidate was put forward for"}
+          action={canApplyHere ? (
+            <button type="button" className={btnPrimary} onClick={() => setApplyOpen(true)}>
+              <Plus size={15} /> Apply to Opportunity
+            </button>
+          ) : null}
+        >
+          {data.profiles.length === 0 ? (
+            <EmptyState message="Not applied to any opportunity yet" icon={<Briefcase size={22} />} />
+          ) : (
+            <ul className="grid gap-3 lg:grid-cols-2">
+              {data.profiles.map((r) => (
+                <li key={r.id}>
+                  <CrmLink
+                    to={`profiles/${r.id}`}
+                    className={`group block h-full rounded-card border border-subtle bg-surface-2 p-4 transition-colors hover:border-brand-500 hover:bg-surface-1 ${focusRing}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-primary group-hover:text-brand-600 dark:group-hover:text-brand-300">
+                          {r.opportunity_title}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                          {r.opportunity_opp_id && <span className="font-mono">{r.opportunity_opp_id}</span>}
+                          <span>{r.customer_name || "—"}</span>
+                        </div>
+                      </div>
+                      <ChevronRight size={16} className="mt-0.5 shrink-0 text-muted group-hover:text-brand-600" aria-hidden />
+                    </div>
+                    <div className="mt-2">
+                      <CandidateStatusBadge status={r.candidate_status} stage={r.pipeline_status} />
+                    </div>
+                    <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      <MiniFact label="Rounds" value={r.interview_rounds ? String(r.interview_rounds) : "—"} />
+                      <MiniFact label="Exp. CTC (Lac)" value={fmtLac(r.expected_ctc)} />
+                      <MiniFact label="TA" value={r.ta_owner_name || "—"} />
+                      <MiniFact label="Applied" value={r.applied_on ? new Date(r.applied_on).toLocaleDateString() : "—"} />
+                    </dl>
+                  </CrmLink>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
       )}
 
-      {tab === "outreach" && <OutreachTab candidateId={data.id} showToast={showToast} />}
-      {tab === "emails" && <EmailsTab candidateId={data.id} />}
+      {tab === "outreach" && (
+        <SectionCard icon={MessageCircle} accent="from-teal-500 to-emerald-600" title="Outreach"
+          subtitle="Calls, emails and messages logged by the team">
+          <OutreachTab candidateId={data.id} showToast={showToast} />
+        </SectionCard>
+      )}
+      {tab === "emails" && (
+        <SectionCard icon={Mail} accent="from-sky-500 to-indigo-600" title="Emails"
+          subtitle="Every email the system sent to this candidate">
+          <EmailsTab candidateId={data.id} />
+        </SectionCard>
+      )}
 
       {showEdit && (
         <CandidateFormModal
@@ -1975,39 +2236,118 @@ function LogOutreachModal({
 
 /* ------------------------------------------------------------------ detail helpers */
 
-function rowActionsCol<T>(onEdit: (r: T) => void, onDelete: (r: T) => void): Column<T> {
-  return {
-    key: "_actions",
-    label: "",
-    className: "!text-right",
-    render: (r: T) => (
-      <span className="flex justify-end gap-1">
-        <button
-          className="rounded-control p-1.5 text-muted hover:bg-surface-2"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit(r);
-          }}
-          aria-label="Edit"
-        >
-          <Pencil size={14} />
-        </button>
-        <button
-          className="rounded-control p-1.5 text-danger hover:bg-danger-soft"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(r);
-          }}
-          aria-label="Delete"
-        >
-          <Trash2 size={14} />
-        </button>
-      </span>
-    ),
-  };
+/** Closed candidacies — everything else counts as "active" in the header chip. */
+const REJECTION_STAGES = new Set([
+  "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Rejected",
+]);
+
+/** Colour cycle for the skill chip cloud (real palette colours — alpha is safe on these). */
+const SKILL_TONES = [
+  "bg-indigo-500/10 text-indigo-700 ring-indigo-500/25 dark:text-indigo-300",
+  "bg-sky-500/10 text-sky-700 ring-sky-500/25 dark:text-sky-300",
+  "bg-emerald-500/10 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300",
+  "bg-violet-500/10 text-violet-700 ring-violet-500/25 dark:text-violet-300",
+  "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300",
+  "bg-rose-500/10 text-rose-700 ring-rose-500/25 dark:text-rose-300",
+  "bg-teal-500/10 text-teal-700 ring-teal-500/25 dark:text-teal-300",
+];
+
+function initialsFor(name?: string | null): string {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return ((parts[0][0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] || "" : "")).toUpperCase();
 }
 
-function PersonalInfoGrid({ c }: { c: CandidateDetail }) {
+/** A tidy white section card with a gradient icon tile, a title and an optional action. */
+function SectionCard({
+  icon: Icon, accent, title, subtitle, action, children,
+}: {
+  icon: LucideIcon;
+  accent: string;
+  title: string;
+  subtitle?: React.ReactNode;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-subtle px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-control bg-gradient-to-br text-white shadow-raised ${accent}`} aria-hidden>
+            <Icon size={17} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-primary">{title}</h2>
+            {subtitle && <p className="text-xs text-muted">{subtitle}</p>}
+          </div>
+        </div>
+        {action}
+      </div>
+      <div className="p-4 sm:p-5">{children}</div>
+    </section>
+  );
+}
+
+function MiniFact({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-control bg-surface-1 px-2 py-1.5 ring-1 ring-inset ring-subtle">
+      <dt className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted">{label}</dt>
+      <dd className="truncate text-xs font-semibold text-primary">{value}</dd>
+    </div>
+  );
+}
+
+/** Vertical timeline for education and experience entries. */
+function Timeline({
+  items, dot,
+}: {
+  items: {
+    key: number; title: string; subtitle: string; from: string; to: string; current: boolean;
+    certificate?: string | null; onEdit?: () => void; onDelete?: () => void;
+  }[];
+  dot: string;
+}) {
+  return (
+    <ol className="relative ml-2 border-l-2 border-subtle">
+      {items.map((it) => (
+        <li key={it.key} className="relative pb-5 pl-5 last:pb-0">
+          <span aria-hidden className={`absolute -left-[7px] top-1.5 h-3 w-3 rounded-full ring-4 ring-surface-1 ${it.current ? "bg-emerald-500" : dot}`} />
+          <div className="flex flex-wrap items-start justify-between gap-2 rounded-card border border-subtle bg-surface-2 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-bold text-primary">{it.title}</span>
+                {it.current && (
+                  <span className="rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">Current</span>
+                )}
+              </div>
+              <div className="text-sm text-secondary">{it.subtitle}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                <span className="inline-flex items-center gap-1"><CalendarDays size={12} aria-hidden /> {it.from} – {it.to}</span>
+                {it.certificate && <span className="text-xs"><FileLink url={it.certificate} label="Certificate" /></span>}
+              </div>
+            </div>
+            {(it.onEdit || it.onDelete) && (
+              <span className="flex shrink-0 gap-1">
+                {it.onEdit && (
+                  <button className={`rounded-control p-1.5 text-muted hover:bg-surface-1 ${focusRing}`} onClick={it.onEdit} aria-label="Edit">
+                    <Pencil size={14} />
+                  </button>
+                )}
+                {it.onDelete && (
+                  <button className={`rounded-control p-1.5 text-danger hover:bg-danger-soft ${focusRing}`} onClick={it.onDelete} aria-label="Delete">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </span>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function PersonalInfoGrid({ c, action }: { c: CandidateDetail; action?: React.ReactNode }) {
   const designations = useMaster<DesignationOpt>("/api/designations");
   const locations = useMaster<LocationOpt>("/api/locations");
   const designation = designations.find((d) => d.id === c.designation_id);
@@ -2016,60 +2356,97 @@ function PersonalInfoGrid({ c }: { c: CandidateDetail }) {
   // Every stored field is shown. Several of these (salutation, middle name, DOB,
   // gender, experience, notice period, roles, current CTC) were captured by the
   // form and saved, but never rendered back — so the page under-reported what the
-  // record actually held.
-  const rows: [string, React.ReactNode][] = [
-    ["Salutation", c.salutation || "—"],
-    ["First name", c.first_name],
-    ["Middle name", c.middle_name || "—"],
-    ["Last name", c.last_name || "—"],
-    ["Email", displayEmail(c.email)],
-    ["Phone", c.phone || "—"],
-    ["Gender", c.gender || "—"],
-    ["Date of birth", fmtDate(c.date_of_birth)],
-    ["City", c.city || "—"],
-    ["Experience (years)", c.experience_years ?? "—"],
-    ["Notice period", c.notice_period || "—"],
-    ["Technical domain", c.technical_domain || "—"],
-    ["Roles", c.roles || "—"],
-    ["Designation", designation ? designation.name : c.designation_id ? `#${c.designation_id}` : "—"],
-    [
-      "LinkedIn",
-      c.linkedin_url ? (
-        <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline dark:text-brand-300">
-          {c.linkedin_url}
-        </a>
-      ) : (
-        "—"
-      ),
-    ],
-    ["Current CTC (Lac)", fmtLac(c.current_ctc)],
-    ["Expected CTC (Lac)", fmtLac(c.expected_ctc)],
-    [
-      "Preferred location",
-      // The full list when the export carried several; otherwise the single FK.
-      c.preferred_locations ||
-        (location ? locLabel(location) : c.preferred_location_id ? `#${c.preferred_location_id}` : "—"),
-    ],
-    ["Resignation status", c.resignation_status ? "Resigned / serving notice" : "Not resigned"],
-    ["Last working day", fmtDate(c.last_working_day)],
-    ["Current address", c.current_address || "—"],
-    ["Permanent address", c.permanent_address || "—"],
-    ["Recruiter", c.recruiter_email || "—"],
-    ["CV file", c.cv_original_filename || "—"],
-    ["Zoho ID", c.zoho_candidate_id ? <span className="font-mono text-xs">{c.zoho_candidate_id}</span> : "—"],
-    ["Added in Zoho", fmtDate(c.source_created_date)],
-    ["Created", fmtDate(c.created_at)],
+  // record actually held. Grouped into section cards (29 Sep 2026, UI only).
+  const sections: { title: string; icon: LucideIcon; accent: string; rows: [string, React.ReactNode][] }[] = [
+    {
+      title: "Identity", icon: UserRound, accent: "from-indigo-500 to-violet-600",
+      rows: [
+        ["Salutation", c.salutation || "—"],
+        ["First name", c.first_name],
+        ["Middle name", c.middle_name || "—"],
+        ["Last name", c.last_name || "—"],
+        ["Gender", c.gender || "—"],
+        ["Date of birth", fmtDate(c.date_of_birth)],
+      ],
+    },
+    {
+      title: "Contact", icon: Phone, accent: "from-sky-500 to-brand-600",
+      rows: [
+        ["Email", displayEmail(c.email)],
+        ["Phone", c.phone || "—"],
+        ["City", c.city || "—"],
+        [
+          "LinkedIn",
+          c.linkedin_url ? (
+            <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline dark:text-brand-300">
+              {c.linkedin_url}
+            </a>
+          ) : (
+            "—"
+          ),
+        ],
+        ["Current address", c.current_address || "—"],
+        ["Permanent address", c.permanent_address || "—"],
+      ],
+    },
+    {
+      title: "Professional", icon: Briefcase, accent: "from-teal-500 to-emerald-600",
+      rows: [
+        ["Experience (years)", c.experience_years ?? "—"],
+        ["Technical domain", c.technical_domain || "—"],
+        ["Roles", c.roles || "—"],
+        ["Designation", designation ? designation.name : c.designation_id ? `#${c.designation_id}` : "—"],
+        [
+          "Preferred location",
+          // The full list when the export carried several; otherwise the single FK.
+          c.preferred_locations ||
+            (location ? locLabel(location) : c.preferred_location_id ? `#${c.preferred_location_id}` : "—"),
+        ],
+      ],
+    },
+    {
+      title: "Compensation & availability", icon: Wallet, accent: "from-amber-500 to-orange-600",
+      rows: [
+        ["Current CTC (Lac)", fmtLac(c.current_ctc)],
+        ["Expected CTC (Lac)", fmtLac(c.expected_ctc)],
+        ["Notice period", c.notice_period || "—"],
+        ["Resignation status", c.resignation_status ? "Resigned / serving notice" : "Not resigned"],
+        ["Last working day", fmtDate(c.last_working_day)],
+      ],
+    },
+    {
+      title: "Record", icon: FileText, accent: "from-slate-500 to-slate-700",
+      rows: [
+        ["Recruiter", c.recruiter_email || "—"],
+        ["CV file", c.cv_original_filename || "—"],
+        ["Zoho ID", c.zoho_candidate_id ? <span className="font-mono text-xs">{c.zoho_candidate_id}</span> : "—"],
+        ["Added in Zoho", fmtDate(c.source_created_date)],
+        ["Created", fmtDate(c.created_at)],
+      ],
+    },
   ];
 
   return (
-    <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
-          <dd className="mt-0.5 break-words text-sm text-primary">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-bold text-primary">Personal information</h2>
+        {action}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {sections.map((s) => (
+          <SectionCard key={s.title} icon={s.icon} accent={s.accent} title={s.title}>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+              {s.rows.map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
+                  <dd className="mt-0.5 break-words text-sm text-primary">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </SectionCard>
+        ))}
+      </div>
+    </div>
   );
 }
 

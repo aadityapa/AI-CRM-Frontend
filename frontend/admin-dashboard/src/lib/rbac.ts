@@ -54,7 +54,7 @@ export const INTERVIEW_VIEW_ROLES: Record<InterviewView, CrmRole[]> = {
   ats: ["TA", "HR", "RMG"],
   integrityLogs: ["TA", "HR"], // RMG explicitly excluded
   hrSetup: ["TA", "HR"], // Interview scheduler (reached via the Interview Schedule button)
-  promptLogs: [], // AI Logs — Admin only
+  promptLogs: [], // AI Costs — Admin only
   questionBank: [], // Admin/super-admin only
   crm: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"], // any CRM role
 };
@@ -111,7 +111,7 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "iv:templates", label: "Templates", group: "Interview Platform", roles: ["RMG"] },
   { key: "iv:candidates", label: "Reports", group: "Interview Platform", roles: ["TA", "HR", "RMG"] },
   { key: "iv:ats", label: "ATS", group: "Interview Platform", roles: ["TA", "HR", "RMG"] },
-  { key: "iv:promptLogs", label: "AI Logs", group: "Interview Platform", roles: [] },
+  { key: "iv:promptLogs", label: "AI Costs", group: "Interview Platform", roles: [] },
   { key: "iv:integrityLogs", label: "Integrity", group: "Interview Platform", roles: ["TA", "HR"] },
   // CRM — synced to TODAY's IA (Aug 2026): hub placements are spelled out in
   // the label so an admin granting access knows where the page actually

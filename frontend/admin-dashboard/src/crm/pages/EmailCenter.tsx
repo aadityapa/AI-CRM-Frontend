@@ -32,9 +32,10 @@ import { useCanAct } from "../useAccess";
 import { CrmLink } from "../routerHooks";
 import { SearchableSelect } from "../components/SearchableSelect";
 import {
-  ActionError, EmptyState, ErrorBox, Modal, Spinner, StatusBadge, btnPrimary, btnSecondary,
+  ActionError, EmptyState, ErrorBox, Modal, Spinner, btnPrimary, btnSecondary,
   inputCls, useToast,
 } from "../components/ui";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 
 type MailRow = {
   id: number;
@@ -262,11 +263,6 @@ export function EmailCenterPage() {
     return <EmptyState message="The Emails tab is not enabled for your role." />;
   }
 
-  const railBtn = (active: boolean) =>
-    `flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-sm font-semibold transition-colors duration-micro ${
-      active ? "bg-brand-600/10 text-brand-700 dark:text-brand-300" : "text-secondary hover:bg-surface-2 hover:text-primary"
-    }`;
-
   const toggleExpanded = (id: number) => setExpanded((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -280,133 +276,171 @@ export function EmailCenterPage() {
     setCompose({ candidateId: selected.candidate_id, subject: subj, quote });
   };
 
+  /* ---- read-only header figures from what is already loaded ---- */
+  const pageFailed = (threads || []).reduce((n, t) => n + (t.failed || 0), 0);
+  const pageQueued = (threads || []).reduce((n, t) => n + (t.queued || 0), 0);
+  const totalMails = tags.reduce((n, t) => n + (t.count || 0), 0);
+  const heroStats = [
+    { label: meta?.total === 1 ? "conversation" : "conversations", value: meta ? meta.total : "…" },
+    ...(tags.length ? [{ label: "emails sent", value: totalMails }] : []),
+    ...(tags.length ? [{ label: "email types", value: tags.length }] : []),
+    ...(pageQueued ? [{ label: "queued on this page", value: pageQueued }] : []),
+    ...(pageFailed ? [{ label: "failed on this page", value: pageFailed }] : []),
+  ];
+
+  const pillCls = (active: boolean) =>
+    `inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors duration-micro ${
+      active
+        ? "bg-purple-600 text-white ring-purple-600 shadow-raised"
+        : "bg-surface-1 text-secondary ring-slate-200 hover:bg-surface-2 hover:text-primary dark:ring-slate-700"
+    }`;
+
   return (
-    <div className="flex h-full min-h-[calc(100vh-8rem)] flex-col">
-      {/* -------- top bar: title + search + filters (as in the mock) -------- */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h1 className="text-display mr-2 flex items-center gap-2 text-xl font-bold text-primary">
-          <Mail size={20} className="text-brand-600 dark:text-brand-300" /> Emails
-        </h1>
-        <div className="flex min-w-[220px] flex-1 max-w-md items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3">
-          <Search size={14} className="shrink-0 text-muted" />
-          <input
-            className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
-            placeholder="Search candidate, email or subject…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-        </div>
-        <select className={`${inputCls} !w-auto`} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {STATUS_FILTERS.map((s) => (
-            <option key={s} value={s}>{s === "" ? "All status" : s}</option>
-          ))}
-        </select>
-        {tag && (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-full bg-brand-600/10 px-2.5 py-1 text-xs font-bold text-brand-700 dark:text-brand-300"
-            onClick={() => setTag("")}
-            title="Clear tag filter"
-          >
-            <Tag size={11} /> {tagLabel(tag, tags.find((t) => t.event === tag)?.label)} ✕
+    <div className="flex h-full min-h-[calc(100vh-8rem)] flex-col gap-3">
+      <PageHeader
+        icon={Mail}
+        accent="violet"
+        eyebrow="Candidate mail"
+        title="Emails"
+        subtitle="Every email sent to a candidate — one conversation per person, newest first. Replies go to the sender's own mailbox."
+        stats={heroStats}
+        actions={canCompose ? (
+          <button type="button" className={HERO_BTN_SOLID}
+            onClick={() => setCompose({ candidateId: selected?.candidate_id ?? null })}>
+            <PenSquare size={14} /> New Email
           </button>
-        )}
-        {meta && (
-          <span className="ml-auto text-xs text-muted">
-            {meta.total} conversation{meta.total === 1 ? "" : "s"}
-          </span>
-        )}
-      </div>
-
-      {error && <ErrorBox error={error} onRetry={load} />}
-
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[200px_minmax(280px,360px)_1fr]">
-        {/* ------------------------- folder rail ------------------------- */}
-        <div className="rounded-card border border-subtle bg-surface-1 p-2">
-          {canCompose && (
-            <button className={`${btnPrimary} mb-2 w-full justify-center`}
-              onClick={() => setCompose({ candidateId: selected?.candidate_id ?? null })}>
-              <PenSquare size={14} /> New Email
-            </button>
-          )}
-          {FOLDERS.map((f) => (
-            <button key={f.key} type="button" className={railBtn(folder === f.key)}
-              onClick={() => setFolder(f.key)}>
-              <f.icon size={15} /> {f.label}
-            </button>
-          ))}
-          <div className="mt-3 border-t border-subtle pt-2">
-            <div className="flex items-center gap-1.5 px-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-muted">
-              <Tag size={11} /> Email type
+        ) : undefined}
+      >
+        <div className="space-y-3">
+          {/* search + status + sort */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 basis-60 items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3 focus-within:ring-2 focus-within:ring-purple-500 sm:max-w-md">
+              <Search size={14} className="shrink-0 text-muted" />
+              <input
+                className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
+                placeholder="Search candidate, email or subject…"
+                aria-label="Search emails"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+              />
             </div>
-            {tags.map((t) => (
-              <button key={t.event} type="button"
-                className={railBtn(tag === t.event)}
-                onClick={() => setTag(tag === t.event ? "" : t.event)}
-                title={tagLabel(t.event, t.label)}>
-                <span className="min-w-0 truncate text-xs">{tagLabel(t.event, t.label)}</span>
-                <span className="ml-auto text-[10px] text-muted">{t.count}</span>
-              </button>
-            ))}
-            {tags.length === 0 && <p className="px-3 py-1 text-xs text-muted">No emails sent yet.</p>}
-          </div>
-        </div>
-
-        {/* ---------------------- conversation list ---------------------- */}
-        <div className="flex min-h-0 flex-col rounded-card border border-subtle bg-surface-1">
-          <div className="flex items-center justify-between border-b border-subtle px-3.5 py-2">
-            <span className="text-xs font-bold uppercase tracking-wide text-muted">
-              {FOLDERS.find((f) => f.key === folder)?.label || "Sent to candidates"}
-            </span>
+            <div role="radiogroup" aria-label="Status"
+              className="inline-flex max-w-full overflow-x-auto rounded-control border border-subtle bg-surface-2 p-0.5">
+              {STATUS_FILTERS.map((s) => {
+                const active = status === s;
+                return (
+                  <button key={s} type="button" role="radio" aria-checked={active}
+                    onClick={() => setStatus(s)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-[5px] px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      active ? "bg-surface-1 text-primary shadow-raised" : "text-muted hover:text-primary"
+                    }`}>
+                    {s && <span className={`h-2 w-2 rounded-full ${MAIL_STATUS[s]?.dot || "bg-slate-400"}`} aria-hidden />}
+                    {s === "" ? "All status" : s}
+                  </button>
+                );
+              })}
+            </div>
             <button type="button"
-              className="inline-flex items-center gap-1 rounded-control px-2 py-1 text-xs font-semibold text-secondary hover:bg-surface-2 hover:text-primary"
+              className="inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-2.5 py-2 text-xs font-semibold text-secondary hover:bg-surface-2 hover:text-primary"
               onClick={() => setSort((s) => (s === "date" ? "name" : "date"))}
               title="Change sort order">
               <ArrowDownUp size={12} /> {sort === "date" ? "By date" : "By name"}
             </button>
+            {meta && (
+              <span className="ml-auto text-xs font-semibold text-muted">
+                {meta.total} conversation{meta.total === 1 ? "" : "s"}
+              </span>
+            )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+
+          {/* folder + email-type pill strip */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            {FOLDERS.map((f) => (
+              <button key={f.key} type="button" className={pillCls(folder === f.key && !tag)}
+                onClick={() => setFolder(f.key)}>
+                <f.icon size={13} /> {f.label}
+              </button>
+            ))}
+            <span className="mx-1 inline-flex shrink-0 items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-muted">
+              <Tag size={11} /> Email type
+            </span>
+            {tags.map((t) => (
+              <button key={t.event} type="button"
+                className={pillCls(tag === t.event)}
+                onClick={() => setTag(tag === t.event ? "" : t.event)}
+                title={tag === t.event ? "Clear tag filter" : tagLabel(t.event, t.label)}>
+                <span className="max-w-[14rem] truncate">{tagLabel(t.event, t.label)}</span>
+                <span className={`rounded-full px-1.5 text-[10px] font-bold ${tag === t.event ? "bg-white/25 text-white" : "bg-surface-2 text-muted"}`}>{t.count}</span>
+                {tag === t.event && <span aria-hidden>✕</span>}
+              </button>
+            ))}
+            {tags.length === 0 && <span className="shrink-0 text-xs text-muted">No emails sent yet.</span>}
+          </div>
+        </div>
+      </PageHeader>
+
+      {error && <ErrorBox error={error} onRetry={load} />}
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(300px,380px)_1fr]">
+        {/* ---------------------- conversation list ---------------------- */}
+        <div className="flex min-h-0 flex-col overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised lg:max-h-[calc(100vh-15rem)]">
+          <div className="flex items-center justify-between gap-2 border-b border-subtle px-3.5 py-2.5">
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+              <Inbox size={13} aria-hidden />
+              <span className="truncate">
+                {tag ? tagLabel(tag, tags.find((t) => t.event === tag)?.label) : (FOLDERS.find((f) => f.key === folder)?.label || "Sent to candidates")}
+              </span>
+            </span>
+            {meta && meta.pages > 1 && (
+              <span className="shrink-0 text-[11px] text-muted">Page {meta.page} of {meta.pages}</span>
+            )}
+          </div>
+          <div className="min-h-0 max-h-[60vh] flex-1 overflow-y-auto lg:max-h-none">
             {threads === null && !error && <Spinner label="Loading…" />}
             {threads !== null && threads.length === 0 && (
               <EmptyState message="No emails match these filters." icon={<Inbox size={26} />} />
             )}
             {grouped.map((g) => (
               <Fragment key={g.label}>
-                <div className="sticky top-0 z-[1] border-b border-subtle bg-surface-2/80 px-3.5 py-1 text-[11px] font-bold uppercase tracking-wide text-muted backdrop-blur">
+                <div className="sticky top-0 z-[1] border-b border-subtle bg-surface-2 px-3.5 py-1 text-[11px] font-bold uppercase tracking-wide text-muted">
                   {g.label}
                 </div>
                 {g.items.map((c) => {
                   const active = openKey === c.key;
                   const badge = c.failed > 0 ? "Failed" : c.queued > 0 ? "Queued" : c.latest.status;
+                  const who = c.candidate_name || c.to_email;
                   return (
                     <button key={c.key} type="button" onClick={() => setOpenKey(c.key)}
-                      className={`block w-full border-b border-subtle border-l-2 px-3.5 py-2.5 text-left transition-colors duration-micro ${
-                        active ? "border-l-brand-600 bg-brand-600/10" : "border-l-transparent hover:bg-surface-2"}`}>
-                      <div className="flex items-start gap-2.5">
-                        <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-600/15 text-xs font-bold text-brand-700 dark:text-brand-300">
-                          {initialsOf(c.candidate_name || c.to_email)}
-                        </span>
+                      aria-current={active ? "true" : undefined}
+                      className={`block w-full border-b border-l-[3px] border-subtle px-3.5 py-3 text-left transition-colors duration-micro ${
+                        active
+                          ? "border-l-purple-600 bg-purple-50 dark:bg-purple-500/15"
+                          : "border-l-transparent hover:bg-surface-2"}`}>
+                      <div className="flex items-start gap-3">
+                        <Avatar name={who} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-sm font-bold text-primary">
-                              {c.candidate_name || c.to_email}
+                            <span className="truncate text-sm font-bold text-primary">{who}</span>
+                            <span className="shrink-0 text-[11px] font-medium text-muted" title={fmtWhen(c.latest_at)}>
+                              {fmtRelative(c.latest_at)}
                             </span>
-                            <span className="shrink-0 text-[11px] text-muted">{fmtListTime(c.latest_at)}</span>
                           </div>
                           <div className="mt-0.5 flex items-center justify-between gap-2">
                             <span className="truncate text-[13px] font-medium text-secondary">{c.latest.subject}</span>
                             {c.count > 1 && (
-                              <span className="shrink-0 rounded-full bg-surface-2 px-1.5 text-[10px] font-bold text-muted"
+                              <span className="shrink-0 rounded-full bg-surface-2 px-1.5 text-[10px] font-bold text-muted ring-1 ring-inset ring-slate-200 dark:ring-slate-700"
                                 title={`${c.count} emails in this conversation`}>{c.count}</span>
                             )}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            <StatusBadge status={badge} />
-                            <span className="shrink-0 rounded-full bg-brand-600/10 px-1.5 py-px text-[10px] font-semibold text-brand-700 dark:text-brand-300">
+                          <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                            <MailStatusChip status={badge} />
+                            <span className="shrink-0 truncate rounded-full bg-purple-100 px-1.5 py-px text-[10px] font-semibold text-purple-800 dark:bg-purple-500/20 dark:text-purple-200">
                               {tagLabel(c.latest.event, c.latest.event_label)}
                             </span>
-                            <span className="min-w-0 truncate text-xs text-muted">{c.latest.snippet}</span>
                           </div>
+                          {c.latest.snippet && (
+                            <div className="mt-1 truncate text-xs text-muted">{c.latest.snippet}</div>
+                          )}
                         </div>
                       </div>
                     </button>
@@ -414,31 +448,29 @@ export function EmailCenterPage() {
                 })}
               </Fragment>
             ))}
-            {meta && meta.pages > 1 && (
-              <div className="flex items-center justify-between px-3.5 py-2.5">
-                <button className="text-xs font-semibold text-brand-600 disabled:text-muted dark:text-brand-300"
-                  disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Newer</button>
-                <span className="text-[11px] text-muted">Page {meta.page} of {meta.pages}</span>
-                <button className="text-xs font-semibold text-brand-600 disabled:text-muted dark:text-brand-300"
-                  disabled={page >= meta.pages} onClick={() => setPage((p) => p + 1)}>Older →</button>
-              </div>
-            )}
           </div>
+          {meta && meta.pages > 1 && (
+            <div className="flex items-center justify-between border-t border-subtle px-3.5 py-2">
+              <button className="inline-flex items-center gap-1 rounded-control px-2 py-1 text-xs font-semibold text-purple-700 hover:bg-surface-2 disabled:text-muted dark:text-purple-300"
+                disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>← Newer</button>
+              <span className="text-[11px] text-muted">Page {meta.page} of {meta.pages}</span>
+              <button className="inline-flex items-center gap-1 rounded-control px-2 py-1 text-xs font-semibold text-purple-700 hover:bg-surface-2 disabled:text-muted dark:text-purple-300"
+                disabled={page >= meta.pages} onClick={() => setPage((p) => p + 1)}>Older →</button>
+            </div>
+          )}
         </div>
 
         {/* -------------------------- reading pane -------------------------- */}
-        <div className="min-h-0 overflow-y-auto rounded-card border border-subtle bg-surface-1">
+        <div className="min-h-0 overflow-y-auto rounded-card border border-subtle bg-surface-1 shadow-raised lg:max-h-[calc(100vh-15rem)]">
           {!selected ? (
             <EmptyState message="Select a conversation to read it." icon={<Mail size={26} />} />
           ) : (
             <>
-              {/* thread header — name, address, count, prev/next (per the mock) */}
-              <div className="sticky top-0 z-10 border-b border-subtle bg-surface-1 px-5 py-3">
-                <div className="flex items-center gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-600/15 text-sm font-bold text-brand-700 dark:text-brand-300">
-                    {initialsOf(selected.candidate_name || selected.to_email)}
-                  </span>
-                  <div className="min-w-0">
+              {/* thread header — name, address, count, prev/next */}
+              <div className="sticky top-0 z-10 border-b border-subtle bg-surface-1 px-4 py-3 sm:px-5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Avatar name={selected.candidate_name || selected.to_email} size="lg" />
+                  <div className="min-w-0 flex-1">
                     <div className="truncate text-base font-bold text-primary">
                       {selected.candidate_id ? (
                         <CrmLink to={`candidates/${selected.candidate_id}`} className="hover:underline">
@@ -450,46 +482,55 @@ export function EmailCenterPage() {
                       &lt;{selected.candidate_email || selected.to_email}&gt;
                     </div>
                   </div>
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {canCompose && selected.candidate_id != null && thread && thread[0] && (
-                      <button className={`${btnSecondary} !px-2.5 !py-1 text-xs`} onClick={() => replyTo(thread[0])}>
+                      <button className={`${btnSecondary} !min-h-0 !px-2.5 !py-1 text-xs`} onClick={() => replyTo(thread[0])}>
                         <Reply size={13} /> Reply
                       </button>
                     )}
-                    <span className="text-xs font-semibold text-muted">
-                      {thread ? `${thread.length} email${thread.length === 1 ? "" : "s"}` : "…"}
-                    </span>
-                    <span className="text-xs text-muted">{fmtDay(selected.latest_at)}</span>
-                    <button type="button" aria-label="Previous conversation"
-                      className="rounded-control p-1 text-muted hover:bg-surface-2 hover:text-primary disabled:opacity-40"
-                      disabled={selectedIdx <= 0}
-                      onClick={() => setOpenKey(threads?.[selectedIdx - 1]?.key || null)}>
-                      <ChevronLeft size={15} />
-                    </button>
-                    <button type="button" aria-label="Next conversation"
-                      className="rounded-control p-1 text-muted hover:bg-surface-2 hover:text-primary disabled:opacity-40"
-                      disabled={selectedIdx < 0 || !threads || selectedIdx >= threads.length - 1}
-                      onClick={() => setOpenKey(threads?.[selectedIdx + 1]?.key || null)}>
-                      <ChevronRight size={15} />
-                    </button>
+                    <div className="inline-flex overflow-hidden rounded-control border border-subtle">
+                      <button type="button" aria-label="Previous conversation"
+                        className="p-1.5 text-muted hover:bg-surface-2 hover:text-primary disabled:opacity-40"
+                        disabled={selectedIdx <= 0}
+                        onClick={() => setOpenKey(threads?.[selectedIdx - 1]?.key || null)}>
+                        <ChevronLeft size={15} />
+                      </button>
+                      <button type="button" aria-label="Next conversation"
+                        className="border-l border-subtle p-1.5 text-muted hover:bg-surface-2 hover:text-primary disabled:opacity-40"
+                        disabled={selectedIdx < 0 || !threads || selectedIdx >= threads.length - 1}
+                        onClick={() => setOpenKey(threads?.[selectedIdx + 1]?.key || null)}>
+                        <ChevronRight size={15} />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {thread && thread[0] && (
-                  <div className="mt-2 truncate text-lg font-bold text-primary">{thread[0].subject}</div>
+                  <div className="mt-2.5 text-lg font-bold leading-snug text-primary">{thread[0].subject}</div>
                 )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 font-semibold">
+                    <Mail size={11} aria-hidden />
+                    {thread ? `${thread.length} email${thread.length === 1 ? "" : "s"}` : "…"}
+                  </span>
+                  <span>Latest {fmtDay(selected.latest_at)}</span>
+                  {selected.failed > 0 && <MailStatusChip status="Failed" label={`${selected.failed} failed`} />}
+                  {selected.queued > 0 && <MailStatusChip status="Queued" label={`${selected.queued} queued`} />}
+                </div>
               </div>
 
-              {/* the conversation: latest open, older collapsed — as Outlook does */}
-              <div className="space-y-2 p-4">
+              {/* the conversation: latest open, older collapsed */}
+              <div className="space-y-2.5 p-3 sm:p-4">
                 {thread === null && <Spinner label="Loading thread…" />}
                 {thread?.map((m) => {
                   const open = expanded.has(m.id);
                   const fromLabel = m.from_name || "Karnex";
                   return (
-                    <div key={m.id} className={`rounded-card border ${open ? "border-subtle bg-surface-2/40" : "border-subtle/60 bg-surface-1"}`}>
-                      <button type="button" onClick={() => toggleExpanded(m.id)}
+                    <article key={m.id}
+                      className={`overflow-hidden rounded-card border transition-shadow ${
+                        open ? "border-purple-200 bg-surface-1 shadow-raised dark:border-purple-500/40" : "border-subtle bg-surface-2"}`}>
+                      <button type="button" onClick={() => toggleExpanded(m.id)} aria-expanded={open}
                         className="flex w-full items-center gap-3 px-4 py-2.5 text-left">
-                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-2 text-xs font-bold text-secondary">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-600 text-xs font-bold text-white">
                           {initialsOf(fromLabel)}
                         </span>
                         <div className="min-w-0 flex-1">
@@ -503,33 +544,37 @@ export function EmailCenterPage() {
                               : (m.body_text || "").replace(/\s+/g, " ").slice(0, 90)}
                           </div>
                         </div>
-                        <StatusBadge status={m.status} />
+                        <MailStatusChip status={m.status} />
                         {open ? <ChevronUp size={14} className="text-muted" /> : <ChevronDown size={14} className="text-muted" />}
                       </button>
                       {open && (
                         <>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-subtle px-4 pt-2 text-xs text-muted">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-subtle bg-surface-2 px-4 py-2 text-xs text-muted">
                             <span className="font-semibold text-secondary">{m.subject}</span>
-                            <span className="inline-flex items-center gap-1"><Tag size={10} /> {tagLabel(m.event, m.event_label)}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 font-semibold text-purple-800 dark:bg-purple-500/20 dark:text-purple-200">
+                              <Tag size={10} /> {tagLabel(m.event, m.event_label)}
+                            </span>
                             {m.reply_to_email && (
                               <span>Reply-To: <span className="text-secondary">{m.reply_to_name || m.reply_to_email}</span></span>
                             )}
-                            {m.status === "Failed" && m.last_error && (
-                              <span className="text-danger">Failed after {m.attempts} attempt{m.attempts === 1 ? "" : "s"}: {m.last_error}</span>
-                            )}
                             {canCompose && selected.candidate_id != null && (
-                              <button type="button" className="ml-auto inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                              <button type="button" className="ml-auto inline-flex items-center gap-1 font-semibold text-purple-700 hover:underline dark:text-purple-300"
                                 onClick={() => replyTo(m)}>
                                 <Reply size={12} /> Reply
                               </button>
                             )}
                           </div>
-                          <pre className="whitespace-pre-wrap px-4 py-3 font-sans text-sm leading-relaxed text-primary">
+                          {m.status === "Failed" && m.last_error && (
+                            <div className="mx-4 mt-3 rounded-control border border-danger bg-danger-soft px-3 py-2 text-xs text-danger">
+                              Failed after {m.attempts} attempt{m.attempts === 1 ? "" : "s"}: {m.last_error}
+                            </div>
+                          )}
+                          <pre className="whitespace-pre-wrap break-words px-4 py-4 font-sans text-sm leading-relaxed text-primary">
                             {m.body_text}
                           </pre>
                         </>
                       )}
-                    </div>
+                    </article>
                   );
                 })}
               </div>
@@ -551,6 +596,76 @@ export function EmailCenterPage() {
       {toast}
     </div>
   );
+}
+
+/* ---------- presentation helpers (29 Sep 2026 redesign) ---------- */
+
+/** One colour per delivery status — Sent green, Queued amber, Failed red,
+ *  Skipped grey. The word is always printed; colour is a second channel. */
+const MAIL_STATUS: Record<string, { chip: string; dot: string; hint: string }> = {
+  Sent: {
+    chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200",
+    dot: "bg-emerald-500", hint: "Delivered to the mail server",
+  },
+  Queued: {
+    chip: "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200",
+    dot: "bg-amber-500", hint: "Waiting in the outbox — it goes out on the next send",
+  },
+  Failed: {
+    chip: "bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200",
+    dot: "bg-rose-500", hint: "The mail server refused it — open the email for the reason",
+  },
+  Skipped: {
+    chip: "bg-slate-100 text-slate-700 dark:bg-slate-500/20 dark:text-slate-200",
+    dot: "bg-slate-400", hint: "Not sent (no real address, or mail is switched off)",
+  },
+};
+
+function MailStatusChip({ status, label }: { status?: string | null; label?: string }) {
+  if (!status) return null;
+  const look = MAIL_STATUS[status] || {
+    chip: "bg-surface-2 text-secondary", dot: "bg-slate-400", hint: status,
+  };
+  return (
+    <span title={look.hint}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-bold ${look.chip}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${look.dot}`} aria-hidden />
+      {label || status}
+    </span>
+  );
+}
+
+const AVATAR_TONES = [
+  "from-purple-500 to-fuchsia-600",
+  "from-sky-500 to-indigo-600",
+  "from-emerald-500 to-teal-600",
+  "from-amber-500 to-orange-600",
+  "from-rose-500 to-pink-600",
+  "from-indigo-500 to-blue-600",
+];
+
+function Avatar({ name, size = "md" }: { name: string; size?: "md" | "lg" }) {
+  let h = 0;
+  for (const ch of name || "") h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const tone = AVATAR_TONES[h % AVATAR_TONES.length];
+  const dims = size === "lg" ? "h-10 w-10 text-sm" : "mt-0.5 h-9 w-9 text-xs";
+  return (
+    <span aria-hidden
+      className={`grid shrink-0 place-items-center rounded-full bg-gradient-to-br ${tone} font-bold text-white shadow-raised ${dims}`}>
+      {initialsOf(name)}
+    </span>
+  );
+}
+
+/** "just now", "12m", "3h", then the Outlook list clock. */
+function fmtRelative(v: string | null | undefined): string {
+  if (!v) return "—";
+  const diffMin = Math.floor((Date.now() - new Date(v).getTime()) / 60000);
+  if (Number.isNaN(diffMin)) return "—";
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 12 * 60) return `${Math.floor(diffMin / 60)}h ago`;
+  return fmtListTime(v);
 }
 
 /** New Email — free-form mail to one candidate, queued on the durable outbox

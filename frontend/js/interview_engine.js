@@ -76,6 +76,7 @@ export class InterviewEngine {
     }
     this.state.currentQuestionIndex = Number(data.index) || 0;
     this.state.isWarmupTurn = !!data.is_warmup;
+    this.state.warmupTimeLimitSec = data.is_warmup ? Math.max(0, Number(data.warmup_time_limit_sec) || 0) : 0;
     if (data.question_source) {
       this.state.questionSource = String(data.question_source);
     }

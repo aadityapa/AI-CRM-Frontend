@@ -9,6 +9,7 @@ import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { RateHistory } from "./ProjectEmployees";
+import { BILLING_UNITS, unitWord } from "../lib/billingUnits";
 import { DataTable, type Column } from "../components/DataTable";
 import {
   EmptyState, ErrorBox, Field, KpiCard, Modal, PolicySourceChip, Spinner, StatusBadge, Tabs,
@@ -16,6 +17,7 @@ import {
 } from "../components/ui";
 import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
 import { leaveTimingCaption } from "../components/PeriodTimingPicker";
+import { usePageTab } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -681,12 +683,17 @@ function RateHistorySection({ pe, reload, notify }: {
   const canEditRates = useCanAct("project-employees", "edit", useHasRole("Sales_Head", "Finance", "HR", "RMG"));
   const [editing, setEditing] = useState(false);
   const [drafts, setDrafts] = useState<RateDraftRow[]>([]);
+  /* The unit is part of Commercial Details (25 Sep 2026): once saved it had no
+     editor anywhere, so an hourly rate saved "per Month" could not be fixed. */
+  const [unitDraft, setUnitDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const stored = (pe.rates || []).filter((r) => r.effective_from);
+  const unitChanged = !!unitDraft && unitDraft !== (pe.billing_unit || "");
 
   const startEditing = () => {
+    setUnitDraft(pe.billing_unit || "");
     setDrafts([...stored]
       .sort((a, b) => String(a.effective_from).localeCompare(String(b.effective_from)))
       .map((r) => ({
@@ -754,6 +761,12 @@ function RateHistorySection({ pe, reload, notify }: {
     setBusy(true);
     const today = new Date().toISOString().slice(0, 10);
     try {
+      // Unit FIRST: the server relabels the whole history and re-freezes the
+      // approved, not-yet-invoiced sheets — its message says which moved.
+      if (unitChanged) {
+        const res = await crmPut(`/api/projects/employees/${pe.id}/billing-unit`, { billing_unit: unitDraft });
+        notify((res as any).message || "Billing unit updated");
+      }
       for (const d of drafts) {
         const orig = stored.find((r) => r.id === d.id);
         if (d.id == null) {
@@ -808,6 +821,20 @@ function RateHistorySection({ pe, reload, notify }: {
       <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
         Commercial Details — edit rates
       </div>
+      <div className="mb-3 flex flex-wrap items-end gap-2 border-b border-subtle pb-3">
+        <Field label="Rates are priced per">
+          <select className={inputCls} value={unitDraft} onChange={(e) => setUnitDraft(e.target.value)}>
+            {!unitDraft && <option value="">Select unit…</option>}
+            {BILLING_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+          </select>
+        </Field>
+        {unitChanged && (
+          <p className="pb-2 text-[11px] font-semibold text-warning">
+            Every rate below becomes per {unitWord(unitDraft).toLowerCase()}; approved timesheets that are not
+            invoiced yet are recalculated. Issued invoices are not changed.
+          </p>
+        )}
+      </div>
       <div className="space-y-2">
         {drafts.map((d, i) => (
           <div key={d.id ?? `new-${i}`} className="flex flex-wrap items-end gap-2">
@@ -819,7 +846,7 @@ function RateHistorySection({ pe, reload, notify }: {
                 aria-invalid={!!d.effective_from && dupDates.has(d.effective_from)}
                 onChange={(e) => setDraft(i, "effective_from", e.target.value)} />
             </Field>
-            <Field label={`Rate${pe.billing_unit ? ` (${pe.billing_unit})` : ""}`}>
+            <Field label={`Rate${unitDraft ? ` (per ${unitWord(unitDraft).toLowerCase()})` : ""}`}>
               <input type="number" min={0} step="0.01" className={inputCls} value={d.rate}
                 placeholder="0.00" onChange={(e) => setDraft(i, "rate", e.target.value)} />
             </Field>
@@ -859,7 +886,7 @@ export function ProjectEmployeeDetailPage() {
   const [toast, notify] = useToast();
   const [pe, setPe] = useState<PeDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("general");
+  const [tab, setTab] = usePageTab<string>("tab", "general");
   const [saving, setSaving] = useState(false);
   const [syncingLeave, setSyncingLeave] = useState(false);
   const [applying, setApplying] = useState(false);

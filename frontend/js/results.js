@@ -163,7 +163,7 @@ function qaExportText(record) {
   const questions = Array.isArray(record.questions) ? record.questions : [];
   const answers = Array.isArray(record.answers) ? record.answers : [];
   const lines = [
-    "KARNEX AI Interview - Q&A Export",
+    "Karnex Orbit — AI Interview Q&A Export",
     `Interview ID: ${record.id || state.lastInterviewId || ""}`,
     `Candidate: ${name}`,
     `Role: ${role}`,
@@ -215,13 +215,13 @@ export async function downloadInterviewQaPdf() {
       .join("<br>");
     const w = window.open("", "_blank", "width=980,height=760");
     if (!w) throw new Error("Popup blocked. Allow popups to export PDF.");
-    w.document.write(`<!doctype html><html><head><title>KARNEX Q&A PDF</title>
+    w.document.write(`<!doctype html><html><head><title>Karnex Orbit — Q&A PDF</title>
       <style>
       body{font-family:Segoe UI,Arial,sans-serif;padding:24px;color:#1d3448;line-height:1.5}
       h1{margin:0 0 12px;font-size:22px}
       .box{white-space:normal;border:1px solid #c5d6e6;border-radius:10px;padding:16px;background:#f8fbff}
       </style></head><body>
-      <h1>KARNEX Interview Q&A</h1><div class="box">${text}</div>
+      <h1>Karnex Orbit — Interview Q&A</h1><div class="box">${text}</div>
       </body></html>`);
     w.document.close();
     w.focus();

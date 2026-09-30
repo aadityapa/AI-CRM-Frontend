@@ -5,6 +5,8 @@
  * Leave Applications flow (project selection sets the applicable balance).
  * API: GET /api/me/project-leave */
 import React, { useEffect, useState } from "react";
+import { Palmtree } from "lucide-react";
+import { PageHeader } from "../components/PageHeader";
 import { crmGet } from "../api";
 import { CrmLink } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
@@ -79,10 +81,23 @@ export function MyLeavePage({ embedded = false }: { embedded?: boolean } = {}) {
   const projects = data.projects || [];
   return (
     <div className="min-w-0 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {!embedded && <h1 className="text-display text-lg font-bold text-primary">My Leave</h1>}
-        <span className="text-sm text-muted">Across {projects.length} project mapping{projects.length === 1 ? "" : "s"}</span>
-      </div>
+      {embedded ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm text-muted">Across {projects.length} project mapping{projects.length === 1 ? "" : "s"}</span>
+        </div>
+      ) : (
+        <PageHeader
+          icon={Palmtree}
+          accent="teal"
+          eyebrow="Self service"
+          title="My Leave"
+          subtitle={<>Across {projects.length} project mapping{projects.length === 1 ? "" : "s"} — each balance follows that client’s leave policy.</>}
+          stats={[
+            { label: "days balance", value: daysFmt(data.total_leave_balance) },
+            { label: "active projects", value: projects.filter((p) => p.is_active && !p.is_exit).length },
+          ]}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <KpiCard label="Total leave balance" value={daysFmt(data.total_leave_balance)} />

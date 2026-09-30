@@ -3,13 +3,13 @@
  * left step rail, one section per step, Previous + Next both bottom-right.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Building2, MapPin, GitBranch, FileText, CalendarDays, Plus, Trash2, Upload,
 } from "lucide-react";
 import { crmGet, crmPost, crmPut, crmUpload, crmDelete } from "../api";
 import { Field, Modal, btnSecondary, inputCls } from "./ui";
-import { motion as motionTok } from "../../design-system/tokens/tokens";
+import { InvoiceFormatPicker } from "./invoice/ProformaActions";
+import type { InvoiceFormat } from "./invoice/types";
 import { customerTypeOptionsForPo, normalizeCustomerType } from "../lib/customerType";
 import {
   CONTACT_ROLES, COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES, stateForCity,
@@ -24,15 +24,14 @@ import {
 import { SearchableSelect, optionsFromStrings } from "./SearchableSelect";
 import {
   WizardTopBar,
-  WizardStepper,
+  WizardFrame,
+  WizardStepCard,
   WizardStepHeader,
-  WizardStepProgress,
   WizardFooter,
   sectionHelper,
-  WizardAurora,
   type WizardStep,
   type StepStatus,
-} from "./WizardChrome";
+} from "./wizard";
 
 type ContactRoleMaster = { id: number; name: string; is_active?: boolean };
 
@@ -283,7 +282,6 @@ export function CustomerFormModal({
   onSaved: (c: CustomerFormCustomer) => void;
   notify: Notify;
 }) {
-  const reduce = useReducedMotion();
   const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [maxReached, setMaxReached] = useState(0);
@@ -322,6 +320,7 @@ export function CustomerFormModal({
     user_role: "",
     operation: "",
     bank_account_id: "",
+    invoice_format: { sac: true, leave: true, per_day: true },
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   /** Karnex receivable accounts (Settings ▸ Invoice) — Sales picks the ONE
@@ -506,7 +505,6 @@ export function CustomerFormModal({
     () => FORM_SECTIONS.map((s) => ({
       key: s.key,
       title: s.title,
-      sublabel: sectionHelper(s.key).split(".")[0],
       status: sectionStatus(s.key),
     })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -559,6 +557,7 @@ export function CustomerFormModal({
       user_role: "",
       operation: "",
       bank_account_id: "",
+      invoice_format: { sac: true, leave: true, per_day: true },
     });
     setErrors({});
     setStepIndex(0);
@@ -888,6 +887,7 @@ export function CustomerFormModal({
         comp_off_covers_lop: compOn ? false : !!pol.comp_off_covers_lop,
         normal_hours_per_day: numOrNull(String(pol.normal_hours_per_day)),
         bank_account_id: pol.bank_account_id ? Number(pol.bank_account_id) : null,
+        invoice_format: (pol.invoice_format as InvoiceFormat | undefined) || null,
         week_off_days: String(pol.week_off_days ?? "").trim() || null,
         user_role: String(pol.user_role || "").trim() || null,
         operation: String(pol.operation || "").trim() || null,
@@ -961,6 +961,12 @@ export function CustomerFormModal({
   const header = (
     <WizardTopBar
       title={initial ? `Edit Customer — ${initial.name}` : "New Customer"}
+      eyebrow={initial ? "Edit customer" : "New customer"}
+      subtitle={initial
+        ? "Update the company, its branches, documents and billing rules"
+        : "Company, address, branches, documents and billing rules — one step at a time"}
+      icon={Building2}
+      steps={wizardSteps}
       stepIndex={clampedStep}
       totalSteps={totalSteps}
       stepPct={stepPct}
@@ -983,6 +989,8 @@ export function CustomerFormModal({
       onSubmit={() => void submit()}
       submitLabel={initial ? "Save changes" : "Create Customer"}
       submitBusyLabel="Saving…"
+      nextTitle={FORM_SECTIONS[clampedStep + 1]?.title}
+      prevTitle={FORM_SECTIONS[clampedStep - 1]?.title}
     />
   );
 
@@ -1496,6 +1504,21 @@ export function CustomerFormModal({
               })()}
             </div>
 
+            <div className="space-y-3 border-t border-subtle pt-6">
+              <div>
+                <p className="text-sm font-bold text-primary">Invoice format (columns printed)</p>
+                <p className="mt-0.5 text-xs text-muted">
+                  Some customers do not want every column of the service table. Untick what this customer's
+                  invoices should not print. The GM confirms this on every proforma, and Finance can still
+                  correct it before the original invoice is generated.
+                </p>
+              </div>
+              <div className="md:w-1/2">
+                <InvoiceFormatPicker value={(pol.invoice_format as InvoiceFormat | undefined) || {}}
+                  onChange={(next) => setPolicy("invoice_format", next)} />
+              </div>
+            </div>
+
             <div className="space-y-4 border-t border-subtle pt-6">
               <div>
                 <p className="text-sm font-bold text-primary">Comp Off</p>
@@ -1669,79 +1692,42 @@ export function CustomerFormModal({
 
   return (
     <Modal
-      title={header}
+      title={initial ? `Edit Customer — ${initial.name}` : "New Customer"}
+      hero={header}
       onClose={onClose}
       fullScreen
       footer={footer}
       bodyClassName="!overflow-hidden !p-0 sm:!px-0 sm:!py-0"
       scopeClassName="crm-wizard wiz-noise"
       panelClassName="wiz-moonlit-panel"
-      headerClassName="wiz-moonlit-header"
       footerClassName="wiz-moonlit-footer"
     >
-      <div className="wiz-moonlit-shell relative flex h-full min-h-0 flex-col">
-        <WizardAurora />
-        <div className="relative z-10 flex h-full min-h-0 flex-col">
-        <div className="shrink-0 border-b border-subtle bg-surface-2/40 px-4 py-2.5 md:hidden">
-          <WizardStepper
-            steps={wizardSteps}
-            currentIndex={clampedStep}
-            maxReached={maxReached}
-            onSelect={goToStep}
-            orientation="horizontal"
-            ariaLabel="Customer wizard steps"
-          />
-        </div>
-
-        <div className="flex min-h-0 flex-1">
-          <aside className="hidden w-[260px] shrink-0 overflow-y-auto border-r border-subtle bg-surface-2/30 px-3 py-5 md:block lg:px-4">
-            <WizardStepper
-              steps={wizardSteps}
-              currentIndex={clampedStep}
-              maxReached={maxReached}
-              onSelect={goToStep}
-              orientation="vertical"
-              ariaLabel="Customer wizard steps"
+      <WizardFrame
+        steps={wizardSteps}
+        currentIndex={clampedStep}
+        maxReached={maxReached}
+        onSelectStep={goToStep}
+        stepProgressPct={stepCompletePct}
+        ariaLabel="Customer wizard steps"
+      >
+        {currentSection && (
+          <WizardStepCard
+            stepKey={currentSection.key}
+            stepDir={stepDir}
+            // Table-heavy steps (branches / billing) get extra room.
+            width={currentSection.key === "branches" || currentSection.key === "billingPolicy" ? "wide" : "narrow"}
+          >
+            <WizardStepHeader
+              title={currentSection.title}
+              description={sectionHelper(currentSection.key, currentSection.title, "customer")}
+              headingRef={stepHeadingRef}
+              icon={currentSection.icon}
+              step={{ index: clampedStep, total: totalSteps }}
             />
-            <WizardStepProgress pct={stepCompletePct} />
-          </aside>
-
-          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-            <AnimatePresence mode="wait" initial={false}>
-              {currentSection && (
-                <motion.section
-                  key={currentSection.key}
-                  id={`cust-sec-${currentSection.key}`}
-                  initial={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * 28 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * -28 }}
-                  transition={
-                    reduce
-                      ? { duration: 0 }
-                      : { duration: motionTok.panel, ease: motionTok.easeOut }
-                  }
-                  className={`wiz-moonlit-form-card mx-auto rounded-card border border-subtle bg-surface-1 px-5 py-6 shadow-raised sm:px-8 sm:py-8 ${
-                    // Match the New Opportunity form's tidy narrow card; give the
-                    // table-heavy steps (branches / billing) extra room.
-                    currentSection.key === "branches" || currentSection.key === "billingPolicy"
-                      ? "max-w-5xl"
-                      : "max-w-3xl"
-                  }`}
-                >
-                  <WizardStepHeader
-                    title={currentSection.title}
-                    description={sectionHelper(currentSection.key, currentSection.title)}
-                    headingRef={stepHeadingRef}
-                    icon={currentSection.icon}
-                  />
-                  {renderStepBody()}
-                </motion.section>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-        </div>
-      </div>
+            {renderStepBody()}
+          </WizardStepCard>
+        )}
+      </WizardFrame>
     </Modal>
   );
 }

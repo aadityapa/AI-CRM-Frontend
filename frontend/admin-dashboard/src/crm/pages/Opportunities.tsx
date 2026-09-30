@@ -2,16 +2,18 @@
  * linked candidate profiles, server-validated stage transitions and activity log.
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * one primary action per screen, right-aligned numerics in tables. */
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, ChevronDown, Mail, Pencil, Plus, UserPlus } from "lucide-react";
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Mail, Pencil, Plus, UserPlus } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
-import { useCanAct, useCrmAccess } from "../useAccess";
+import { useCanAct, useCanApprove, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
+import { fmtDateShort } from "../../lib/datetime";
 import { DataTable } from "../components/DataTable";
+import { PositionsPanel } from "../components/PositionsPanel";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
@@ -39,8 +41,13 @@ import {
   btnPrimary,
   btnSecondary,
   inputCls,
-  useToast, selfWithdrewLabel } from "../components/ui";
+  statusLabel,
+  useToast } from "../components/ui";
+import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
+import { CANDIDATE_STAGE_BUCKETS, bucketPhase } from "../lib/candidateStageBuckets";
 import { TeachingEmpty } from "../components/TeachingEmpty";
+import { usePageTab, useSessionState } from "../lib/pageState";
+import { useRefetchOnFocus } from "../lib/useRefetchOnFocus";
 
 /* ------------------------------------------------------------------ types */
 
@@ -77,6 +84,14 @@ type Opportunity = {
   ctc_slab?: Record<string, unknown>[] | null;
   contact_email?: string | null;
   contact_phone?: string | null;
+  /** Headcount from the linked requirement (21 Sep 2026, list endpoint).
+   * Absent while the opportunity has no requirement yet — the column shows "—". */
+  positions_total?: number | null;
+  positions_joined?: number | null;
+  positions_open?: number | null;
+  positions_change_pending?: boolean | null;
+  requirement_id?: number | null;
+  requirement_status?: string | null;
   customer_type?: string | null;
   hiring_manager_email?: string | null;
   hiring_manager_contact?: string | null;
@@ -171,6 +186,35 @@ const PENDING_APPROVAL_STATUS = "Pending_Sales_Head_Approval";
 const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
 const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : "—");
 
+/**
+ * "open / total" headcount for one opportunity (21 Sep 2026).
+ *
+ * Open is what still needs sourcing (total − joined), so it is the number in
+ * front; zero open reads as filled, and a pending RMG decision is flagged
+ * because the target is about to move. An opportunity with no requirement yet
+ * has no numbers at all — "—" rather than a made-up 0.
+ */
+function PositionsCell({ row }: { row: Opportunity }) {
+  const total = row.positions_total;
+  if (total === null || total === undefined) return <span className="text-muted">—</span>;
+  const open = Number(row.positions_open ?? 0);
+  const filled = open === 0;
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5 tabular-nums">
+      {row.positions_change_pending && (
+        <span
+          className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+          title="A position change is waiting for RMG approval"
+        >
+          Change
+        </span>
+      )}
+      <span className={filled ? "font-semibold text-success" : "font-semibold text-primary"}>{open}</span>
+      <span className="text-muted">/ {total}</span>
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------------ list page */
 
 export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SOW" } = {}) {
@@ -179,15 +223,16 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const canWrite = useCanAct("opportunities", "edit", canWriteRole);
   // Roles allowed to create a Candidate Profile.
   const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
-  const [tab, setTab] = useState("Active");
+  const [tab, setTab] = usePageTab<string>("status", "Active", LIST_TABS.map((t) => t.key));
   // "" = All stages (the tab's whole stage set) — see TAB_STAGES note above.
   const [stage, setStage] = useState<string>("");
   const [rows, setRows] = useState<Opportunity[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  // Page + search survive a Back (crm/lib/pageState.ts).
+  const [page, setPage] = useSessionState(`opp.${typeFilter || "all"}.page`, 1);
+  const [search, setSearch] = useSessionState(`opp.${typeFilter || "all"}.search`, "");
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState<{ by: string; dir: "asc" | "desc" }>({ by: "created_at", dir: "desc" });
   const [showCreate, setShowCreate] = useState(false);
@@ -264,6 +309,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   useEffect(() => {
     load();
   }, [load]);
+  useRefetchOnFocus(load);
 
   const typeOpts = (typeFilter === "SOW"
     ? ["Work_Package", "Fixed_Price", "Retainer"]
@@ -290,6 +336,11 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
       ...(typeOpts.length > 1 ? { filter: { type: "select" as const, options: typeOpts } } : {}) },
     // Stage & Approval columns removed (14 Aug 2026): the tab strip + the two
     // dropdown filters carry that state, so the columns were pure repetition.
+    // Positions (21 Sep 2026, user request): open / total, so a Sales lead can
+    // see what is still to source without opening the requirement. Server-
+    // computed per page; not sortable, because sorting one page of a derived
+    // value would order only that page and read like a lie.
+    { key: "positions_open", label: "Positions", align: "right", render: (r) => <PositionsCell row={r} /> },
     { key: "rfi_value", label: "RFI Value", sortable: true, align: "right", render: (r) => fmtMoney(r.rfi_value),
       filter: { type: "number-range", minLabel: "Min ₹", maxLabel: "Max ₹" } },
     { key: "created_at", label: "Created", sortable: true, align: "right", render: (r) => fmtDate(r.created_at),
@@ -333,7 +384,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           sort={sort}
           onSort={(by) => setSort((s) => ({ by, dir: s.by === by && s.dir === "desc" ? "asc" : "desc" }))}
           onPage={setPage}
-          onRowClick={(r) => crmNavigate(`opportunities/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`opportunities/${r.id}`)} rowHref={(r: any) => `opportunities/${r.id}`}
           columnFilters={colFilters}
           onColumnFilter={onColumnFilter}
           filters={
@@ -454,14 +505,261 @@ type Suggestion = {
   score: number;
   matched_skills: string[];
   missing_mandatory_skills: string[];
+  missing_optional_skills?: string[];
+  jd_terms_matched?: string[];
+  jd_terms_missing?: string[];
+  skills_from_ats?: boolean;
+  /** "Which area is good & which lacks" — server-derived, one line each. */
+  strengths?: FitNote[];
+  gaps?: FitNote[];
+  penalty?: number;
   reasons: string[];
   engaged: boolean;
   applications_count: number;
+  /** EVERY previous application, newest first (28 Sep 2026). */
+  history?: HistoryRow[];
   last_application?: { opportunity_title: string; pipeline_status: string } | null;
 };
 
+type FitNote = { area: string; detail: string };
+
+type HistoryRow = {
+  profile_id: number;
+  opportunity_id: number;
+  opp_id: string;
+  opportunity_title: string;
+  customer_id: number | null;
+  customer_name: string | null;
+  this_customer: boolean;
+  pipeline_status: string;
+  stage_label: string;
+  outcome: "joined" | "rejected" | "withdrawn" | "engaged" | "in_progress";
+  withdrawn_from: string | null;
+  rmg_screening_status: string | null;
+  applied_on: string | null;
+  updated_at: string | null;
+  ai_result: string | null;
+  ai_score: number | null;
+  ats_score: number | null;
+};
+
+/** What the scan scored against — `meta.basis` from the endpoint. */
+type SuggestionBasis = {
+  requirement_id: number | null;
+  req_number: string | null;
+  requirement_title: string | null;
+  jd_source: "rmg_jd" | "requirement_description" | null;
+  jd_keywords: string[];
+  mandatory_skills: string[];
+  optional_skills: string[];
+  experience_band: { min: number; max: number } | null;
+};
+
+const HISTORY_TONE: Record<HistoryRow["outcome"], string> = {
+  joined: "bg-success-soft text-success",
+  engaged: "bg-success-soft text-success",
+  rejected: "bg-danger-soft text-danger",
+  withdrawn: "bg-surface-2 text-muted",
+  in_progress: "bg-info-soft text-info",
+};
+
+const HISTORY_LABEL: Record<HistoryRow["outcome"], string> = {
+  joined: "Joined", engaged: "Onboarding", rejected: "Rejected",
+  withdrawn: "Withdrew", in_progress: "In pipeline",
+};
+
+/** One line per area: what the position asks for, and whether this candidate has it. */
+function FitColumns({ r }: { r: Suggestion }) {
+  const strengths = r.strengths || [];
+  const gaps = r.gaps || [];
+  if (!strengths.length && !gaps.length) return null;
+  return (
+    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="rounded-control border border-subtle bg-surface-2 px-2.5 py-2">
+        <div className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.08em] text-success">
+          <CheckCircle2 size={12} /> Good fit
+        </div>
+        {strengths.length === 0 ? (
+          <p className="text-xs text-muted">Nothing on file matches this position yet.</p>
+        ) : (
+          <ul className="space-y-0.5 text-xs text-secondary">
+            {strengths.map((n, i) => (
+              <li key={i}><span className="font-semibold text-primary">{n.area}:</span> {n.detail}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="rounded-control border border-subtle bg-surface-2 px-2.5 py-2">
+        <div className="mb-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.08em] text-warning">
+          <AlertTriangle size={12} /> Lacks
+        </div>
+        {gaps.length === 0 ? (
+          <p className="text-xs text-muted">Nothing missing against this position.</p>
+        ) : (
+          <ul className="space-y-0.5 text-xs text-secondary">
+            {gaps.map((n, i) => (
+              <li key={i} className={n.detail.startsWith("Rejected at this customer") ? "text-danger" : ""}>
+                <span className="font-semibold text-primary">{n.area}:</span> {n.detail}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Every previous application this candidate has with us — collapsed by default. */
+function HistoryList({ rows }: { rows: HistoryRow[] }) {
+  const [open, setOpen] = useState(false);
+  if (!rows.length) return null;
+  const rejectedHere = rows.filter((h) => h.this_customer && h.outcome === "rejected").length;
+  return (
+    <div className="mt-2">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
+        <ChevronRight size={13} className={`transition-transform duration-micro ${open ? "rotate-90" : ""}`} aria-hidden />
+        Previous applications ({rows.length})
+        {rejectedHere > 0 && (
+          <span className="ml-1 rounded-full bg-danger-soft px-1.5 py-0.5 text-[10px] font-bold text-danger">
+            {rejectedHere} rejected by this customer
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1.5 overflow-x-auto rounded-control border border-subtle">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-subtle bg-surface-2 text-left text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
+                <th className="px-2 py-1.5">Opportunity</th>
+                <th className="px-2 py-1.5">Customer</th>
+                <th className="px-2 py-1.5">Reached</th>
+                <th className="px-2 py-1.5">Outcome</th>
+                <th className="px-2 py-1.5">AI L1</th>
+                <th className="px-2 py-1.5">ATS</th>
+                <th className="px-2 py-1.5">Applied</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((h) => (
+                <tr key={h.profile_id} className="border-b border-subtle last:border-0">
+                  <td className="px-2 py-1.5">
+                    <CrmLink to={`profiles/${h.profile_id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+                      {h.opportunity_title}
+                    </CrmLink>
+                    <span className="ml-1 text-muted">{h.opp_id}</span>
+                  </td>
+                  <td className="px-2 py-1.5 text-secondary">
+                    {h.customer_name || "—"}
+                    {h.this_customer && (
+                      <span className="ml-1 rounded-full bg-info-soft px-1.5 py-0.5 text-[10px] font-semibold text-info">this customer</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-secondary">
+                    {h.outcome === "withdrawn" && h.withdrawn_from ? statusLabel(h.withdrawn_from) : h.stage_label}
+                    {h.rmg_screening_status === "Rejected" && <span className="ml-1 text-danger">(RMG rejected)</span>}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${HISTORY_TONE[h.outcome]}`}>
+                      {HISTORY_LABEL[h.outcome]}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-secondary">
+                    {h.ai_result ? `${h.ai_result}${h.ai_score != null ? ` · ${Math.round(h.ai_score)}%` : ""}` : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-secondary">{h.ats_score != null ? `${Math.round(h.ats_score)}%` : "—"}</td>
+                  <td className="px-2 py-1.5 text-secondary">{fmtDateShort(h.applied_on || h.updated_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The header card: what this scan scored against, in the recruiter's words. */
+function BasisCard({ basis }: { basis: SuggestionBasis | null }) {
+  if (!basis) return null;
+  const hasJd = !!basis.jd_source;
+  const hasSkills = basis.mandatory_skills.length + basis.optional_skills.length > 0;
+  return (
+    <div className={`rounded-card border px-3 py-2.5 text-xs ${hasJd ? "border-subtle bg-surface-2" : "border-warning bg-warning-soft"}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-bold text-primary">Scored against</span>
+        {basis.req_number ? (
+          <CrmLink to={`requirements/${basis.requirement_id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">
+            {basis.req_number} · {basis.requirement_title}
+          </CrmLink>
+        ) : (
+          <span className="text-secondary">this opportunity (no position raised yet)</span>
+        )}
+        {hasJd ? (
+          <span className="text-secondary">
+            {basis.jd_source === "rmg_jd" ? "RMG JD" : "position description"} · {basis.jd_keywords.length} key terms
+          </span>
+        ) : (
+          <span className="font-semibold text-warning">No RMG JD yet — skills, band and history only. Ask RMG to add the JD &amp; skills for a sharper match.</span>
+        )}
+        {basis.experience_band && (
+          <span className="text-secondary">Band {basis.experience_band.min}–{basis.experience_band.max} yrs</span>
+        )}
+      </div>
+      {hasSkills && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {basis.mandatory_skills.map((sk) => (
+            <span key={`m-${sk}`} className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900 dark:text-brand-200" title="Mandatory">
+              {sk} *
+            </span>
+          ))}
+          {basis.optional_skills.map((sk) => (
+            <span key={`o-${sk}`} className="rounded-full bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-secondary" title="Optional">
+              {sk}
+            </span>
+          ))}
+          <span className="text-[10px] text-muted">* mandatory</span>
+        </div>
+      )}
+      {hasJd && basis.jd_keywords.length > 0 && (
+        <div className="mt-1 text-[11px] text-muted">
+          JD terms: {basis.jd_keywords.slice(0, 14).join(", ")}{basis.jd_keywords.length > 14 ? ` +${basis.jd_keywords.length - 14} more` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** DB scan for this position: scored skills/experience/history matches with
  * the WHY spelled out per candidate, and one-click Apply. */
+/* Loaded on demand — Requirements.tsx imports this module too, so a static
+   import would tie the two route chunks together. */
+const RequirementResumesTab = lazy(() => import("./Requirements").then((m) => ({ default: m.ResumesTab })));
+
+/** RMG / GM's "Applied Candidates" on the opportunity page (29 Sep 2026): the
+ *  requirement's own list — stage, status, rounds and the screener's buttons. */
+function ScreenerAppliedTab({ requirementId, toast, onChanged }: {
+  requirementId: number;
+  toast: (msg: string, kind?: "ok" | "err") => void;
+  onChanged: () => void;
+}) {
+  const [req, setReq] = useState<any | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => {
+    crmGet<any>(`/api/requirements/${requirementId}`)
+      .then((r) => { setReq(r.data); setError(""); })
+      .catch((e: any) => setError(e?.message || "Could not load the applied candidates"));
+  }, [requirementId]);
+  useEffect(() => { load(); }, [load]);
+  if (error) return <ErrorBox error={error} onRetry={load} />;
+  if (!req) return <Spinner label="Loading applied candidates…" />;
+  return (
+    <Suspense fallback={<Spinner label="Loading applied candidates…" />}>
+      <RequirementResumesTab req={req} toast={toast} onRequirementChanged={() => { load(); onChanged(); }} />
+    </Suspense>
+  );
+}
+
 export function SuggestedCandidatesTab({
   oppId, canApply, onApplied, showToast,
 }: {
@@ -471,6 +769,7 @@ export function SuggestedCandidatesTab({
   showToast: (msg: string) => void;
 }) {
   const [rows, setRows] = useState<Suggestion[] | null>(null);
+  const [basis, setBasis] = useState<SuggestionBasis | null>(null);
   const [error, setError] = useState("");
   const [applying, setApplying] = useState<Suggestion | null>(null);
   const [busy, setBusy] = useState(false);
@@ -645,7 +944,10 @@ export function SuggestedCandidatesTab({
     setError("");
     setSelected(new Set());
     crmGet<Suggestion[]>(`/api/opportunities/${oppId}/suggested-candidates`)
-      .then((r) => setRows(r.data || []))
+      .then((r) => {
+        setRows(r.data || []);
+        setBasis(((r.meta as any)?.basis as SuggestionBasis | undefined) || null);
+      })
       .catch((e: any) => setError(e?.message || "Failed to scan for candidates"));
   }, [oppId]);
   useEffect(() => { load(); }, [load]);
@@ -709,7 +1011,7 @@ export function SuggestedCandidatesTab({
     if (contactableOnly && !(r.phone || realEmail(r.email))) return false;
     if (q.trim()) {
       const t = q.trim().toLowerCase();
-      const hay = [r.name, r.technical_domain, r.city, ...r.matched_skills]
+      const hay = [r.name, r.technical_domain, r.city, ...r.matched_skills, ...(r.jd_terms_matched || [])]
         .filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(t)) return false;
     }
@@ -727,10 +1029,12 @@ export function SuggestedCandidatesTab({
 
   return (
     <div className="space-y-3">
+      <BasisCard basis={basis} />
       <p className="text-xs text-muted">
-        Scored against this opportunity&rsquo;s skills, experience band and each
-        candidate&rsquo;s pipeline history — candidates already applied here are excluded.
-        Contact them directly or apply them into this pipeline.
+        Each candidate is matched on what is already on file — recorded skills, job history,
+        education and what the ATS found in their earlier resumes — plus the experience band and
+        their pipeline history with us. Candidates already applied here are excluded; a
+        rejection by this customer in the last 12 months costs points and is named.
       </p>
 
       {/* -------- TA filter bar -------- */}
@@ -852,7 +1156,7 @@ export function SuggestedCandidatesTab({
         <div key={r.candidate_id}
           className="rounded-card border border-subtle bg-surface-1 p-4 shadow-raised">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 {canApply && (
                   <input
@@ -890,32 +1194,43 @@ export function SuggestedCandidatesTab({
                 <span>{displayEmail(r.email)}</span>
                 {r.phone && <span>{r.phone}</span>}
               </div>
-              {r.matched_skills.length > 0 && (
+              {(r.matched_skills.length > 0 || r.missing_mandatory_skills.length > 0
+                || (r.jd_terms_matched || []).length > 0) && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {r.matched_skills.map((s) => (
-                    <span key={s} className="rounded-full bg-brand-600/10 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:text-brand-300">
+                    <span key={s} className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-900 dark:text-brand-200">
                       {s}
                     </span>
                   ))}
                   {r.missing_mandatory_skills.map((s) => (
-                    <span key={s} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+                    <span key={s} className="rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger"
                       title="Mandatory skill this candidate is missing">
                       missing: {s}
                     </span>
                   ))}
+                  {(r.jd_terms_matched || []).map((t) => (
+                    <span key={`jd-${t}`} className="rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success"
+                      title="Term from the RMG JD found on this candidate's file">
+                      JD: {t}
+                    </span>
+                  ))}
+                  {r.skills_from_ats && (
+                    <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning"
+                      title="No skills recorded on the candidate — the latest resume's ATS score stands in">
+                      scored from ATS
+                    </span>
+                  )}
                 </div>
               )}
-              <ul className="mt-2 space-y-0.5 text-xs text-muted">
-                {r.reasons.map((reason, i) => <li key={i}>· {reason}</li>)}
-                {r.last_application && (
-                  <li>
-                    · Last application: {r.last_application.opportunity_title}{" "}
-                    (<span className="font-semibold">
-                      {r.last_application.pipeline_status.replace(/_/g, " ")}
-                    </span>)
-                  </li>
-                )}
-              </ul>
+              <FitColumns r={r} />
+              {r.history ? (
+                <HistoryList rows={r.history} />
+              ) : r.last_application ? (
+                <p className="mt-2 text-xs text-muted">
+                  · Last application: {r.last_application.opportunity_title}{" "}
+                  (<span className="font-semibold">{statusLabel(r.last_application.pipeline_status)}</span>)
+                </p>
+              ) : null}
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               {canApply && (
@@ -1229,23 +1544,6 @@ export function SuggestedCandidatesTab({
   );
 }
 
-/* ------------------------------------------- applicant stage filter chips */
-
-/** Requested stage buckets (14 Aug 2026) — each maps to the pipeline
- * statuses it covers; the API takes a comma-separated pipeline_status list,
- * so filtering stays server-paged. */
-const APPLICANT_STAGE_FILTERS: { key: string; label: string; statuses: string[] }[] = [
-  { key: "all", label: "All", statuses: [] },
-  { key: "sourcing", label: "Sourcing", statuses: ["Sourcing"] },
-  { key: "tech", label: "Technical Interviewing", statuses: ["Technical_Screening"] },
-  { key: "rmg", label: "RMG Screening", statuses: ["RMG_Review"] },
-  { key: "cust_screen", label: "Customer Screening", statuses: ["Customer_Screening"] },
-  { key: "sales_screen", label: "Sales Screening", statuses: ["Sales_Screening"] },
-  { key: "cust_interview", label: "Customer Interviewing",
-    statuses: ["Customer_Interview", "L1_Feedback", "L2_Feedback"] },
-  { key: "onboarding", label: "Onboarding", statuses: ["HR_Screening", "HR_Interviewing", "Preboarding", "Joined"] },
-];
-
 /* ------------------------------------------------------- collapsible card */
 
 /** Detail blocks collapse by default (14 Aug 2026): the page had grown into
@@ -1304,6 +1602,9 @@ function OpportunityAllDetails({ opp }: { opp: Opportunity }) {
     hiring_manager_id: opp.hiring_manager_name,
   };
   const MONEY_HINT = /(ctc|value|budget|revenue|rate|amount|cost|salary)/i;
+  // `management_cost_pct` / `hike_pct` are percentages — "cost" must not turn
+  // them into rupees (21 Sep 2026). A `_pct` suffix always wins.
+  const PCT_HINT = /(_pct$|_percent$|^pct_)/i;
 
   const renderValue = (field: FieldDef): React.ReactNode => {
     if (field.key in nameByKey) return nameByKey[field.key] ?? "—";
@@ -1314,6 +1615,7 @@ function OpportunityAllDetails({ opp }: { opp: Opportunity }) {
     if (field.type === "date" || /_date$/.test(field.key)) return fmtDate(String(raw));
     const opt = field.options?.find((o) => String(o.value) === String(raw));
     if (opt) return opt.label;
+    if (typeof raw === "number" && (field.type === "percent" || PCT_HINT.test(field.key))) return `${raw}%`;
     if (typeof raw === "number" && MONEY_HINT.test(field.key)) return `₹${fmtMoney(raw)}`;
     if (typeof raw === "object") return "—";
     return String(raw).replace(/_/g, " ");
@@ -1357,7 +1659,7 @@ function OpportunityAllDetails({ opp }: { opp: Opportunity }) {
               <thead>
                 <tr className="text-left text-xs font-semibold uppercase tracking-wide text-muted">
                   {Object.keys(slab[0]).filter((k) => k !== "id" && k !== "position").map((k) => (
-                    <th key={k} className="px-2 py-1.5">{k.replace(/_/g, " ")}</th>
+                    <th key={k} className="px-2 py-1.5">{k.replace(/_pct$/, " %").replace(/_/g, " ")}</th>
                   ))}
                 </tr>
               </thead>
@@ -1367,6 +1669,7 @@ function OpportunityAllDetails({ opp }: { opp: Opportunity }) {
                     {Object.entries(row).filter(([k]) => k !== "id" && k !== "position").map(([k, v]) => (
                       <td key={k} className="px-2 py-1.5 text-primary">
                         {v === null || v === undefined || v === "" ? "—"
+                          : typeof v === "number" && PCT_HINT.test(k) ? `${v}%`
                           : typeof v === "number" && MONEY_HINT.test(k) ? `₹${fmtMoney(v)}`
                           : String(v)}
                       </td>
@@ -1391,7 +1694,9 @@ export function OpportunityDetailPage() {
   /* Sub-tab access (25 Aug 2026): templates hide detail tabs. */
   const oppAcc = useCrmAccess("opportunities");
   const canArchive = useHasRole("Sales_Head");
-  const canApprove = useHasRole("Sales_Head"); // Sales Head (or Admin) signs off
+  // An approval button (25 Sep 2026): `me.approvals` — the template's / role's
+  // Approvals, else the Sales Head role — the same answer as the server gate.
+  const canApprove = useCanApprove("opportunity.approve");
   const canApplyHere = useHasRole("TA", "Sales", "RMG");
   const [applyHere, setApplyHere] = useState(false);
   // Skill Evaluation Details are owned by RMG (and Admin/CEO) — Sales & Sales Head
@@ -1426,7 +1731,13 @@ export function OpportunityDetailPage() {
   const [rejectReason, setRejectReason] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [toast, showToast] = useToast();
-  const [tab, setTab] = useState("details");
+  const [tab, setTab] = usePageTab<string>("tab", "details");
+  /* RMG / GM screen and interview; they never source (28 Sep 2026, user
+     request) — Applicants and Suggested Candidates are TA's / Sales' tabs.
+     Their candidates are on the Screening Desk. */
+  const screensCandidates = useCanApprove("profile.rmg_screening");
+  const isTaRole = useHasRole("TA");   // both hooks always run — never `a && useX()`
+  const screenerOnly = screensCandidates && !canWriteRole && !isTaRole;
 
   const loadLog = useCallback(() => {
     crmGet<ActivityEntry[]>(`/api/opportunities/${id}/activity-log`)
@@ -1451,16 +1762,13 @@ export function OpportunityDetailPage() {
   // fetch "the first 100 and hope" — page + search against the API instead.
   const loadProfiles = useCallback(async () => {
     try {
-      const bucket = APPLICANT_STAGE_FILTERS.find((b) => b.key === profileStage);
       const res = await crmGet<ProfileRow[]>(
         `/api/candidate-profiles${qs({
           opportunity_id: id,
           page: profilePage,
           limit: 20,
           search: profileSearch || undefined,
-          pipeline_status: bucket && bucket.statuses.length
-            ? bucket.statuses.join(",")
-            : undefined,
+          phase: bucketPhase(profileStage),
         })}`,
       );
       setProfiles(res.data || []);
@@ -1501,6 +1809,8 @@ export function OpportunityDetailPage() {
       .catch(() => {});
     loadLog();
   }, [id, loadLog]);
+  // Another role may have moved the deal while this tab sat open.
+  useRefetchOnFocus(reloadOpp);
 
   const doApprove = async () => {
     setApprovalBusy(true);
@@ -1615,8 +1925,11 @@ export function OpportunityDetailPage() {
     { key: "technical_domain", label: "Technical domain", render: (r) => r.technical_domain || "—" },
     {
       key: "pipeline_status",
-      label: "Pipeline status",
-      render: (r) => <StatusBadge status={r.pipeline_status} label={selfWithdrewLabel(r.pipeline_status, (r as any).withdrawn_from_status)} />,
+      label: "Status",
+      render: (r) => (
+        <CandidateStatusBadge status={(r as any).candidate_status} stage={r.pipeline_status}
+          withdrawnFrom={(r as any).withdrawn_from_status} />
+      ),
     },
     // The applicants table had no AI interview column at all, so an opportunity
     // gave no sign of how its candidates had done in their L1.
@@ -1751,6 +2064,23 @@ export function OpportunityDetailPage() {
         )}
       </div>
 
+      {/* Headcount + its RMG approval (21 Sep 2026). It belongs to the
+          requirement this opportunity spawned, but it is mounted HERE because
+          Sales has no Requirements sub-tab — this page is where they work.
+          Absent until the opportunity is approved and a requirement exists. */}
+      {opp.requirement_id ? (
+        <PositionsPanel
+          target={{
+            requirementId: opp.requirement_id,
+            label: opp.opp_id,
+            title: opp.title,
+            status: opp.requirement_status,
+          }}
+          toast={showToast}
+          onChanged={reloadOpp}
+        />
+      ) : null}
+
       {/* Requirements-style tabs (Aug 2026): one surface per question — what
           was sold (Opportunity Details), who applied (Applicants), what to
           test for (Skill Evaluation), and what happened (Activity Log). */}
@@ -1759,8 +2089,16 @@ export function OpportunityDetailPage() {
           /* Sub-tab access (25 Aug 2026): templates hide these via the
              `tab:<key>` field entries on the opportunities tab. */
           { key: "details", label: "Opportunity Details", gate: "tab:details" },
-          { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
-          { key: "suggested", label: "Suggested Candidates", gate: "tab:applicants" },
+          /* RMG / GM see who applied, with stage · status · rounds and their
+             own buttons — the requirement's Applied Candidates list, in place
+             (29 Sep 2026). Sourcing tabs stay TA's / Sales'. */
+          ...(screenerOnly && opp.requirement_id
+            ? [{ key: "applied", label: "Applied Candidates", count: profileMeta?.total, gate: "tab:details" }]
+            : []),
+          ...(screenerOnly ? [] : [
+            { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
+            { key: "suggested", label: "Suggested Candidates", gate: "tab:applicants" },
+          ]),
           { key: "skills", label: "Skill Evaluation Details", count: skills.length, gate: "tab:skill-eval" },
           { key: "activity", label: "Activity Log", gate: "tab:activity" },
           { key: "projects", label: "Projects", gate: "tab:details" },
@@ -1828,6 +2166,10 @@ export function OpportunityDetailPage() {
         </div>
       )}
 
+      {tab === "applied" && screenerOnly && opp.requirement_id ? (
+        <ScreenerAppliedTab requirementId={opp.requirement_id} toast={showToast} onChanged={loadProfiles} />
+      ) : null}
+
       {tab === "suggested" && (
         <SuggestedCandidatesTab
           oppId={Number(id)}
@@ -1887,7 +2229,7 @@ export function OpportunityDetailPage() {
         </div>
         <p className="mb-3 text-sm text-muted">Candidates applied to this opportunity.</p>
         <div className="mb-4 flex flex-wrap gap-1.5">
-          {APPLICANT_STAGE_FILTERS.map((b) => (
+          {CANDIDATE_STAGE_BUCKETS.map((b) => (
             <button
               key={b.key}
               type="button"
@@ -1905,7 +2247,7 @@ export function OpportunityDetailPage() {
         {profiles.length === 0 && !profileSearch && profileStage === "all" ? (
           <EmptyState message="No candidates have applied to this opportunity yet." />
         ) : profiles.length === 0 && profileStage !== "all" && !profileSearch ? (
-          <EmptyState message={`No applicants in ${APPLICANT_STAGE_FILTERS.find((b) => b.key === profileStage)?.label || "this stage"} right now.`} />
+          <EmptyState message={`No applicants in ${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === profileStage)?.label || "this stage"} right now.`} />
         ) : (
           <DataTable<ProfileRow>
             columns={applicantCols}
@@ -1915,7 +2257,7 @@ export function OpportunityDetailPage() {
             onPage={setProfilePage}
             search={profileSearch}
             onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
-            onRowClick={(r) => crmNavigate(`profiles/${r.id}`)}
+            onRowClick={(r) => crmNavigate(`profiles/${r.id}`)} rowHref={(r: any) => `profiles/${r.id}`}
             emptyMessage="No applicants match your search."
           />
         )}

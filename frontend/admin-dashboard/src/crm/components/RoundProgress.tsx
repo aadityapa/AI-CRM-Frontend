@@ -10,7 +10,7 @@
  * not in the order they happen to have been entered, because the reader is
  * asking "how far along", which is a sequence question.
  */
-import { Bot, Check, Minus, X } from "lucide-react";
+import { Bot, Check, ExternalLink, Minus, X } from "lucide-react";
 
 export type RoundLike = {
   kind: string;
@@ -65,6 +65,7 @@ export function RoundProgress({
   aiScore,
   aiResult,
   onOpen,
+  aiReportLink,
   fmtDateTime,
 }: {
   rounds: RoundLike[];
@@ -72,6 +73,9 @@ export function RoundProgress({
   aiScore?: number | null;
   aiResult?: string | null;
   onOpen?: () => void;
+  /** When given, the AI L1 chip opens the full AI report (29 Sep 2026, user ask:
+   *  "View feedback does not take me to the AI interview report"). */
+  aiReportLink?: string | null;
   fmtDateTime: (v?: string | null) => string | null;
 }) {
   // Latest entry per (kind, stage): a re-run replaces its predecessor, but the
@@ -96,16 +100,24 @@ export function RoundProgress({
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Rounds</span>
 
-      {hasAi && (
-        <span
-          className={`${chip} ${toneFor(aiResult === "Passed" ? "Hire" : aiResult === "Failed" ? "No Hire" : null).cls}`}
-          title={`AI L1${aiScore != null ? ` — ${aiScore}%` : ""}${aiResult ? ` (${aiResult})` : ""}`}
-        >
-          <Bot size={11} aria-hidden />
-          AI L1
-          {aiScore != null && <span className="tnum font-bold">{Math.round(Number(aiScore))}</span>}
-        </span>
-      )}
+      {hasAi && (() => {
+        const cls = `${chip} ${toneFor(aiResult === "Passed" ? "Hire" : aiResult === "Failed" ? "No Hire" : null).cls}`;
+        const title = `AI L1${aiScore != null ? ` — ${aiScore}%` : ""}${aiResult ? ` (${aiResult})` : ""}`;
+        const body = (
+          <>
+            <Bot size={11} aria-hidden />
+            AI L1
+            {aiScore != null && <span className="tnum font-bold">{Math.round(Number(aiScore))}</span>}
+            {aiReportLink && <ExternalLink size={10} aria-hidden />}
+          </>
+        );
+        return aiReportLink ? (
+          <a href={aiReportLink} target="_blank" rel="noopener noreferrer" className={`${cls} hover:underline`}
+            title={`${title} — open the full AI report`}>{body}</a>
+        ) : (
+          <span className={cls} title={title}>{body}</span>
+        );
+      })()}
 
       {done.map((step) => {
         const r = byKey.get(key(step.kind, step.stage))!;

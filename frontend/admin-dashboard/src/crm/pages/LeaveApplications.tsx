@@ -5,10 +5,11 @@
  * insufficient-balance 400s are surfaced inline in the apply modal. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Ban, CalendarOff, Check, Plus, X } from "lucide-react";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { CrmApiError, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useCanApprove } from "../useAccess";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -18,6 +19,7 @@ import {
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
+import { usePageTab } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -89,7 +91,10 @@ const iconBtn =
  * the host page owns the h1, so the title is hidden. */
 export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const isHr = useCanAct("leave-applications", "edit", useHasRole("HR"));
-  const [tab, setTab] = useState("Pending");
+  // Approve / Reject are approval buttons (25 Sep 2026): `me.approvals` decides.
+  const canApproveLeave = useCanApprove("leave.approve");
+  const canRejectLeave = useCanApprove("leave.reject");
+  const [tab, setTab] = usePageTab<string>("status", "Pending", STATUS_TABS.map((t) => t.key));
   const [rows, setRows] = useState<LeaveApplication[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [page, setPage] = useState(1);
@@ -190,25 +195,25 @@ export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean
       render: (r) =>
         r.status === "Pending" ? (
           <span className="inline-flex gap-1">
-            {isHr && (
-              <>
-                <button
-                  className={`${iconBtn} hover:!text-success`}
-                  title="Approve"
-                  aria-label={`Approve leave application #${r.id}`}
-                  onClick={(e) => { e.stopPropagation(); setConfirm({ kind: "approve", row: r }); }}
-                >
-                  <Check size={15} />
-                </button>
-                <button
-                  className={`${iconBtn} hover:!text-danger`}
-                  title="Reject"
-                  aria-label={`Reject leave application #${r.id}`}
-                  onClick={(e) => { e.stopPropagation(); setRejecting(r); }}
-                >
-                  <X size={15} />
-                </button>
-              </>
+            {canApproveLeave && (
+              <button
+                className={`${iconBtn} hover:!text-success`}
+                title="Approve"
+                aria-label={`Approve leave application #${r.id}`}
+                onClick={(e) => { e.stopPropagation(); setConfirm({ kind: "approve", row: r }); }}
+              >
+                <Check size={15} />
+              </button>
+            )}
+            {canRejectLeave && (
+              <button
+                className={`${iconBtn} hover:!text-danger`}
+                title="Reject"
+                aria-label={`Reject leave application #${r.id}`}
+                onClick={(e) => { e.stopPropagation(); setRejecting(r); }}
+              >
+                <X size={15} />
+              </button>
             )}
             <button
               className={`${iconBtn} hover:!text-danger`}
@@ -225,14 +230,32 @@ export function LeaveApplicationsPage({ embedded = false }: { embedded?: boolean
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {!embedded && <h1 className="text-display text-xl font-bold text-primary">Leave Applications</h1>}
-        <button className={btnPrimary} onClick={() => setShowApply(true)}>
-          <Plus size={15} /> Apply Leave
-        </button>
-      </div>
-
-      <Tabs tabs={STATUS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+      {embedded ? (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Tabs tabs={STATUS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+            <button className={btnPrimary} onClick={() => setShowApply(true)}>
+              <Plus size={15} /> Apply Leave
+            </button>
+          </div>
+        </>
+      ) : (
+        <PageHeader
+          icon={CalendarOff}
+          accent="teal"
+          eyebrow="Leave"
+          title="Leave Applications"
+          subtitle="Leave requested against project mappings — HR reviews, approves or rejects each one."
+          stats={meta ? [{ label: meta.total === 1 ? "application" : "applications", value: meta.total }] : undefined}
+          actions={
+            <button className={HERO_BTN_SOLID} onClick={() => setShowApply(true)}>
+              <Plus size={15} /> Apply Leave
+            </button>
+          }
+        >
+          <Tabs tabs={STATUS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+        </PageHeader>
+      )}
 
       {error ? (
         <ErrorBox error={error} onRetry={load} />

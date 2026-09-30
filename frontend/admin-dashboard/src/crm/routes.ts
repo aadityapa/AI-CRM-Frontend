@@ -53,6 +53,8 @@ const SupportTicketDetailPage = lazy(() => import("./pages/SupportTickets").then
 const CrmReportsPage = lazy(() => import("./pages/CrmReports").then((m) => ({ default: m.CrmReportsPage })));
 const TemplateRequestsPage = lazy(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
 const ProfilePage = lazy(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
+const ScreeningDeskPage = lazy(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
+const MyTasksPage = lazy(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
 
 export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "", element: CrmDashboardPage },
@@ -66,6 +68,8 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "candidates/:id", element: CandidateDetailPage },
   { pattern: "profiles", element: ProfilesListPage },
   { pattern: "profiles/:id", element: ProfileDetailPage },
+  { pattern: "screening-desk", element: ScreeningDeskPage },
+  { pattern: "my-tasks", element: MyTasksPage },
   { pattern: "calendar", element: CalendarPage },
   { pattern: "emails", element: EmailCenterPage },
   { pattern: "activity-log", element: ActivityLogPage },

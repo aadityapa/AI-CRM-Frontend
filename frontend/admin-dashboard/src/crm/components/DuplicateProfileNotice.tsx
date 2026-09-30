@@ -9,6 +9,7 @@
  */
 import React from "react";
 import { CrmLink } from "../routerHooks";
+import { statusLabel } from "./ui";
 
 export type DuplicateProfile = {
   profile_id: number;
@@ -29,7 +30,7 @@ export function duplicateProfileFromError(e: any): DuplicateProfile | null {
 export function duplicateProfileSummary(d: DuplicateProfile): string {
   const who = d.applied_by ? ` by ${d.applied_by}` : "";
   const when = d.applied_on ? ` on ${new Date(d.applied_on).toLocaleDateString()}` : "";
-  const stage = d.pipeline_status ? ` — at ${String(d.pipeline_status).replace(/_/g, " ")}` : "";
+  const stage = d.pipeline_status ? ` — at ${statusLabel(String(d.pipeline_status))}` : "";
   return `${d.candidate_name || "This candidate"} was already applied${who}${when}${stage}`;
 }
 
@@ -41,7 +42,7 @@ export function DuplicateProfileNotice({ dup, compact }: { dup: DuplicateProfile
         <b>{dup.candidate_name || "This candidate"}</b> was applied
         {dup.applied_by ? <> by <b>{dup.applied_by}</b></> : null}
         {dup.applied_on ? <> on {new Date(dup.applied_on).toLocaleDateString()}</> : null}
-        {dup.pipeline_status ? <> — currently at {String(dup.pipeline_status).replace(/_/g, " ")}</> : null}.
+        {dup.pipeline_status ? <> — currently at {statusLabel(String(dup.pipeline_status))}</> : null}.
         {" "}
         <CrmLink to={`profiles/${dup.profile_id}`} className="font-semibold underline">
           Open the existing profile →

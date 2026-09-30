@@ -1,14 +1,17 @@
-/** HR module pages: employee directory + detail master form ("Tab 13: Employees").
- * Detail = sectioned glass cards with per-section Edit → Save (dirty-tracked):
- * Employee Details / Addresses / Education / Experience / Projects / Office /
- * Separation / Leave Balances (matrix + editable upsert) / Attendance Rule.
+/** HR module pages: employee directory + detail page ("Tab 13: Employees").
+ * Detail Profile tab (29 Sep 2026) = ONE page: completeness ring → Job details |
+ * Personal details (field specs in crm/lib/employeeFields.ts) → Projects →
+ * Addresses → Leave Balances → "More details" (education, experience,
+ * attendance rule, separation), each card with its own Edit → Save.
  * Writes: HR (Admin implicit). Reads open to page viewers. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  Briefcase, Building2, CalendarDays, ClipboardCheck, GraduationCap, LogOut, Mail,
-  Pencil, Plus, Save, Trash2, User, X,
+  Briefcase, Building2, CalendarDays, ChevronDown, Download, FileSpreadsheet, FolderOpen, GraduationCap,
+  History, IdCard, LogOut, Mail, MapPin, Pencil, Phone, Plus, Save, Trash2, User, UserCheck, Users, X,
+  type LucideIcon,
 } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs, type Meta } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
@@ -20,7 +23,7 @@ import { EmployeeHistoryTab } from "./EmployeeHistory";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
 import {
   btnPrimary, btnSecondary, ConfirmModal, EmptyState, ErrorBox, Field, inputCls,
-  Modal, Spinner, StatusBadge, Tabs, useToast,
+  Modal, Spinner, StatusBadge, useToast,
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { WizardAurora } from "../components/WizardAurora";
@@ -29,9 +32,13 @@ import {
   COUNTRIES, DEFAULT_COUNTRY, INDIAN_CITIES, INDIAN_STATES,
 } from "../constants/geo";
 import {
-  StepperRail, SectionHeaderBanner, WizardField, WizardFooter, WizardStepProgress, WizardStepCard,
-  InfoChip, type WizardStep,
+  SectionHeaderBanner, WizardField,
 } from "../components/wizard";
+import {
+  EMPLOYEE_CARDS, changedPayload, coreCount, displayValue, hiddenFields, missingCore, seedValue,
+  validationError, visibleFields, type EmpCardKey, type EmpDraftValue, type EmpField,
+} from "../lib/employeeFields";
+import { usePageTab, useSessionState } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -65,7 +72,8 @@ const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-ring";
 
 type ShowToast = (msg: string, kind?: "ok" | "err") => void;
 
-const fmtDate = (d?: string | null): string => (d ? new Date(d).toLocaleDateString("en-IN") : "—");
+const fmtDate = (d?: string | null): string =>
+  (d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—");
 
 const num = (s: string): number | undefined => {
   const n = parseFloat(s);
@@ -78,16 +86,6 @@ const sOrNull = (v: string): string | null => {
   return t ? t : null;
 };
 
-const TITLES = ["Mr", "Ms", "Mrs", "Dr"];
-const GENDERS = ["Male", "Female", "Other"];
-const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
-const EMPLOYMENT_TYPES = [
-  { value: "Full_Time", label: "Full Time" },
-  { value: "Part_Time", label: "Part Time" },
-  { value: "Contract", label: "Contract" },
-];
-const empTypeLabel = (v?: string | null): string =>
-  EMPLOYMENT_TYPES.find((t) => t.value === v)?.label || (v ? String(v).replace(/_/g, " ") : "—");
 
 /** id → name map from a CRM list endpoint. */
 function useNameMap(path: string): Record<number, string> {
@@ -118,9 +116,9 @@ function TypeBadge({ type }: { type?: string | null }) {
 
 function InfoItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
-      <div className="mt-0.5 text-sm text-primary">{children ?? "—"}</div>
+    <div className="min-w-0 rounded-control border border-subtle bg-surface-2 px-3 py-2">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
+      <div className="mt-0.5 break-words text-sm font-medium text-primary">{children ?? "—"}</div>
     </div>
   );
 }
@@ -164,6 +162,38 @@ function Toggle({
 
 /* ---------------------------------------------------- section scaffolding */
 
+/** Icon for a section header, picked from its title (presentation only). */
+function sectionIconFor(title: string): LucideIcon {
+  const t = title.toLowerCase();
+  if (t.includes("address")) return MapPin;
+  if (t.includes("education")) return GraduationCap;
+  if (t.includes("experience")) return Briefcase;
+  if (t.includes("project")) return Briefcase;
+  if (t.includes("office") || t.includes("job")) return Building2;
+  if (t.includes("separation") || t.includes("exit")) return LogOut;
+  if (t.includes("leave") || t.includes("attendance")) return CalendarDays;
+  return User;
+}
+
+/** Up to two initials for the avatar. */
+function initialsOf(name?: string | null): string {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return ((parts[0][0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] || "" : "")).toUpperCase();
+}
+
+/** Stable avatar gradient per person (presentation only). */
+const AVATAR_TONES = [
+  "from-teal-500 to-cyan-600", "from-sky-500 to-indigo-600", "from-violet-500 to-fuchsia-600",
+  "from-amber-500 to-orange-600", "from-emerald-500 to-teal-600", "from-rose-500 to-pink-600",
+];
+function avatarTone(seed: string | number | undefined): string {
+  const str = String(seed ?? "");
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[h % AVATAR_TONES.length];
+}
+
 /** Glass E1 section card (text-heavy → no sheen per DEPTH_SYSTEM) with a
  * per-section Edit → Save/Cancel header. Save disabled until dirty. */
 function SectionCard({
@@ -176,9 +206,13 @@ function SectionCard({
   onCancel,
   onSave,
   headerExtra,
+  subtitle,
+  editLabel = "Edit",
   children,
 }: {
   title: string;
+  subtitle?: string;
+  editLabel?: string;
   canWrite?: boolean;
   editing?: boolean;
   dirty?: boolean;
@@ -190,20 +224,36 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   const reduce = useReducedMotion();
+  const SectionIcon = sectionIconFor(title);
   return (
     <motion.section
-      className="overflow-hidden rounded-card border border-subtle bg-surface-1"
+      className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised"
       initial={reduce ? false : { opacity: 0, y: 10 }}
       animate={reduce ? undefined : { opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: EASE_OUT }}
     >
-      <div className="fx-hairline-b flex flex-wrap items-center justify-between gap-2 px-5 py-3">
-        <h2 className="text-sm font-bold text-primary">{title}</h2>
+      <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-4 py-3 sm:px-5 ${
+        editing ? "bg-brand-50 dark:bg-brand-900" : "bg-surface-2"
+      }`}>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-gradient-to-br from-teal-500 to-cyan-600 text-white shadow-raised" aria-hidden>
+            <SectionIcon size={15} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-bold text-primary">{title}</h2>
+            {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
+          </div>
+          {editing && (
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${dirty ? "bg-warning-soft text-warning" : "bg-info-soft text-info"}`}>
+              {dirty ? "Unsaved changes" : "Editing"}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {headerExtra}
           {canWrite && onEdit && !editing && (
             <button className={btnSecondary} onClick={onEdit}>
-              <Pencil size={14} /> Edit
+              <Pencil size={14} /> {editLabel}
             </button>
           )}
           {canWrite && editing && (
@@ -218,7 +268,7 @@ function SectionCard({
           )}
         </div>
       </div>
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-4 py-4 sm:px-5">{children}</div>
     </motion.section>
   );
 }
@@ -523,15 +573,45 @@ const EMP_TABS = [
   { key: "Inactive", label: "Relieved / Inactive" },
 ];
 
+
+/** Deployed (with the live project in the tooltip) or Bench — from the list
+ *  endpoint's `deployment_status`; an inactive person shows neither. */
+function DeploymentCell({ row }: { row: { deployment_status?: string | null; current_projects?: { project: string; customer: string | null }[] } }) {
+  if (!row.deployment_status) return <span className="text-muted">—</span>;
+  if (row.deployment_status === "Bench") {
+    return <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-bold text-warning">Bench</span>;
+  }
+  const where = (row.current_projects || []).map((p) => [p.project, p.customer].filter(Boolean).join(" · ")).join("\n");
+  return (
+    <span className="rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-bold text-success" title={where || undefined}>
+      Deployed{(row.current_projects?.length || 0) > 1 ? ` ×${row.current_projects!.length}` : ""}
+    </span>
+  );
+}
+
 export function EmployeesListPage() {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("HR");
   const canWrite = useCanAct("employees", "edit", canWriteRole);
-  const [tab, setTab] = useState("All");
-  const [search, setSearch] = useState("");
+  const [tab, setTab] = usePageTab<string>("status", "All", EMP_TABS.map((t) => t.key));
+  const [search, setSearch] = useSessionState("emp.search", "");
   const [deptFilter, setDeptFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const [page, setPage] = useState(1);
+  /**
+   * Blank = the server's default (joining date, newest first). "Recently
+   * updated" exists because joining date cannot answer "who changed just now"
+   * (22 Sep 2026): an internal employee with Karnex since 2022 who was placed
+   * with a customer today still sorts by 2022 and lands near the bottom.
+   */
+  const [sortBy, setSortBy] = useState("");
+  /** "bench" = active and on no live project today (25 Sep 2026) — where a
+   *  closed project's team lands. Server-side filter, so paging stays right. */
+  const [deploymentFilter, setDeploymentFilter] = useState(() => {
+    // Deep link from the CEO dashboard's Deployed / Bench tiles (28 Sep 2026).
+    const v = new URLSearchParams(window.location.search).get("deployment") || "";
+    return v === "bench" || v === "deployed" ? v : "";
+  });
+  const [page, setPage] = useSessionState("emp.page", 1);
   const [rows, setRows] = useState<any[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [loading, setLoading] = useState(true);
@@ -582,6 +662,9 @@ export function EmployeesListPage() {
         is_active: tab === "All" ? undefined : tab === "Active",
         department_id: deptFilter || undefined,
         profile_type: typeFilter || undefined,
+        // Default (DOJ) is sent as undefined so the server owns it in one place.
+        sort_by: sortBy || undefined,
+        deployment: deploymentFilter || undefined,
         search,
         page,
         limit: 20,
@@ -591,22 +674,44 @@ export function EmployeesListPage() {
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, deptFilter, typeFilter, page, reloadKey]);
+  }, [tab, search, deptFilter, typeFilter, sortBy, deploymentFilter, page, reloadKey]);
 
   const columns: Column<any>[] = [
     { key: "employee_code", label: "Emp ID", className: "whitespace-nowrap",
       render: (r) => r.employee_code ? <span className="font-mono text-xs font-semibold text-secondary">{r.employee_code}</span> : <span className="text-muted">—</span> },
-    { key: "full_name", label: "Name", render: (r) => <span className="font-semibold">{r.full_name}</span> },
-    { key: "email", label: "Email" },
-    { key: "department", label: "Department", render: (r) => (r.department_id ? departments[r.department_id] || `#${r.department_id}` : "—") },
-    { key: "designation", label: "Designation", render: (r) => (r.designation_id ? designations[r.designation_id] || `#${r.designation_id}` : "—") },
+    { key: "full_name", label: "Name", render: (r) => (
+      <div className="flex min-w-[12rem] items-center gap-2.5">
+        <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-xs font-bold text-white shadow-raised ${avatarTone(r.id ?? r.full_name)}`} aria-hidden>
+          {initialsOf(r.full_name)}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-primary">{r.full_name}</div>
+          <div className="truncate text-xs text-muted">{r.email || "—"}</div>
+        </div>
+      </div>
+    ) },
+    { key: "designation", label: "Designation", render: (r) => (
+      <div className="min-w-[8rem]">
+        <div className="font-medium text-primary">{r.designation_id ? designations[r.designation_id] || `#${r.designation_id}` : "—"}</div>
+        <div className="text-xs text-muted">{r.department_id ? departments[r.department_id] || `#${r.department_id}` : "No department"}</div>
+      </div>
+    ) },
     { key: "profile_type", label: "Type", render: (r) => <TypeBadge type={r.profile_type} /> },
-    { key: "date_of_joining", label: "DOJ", render: (r) => fmtDate(r.date_of_joining) },
+    { key: "date_of_joining", label: "Joined", className: "whitespace-nowrap", render: (r) => (
+      <span className="inline-flex items-center gap-1 text-secondary"><CalendarDays size={12} className="text-muted" aria-hidden />{fmtDate(r.date_of_joining)}</span>
+    ) },
     { key: "is_active", label: "Status", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
+    { key: "deployment_status", label: "Deployment", render: (r) => <DeploymentCell row={r} /> },
   ];
 
   const filters = (
     <>
+      <select className={`${inputCls} !w-48`} value={deploymentFilter}
+              onChange={(e) => { setDeploymentFilter(e.target.value); setPage(1); }} title="Deployment">
+        <option value="">Bench & deployed</option>
+        <option value="bench">On the bench</option>
+        <option value="deployed">Deployed</option>
+      </select>
       <select className={`${inputCls} !w-44`} value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value); setPage(1); }}>
         <option value="">All departments</option>
         {Object.entries(departments).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -616,30 +721,84 @@ export function EmployeesListPage() {
         <option value="Internal">Internal</option>
         <option value="External">External</option>
       </select>
+      {/* `!w-44` — the `!` matters: `inputCls` ends in `w-full`, which beats a
+          plain `w-44` appended after it (see F-V2 CLAUDE.md). */}
+      <select
+        className={`${inputCls} !w-44`}
+        value={sortBy}
+        onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
+        title="Sort the list"
+      >
+        {/* "" = the server default: latest first (recently updated — a new
+            joiner or an internal one the join just updated tops the list). */}
+        <option value="">Latest first</option>
+        <option value="date_of_joining">Newest joiner first</option>
+        <option value="name">Name (A–Z)</option>
+      </select>
     </>
   );
 
+  /* Headline chips — read-only, from what the page already loaded. */
+  const deployedHere = rows.filter((r) => r.deployment_status === "Deployed").length;
+  const benchHere = rows.filter((r) => r.deployment_status === "Bench").length;
+  const heroStats = [
+    { label: meta?.total === 1 ? "employee" : "employees", value: meta ? meta.total : "—" },
+    { label: "deployed on this page", value: deployedHere, title: "Deployed people among the rows shown" },
+    { label: "on the bench on this page", value: benchHere, title: "Bench people among the rows shown" },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-lg font-bold text-primary">Employees</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <button className={btnSecondary} onClick={exportEmployees} disabled={exporting}>
-            {exporting ? "Exporting…" : "Export"}
-          </button>
-          {canWrite && (
-            <button className={btnSecondary} onClick={() => setShowBulk(true)}>
-              Bulk upload
+      <PageHeader
+        icon={Users}
+        accent="teal"
+        eyebrow="People"
+        title="Employees"
+        subtitle="The Karnex directory — who works here, where they are deployed and who is on the bench."
+        stats={heroStats}
+        actions={
+          <>
+            <button className={HERO_BTN} onClick={exportEmployees} disabled={exporting}>
+              <Download size={15} aria-hidden /> {exporting ? "Exporting…" : "Export"}
             </button>
-          )}
-          {canWrite && (
-            <button className={btnPrimary} onClick={() => setShowNew(true)}>
-              <Plus size={15} /> New Employee
-            </button>
-          )}
+            {canWrite && (
+              <button className={HERO_BTN} onClick={() => setShowBulk(true)}>
+                <FileSpreadsheet size={15} aria-hidden /> Bulk upload
+              </button>
+            )}
+            {canWrite && (
+              <button className={HERO_BTN_SOLID} onClick={() => setShowNew(true)}>
+                <Plus size={15} /> New Employee
+              </button>
+            )}
+          </>
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Employee status">
+          {EMP_TABS.map((t) => {
+            const on = tab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => { setTab(t.key); setPage(1); }}
+                className={`rounded-full px-3.5 py-1.5 text-sm font-semibold transition-colors ${focusRing} ${
+                  on
+                    ? "bg-gradient-to-r from-teal-600 to-cyan-700 text-white shadow-raised"
+                    : "bg-surface-2 text-secondary ring-1 ring-inset ring-black/5 hover:text-primary dark:ring-white/10"
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+          <span className="ml-auto hidden text-xs text-muted sm:inline">
+            Click a person to open their record · right-click for a new tab
+          </span>
         </div>
-      </div>
-      <Tabs tabs={EMP_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+      </PageHeader>
       {error && <ErrorBox error={error} />}
       <DataTable
         columns={columns}
@@ -650,7 +809,7 @@ export function EmployeesListPage() {
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
-        onRowClick={(r) => crmNavigate(`employees/${r.id}`)}
+        onRowClick={(r) => crmNavigate(`employees/${r.id}`)} rowHref={(r: any) => `employees/${r.id}`}
         filters={filters}
         emptyMessage={<TeachingEmpty page="employees" />}
         rowActions={canWrite ? (r) => (
@@ -736,7 +895,7 @@ function BulkEmployeeUploadModal({ onClose, onDone, onTemplate, notify }: {
     <Modal title="Bulk upload employees" onClose={onClose} wide>
       {!result ? (
         <div className="space-y-4">
-          <div className="rounded-card border border-subtle bg-surface-2/40 p-4 text-sm text-secondary">
+          <div className="rounded-card border border-subtle bg-surface-2 p-4 text-sm text-secondary">
             <div className="font-semibold text-primary">How it works</div>
             <ol className="mt-1 list-decimal space-y-1 pl-5">
               <li>
@@ -820,6 +979,11 @@ const DETAIL_TABS = [
   { key: "employee_history", label: "History" },
   { key: "history", label: "Project History" },
 ];
+const DETAIL_TAB_ICONS: Record<string, LucideIcon> = {
+  profile: UserCheck,
+  employee_history: History,
+  history: Briefcase,
+};
 
 export function EmployeeDetailPage() {
   const { id } = useCrmParams();
@@ -828,7 +992,7 @@ export function EmployeeDetailPage() {
   const canWrite = useCanAct("employees", "edit", canWriteRole);
   const [emp, setEmp] = useState<any | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("profile");
+  const [tab, setTab] = usePageTab<string>("tab", "profile", DETAIL_TABS.map((t) => t.key));
   /* Lazy-load flag: the 360° History view mounts (and fetches) only on first
    * open, then stays mounted (hidden) so switching tabs doesn't refetch. */
   const [historyOpened, setHistoryOpened] = useState(false);
@@ -846,28 +1010,94 @@ export function EmployeeDetailPage() {
 
   const common = { emp, canWrite, onSaved: load, showToast };
 
+  const mailOk = typeof emp.email === "string" && emp.email.includes("@");
+  const pillCls = "inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-semibold text-white ring-1 ring-inset ring-white/25";
+  const bandFacts: { label: string; value: React.ReactNode }[] = [
+    { label: "Designation", value: emp.designation_name || "—" },
+    { label: "Department", value: emp.department_name || "—" },
+    { label: "Reporting manager", value: emp.reporting_manager_name || "—" },
+    { label: "Joined", value: fmtDate(emp.date_of_joining) },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <CrmLink to="employees" className={`rounded-control text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}>Employees</CrmLink>
-        <span className="text-muted">/</span>
-        <h1 className="text-display text-lg font-bold text-primary">{emp.full_name}</h1>
-        {emp.employee_code && <span className={chipCls}>{emp.employee_code}</span>}
-        <TypeBadge type={emp.profile_type} />
-        <StatusBadge status={emp.is_active ? "Active" : "Inactive"} />
-        {(emp.is_exit || emp.is_resigned) && <StatusBadge status="Exited" />}
-      </div>
+      {/* Identity band (29 Sep 2026 redesign) — presentation only; every figure
+          is from the employee payload already loaded above. */}
+      <header className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+        <div className="relative bg-gradient-to-r from-teal-700 via-emerald-700 to-cyan-800 px-4 py-5 text-white sm:px-6">
+          <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
+          <nav className="relative mb-3 flex items-center gap-1.5 text-xs font-semibold text-white/80" aria-label="Breadcrumb">
+            <CrmLink to="employees" className={`rounded-control text-white/90 hover:text-white hover:underline ${focusRing}`}>Employees</CrmLink>
+            <span aria-hidden>/</span>
+            <span className="truncate">{emp.full_name}</span>
+          </nav>
+          <div className="relative flex min-w-0 flex-wrap items-start gap-4">
+            <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/15 text-lg font-bold ring-2 ring-white/40" aria-hidden>
+              {initialsOf(emp.full_name)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-display break-words text-2xl font-bold leading-tight">{emp.full_name}</h1>
+                {emp.employee_code && (
+                  <span className={`${pillCls} font-mono`}><IdCard size={12} aria-hidden /> {emp.employee_code}</span>
+                )}
+              </div>
+              <div className="mt-1 text-sm text-white/85">
+                {[emp.designation_name, emp.department_name].filter(Boolean).join(" · ") || "No designation recorded"}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <TypeBadge type={emp.profile_type} />
+                <StatusBadge status={emp.is_active ? "Active" : "Inactive"} />
+                {(emp.is_exit || emp.is_resigned) && <StatusBadge status="Exited" />}
+                {emp.deployment_status && <DeploymentCell row={emp} />}
+                {emp.email && (
+                  mailOk
+                    ? <a href={`mailto:${emp.email}`} className={`${pillCls} hover:bg-white/25`}><Mail size={12} aria-hidden /> {emp.email}</a>
+                    : <span className={pillCls}><Mail size={12} aria-hidden /> {emp.email}</span>
+                )}
+                {emp.phone && <span className={pillCls}><Phone size={12} aria-hidden /> {emp.phone}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+        <dl className="grid grid-cols-2 border-t border-subtle bg-surface-1 sm:grid-cols-4">
+          {bandFacts.map((f) => (
+            <div key={f.label} className="min-w-0 px-4 py-3">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{f.label}</dt>
+              <dd className="mt-0.5 truncate text-sm font-semibold text-primary" title={typeof f.value === "string" ? f.value : undefined}>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="border-t border-subtle px-3 py-2 sm:px-4">
+          <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Employee sections">
+            {DETAIL_TABS.map((t) => {
+              const on = tab === t.key;
+              const Icon = DETAIL_TAB_ICONS[t.key] || User;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => {
+                    setTab(t.key);
+                    if (t.key === "employee_history") setHistoryOpened(true);
+                  }}
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-control px-3 py-2 text-sm font-semibold transition-colors ${focusRing} ${
+                    on
+                      ? "bg-gradient-to-r from-teal-600 to-cyan-700 text-white shadow-raised"
+                      : "text-secondary hover:bg-surface-2 hover:text-primary"
+                  }`}
+                >
+                  <Icon size={15} aria-hidden /> {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </header>
 
-      <Tabs
-        tabs={DETAIL_TABS}
-        active={tab}
-        onChange={(k) => {
-          setTab(k);
-          if (k === "employee_history") setHistoryOpened(true);
-        }}
-      />
-
-      {tab === "profile" && <EmployeeProfileWizard {...common} />}
+      {tab === "profile" && <EmployeeProfile {...common} />}
 
       {historyOpened && (
         <div className={tab === "employee_history" ? undefined : "hidden"}>
@@ -884,414 +1114,328 @@ export function EmployeeDetailPage() {
 
 type SectionProps = { emp: any; canWrite: boolean; onSaved: () => void; showToast: ShowToast };
 
-/* ------------------------------------------ Profile master form as a wizard */
+/* ------------------------------------------ Profile: one page, core first */
+/*
+ * 29 Sep 2026 (user ask: "only the required details on the Employee page, and
+ * make adding details easy"). The 7-step wizard of read-only boxes — most of
+ * them "—" — is gone. The Profile tab is ONE page:
+ *   completeness ring + "Add …" chips for every core detail still missing
+ *   → Job details | Personal details (+ CV)   (crm/lib/employeeFields.ts)
+ *   → Current projects → Addresses → Leave balances
+ *   → "More" (education, experience, attendance rule, separation), collapsed.
+ * A card shows its CORE fields and any optional field that holds something;
+ * blank optional fields wait behind "Add more details". A save sends only the
+ * fields that changed.
+ */
 
-/** Read-only summary shown on the final wizard step. */
-function EmployeeReviewStep({ emp }: { emp: any }) {
-  const name = emp.full_name || `${emp.first_name || ""} ${emp.last_name || ""}`.trim();
-  return (
-    <div className="space-y-4">
-      <InfoChip>
-        Each section saves independently as you edit — there is no combined submit. Review the key
-        details below, then choose Done.
-      </InfoChip>
-      <div className="rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] p-5">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          <InfoItem label="Name">{name || "—"}</InfoItem>
-          <InfoItem label="Employee ID">{emp.employee_code || "—"}</InfoItem>
-          <InfoItem label="Email (Official)">{emp.email || "—"}</InfoItem>
-          <InfoItem label="Phone">{emp.phone || "—"}</InfoItem>
-          <InfoItem label="Department">{emp.department_name || "—"}</InfoItem>
-          <InfoItem label="Designation">{emp.designation_name || "—"}</InfoItem>
-          <InfoItem label="Profile type">{emp.profile_type || "—"}</InfoItem>
-          <InfoItem label="Status">{emp.is_active ? "Active" : "Inactive"}</InfoItem>
-          <InfoItem label="Date of joining">{fmtDate(emp.date_of_joining)}</InfoItem>
-          <InfoItem label="Reporting manager">{emp.reporting_manager_name || "—"}</InfoItem>
-          <InfoItem label="Portal access">{emp.portal_access ? "Yes" : "No"}</InfoItem>
-          <InfoItem label="Resigned">{emp.is_resigned ? "Yes" : "No"}</InfoItem>
-        </div>
-      </div>
-    </div>
-  );
-}
+type OpenSignal = { card: EmpCardKey; field?: string; n: number } | null;
+type Option = { id: number; name: string };
+type Masters = { departments: Option[]; designations: Option[]; people: Option[] };
 
-/** Re-skins the profile master form as a premium multi-step wizard (New
- *  Opportunity look). Each step hosts the EXISTING section component(s)
- *  unchanged — per-section Edit → Save (useDraft) plus every data/validation/
- *  API wire (incl. CV & certificate upload) is preserved. Previous/Next only
- *  navigate; there is no combined submit. */
-function EmployeeProfileWizard({ emp, canWrite, onSaved, showToast }: SectionProps) {
-  const reduce = useReducedMotion();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [stepDir, setStepDir] = useState<1 | -1>(1);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-
-  const steps = useMemo(
-    () => [
-      {
-        key: "identity",
-        title: "Identity & Personal",
-        description: "Name, contact numbers, identifiers, CTC, and CV for this employee.",
-        icon: <User size={20} aria-hidden />,
-        render: () => (
-          <EmployeeDetailsSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
-        ),
-      },
-      {
-        key: "contact",
-        title: "Contact & Address",
-        description: "Present and permanent addresses with correspondence details.",
-        icon: <Mail size={20} aria-hidden />,
-        render: () => (
-          <AddressSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
-        ),
-      },
-      {
-        key: "office",
-        title: "Office Details",
-        description: "Department, designation, reporting line, role, skills, and project assignments.",
-        icon: <Building2 size={20} aria-hidden />,
-        render: () => (
-          <div className="space-y-4">
-            <OfficeDetailsSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
-            <ProjectsSection emp={emp} />
-          </div>
-        ),
-      },
-      {
-        key: "education",
-        title: "Education & Experience",
-        description: "Qualifications and prior work history, with certificate uploads.",
-        icon: <GraduationCap size={20} aria-hidden />,
-        render: () => (
-          <div className="space-y-4">
-            <EducationSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-            <ExperienceSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-          </div>
-        ),
-      },
-      {
-        key: "leave",
-        title: "Leave & Attendance",
-        description: "Leave balances by year and attendance-hour rules.",
-        icon: <CalendarDays size={20} aria-hidden />,
-        render: () => (
-          <div className="space-y-4">
-            <LeaveBalancesSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-            <AttendanceRuleSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
-          </div>
-        ),
-      },
-      {
-        key: "separation",
-        title: "Separation",
-        description: "Resignation status, notice period, and last working day.",
-        icon: <LogOut size={20} aria-hidden />,
-        render: () => (
-          <SeparationSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
-        ),
-      },
-      {
-        key: "review",
-        title: "Review",
-        description: "Confirm the details. Each section saves independently as you edit.",
-        icon: <ClipboardCheck size={20} aria-hidden />,
-        render: () => <EmployeeReviewStep emp={emp} />,
-      },
-    ],
-    [emp, canWrite, onSaved, showToast],
-  );
-
-  const total = steps.length;
-  const clamped = Math.min(Math.max(stepIndex, 0), total - 1);
-  const current = steps[clamped];
-  const isFirst = clamped <= 0;
-  const isLast = clamped >= total - 1;
-  const maxReached = total - 1; // edit context — every step is freely reachable
-
-  const wizardSteps: WizardStep[] = steps.map((s, i) => ({
-    key: s.key,
-    title: s.title,
-    sublabel: s.description,
-    status: i < clamped ? "complete" : i === clamped ? "partial" : "empty",
-  }));
-
-  const goTo = (i: number) => {
-    if (i < 0 || i >= total) return;
-    setStepDir(i >= clamped ? 1 : -1);
-    setStepIndex(i);
-  };
-  const goPrev = () => {
-    if (isFirst) return;
-    setStepDir(-1);
-    setStepIndex((i) => Math.max(0, i - 1));
-  };
-  const goNext = () => {
-    if (isLast) return;
-    setStepDir(1);
-    setStepIndex((i) => Math.min(total - 1, i + 1));
-  };
-
-  /* Focus the step heading (a11y) then the first editable field on step change. */
+/** Departments · designations · active people for the pickers (writers only). */
+function useEmployeeMasters(enabled: boolean, selfId: number): Masters {
+  const [m, setM] = useState<Masters>({ departments: [], designations: [], people: [] });
   useEffect(() => {
-    const t = window.setTimeout(() => {
-      headingRef.current?.focus?.({ preventScroll: true });
-      const el = bodyRef.current?.querySelector<HTMLElement>(
-        'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled])',
-      );
-      el?.focus?.({ preventScroll: true });
-    }, reduce ? 0 : 200);
-    return () => window.clearTimeout(t);
-  }, [clamped, reduce]);
+    if (!enabled) return;
+    let alive = true;
+    const named = (rows: any[]) => rows.map((x) => ({ id: x.id, name: x.name || x.full_name || `${x.first_name || ""} ${x.last_name || ""}`.trim() }));
+    Promise.all([
+      fetchAllMaster<any>("/api/departments").catch(() => []),
+      fetchAllMaster<any>("/api/designations").catch(() => []),
+      fetchAllMaster<any>("/api/employees?is_active=true").catch(() => []),
+    ]).then(([d, g, p]) => {
+      if (!alive) return;
+      setM({ departments: named(d), designations: named(g), people: named(p).filter((x) => x.id !== selfId) });
+    });
+    return () => { alive = false; };
+  }, [enabled, selfId]);
+  return m;
+}
 
-  const pct = Math.round(((clamped + 1) / total) * 100);
-
+/** One input for one field spec. */
+function EmpFieldInput({ f, value, onChange, masters, current, disabled }: {
+  f: EmpField;
+  value: EmpDraftValue;
+  onChange: (v: EmpDraftValue) => void;
+  masters: Masters;
+  /** The readable current value of a `ref` field (so it shows before the list loads). */
+  current?: string | null;
+  disabled?: boolean;
+}) {
+  const common = { id: `emp-f-${f.key}`, "data-field": f.key, disabled, className: inputCls };
+  if (f.kind === "toggle") {
+    return (
+      <div className="flex h-10 items-center gap-2">
+        <Toggle checked={Boolean(value)} onChange={onChange} label={f.label} disabled={disabled} />
+        <span className="text-sm font-semibold text-secondary">
+          {f.key === "is_active" ? (value ? "Active" : "Inactive") : (value ? "Yes" : "No")}
+        </span>
+      </div>
+    );
+  }
+  if (f.kind === "skills") return <SkillsInput value={value as string[]} onChange={onChange} />;
+  if (f.kind === "select" || f.kind === "ref") {
+    const list = f.kind === "select"
+      ? (f.options || [])
+      : masters[f.ref!].map((o) => ({ value: String(o.id), label: o.name }));
+    const known = list.some((o) => o.value === value);
+    return (
+      <select {...common} value={String(value)} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Select…</option>
+        {!known && value ? <option value={String(value)}>{current || `#${value}`}</option> : null}
+        {list.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    );
+  }
+  const type = f.kind === "money" || f.kind === "number" ? "number" : f.kind === "text" ? "text" : f.kind;
   return (
-    <div className="crm-wizard wiz-noise overflow-hidden rounded-2xl border border-[color:var(--wiz-border)]">
-      {/* Mobile: compact horizontal stepper */}
-      <div className="border-b border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] px-4 py-2.5 md:hidden">
-        <StepperRail
-          steps={wizardSteps}
-          currentIndex={clamped}
-          maxReached={maxReached}
-          onSelect={goTo}
-          orientation="horizontal"
-          ariaLabel="Employee profile steps"
-        />
-      </div>
-
-      <div className="flex min-h-0">
-        {/* Desktop: vertical rail + step progress */}
-        <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-[color:var(--wiz-border)] bg-[color:var(--wiz-card)] p-4 md:block">
-          <StepperRail
-            steps={wizardSteps}
-            currentIndex={clamped}
-            maxReached={maxReached}
-            onSelect={goTo}
-            orientation="vertical"
-            ariaLabel="Employee profile steps"
-          />
-          <WizardStepProgress
-            pct={pct}
-            completeLabel="You're on the final step — review and finish."
-            incompleteLabel="Use Edit within each section to make changes."
-          />
-        </aside>
-
-        {/* Content */}
-        <div
-          ref={bodyRef}
-          className="min-h-0 min-w-0 flex-1 overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6 lg:px-8"
-        >
-          <WizardStepCard stepKey={current.key} stepDir={stepDir}>
-            <SectionHeaderBanner
-              title={current.title}
-              description={current.description}
-              headingRef={headingRef}
-              icon={current.icon}
-            />
-            {current.render()}
-          </WizardStepCard>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="border-t border-[color:var(--wiz-border)] bg-[color:var(--wiz-bg)] px-4 py-3 sm:px-6">
-        <WizardFooter
-          stepIndex={clamped}
-          totalSteps={total}
-          isFirstStep={isFirst}
-          isLastStep={isLast}
-          onPrev={goPrev}
-          onNext={goNext}
-          onSubmit={() => crmNavigate("employees")}
-          submitLabel="Done"
-        />
-      </div>
+    <div className="relative">
+      {f.kind === "money" && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">₹</span>}
+      <input {...common} type={type} min={type === "number" ? 0 : undefined}
+        step={f.kind === "number" ? "0.25" : undefined}
+        className={`${inputCls} ${f.kind === "money" ? "pl-7" : ""}`}
+        value={String(value)} maxLength={f.maxLength} placeholder={f.placeholder}
+        onChange={(e) => onChange(f.upper ? e.target.value.toUpperCase() : e.target.value)} />
     </div>
   );
 }
 
-/* ------------------------------------------------ 1. Employee Details */
-
-function EmployeeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
-  const d = useDraft(() => ({
-    title: emp.title || "",
-    first_name: emp.first_name || "",
-    middle_name: emp.middle_name || "",
-    last_name: emp.last_name || "",
-    display_name: emp.display_name || "",
-    phone: emp.phone || "",
-    personal_email: emp.personal_email || "",
-    email: emp.email || "",
-    gender: emp.gender || "",
-    blood_group: emp.blood_group || "",
-    current_ctc: emp.current_ctc != null ? String(emp.current_ctc) : "",
-    employee_code: emp.employee_code || "",
-    date_of_joining: emp.date_of_joining || "",
-    emergency_number: emp.emergency_number || "",
-    date_of_birth: emp.date_of_birth || "",
-    profile_type: emp.profile_type || "Internal",
-    pan: emp.pan || "",
-    aadhar: emp.aadhar || "",
-  }));
+/** A card of employee fields: core + filled ones to read, a short form to edit. */
+function DetailsCard({ cardKey, emp, canWrite, onSaved, showToast, masters, open, skip, locked, footer, emptyText }: SectionProps & {
+  cardKey: EmpCardKey;
+  masters: Masters;
+  open: OpenSignal;
+  /** Fields this login may not see at all (e.g. CTC without the field grant). */
+  skip: (f: EmpField) => boolean;
+  /** Fields this login may see but not change. */
+  locked: (f: EmpField) => boolean;
+  footer?: React.ReactNode;
+  /** Said when the card has nothing to show yet (no core fields, nothing filled). */
+  emptyText?: string;
+}) {
+  const spec = EMPLOYEE_CARDS[cardKey];
+  const fields = useMemo(() => spec.fields.filter((f) => !skip(f)), [spec, skip]);
+  const [draft, setDraft] = useState<Record<string, EmpDraftValue> | null>(null);
+  const [more, setMore] = useState(false);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
   const { busy, save } = useEmployeeSave(emp.id, onSaved, showToast);
-  // Template field grant: CTC is the classic "HR sees it, others don't" field.
-  const acc = useCrmAccess("employees");
-  const canEditCtc = acc.canEditField("current_ctc");
+
+  const shown = visibleFields(emp, fields);
+  const extra = hiddenFields(emp, fields);
+
+  const begin = (opts: { more?: boolean; field?: string } = {}) => {
+    const seed: Record<string, EmpDraftValue> = {};
+    fields.forEach((f) => { seed[f.key] = seedValue(emp, f); });
+    setDraft(seed);
+    setMore(Boolean(opts.more));
+    setFocusKey(opts.field || null);
+  };
+
+  /* "Add …" on the completeness card opens THIS card on that field. */
+  useEffect(() => {
+    if (!open || open.card !== cardKey || !canWrite) return;
+    begin({ field: open.field, more: extra.some((f) => f.key === open.field) });
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open?.n]);
+
+  useEffect(() => {
+    if (!draft || !focusKey) return;
+    const t = window.setTimeout(() => {
+      ref.current?.querySelector<HTMLElement>(`[data-field="${focusKey}"]`)?.focus();
+      setFocusKey(null);
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [draft, focusKey]);
+
+  const payload = draft ? changedPayload(emp, fields, draft) : {};
+  const dirty = Object.keys(payload).length > 0;
 
   const submit = async () => {
-    const v = d.draft!;
-    if (!v.first_name.trim()) { showToast("First name is required", "err"); return; }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email.trim())) { showToast("A valid official email is required", "err"); return; }
-    const ok = await save({
-      title: sOrNull(v.title),
-      first_name: v.first_name.trim(),
-      middle_name: sOrNull(v.middle_name),
-      last_name: sOrNull(v.last_name),
-      display_name: sOrNull(v.display_name),
-      phone: sOrNull(v.phone),
-      personal_email: sOrNull(v.personal_email),
-      email: v.email.trim(),
-      gender: v.gender || null,
-      blood_group: v.blood_group || null,
-      ...(canEditCtc ? { current_ctc: num(v.current_ctc) ?? null } : {}),
-      employee_code: sOrNull(v.employee_code),
-      date_of_joining: v.date_of_joining || null,
-      emergency_number: sOrNull(v.emergency_number),
-      date_of_birth: v.date_of_birth || null,
-      profile_type: v.profile_type,
-      pan: sOrNull(v.pan),
-      aadhar: sOrNull(v.aadhar),
-    }, "Employee details saved");
-    if (ok) d.cancel();
+    if (!draft) return;
+    const err = validationError(Object.fromEntries(Object.keys(payload).map((k) => [k, draft[k]])));
+    if (err) { showToast(err, "err"); return; }
+    if (await save(payload, `${spec.title} saved`)) setDraft(null);
   };
 
-  /* CV upload persists immediately (independent of section edit mode). */
-  const cvBlock = (
-    <div className="flex flex-wrap items-center gap-2">
-      <FileLink url={emp.cv_url} label="View CV" />
+  const inputFor = (f: EmpField) => (
+    <div key={f.key} className={f.kind === "skills" ? "sm:col-span-2" : undefined}>
+      <Field label={f.label} required={f.mandatory}>
+        <EmpFieldInput f={f} value={draft![f.key]} masters={masters} current={f.display ? emp[f.display] : null}
+          disabled={locked(f)} onChange={(v) => setDraft((d) => (d ? { ...d, [f.key]: v } : d))} />
+      </Field>
+    </div>
+  );
+
+  return (
+    <div ref={ref} className="scroll-mt-20">
+      <SectionCard title={spec.title} subtitle={spec.subtitle} canWrite={canWrite} editing={draft != null}
+        dirty={dirty} busy={busy} onEdit={() => begin()} onCancel={() => setDraft(null)} onSave={submit}>
+        {draft ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{shown.map(inputFor)}</div>
+            {extra.length > 0 && (
+              <div className="rounded-card border border-dashed border-subtle">
+                <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm font-semibold text-brand-700 dark:text-brand-300 ${focusRing}`}>
+                  <span className="inline-flex items-center gap-1.5"><Plus size={14} aria-hidden /> Add more details ({extra.length})</span>
+                  <span className="text-xs font-normal text-muted">{more ? "Hide" : extra.map((f) => f.label).slice(0, 3).join(" · ") + (extra.length > 3 ? " …" : "")}</span>
+                </button>
+                {more && <div className="grid grid-cols-1 gap-3 border-t border-subtle p-3 sm:grid-cols-2">{extra.map(inputFor)}</div>}
+              </div>
+            )}
+            <p className="text-xs text-muted">Only what you change is saved. <span className="text-danger">*</span> required to save.</p>
+          </div>
+        ) : (
+          <>
+            {shown.length === 0 && emptyText && <p className="text-sm text-secondary">{emptyText}</p>}
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+              {shown.map((f) => {
+                const v = displayValue(emp, f);
+                return (
+                  <div key={f.key} className="min-w-0 border-b border-subtle pb-2">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{f.label}</dt>
+                    <dd className="mt-0.5 break-words text-sm font-medium text-primary">
+                      {v != null ? (f.key === "is_active" ? <StatusBadge status={emp.is_active ? "Active" : "Inactive"} /> : v)
+                        : canWrite ? (
+                          <button type="button" onClick={() => begin({ field: f.key })}
+                            className={`inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning hover:underline ${focusRing}`}>
+                            <Plus size={11} aria-hidden /> Add
+                          </button>
+                        ) : <span className="text-muted">Not added</span>}
+                    </dd>
+                  </div>
+                );
+              })}
+            </dl>
+            {canWrite && extra.length > 0 && (
+              <button type="button" onClick={() => begin({ more: true })}
+                className={`mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 ${focusRing}`}>
+                <Plus size={13} aria-hidden /> Add more details — {extra.map((f) => f.label).slice(0, 3).join(", ")}{extra.length > 3 ? ` +${extra.length - 3}` : ""}
+              </button>
+            )}
+          </>
+        )}
+        {footer}
+      </SectionCard>
+    </div>
+  );
+}
+
+/** How much of the core record is there, and one click to add each gap. */
+function ProfileCompleteness({ emp, skip, canWrite, onAdd }: {
+  emp: any;
+  skip: (f: EmpField) => boolean;
+  canWrite: boolean;
+  onAdd: (card: EmpCardKey, field: string) => void;
+}) {
+  const missing = missingCore(emp, skip);
+  const total = coreCount(skip);
+  const done = total - missing.length;
+  const pct = total ? Math.round((done / total) * 100) : 100;
+  const r = 22;
+  const c = 2 * Math.PI * r;
+  const tone = pct === 100 ? "text-success" : pct >= 70 ? "text-brand-600" : "text-warning";
+  return (
+    <section className="flex flex-wrap items-center gap-4 rounded-card border border-subtle bg-surface-1 px-4 py-3 shadow-raised" aria-label="Profile completeness">
+      <svg viewBox="0 0 56 56" className={`h-14 w-14 shrink-0 ${tone}`} aria-hidden>
+        <circle cx="28" cy="28" r={r} fill="none" stroke="currentColor" strokeOpacity="0.15" strokeWidth="6" />
+        <circle cx="28" cy="28" r={r} fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} transform="rotate(-90 28 28)" />
+        <text x="28" y="32" textAnchor="middle" className="fill-current text-[12px] font-bold">{pct}%</text>
+      </svg>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-bold text-primary">
+          {missing.length ? `${done} of ${total} key details recorded` : "Every key detail is recorded"}
+        </div>
+        {missing.length > 0 ? (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {missing.map(({ card, field }) => canWrite ? (
+              <button key={field.key} type="button" onClick={() => onAdd(card, field.key)}
+                className={`inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning hover:underline ${focusRing}`}>
+                <Plus size={11} aria-hidden /> {field.label}
+              </button>
+            ) : (
+              <span key={field.key} className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-muted">{field.label}</span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted">Optional details can still be added from each card.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** A collapsed group for the rarely-touched sections; mounts its body on first open. */
+function MoreSection({ title, hint, icon: Icon, children, defaultOpen = false }: {
+  title: string; hint: string; icon: LucideIcon; children: React.ReactNode; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className={`flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 ${focusRing}`}>
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-gradient-to-br from-slate-500 to-slate-700 text-white shadow-raised" aria-hidden>
+          <Icon size={15} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-bold text-primary">{title}</span>
+          <span className="block truncate text-xs text-muted">{hint}</span>
+        </span>
+        <ChevronDown size={16} className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open && <div className="space-y-4 border-t border-subtle bg-surface-2 p-3 sm:p-4">{children}</div>}
+    </section>
+  );
+}
+
+function EmployeeProfile({ emp, canWrite, onSaved, showToast }: SectionProps) {
+  const acc = useCrmAccess("employees");
+  const canSeeCtc = acc.canViewField("current_ctc");
+  const canEditCtc = acc.canEditField("current_ctc");
+  const skip = useCallback((f: EmpField) => f.key === "current_ctc" && !canSeeCtc, [canSeeCtc]);
+  const locked = useCallback((f: EmpField) => f.key === "current_ctc" && !canEditCtc, [canEditCtc]);
+  const masters = useEmployeeMasters(canWrite, emp.id);
+  const [open, setOpen] = useState<OpenSignal>(null);
+  const common = { emp, canWrite, onSaved, showToast, masters, open, skip, locked };
+  const resigned = Boolean(emp.is_resigned || emp.is_exit);
+
+  /* CV upload persists immediately (independent of the card's edit mode). */
+  const cv = (
+    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-3">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">CV</span>
+      {emp.cv_url ? <FileLink url={emp.cv_url} label="View CV" /> : <span className="text-sm text-muted">Not uploaded</span>}
       {canWrite && (
-        <FileUploadButton
-          path={`/api/employees/${emp.id}/cv`}
-          label={emp.cv_url ? "Replace CV" : "Upload CV"}
-          accept=".pdf,.doc,.docx"
-          onDone={() => { showToast("CV uploaded"); onSaved(); }}
-          onError={(m) => showToast(m, "err")}
-        />
+        <FileUploadButton path={`/api/employees/${emp.id}/cv`} label={emp.cv_url ? "Replace CV" : "Upload CV"}
+          accept=".pdf,.doc,.docx" onDone={() => { showToast("CV uploaded"); onSaved(); }}
+          onError={(m) => showToast(m, "err")} />
       )}
     </div>
   );
 
   return (
-    <SectionCard
-      title="Employee Details"
-      canWrite={canWrite}
-      editing={d.editing}
-      dirty={d.dirty}
-      busy={busy}
-      onEdit={d.begin}
-      onCancel={d.cancel}
-      onSave={submit}
-    >
-      {d.editing ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Title">
-            <select className={inputCls} value={d.draft!.title} onChange={(e) => d.patch({ title: e.target.value })}>
-              <option value="">—</option>
-              {TITLES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </Field>
-          <Field label="First name" required>
-            <input className={inputCls} value={d.draft!.first_name} onChange={(e) => d.patch({ first_name: e.target.value })} />
-          </Field>
-          <Field label="Middle name">
-            <input className={inputCls} value={d.draft!.middle_name} onChange={(e) => d.patch({ middle_name: e.target.value })} />
-          </Field>
-          <Field label="Last name">
-            <input className={inputCls} value={d.draft!.last_name} onChange={(e) => d.patch({ last_name: e.target.value })} />
-          </Field>
-          <Field label="Display name">
-            <input className={inputCls} value={d.draft!.display_name} onChange={(e) => d.patch({ display_name: e.target.value })} />
-          </Field>
-          <Field label="Phone">
-            <input className={inputCls} value={d.draft!.phone} onChange={(e) => d.patch({ phone: e.target.value })} />
-          </Field>
-          <Field label="Email (Personal)">
-            <input type="email" className={inputCls} value={d.draft!.personal_email} onChange={(e) => d.patch({ personal_email: e.target.value })} />
-          </Field>
-          <Field label="Gender">
-            <select className={inputCls} value={d.draft!.gender} onChange={(e) => d.patch({ gender: e.target.value })}>
-              <option value="">—</option>
-              {GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </Field>
-          <Field label="Blood group">
-            <select className={inputCls} value={d.draft!.blood_group} onChange={(e) => d.patch({ blood_group: e.target.value })}>
-              <option value="">—</option>
-              {BLOOD_GROUPS.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select>
-          </Field>
-          <Field label="Current CTC">
-            <input type="number" min={0} className={inputCls} value={d.draft!.current_ctc} disabled={!canEditCtc} onChange={(e) => d.patch({ current_ctc: e.target.value })} />
-          </Field>
-          <div>
-            <span className="mb-1 block text-xs font-semibold text-secondary">CV</span>
-            {cvBlock}
-          </div>
-          <Field label="Employee ID">
-            <input className={inputCls} value={d.draft!.employee_code} onChange={(e) => d.patch({ employee_code: e.target.value })} />
-          </Field>
-          <Field label="Date of joining">
-            <input type="date" className={inputCls} value={d.draft!.date_of_joining} onChange={(e) => d.patch({ date_of_joining: e.target.value })} />
-          </Field>
-          <Field label="Emergency number">
-            <input className={inputCls} value={d.draft!.emergency_number} onChange={(e) => d.patch({ emergency_number: e.target.value })} />
-          </Field>
-          <Field label="Email (Official)" required>
-            <input type="email" className={inputCls} value={d.draft!.email} onChange={(e) => d.patch({ email: e.target.value })} />
-          </Field>
-          <Field label="Date of birth">
-            <input type="date" className={inputCls} value={d.draft!.date_of_birth} onChange={(e) => d.patch({ date_of_birth: e.target.value })} />
-          </Field>
-          <Field label="Profile type">
-            <select className={inputCls} value={d.draft!.profile_type} onChange={(e) => d.patch({ profile_type: e.target.value })}>
-              <option value="Internal">Internal</option>
-              <option value="External">External</option>
-            </select>
-          </Field>
-          <Field label="PAN">
-            <input className={inputCls} value={d.draft!.pan} onChange={(e) => d.patch({ pan: e.target.value.toUpperCase() })} maxLength={10} placeholder="ABCDE1234F" />
-          </Field>
-          <Field label="Aadhar">
-            <input className={inputCls} value={d.draft!.aadhar} onChange={(e) => d.patch({ aadhar: e.target.value })} maxLength={12} placeholder="12-digit number" />
-          </Field>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          <InfoItem label="Title">{emp.title || "—"}</InfoItem>
-          <InfoItem label="First name">{emp.first_name || "—"}</InfoItem>
-          <InfoItem label="Middle name">{emp.middle_name || "—"}</InfoItem>
-          <InfoItem label="Last name">{emp.last_name || "—"}</InfoItem>
-          <InfoItem label="Display name">{emp.display_name || "—"}</InfoItem>
-          <InfoItem label="Phone">{emp.phone || "—"}</InfoItem>
-          <InfoItem label="Email (Personal)">{emp.personal_email || "—"}</InfoItem>
-          <InfoItem label="Gender">{emp.gender || "—"}</InfoItem>
-          <InfoItem label="Blood group">{emp.blood_group || "—"}</InfoItem>
-          <InfoItem label="Current CTC">{emp.current_ctc != null ? Number(emp.current_ctc).toLocaleString("en-IN") : "—"}</InfoItem>
-          <InfoItem label="CV">{cvBlock}</InfoItem>
-          <InfoItem label="Employee ID">{emp.employee_code || "—"}</InfoItem>
-          <InfoItem label="Date of joining">{fmtDate(emp.date_of_joining)}</InfoItem>
-          <InfoItem label="Emergency number">{emp.emergency_number || "—"}</InfoItem>
-          <InfoItem label="Email (Official)">{emp.email || "—"}</InfoItem>
-          <InfoItem label="Date of birth">{fmtDate(emp.date_of_birth)}</InfoItem>
-          <InfoItem label="Profile type">{emp.profile_type || "—"}</InfoItem>
-          <InfoItem label="PAN">{emp.pan || "—"}</InfoItem>
-          <InfoItem label="Aadhar">{emp.aadhar || "—"}</InfoItem>
-        </div>
-      )}
-    </SectionCard>
+    <div className="space-y-4">
+      <ProfileCompleteness emp={emp} skip={skip} canWrite={canWrite}
+        onAdd={(card, field) => setOpen((o) => ({ card, field, n: (o?.n || 0) + 1 }))} />
+      {resigned && <SeparationSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />}
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+        <DetailsCard cardKey="job" {...common} />
+        <DetailsCard cardKey="personal" {...common} footer={cv} />
+      </div>
+      <ProjectsSection emp={emp} />
+      <AddressSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
+      <LeaveBalancesSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+      <MoreSection title="More details" icon={FolderOpen}
+        hint={`Education · Experience · Attendance rule${resigned ? "" : " · Resignation"} — open only when you need them`}>
+        <EducationSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+        <ExperienceSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
+        <DetailsCard cardKey="attendance" {...common}
+          emptyText="Follows the branch / project attendance policy. Set hours here only for an exception." />
+        {!resigned && <SeparationSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />}
+      </MoreSection>
+    </div>
   );
 }
 
@@ -1325,6 +1469,10 @@ const addrPayload = (a: Address, withPhone: boolean): any | null => {
   const hasAny = Object.values(out).some((v) => v != null);
   return hasAny ? out : null;
 };
+
+/** Anything beyond the default country recorded? */
+const hasAddress = (a?: any): boolean =>
+  [a?.line1, a?.line2, a?.city, a?.state, a?.postal_code].some((x) => x && String(x).trim());
 
 function AddressReadout({ a }: { a?: any }) {
   const parts = [a?.line1, a?.line2, a?.city, a?.state, a?.postal_code, a?.country].filter(Boolean);
@@ -1403,6 +1551,8 @@ function AddressSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
     if (ok) d.cancel();
   };
 
+  const addressEmpty = !hasAddress(emp.present_address) && !hasAddress(emp.permanent_address);
+
   const copyPresent = (checked: boolean) => {
     if (!d.draft) return;
     if (checked) {
@@ -1415,6 +1565,7 @@ function AddressSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
   return (
     <SectionCard
       title="Present & Permanent Address"
+      editLabel={addressEmpty ? "Add address" : "Edit"}
       canWrite={canWrite}
       editing={d.editing}
       dirty={d.dirty}
@@ -1606,7 +1757,7 @@ function EducationSection({
       {loading ? (
         <div className="py-6 text-center text-sm text-muted">Loading…</div>
       ) : rows.length === 0 ? (
-        <EmptyState message="No education details recorded" />
+        <p className="text-sm text-muted">No education recorded yet{canWrite ? " — use Add to record a degree or certificate" : ""}.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm lg:min-w-0">
@@ -1844,7 +1995,7 @@ function ExperienceSection({
       {loading ? (
         <div className="py-6 text-center text-sm text-muted">Loading…</div>
       ) : rows.length === 0 ? (
-        <EmptyState message="No prior experience recorded" />
+        <p className="text-sm text-muted">No earlier employers recorded{canWrite ? " — use Add to record one" : ""}.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm lg:min-w-0">
@@ -2001,155 +2152,6 @@ function ProjectsSection({ emp }: { emp: any }) {
   );
 }
 
-/* ------------------------------------------------ 6. Office Details */
-
-function OfficeDetailsSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
-  const [departments, setDepartments] = useState<any[]>([]);
-  const [designations, setDesignations] = useState<any[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!canWrite) return;
-    crmGet<any[]>("/api/departments?limit=100").then((r) => setDepartments(r.data || [])).catch(() => {});
-    crmGet<any[]>("/api/designations?limit=100").then((r) => setDesignations(r.data || [])).catch(() => {});
-    crmGet<any[]>("/api/employees?is_active=true&limit=100").then((r) => setPeople(r.data || [])).catch(() => {});
-  }, [canWrite]);
-
-  const d = useDraft(() => ({
-    work_location: emp.work_location || "",
-    role_title: emp.role_title || "",
-    skills: (emp.skills || []) as string[],
-    experience_years: emp.experience_years != null ? String(emp.experience_years) : "",
-    employment_type: emp.employment_type || "",
-    is_active: Boolean(emp.is_active),
-    portal_access: Boolean(emp.portal_access),
-    department_id: emp.department_id ? String(emp.department_id) : "",
-    designation_id: emp.designation_id ? String(emp.designation_id) : "",
-    reporting_manager_id: emp.reporting_manager_id ? String(emp.reporting_manager_id) : "",
-    reporting_hr_id: emp.reporting_hr_id ? String(emp.reporting_hr_id) : "",
-  }));
-  const { busy, save } = useEmployeeSave(emp.id, onSaved, showToast);
-
-  const submit = async () => {
-    const v = d.draft!;
-    const ok = await save({
-      work_location: sOrNull(v.work_location),
-      role_title: sOrNull(v.role_title),
-      skills: v.skills,
-      experience_years: num(v.experience_years) ?? null,
-      employment_type: v.employment_type || null,
-      is_active: v.is_active,
-      portal_access: v.portal_access,
-      department_id: v.department_id ? Number(v.department_id) : null,
-      designation_id: v.designation_id ? Number(v.designation_id) : null,
-      reporting_manager_id: v.reporting_manager_id ? Number(v.reporting_manager_id) : null,
-      reporting_hr_id: v.reporting_hr_id ? Number(v.reporting_hr_id) : null,
-    }, "Office details saved");
-    if (ok) d.cancel();
-  };
-
-  const personName = (m: any) => m.full_name || `${m.first_name} ${m.last_name || ""}`;
-  const peopleOptions = people.filter((m) => m.id !== emp.id);
-
-  return (
-    <SectionCard
-      title="Office Details"
-      canWrite={canWrite}
-      editing={d.editing}
-      dirty={d.dirty}
-      busy={busy}
-      onEdit={d.begin}
-      onCancel={d.cancel}
-      onSave={submit}
-    >
-      {d.editing ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Work location">
-            <input className={inputCls} value={d.draft!.work_location} onChange={(e) => d.patch({ work_location: e.target.value })} />
-          </Field>
-          <Field label="Role">
-            <input className={inputCls} value={d.draft!.role_title} onChange={(e) => d.patch({ role_title: e.target.value })} />
-          </Field>
-          <Field label="Experience in years">
-            <input type="number" min={0} step="0.5" className={inputCls} value={d.draft!.experience_years} onChange={(e) => d.patch({ experience_years: e.target.value })} />
-          </Field>
-          <div className="sm:col-span-2 lg:col-span-3">
-            <Field label="Skills">
-              <SkillsInput value={d.draft!.skills} onChange={(skills) => d.patch({ skills })} />
-            </Field>
-          </div>
-          <Field label="Employment type">
-            <select className={inputCls} value={d.draft!.employment_type} onChange={(e) => d.patch({ employment_type: e.target.value })}>
-              <option value="">—</option>
-              {EMPLOYMENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Department">
-            <select className={inputCls} value={d.draft!.department_id} onChange={(e) => d.patch({ department_id: e.target.value })}>
-              <option value="">—</option>
-              {departments.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Designation">
-            <select className={inputCls} value={d.draft!.designation_id} onChange={(e) => d.patch({ designation_id: e.target.value })}>
-              <option value="">—</option>
-              {designations.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Reporting manager">
-            <select className={inputCls} value={d.draft!.reporting_manager_id} onChange={(e) => d.patch({ reporting_manager_id: e.target.value })}>
-              <option value="">—</option>
-              {peopleOptions.map((m) => <option key={m.id} value={m.id}>{personName(m)}</option>)}
-            </select>
-          </Field>
-          <Field label="Reporting HR">
-            <select className={inputCls} value={d.draft!.reporting_hr_id} onChange={(e) => d.patch({ reporting_hr_id: e.target.value })}>
-              <option value="">—</option>
-              {peopleOptions.map((m) => <option key={m.id} value={m.id}>{personName(m)}</option>)}
-            </select>
-          </Field>
-          <div className="flex items-end gap-6 pb-1.5">
-            <div className="flex items-center gap-2">
-              <Toggle checked={d.draft!.is_active} onChange={(v) => d.patch({ is_active: v })} label="Active status" />
-              <span className="text-sm font-semibold text-secondary">Active</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Toggle checked={d.draft!.portal_access} onChange={(v) => d.patch({ portal_access: v })} label="Portal access" />
-              <span className="text-sm font-semibold text-secondary">Portal access</span>
-            </div>
-          </div>
-          <InfoItem label="Current experience (computed)">
-            {emp.current_experience_years != null ? `${emp.current_experience_years} yrs` : "—"}
-          </InfoItem>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          <InfoItem label="Work location">{emp.work_location || "—"}</InfoItem>
-          <InfoItem label="Role">{emp.role_title || "—"}</InfoItem>
-          <InfoItem label="Skills">
-            {(emp.skills || []).length ? (
-              <span className="flex flex-wrap gap-1.5">
-                {(emp.skills as string[]).map((s) => <span key={s} className={chipCls}>{s}</span>)}
-              </span>
-            ) : "—"}
-          </InfoItem>
-          <InfoItem label="Experience in years">{emp.experience_years != null ? `${emp.experience_years} yrs` : "—"}</InfoItem>
-          <InfoItem label="Employment type">{empTypeLabel(emp.employment_type)}</InfoItem>
-          <InfoItem label="Status"><StatusBadge status={emp.is_active ? "Active" : "Inactive"} /></InfoItem>
-          <InfoItem label="Department">{emp.department_name || "—"}</InfoItem>
-          <InfoItem label="Designation">{emp.designation_name || "—"}</InfoItem>
-          <InfoItem label="Reporting manager">{emp.reporting_manager_name || "—"}</InfoItem>
-          <InfoItem label="Reporting HR">{emp.reporting_hr_name || "—"}</InfoItem>
-          <InfoItem label="Portal access">{emp.portal_access ? "Yes" : "No"}</InfoItem>
-          <InfoItem label="Current experience (computed)">
-            {emp.current_experience_years != null ? `${emp.current_experience_years} yrs` : "—"}
-          </InfoItem>
-        </div>
-      )}
-    </SectionCard>
-  );
-}
-
 /* ------------------------------------------------ 7. Separation Details */
 
 function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
@@ -2175,6 +2177,8 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
   return (
     <SectionCard
       title="Separation Details"
+      subtitle={emp.is_resigned ? "Resignation, notice period and last working day" : undefined}
+      editLabel={emp.is_resigned ? "Edit" : "Record resignation"}
       canWrite={canWrite}
       editing={d.editing}
       dirty={d.dirty}
@@ -2218,8 +2222,10 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
             />
           </Field>
         </div>
+      ) : !emp.is_resigned ? (
+        <p className="text-sm text-secondary">No resignation recorded — this person is currently employed.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <InfoItem label="Is resigned">{emp.is_resigned ? "Yes" : "No"}</InfoItem>
           <InfoItem label="Date of resignation">{fmtDate(emp.date_of_resignation)}</InfoItem>
           <InfoItem label="Notice period (days)">{emp.notice_period_days ?? "—"}</InfoItem>
@@ -2271,6 +2277,9 @@ function LeaveBalancesSection({
   const [balances, setBalances] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<Record<number, LeaveDraft>>({});
   const [busy, setBusy] = useState(false);
+  /* Leave types with nothing accrued, taken or left are hidden until asked for
+     (29 Sep 2026: six rows of zeros read as noise, not information). */
+  const [showAllTypes, setShowAllTypes] = useState(false);
 
   const loadMatrix = () => {
     setLoading(true);
@@ -2464,7 +2473,27 @@ function LeaveBalancesSection({
       ) : !matrix || (matrix.rows || []).length === 0 ? (
         <EmptyState message={`No leave data for ${year}`} />
       ) : (
+        (() => {
+          const nonZero = (v: number | null | undefined) => Number(v || 0) !== 0;
+          const active = matrix.rows.filter((r) => nonZero(r.accrual) || nonZero(r.consumed) || nonZero(r.balance));
+          const listed = showAllTypes ? matrix.rows : active;
+          const tiles = [
+            { label: "Earned leave carried from last year", value: matrix.el_carry_forward_last_year },
+            { label: "Comp-off carried from last year", value: matrix.comp_off_carry_forward_last_year },
+            { label: "Loss of pay", value: matrix.loss_of_pay },
+          ].filter((t) => nonZero(t.value));
+          const toggle = active.length < matrix.rows.length && (
+            <button type="button" onClick={() => setShowAllTypes((v) => !v)}
+              className={`mt-2 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300 ${focusRing}`}>
+              {showAllTypes ? "Hide leave types with nothing recorded"
+                : `Show all ${matrix.rows.length} leave types`}
+            </button>
+          );
+          return (
         <>
+          {listed.length === 0 ? (
+            <p className="text-sm text-secondary">No leave accrued or taken in {year} yet.</p>
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-max text-sm lg:min-w-0">
               <thead>
@@ -2476,7 +2505,7 @@ function LeaveBalancesSection({
                 </tr>
               </thead>
               <tbody>
-                {(matrix.rows || []).map((r) => (
+                {listed.map((r) => (
                   <tr key={r.code} className={`${rowCls} transition-colors duration-base ease-smooth hover:bg-surface-2`}>
                     <td className={tdCls}>
                       <span className="font-semibold text-primary">{r.label || r.code}</span>
@@ -2490,76 +2519,29 @@ function LeaveBalancesSection({
               </tbody>
             </table>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatTile label="Earned Leave Carry Forward (Last Year)" value={matrix.el_carry_forward_last_year ?? "—"} />
-            <StatTile label="Comp Off Carry Forward (Last Year)" value={matrix.comp_off_carry_forward_last_year ?? "—"} />
-            <StatTile label="Loss of Pay" value={matrix.loss_of_pay ?? "—"} />
-          </div>
+          )}
+          {toggle}
+          {tiles.length > 0 && (
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {tiles.map((t) => <StatTile key={t.label} label={t.label} value={t.value} />)}
+            </div>
+          )}
         </>
+          );
+        })()
       )}
-    </SectionCard>
-  );
-}
-
-/* ------------------------------------------------ 9. Attendance Rule */
-
-function AttendanceRuleSection({ emp, canWrite, onSaved, showToast }: SectionProps) {
-  const d = useDraft(() => ({
-    min_hours_full_day: emp.min_hours_full_day != null ? String(emp.min_hours_full_day) : "",
-    min_hours_half_day: emp.min_hours_half_day != null ? String(emp.min_hours_half_day) : "",
-    normal_hours_per_day: emp.normal_hours_per_day != null ? String(emp.normal_hours_per_day) : "",
-  }));
-  const { busy, save } = useEmployeeSave(emp.id, onSaved, showToast);
-
-  const submit = async () => {
-    const v = d.draft!;
-    const ok = await save({
-      min_hours_full_day: num(v.min_hours_full_day) ?? null,
-      min_hours_half_day: num(v.min_hours_half_day) ?? null,
-      normal_hours_per_day: num(v.normal_hours_per_day) ?? null,
-    }, "Attendance rule saved");
-    if (ok) d.cancel();
-  };
-
-  return (
-    <SectionCard
-      title="Attendance Rule"
-      canWrite={canWrite}
-      editing={d.editing}
-      dirty={d.dirty}
-      busy={busy}
-      onEdit={d.begin}
-      onCancel={d.cancel}
-      onSave={submit}
-    >
-      {d.editing ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Min hours for full day">
-            <input type="number" min={0} step="0.25" className={inputCls} value={d.draft!.min_hours_full_day}
-              onChange={(e) => d.patch({ min_hours_full_day: e.target.value })} />
-          </Field>
-          <Field label="Min hours for half day">
-            <input type="number" min={0} step="0.25" className={inputCls} value={d.draft!.min_hours_half_day}
-              onChange={(e) => d.patch({ min_hours_half_day: e.target.value })} />
-          </Field>
-          <Field label="Normal hours per day">
-            <input type="number" min={0} step="0.25" className={inputCls} value={d.draft!.normal_hours_per_day}
-              onChange={(e) => d.patch({ normal_hours_per_day: e.target.value })} />
-          </Field>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-          <InfoItem label="Min hours for full day">{emp.min_hours_full_day ?? "—"}</InfoItem>
-          <InfoItem label="Min hours for half day">{emp.min_hours_half_day ?? "—"}</InfoItem>
-          <InfoItem label="Normal hours per day">{emp.normal_hours_per_day ?? "—"}</InfoItem>
-        </div>
-      )}
-      <p className="mt-3 text-xs text-muted">Overrides branch policy when set.</p>
     </SectionCard>
   );
 }
 
 /* ------------------------------------------------- Project history tab */
+
+/** Rupees, en-IN, no decimals — the same shape every money cell in the CRM uses. */
+function money(n: number | null | undefined): string {
+  return n === null || n === undefined
+    ? "—"
+    : `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
 
 function ProjectHistoryTab({ employeeId }: { employeeId: number }) {
   const [rows, setRows] = useState<any[]>([]);
@@ -2574,11 +2556,67 @@ function ProjectHistoryTab({ employeeId }: { employeeId: number }) {
       .finally(() => setLoading(false));
   }, [employeeId]);
 
+  // "Where has this person worked, and what was the placement FOR." A project
+  // name and two dates answered the first half only (22 Sep 2026) — the
+  // customer, the deal and the headcount it was sourcing for are the context
+  // that makes a history row mean anything. All server-derived; see
+  // `project_history_context` for the batched lookup.
   const columns: Column<any>[] = [
-    { key: "project_name", label: "Project", render: (r) => r.project_name || `#${r.project_id}` },
-    { key: "role", label: "Role", render: (r) => r.role || "—" },
+    {
+      key: "project_name",
+      label: "Project",
+      render: (r) => (
+        <span>
+          <CrmLink to={`projects/${r.project_id}`} className="font-semibold hover:underline">
+            {r.project_name || `#${r.project_id}`}
+          </CrmLink>
+          {r.customer_name && <span className="block text-xs text-muted">{r.customer_name}</span>}
+        </span>
+      ),
+    },
+    {
+      key: "opportunity",
+      label: "Opportunity",
+      render: (r) => (r.opportunity_id ? (
+        <span>
+          <CrmLink to={`opportunities/${r.opportunity_id}`} className="hover:underline">
+            {r.opportunity_opp_id || `#${r.opportunity_id}`}
+          </CrmLink>
+          {r.opportunity_title && (
+            <span className="block text-xs text-muted">{r.opportunity_title}</span>
+          )}
+        </span>
+      ) : <span className="text-muted">Direct placement</span>),
+    },
+    // The designation held ON that project, captured at assignment — not the
+    // employee's current one, which may have moved on since.
+    { key: "role", label: "Position held", render: (r) => r.role || "—" },
+    {
+      key: "positions_total",
+      label: "Headcount",
+      className: "text-right",
+      render: (r) => (r.positions_total ?? "—"),
+    },
+    {
+      key: "billing_rate",
+      label: "Rate",
+      className: "text-right",
+      render: (r) => (r.billing_rate
+        ? <span className="tabular-nums">{money(r.billing_rate)}
+            <span className="ml-1 text-xs text-muted">
+              {String(r.billing_unit || "").replace(/_/g, " ")}
+            </span>
+          </span>
+        : "—"),
+    },
     { key: "start_date", label: "Start", render: (r) => fmtDate(r.start_date) },
-    { key: "end_date", label: "End", render: (r) => (r.end_date ? fmtDate(r.end_date) : "Ongoing") },
+    {
+      key: "end_date",
+      label: "End",
+      render: (r) => (r.end_date
+        ? fmtDate(r.end_date)
+        : <StatusBadge status="Active" label="Ongoing" />),
+    },
   ];
 
   if (error) return <ErrorBox error={error} />;

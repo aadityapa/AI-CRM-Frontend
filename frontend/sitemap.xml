@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Karnex Orbit — public pages only. The CRM (/admin/), the API and every
+     candidate interview / apply / booking link are private and stay out
+     (see robots.txt). Add a <url> here when a new PUBLIC page ships. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://karnexgroup.com/</loc>
+    <lastmod>2026-09-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

@@ -14,8 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Bot, Calendar as CalendarIcon, ChevronLeft, ChevronRight, ExternalLink,
-  FileText, Link2, Mail, MapPin, Plus, RefreshCw, User, Users,
+  Bot, Building2, Calendar as CalendarIcon, CalendarDays, ChevronLeft, ChevronRight, Code2,
+  ExternalLink, FileText, HeartHandshake, Link2, Mail, MapPin, Plus, RefreshCw, User, Users,
   Clock3,
   Check,
 } from "lucide-react";
@@ -26,6 +26,7 @@ import { useCanAct } from "../useAccess";
 import { CrmLink, crmNavigate } from "../routerHooks";
 import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal";
 import { Modal, btnPrimary, btnSecondary, inputCls } from "../components/ui";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 
 /** Matches the card surface used across the CRM pages. */
 const cardCls = "rounded-card border border-subtle bg-surface-1 shadow-raised";
@@ -93,22 +94,81 @@ const GUTTER_PX = 64;
 
 const minutesToPx = (m: number) => m * PX_PER_MINUTE;
 
-const SOURCE_STYLE: Record<CalendarSource, { chip: string; block: string; label: string }> = {
-  ai_l1: {
-    chip: "bg-brand-100 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300",
-    block:
-      "border-brand-400/70 bg-brand-50 text-brand-900 hover:bg-brand-100 " +
-      "dark:border-brand-500/50 dark:bg-brand-950/50 dark:text-brand-100 dark:hover:bg-brand-900/60",
+const SOURCE_STYLE: Record<CalendarSource, { label: string }> = {
+  ai_l1: { label: "AI interview" },
+  manual_round: { label: "Panel round" },
+};
+
+/* ------------------------------------------------------------------ */
+/* Interview families — colour by WHO runs the interview               */
+/* (29 Sep 2026 redesign; same families as InterviewRoundsModal)       */
+/* ------------------------------------------------------------------ */
+
+type FamilyKey = "ai" | "tech" | "customer" | "hr";
+type Family = {
+  label: string;
+  icon: typeof Bot;
+  /** the grid block */
+  block: string;
+  /** a small chip / badge */
+  chip: string;
+  /** the legend / agenda dot */
+  dot: string;
+};
+
+const FAMILY: Record<FamilyKey, Family> = {
+  ai: {
     label: "AI interview",
-  },
-  manual_round: {
-    chip: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
+    icon: Bot,
     block:
-      "border-violet-400/70 bg-violet-50 text-violet-900 hover:bg-violet-100 " +
-      "dark:border-violet-500/50 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/60",
-    label: "Panel round",
+      "border-purple-500 bg-purple-50 text-purple-950 hover:bg-purple-100 " +
+      "dark:bg-purple-500/20 dark:text-purple-50 dark:hover:bg-purple-500/30",
+    chip: "bg-purple-100 text-purple-800 dark:bg-purple-500/20 dark:text-purple-200",
+    dot: "bg-purple-500",
+  },
+  tech: {
+    label: "Technical round",
+    icon: Code2,
+    block:
+      "border-indigo-500 bg-indigo-50 text-indigo-950 hover:bg-indigo-100 " +
+      "dark:bg-indigo-500/20 dark:text-indigo-50 dark:hover:bg-indigo-500/30",
+    chip: "bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-200",
+    dot: "bg-indigo-500",
+  },
+  customer: {
+    label: "Customer round",
+    icon: Building2,
+    block:
+      "border-sky-500 bg-sky-50 text-sky-950 hover:bg-sky-100 " +
+      "dark:bg-sky-500/20 dark:text-sky-50 dark:hover:bg-sky-500/30",
+    chip: "bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200",
+    dot: "bg-sky-500",
+  },
+  hr: {
+    label: "HR round",
+    icon: HeartHandshake,
+    block:
+      "border-emerald-500 bg-emerald-50 text-emerald-950 hover:bg-emerald-100 " +
+      "dark:bg-emerald-500/20 dark:text-emerald-50 dark:hover:bg-emerald-500/30",
+    chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200",
+    dot: "bg-emerald-500",
   },
 };
+const FAMILY_ORDER: FamilyKey[] = ["ai", "tech", "customer", "hr"];
+
+/** Which family an event belongs to — read from the source, the round kind and
+ *  the round's label (pure presentation; nothing is filtered by it). */
+function familyKeyOf(ev: CalendarEvent): FamilyKey {
+  if (ev.source === "ai_l1") return "ai";
+  const k = `${ev.kind || ""} ${ev.round_label || ""}`.toLowerCase();
+  if (/\bhr\b|hr_/.test(k)) return "hr";
+  if (k.includes("customer") || k.includes("client")) return "customer";
+  return "tech";
+}
+const familyOf = (ev: CalendarEvent) => FAMILY[familyKeyOf(ev)];
+
+const initialsOf = (name: string) =>
+  name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() || "").join("") || "?";
 
 /* ------------------------------------------------------------------ */
 /* Page                                                                */
@@ -128,6 +188,8 @@ export default function CalendarPage() {
   const [selected, setSelected] = useState<CalendarEvent | null>(null);
   const [slot, setSlot] = useState<Date | null>(null);
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "err" } | null>(null);
+  /** The day the Agenda panel lists (presentation only). */
+  const [agendaKey, setAgendaKey] = useState<string | null>(null);
 
   const days = useMemo(() => weekDays(anchor), [anchor]);
   const rangeStart = days[0];
@@ -176,7 +238,7 @@ export default function CalendarPage() {
     if (!showAi && !showManual) setShowManual(true);
   }, [showAi, showManual]);
 
-  const events = payload?.events || [];
+  const events = useMemo(() => payload?.events || [], [payload]);
 
   /** Events bucketed by day key, so each column only scans its own. */
   const byDay = useMemo(() => {
@@ -211,12 +273,53 @@ export default function CalendarPage() {
     setSlot(when);
   };
 
+  /* ---- read-only figures for the header, from the loaded week ---- */
+  const todayKey = toDateKey(new Date());
+  const todayInWeek = days.some((d) => toDateKey(d) === todayKey);
+  const todayCount = byDay.get(todayKey)?.length || 0;
+  const familyCounts = useMemo(() => {
+    const out: Record<FamilyKey, number> = { ai: 0, tech: 0, customer: 0, hr: 0 };
+    for (const ev of events) out[familyKeyOf(ev)] += 1;
+    return out;
+  }, [events]);
+  const busiest = useMemo(() => {
+    let best: { day: Date; n: number } | null = null;
+    for (const d of days) {
+      const n = byDay.get(toDateKey(d))?.length || 0;
+      if (n > 0 && (!best || n > best.n)) best = { day: d, n };
+    }
+    return best;
+  }, [days, byDay]);
+
+  /* Agenda day: the one picked, else today when it is in view, else the first
+     day of the week that has an interview, else the first day. */
+  const agendaDay = useMemo(() => {
+    const picked = agendaKey ? days.find((d) => toDateKey(d) === agendaKey) : undefined;
+    if (picked) return picked;
+    if (todayInWeek) return days.find((d) => toDateKey(d) === todayKey)!;
+    return days.find((d) => (byDay.get(toDateKey(d))?.length || 0) > 0) || days[0];
+  }, [agendaKey, days, todayInWeek, todayKey, byDay]);
+  const agendaItems = useMemo(
+    () => [...(byDay.get(toDateKey(agendaDay)) || [])].sort((a, b) => a.start.getTime() - b.start.getTime()),
+    [byDay, agendaDay],
+  );
+
+  const stats = [
+    ...(todayInWeek ? [{ label: "today", value: todayCount }] : []),
+    { label: "this week", value: loading && !payload ? "…" : events.length },
+    { label: "AI", value: familyCounts.ai },
+    { label: "panel rounds", value: events.length - familyCounts.ai },
+    ...(payload?.undated?.length ? [{ label: "without a date", value: payload.undated.length }] : []),
+    ...(busiest ? [{ label: `busiest · ${busiest.day.toLocaleDateString(undefined, { weekday: "short" })}`, value: busiest.n }] : []),
+  ];
+
   return (
     <div className="space-y-4">
       <Toolbar
         days={days}
         loading={loading}
         counts={payload?.counts}
+        stats={stats}
         showAi={showAi}
         showManual={showManual}
         mine={mine}
@@ -241,160 +344,214 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <div className={`${cardCls} overflow-hidden`}>
-        {/* Day headers — sticky so they survive vertical scrolling */}
-        <div
-          className="grid border-b border-subtle bg-surface-1"
-          style={{ gridTemplateColumns: `${GUTTER_PX}px repeat(7, minmax(0, 1fr))` }}
-        >
-          <div className="border-r border-subtle" />
-          {days.map((day) => (
-            <div
-              key={toDateKey(day)}
-              className={`border-r border-subtle px-2 py-2 text-center last:border-r-0 ${
-                isWeekend(day) ? "bg-surface-2" : ""
-              }`}
-            >
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                {day.toLocaleDateString(undefined, { weekday: "short" })}
-              </div>
-              <div
-                className={`mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${
-                  isToday(day)
-                    ? "bg-brand-600 text-white"
-                    : "text-primary"
-                }`}
-              >
-                {day.getDate()}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Scrollable time grid */}
-        <div ref={scrollerRef} className="max-h-[68vh] overflow-y-auto">
-          <div
-            className="relative grid"
-            style={{
-              gridTemplateColumns: `${GUTTER_PX}px repeat(7, minmax(0, 1fr))`,
-              height: gridHeight,
-            }}
-          >
-            {/* Hour gutter */}
-            <div className="relative border-r border-subtle">
-              {hours.map((hour) => (
-                <div
-                  key={hour}
-                  className="absolute right-2 -translate-y-1/2 text-[11px] font-medium text-muted"
-                  style={{ top: minutesToPx(hour * 60 - gridTopMinutes) }}
-                >
-                  {formatHour(hour)}
-                </div>
-              ))}
-            </div>
-
-            {/* Day columns */}
-            {days.map((day) => {
-              const key = toDateKey(day);
-              const dayEvents = byDay.get(key) || [];
-              const positioned = layoutDayEvents(
-                dayEvents,
-                ({ event, start }) => {
-                  const startMin = minutesSinceMidnight(start);
-                  const end = parseLocalIso(event.ends_at);
-                  const endMin = end
-                    ? minutesSinceMidnight(end)
-                    : startMin + (event.duration_minutes || 60);
-                  return { start: startMin, end: Math.max(endMin, startMin + 20) };
-                },
-                20,
-              );
-
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className={`${cardCls} min-w-0 overflow-hidden`}>
+          {/* legend — what each colour means */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-subtle px-4 py-2.5">
+            {FAMILY_ORDER.map((k) => {
+              const f = FAMILY[k];
               return (
-                <div
-                  key={key}
-                  className={`relative border-r border-subtle last:border-r-0 ${
-                    isWeekend(day) ? "bg-surface-2/50" : ""
-                  }`}
-                >
-                  {/* Hour lines + click targets for scheduling */}
-                  {hours.map((hour) => (
+                <span key={k} className="inline-flex items-center gap-1.5 text-xs font-semibold text-secondary">
+                  <span className={`h-2.5 w-2.5 rounded-full ${f.dot}`} aria-hidden />
+                  {f.label}
+                  <span className="tnum text-muted">{familyCounts[k]}</span>
+                </span>
+              );
+            })}
+            <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted">
+              <span className="h-2 w-2 rounded-full bg-rose-500" aria-hidden /> Now
+            </span>
+          </div>
+
+          {/* the week — scrolls sideways inside its own box on a phone */}
+          <div className="overflow-x-auto">
+            <div className="min-w-[760px]">
+              {/* Day headers — click one to list it in the Agenda */}
+              <div
+                className="grid border-b border-subtle bg-surface-1"
+                style={{ gridTemplateColumns: `${GUTTER_PX}px repeat(7, minmax(0, 1fr))` }}
+              >
+                <div className="border-r border-subtle" />
+                {days.map((day) => {
+                  const key = toDateKey(day);
+                  const n = byDay.get(key)?.length || 0;
+                  const today = isToday(day);
+                  const picked = toDateKey(agendaDay) === key;
+                  return (
                     <button
-                      key={hour}
+                      key={key}
                       type="button"
-                      onClick={() => openSlot(day, hour)}
-                      disabled={!canSchedule}
-                      aria-label={
-                        canSchedule
-                          ? `Schedule an interview on ${formatLongDate(day)} at ${formatHour(hour)}`
-                          : undefined
-                      }
-                      className={`absolute inset-x-0 border-t border-subtle/70 ${
-                        canSchedule ? "hover:bg-brand-50/60 dark:hover:bg-brand-950/20" : ""
-                      }`}
-                      style={{
-                        top: minutesToPx(hour * 60 - gridTopMinutes),
-                        height: minutesToPx(60),
-                      }}
-                    />
-                  ))}
-
-                  {isToday(day) && <NowLine gridTopMinutes={gridTopMinutes} />}
-
-                  {positioned.map(({ item, top, height, column, columns }) => {
-                    const ev = item.event;
-                    const style = SOURCE_STYLE[ev.source];
-                    const widthPct = 100 / columns;
-                    return (
-                      <button
-                        key={ev.id}
-                        type="button"
-                        onClick={() => setSelected(ev)}
-                        title={`${ev.title}\n${formatTime(item.start)}`}
-                        className={`absolute overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight shadow-sm transition-colors ${style.block}`}
-                        style={{
-                          top: minutesToPx(top - gridTopMinutes),
-                          height: Math.max(minutesToPx(height) - 2, 18),
-                          left: `calc(${column * widthPct}% + 2px)`,
-                          width: `calc(${widthPct}% - 4px)`,
-                        }}
+                      onClick={() => setAgendaKey(key)}
+                      aria-pressed={picked}
+                      title={`Show ${formatLongDate(day)} in the agenda`}
+                      className={`border-r border-subtle px-2 py-2 text-center transition-colors last:border-r-0 hover:bg-surface-2 ${
+                        today ? "bg-sky-50 dark:bg-sky-500/10" : isWeekend(day) ? "bg-surface-2" : ""
+                      } ${picked ? "shadow-[inset_0_-3px_0_0_#0284c7]" : ""}`}
+                    >
+                      <div className={`text-[11px] font-semibold uppercase tracking-wide ${today ? "text-sky-700 dark:text-sky-300" : "text-muted"}`}>
+                        {day.toLocaleDateString(undefined, { weekday: "short" })}
+                      </div>
+                      <div
+                        className={`mx-auto mt-0.5 flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${
+                          today
+                            ? "bg-gradient-to-br from-sky-500 to-brand-600 text-white shadow-raised"
+                            : "text-primary"
+                        }`}
                       >
-                        <span className="flex items-center gap-1 font-semibold">
-                          <Clock3 size={10} className="shrink-0 opacity-70" />
-                          <span className="truncate">{formatTime(item.start)}</span>
-                          {ev.source === "ai_l1"
-                            ? <Bot size={10} className="ml-auto shrink-0 opacity-60" />
-                            : <Users size={10} className="ml-auto shrink-0 opacity-60" />}
-                        </span>
-                        <span className="mt-0.5 block truncate font-medium">
-                          Interview: {ev.candidate_name || ev.title}
-                        </span>
-                        {height >= 34 && (
-                          /* initials chip, bottom-right — as in the mock */
-                          <span className="absolute bottom-1 right-1.5 grid h-4 w-4 place-items-center rounded-full bg-white/70 text-[8px] font-bold text-slate-700 ring-1 ring-black/10 dark:bg-white/20 dark:text-white">
-                            {(ev.candidate_name || ev.title || "?")
-                              .split(/\s+/).filter(Boolean).slice(0, 2)
-                              .map((p) => p[0]?.toUpperCase() || "").join("")}
+                        {day.getDate()}
+                      </div>
+                      <div className="mt-1 h-4">
+                        {n > 0 && (
+                          <span className="inline-flex items-center rounded-full bg-surface-2 px-1.5 text-[10px] font-bold text-secondary ring-1 ring-inset ring-slate-200 dark:ring-slate-700">
+                            {n} interview{n === 1 ? "" : "s"}
                           </span>
                         )}
-                      </button>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Scrollable time grid */}
+              <div ref={scrollerRef} className="max-h-[68vh] overflow-y-auto">
+                <div
+                  className="relative grid"
+                  style={{
+                    gridTemplateColumns: `${GUTTER_PX}px repeat(7, minmax(0, 1fr))`,
+                    height: gridHeight,
+                  }}
+                >
+                  {/* Hour gutter */}
+                  <div className="relative border-r border-subtle bg-surface-1">
+                    {hours.map((hour) => (
+                      <div
+                        key={hour}
+                        className="absolute right-2 -translate-y-1/2 text-[11px] font-medium text-muted"
+                        style={{ top: minutesToPx(hour * 60 - gridTopMinutes) }}
+                      >
+                        {formatHour(hour)}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Day columns */}
+                  {days.map((day) => {
+                    const key = toDateKey(day);
+                    const dayEvents = byDay.get(key) || [];
+                    const positioned = layoutDayEvents(
+                      dayEvents,
+                      ({ event, start }) => {
+                        const startMin = minutesSinceMidnight(start);
+                        const end = parseLocalIso(event.ends_at);
+                        const endMin = end
+                          ? minutesSinceMidnight(end)
+                          : startMin + (event.duration_minutes || 60);
+                        return { start: startMin, end: Math.max(endMin, startMin + 20) };
+                      },
+                      20,
+                    );
+
+                    return (
+                      <div
+                        key={key}
+                        className={`relative border-r border-subtle last:border-r-0 ${
+                          isToday(day)
+                            ? "bg-sky-50 dark:bg-sky-500/5"
+                            : isWeekend(day) ? "bg-slate-50 dark:bg-white/[0.02]" : ""
+                        }`}
+                      >
+                        {/* Hour lines + click targets for scheduling */}
+                        {hours.map((hour) => (
+                          <button
+                            key={hour}
+                            type="button"
+                            onClick={() => openSlot(day, hour)}
+                            disabled={!canSchedule}
+                            aria-label={
+                              canSchedule
+                                ? `Schedule an interview on ${formatLongDate(day)} at ${formatHour(hour)}`
+                                : undefined
+                            }
+                            className={`absolute inset-x-0 border-t border-subtle ${
+                              canSchedule ? "hover:bg-sky-100 dark:hover:bg-sky-500/10" : ""
+                            }`}
+                            style={{
+                              top: minutesToPx(hour * 60 - gridTopMinutes),
+                              height: minutesToPx(60),
+                            }}
+                          />
+                        ))}
+
+                        {isToday(day) && <NowLine gridTopMinutes={gridTopMinutes} />}
+
+                        {positioned.map(({ item, top, height, column, columns }) => {
+                          const ev = item.event;
+                          const fam = familyOf(ev);
+                          const FamIcon = fam.icon;
+                          const widthPct = 100 / columns;
+                          return (
+                            <button
+                              key={ev.id}
+                              type="button"
+                              onClick={() => setSelected(ev)}
+                              title={`${ev.title}\n${formatTime(item.start)}`}
+                              className={`absolute overflow-hidden rounded-md border-l-[3px] px-1.5 py-1 text-left text-[11px] leading-tight shadow-sm ring-1 ring-inset ring-black/5 transition-colors dark:ring-white/10 ${fam.block}`}
+                              style={{
+                                top: minutesToPx(top - gridTopMinutes),
+                                height: Math.max(minutesToPx(height) - 2, 18),
+                                left: `calc(${column * widthPct}% + 2px)`,
+                                width: `calc(${widthPct}% - 4px)`,
+                              }}
+                            >
+                              <span className="flex items-center gap-1 font-semibold">
+                                <Clock3 size={10} className="shrink-0 opacity-70" />
+                                <span className="truncate">{formatTime(item.start)}</span>
+                                <FamIcon size={10} className="ml-auto shrink-0 opacity-70" />
+                              </span>
+                              <span className={`mt-0.5 block truncate font-medium ${height >= 34 ? "pr-5" : ""}`}>
+                                Interview: {ev.candidate_name || ev.title}
+                              </span>
+                              {height >= 52 && ev.round_label && (
+                                <span className="block truncate text-[10px] opacity-75">{ev.round_label}</span>
+                              )}
+                              {height >= 34 && (
+                                <span className="absolute bottom-1 right-1.5 grid h-4 w-4 place-items-center rounded-full bg-white/80 text-[8px] font-bold text-slate-700 ring-1 ring-black/10 dark:bg-white/20 dark:text-white">
+                                  {initialsOf(ev.candidate_name || ev.title || "?")}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
                     );
                   })}
                 </div>
-              );
-            })}
+              </div>
+            </div>
           </div>
+
+          {loading && (
+            <div className="flex items-center gap-2 border-t border-subtle px-4 py-2 text-xs text-muted">
+              <RefreshCw size={12} className="animate-spin" /> Loading…
+            </div>
+          )}
+          {!loading && events.length === 0 && !error && (
+            <div className="border-t border-subtle px-4 py-8 text-center text-sm text-muted">
+              <CalendarDays size={26} className="mx-auto mb-2 text-sky-500" aria-hidden />
+              No interviews scheduled this week.
+              {canSchedule && " Click any time slot to schedule one."}
+            </div>
+          )}
         </div>
 
-        {loading && (
-          <div className="border-t border-subtle px-4 py-2 text-xs text-muted">Loading…</div>
-        )}
-        {!loading && events.length === 0 && !error && (
-          <div className="border-t border-subtle px-4 py-8 text-center text-sm text-muted">
-            No interviews scheduled this week.
-            {canSchedule && " Click any time slot to schedule one."}
-          </div>
-        )}
+        <AgendaPanel
+          day={agendaDay}
+          items={agendaItems}
+          loading={loading}
+          canSchedule={canSchedule}
+          onOpen={setSelected}
+          onSchedule={() => openSlot(agendaDay, 10)}
+        />
       </div>
 
       {payload?.undated && payload.undated.length > 0 && (
@@ -443,16 +600,17 @@ export default function CalendarPage() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Toolbar                                                             */
+/* Toolbar — the page header, week stepper and source filters          */
 /* ------------------------------------------------------------------ */
 
 function Toolbar({
-  days, loading, counts, showAi, showManual, mine, canSchedule,
+  days, loading, counts, stats, showAi, showManual, mine, canSchedule,
   onToggleAi, onToggleManual, onToggleMine, onPrev, onNext, onToday, onRefresh, onNew,
 }: {
   days: Date[];
   loading: boolean;
   counts?: CalendarPayload["counts"];
+  stats: { label: string; value: React.ReactNode }[];
   showAi: boolean;
   showManual: boolean;
   mine: boolean;
@@ -466,72 +624,180 @@ function Toolbar({
   onRefresh: () => void;
   onNew: () => void;
 }) {
-  const navBtn =
-    "inline-flex h-8 w-8 items-center justify-center rounded-control border border-subtle " +
-    "bg-surface-2 text-secondary transition-colors hover:bg-surface-3 hover:text-primary";
-  /* Checkbox-style source filters (27 Aug 2026 redesign): a small coloured
-   * checkbox + label, like the reference design — the pill look read as
-   * status chips, not filters. */
-  const checkRow = "inline-flex cursor-pointer select-none items-center gap-1.5 text-xs font-semibold text-secondary hover:text-primary";
-  const checkBox = (on: boolean, tone: string) =>
-    `grid h-3.5 w-3.5 place-items-center rounded-[3px] border transition-colors ${
-      on ? `${tone} border-transparent text-white` : "border-strong bg-surface-1"
+  /* One joined control: ‹ · Today · › */
+  const segBtn =
+    "inline-flex h-9 items-center justify-center px-2.5 text-sm font-semibold text-secondary " +
+    "transition-colors hover:bg-surface-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 " +
+    "focus-visible:ring-inset focus-visible:ring-sky-500";
+  /* Source filters as toggle pills with a coloured tick. */
+  const pill = (on: boolean, tone: string) =>
+    `inline-flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-full px-3 text-xs font-semibold ring-1 ring-inset transition-colors ${
+      on ? `${tone}` : "bg-surface-1 text-muted ring-slate-200 hover:text-primary dark:ring-slate-700"
     }`;
+  const tick = (on: boolean, fill: string) =>
+    `grid h-3.5 w-3.5 place-items-center rounded-full text-white ${on ? fill : "bg-slate-300 dark:bg-slate-600"}`;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-2">
-        <button type="button" className={btnSecondary} onClick={onToday}>
-          Today
-        </button>
-        <button type="button" className={navBtn} onClick={onPrev} aria-label="Previous week">
-          <ChevronLeft size={16} />
-        </button>
-        <button type="button" className={navBtn} onClick={onNext} aria-label="Next week">
-          <ChevronRight size={16} />
-        </button>
-        <h1 className="ml-1 font-display text-lg font-bold text-primary">
-          {formatWeekRange(days)}
-        </h1>
-        <button
-          type="button"
-          className={`${navBtn} ${loading ? "animate-spin" : ""}`}
-          onClick={onRefresh}
-          aria-label="Refresh"
-        >
-          <RefreshCw size={14} />
-        </button>
+    <PageHeader
+      icon={CalendarDays}
+      accent="ocean"
+      eyebrow="Interviews"
+      title="Interview calendar"
+      subtitle="Every AI L1 session and panel round in one week — click an interview for its details, or an empty slot to schedule."
+      stats={stats}
+      actions={
+        <>
+          <button
+            type="button"
+            className={HERO_BTN}
+            onClick={onRefresh}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          </button>
+          {canSchedule && (
+            <button type="button" className={HERO_BTN_SOLID} onClick={onNew}>
+              <Plus size={15} /> New interview
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex overflow-hidden rounded-control border border-subtle bg-surface-1 shadow-raised">
+            <button type="button" className={segBtn} onClick={onPrev} aria-label="Previous week">
+              <ChevronLeft size={16} />
+            </button>
+            <button type="button" className={`${segBtn} border-x border-subtle px-3.5`} onClick={onToday}>
+              Today
+            </button>
+            <button type="button" className={segBtn} onClick={onNext} aria-label="Next week">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <h2 className="font-display text-lg font-bold text-primary">
+            {formatWeekRange(days)}
+          </h2>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="hidden text-[11px] font-bold uppercase tracking-wide text-muted sm:inline">Show</span>
+          <button type="button" role="checkbox" aria-checked={showAi} onClick={onToggleAi}
+            className={pill(showAi, "bg-purple-50 text-purple-800 ring-purple-200 dark:bg-purple-500/15 dark:text-purple-200 dark:ring-purple-500/40")}>
+            <span className={tick(showAi, "bg-purple-500")}>{showAi && <Check size={9} strokeWidth={3.5} />}</span>
+            <Bot size={13} aria-hidden />
+            AI{counts ? ` (${counts.ai_l1})` : ""}
+          </button>
+          <button type="button" role="checkbox" aria-checked={showManual} onClick={onToggleManual}
+            className={pill(showManual, "bg-indigo-50 text-indigo-800 ring-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-200 dark:ring-indigo-500/40")}>
+            <span className={tick(showManual, "bg-indigo-500")}>{showManual && <Check size={9} strokeWidth={3.5} />}</span>
+            <Users size={13} aria-hidden />
+            Panel{counts ? ` (${counts.manual_round})` : ""}
+          </button>
+          <button type="button" role="checkbox" aria-checked={mine} onClick={onToggleMine}
+            title="Only interviews you scheduled"
+            className={pill(mine, "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/40")}>
+            <span className={tick(mine, "bg-emerald-500")}>{mine && <Check size={9} strokeWidth={3.5} />}</span>
+            <User size={13} aria-hidden />
+            Mine
+          </button>
+        </div>
+      </div>
+    </PageHeader>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Agenda — the picked day as a list                                   */
+/* ------------------------------------------------------------------ */
+
+function AgendaPanel({
+  day, items, loading, canSchedule, onOpen, onSchedule,
+}: {
+  day: Date;
+  items: { event: CalendarEvent; start: Date }[];
+  loading: boolean;
+  canSchedule: boolean;
+  onOpen: (e: CalendarEvent) => void;
+  onSchedule: () => void;
+}) {
+  return (
+    <aside className={`${cardCls} flex min-w-0 flex-col self-start overflow-hidden xl:sticky xl:top-4`}>
+      <div className="flex items-center gap-3 border-b border-subtle px-4 py-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-card bg-gradient-to-br from-sky-500 to-brand-600 text-white shadow-raised">
+          <span className="text-center leading-none">
+            <span className="block text-[9px] font-bold uppercase tracking-wider opacity-90">
+              {day.toLocaleDateString(undefined, { weekday: "short" })}
+            </span>
+            <span className="block text-base font-bold">{day.getDate()}</span>
+          </span>
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-sm font-bold text-primary">
+            Agenda{isToday(day) ? " · Today" : ""}
+          </h2>
+          <p className="truncate text-xs text-muted">
+            {formatLongDate(day)} · {items.length} interview{items.length === 1 ? "" : "s"}
+          </p>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <label className={checkRow}>
-          <button type="button" role="checkbox" aria-checked={showAi}
-            className={checkBox(showAi, "bg-brand-600")} onClick={onToggleAi}>
-            {showAi && <Check size={10} strokeWidth={3.5} />}
-          </button>
-          AI{counts ? ` (${counts.ai_l1})` : ""}
-        </label>
-        <label className={checkRow}>
-          <button type="button" role="checkbox" aria-checked={showManual}
-            className={checkBox(showManual, "bg-violet-500")} onClick={onToggleManual}>
-            {showManual && <Check size={10} strokeWidth={3.5} />}
-          </button>
-          Panel{counts ? ` (${counts.manual_round})` : ""}
-        </label>
-        <label className={checkRow} title="Only interviews you scheduled">
-          <button type="button" role="checkbox" aria-checked={mine}
-            className={checkBox(mine, "bg-emerald-500")} onClick={onToggleMine}>
-            {mine && <Check size={10} strokeWidth={3.5} />}
-          </button>
-          Mine
-        </label>
-        {canSchedule && (
-          <button type="button" className={btnPrimary} onClick={onNew}>
-            <Plus size={15} /> New interview
-          </button>
-        )}
-      </div>
-    </div>
+      {items.length === 0 ? (
+        <div className="px-4 py-8 text-center">
+          <CalendarIcon size={24} className="mx-auto text-slate-300 dark:text-slate-600" aria-hidden />
+          <p className="mt-2 text-sm text-muted">
+            {loading ? "Loading…" : "Nothing booked on this day."}
+          </p>
+          {canSchedule && !loading && (
+            <button type="button" className={`${btnSecondary} mt-3`} onClick={onSchedule}>
+              <Plus size={14} /> Schedule on this day
+            </button>
+          )}
+        </div>
+      ) : (
+        <ol className="max-h-[60vh] divide-y divide-subtle overflow-y-auto">
+          {items.map(({ event: ev, start }) => {
+            const fam = familyOf(ev);
+            const FamIcon = fam.icon;
+            const end = parseLocalIso(ev.ends_at);
+            return (
+              <li key={ev.id}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(ev)}
+                  className="flex w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
+                >
+                  <div className="w-[4.5rem] shrink-0 whitespace-nowrap text-right">
+                    <div className="tnum text-[13px] font-bold text-primary">{formatTime(start)}</div>
+                    {end && <div className="tnum text-[11px] text-muted">{formatTime(end)}</div>}
+                  </div>
+                  <span className={`w-1 shrink-0 rounded-full ${fam.dot}`} aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-primary">
+                      {ev.candidate_name || ev.title}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${fam.chip}`}>
+                        <FamIcon size={10} aria-hidden /> {ev.round_label || SOURCE_STYLE[ev.source].label}
+                      </span>
+                      {ev.status && <Badge>{ev.status}</Badge>}
+                    </div>
+                    {(ev.opportunity_title || ev.customer_name) && (
+                      <div className="mt-0.5 truncate text-xs text-muted">
+                        {[ev.opportunity_title, ev.customer_name].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
+                  </div>
+                  {ev.meeting_link && <Link2 size={13} className="mt-1 shrink-0 text-sky-600 dark:text-sky-300" aria-label="Has a meeting link" />}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </aside>
   );
 }
 
@@ -552,8 +818,8 @@ function NowLine({ gridTopMinutes }: { gridTopMinutes: number }) {
       style={{ top }}
       aria-hidden
     >
-      <span className="h-2 w-2 -translate-x-1/2 rounded-full bg-rose-500" />
-      <span className="h-px flex-1 bg-rose-500" />
+      <span className="h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-900" />
+      <span className="h-0.5 flex-1 bg-rose-500" />
     </div>
   );
 }
@@ -567,29 +833,41 @@ function UndatedList({
 }: { events: CalendarEvent[]; onOpen: (e: CalendarEvent) => void }) {
   return (
     <div className={cardCls}>
-      <div className="fx-hairline-b px-4 py-3">
-        <h2 className="text-sm font-bold text-primary">Not yet on the calendar</h2>
-        <p className="mt-0.5 text-xs text-muted">
-          Rounds recorded with a written time but no exact date, so they cannot be placed
-          on the grid.
-        </p>
+      <div className="flex items-start gap-3 border-b border-subtle px-4 py-3">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+          <Clock3 size={15} aria-hidden />
+        </span>
+        <div>
+          <h2 className="text-sm font-bold text-primary">
+            Not yet on the calendar
+            <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">{events.length}</span>
+          </h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Rounds recorded with a written time but no exact date, so they cannot be placed
+            on the grid.
+          </p>
+        </div>
       </div>
       <ul className="divide-y divide-subtle">
-        {events.map((ev) => (
-          <li key={ev.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
-            <button
-              type="button"
-              className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
-              onClick={() => onOpen(ev)}
-            >
-              {ev.candidate_name || ev.title}
-            </button>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${SOURCE_STYLE[ev.source].chip}`}>
-              {ev.round_label || SOURCE_STYLE[ev.source].label}
-            </span>
-            {ev.raw_when && <span className="text-muted">“{ev.raw_when}”</span>}
-          </li>
-        ))}
+        {events.map((ev) => {
+          const fam = familyOf(ev);
+          return (
+            <li key={ev.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${fam.dot}`} aria-hidden />
+              <button
+                type="button"
+                className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                onClick={() => onOpen(ev)}
+              >
+                {ev.candidate_name || ev.title}
+              </button>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${fam.chip}`}>
+                {ev.round_label || SOURCE_STYLE[ev.source].label}
+              </span>
+              {ev.raw_when && <span className="text-muted">“{ev.raw_when}”</span>}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -611,7 +889,8 @@ function EventDetailModal({
   const [editing, setEditing] = useState(false);
   const start = parseLocalIso(event.starts_at);
   const end = parseLocalIso(event.ends_at);
-  const style = SOURCE_STYLE[event.source];
+  const style = { chip: familyOf(event).chip, label: SOURCE_STYLE[event.source].label };
+  const FamIcon = familyOf(event).icon;
   const panel = (event.panel || []).filter(Boolean) as string[];
 
   if (editing && event.source === "ai_l1" && event.profile_id) {
@@ -640,7 +919,7 @@ function EventDetailModal({
       <div className="space-y-5 p-1">
         <header className="space-y-2">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${style.chip}`}>
-            {event.source === "ai_l1" ? <Bot size={12} /> : <Users size={12} />}
+            <FamIcon size={12} />
             {event.round_label || style.label}
           </span>
           <h2 className="font-display text-xl font-bold text-primary">{event.title}</h2>

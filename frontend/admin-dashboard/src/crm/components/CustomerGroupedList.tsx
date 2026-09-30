@@ -10,9 +10,12 @@
  * table behind a "Flat list" toggle (`ViewToggle`) so nothing is lost.
  */
 import { useMemo, useState } from "react";
-import { Building2, ChevronDown, ChevronRight, LayoutList, Rows3 } from "lucide-react";
+import { Building2, ChevronDown, ChevronRight, Rows3 } from "lucide-react";
 
 import type { Column } from "./DataTable";
+import { isOwnDomClick } from "./ui";
+import { RowLinkMenu, openCrmInNewTab, rowLinkHandlers, wantsNewTab, type RowMenuState } from "./RowLinkMenu";
+import { crmNavigate } from "../router";
 
 export type GroupView = "customer" | "flat";
 
@@ -60,6 +63,8 @@ type Props<T> = {
   /** Right-hand summary of one customer's rows (totals, counts). */
   summary?: (rows: T[]) => React.ReactNode;
   onRowClick?: (r: T) => void;
+  /** Where a row leads — right-click menu + Ctrl/middle-click new tab (29 Sep 2026). */
+  rowHref?: (r: T) => string | null | undefined;
   rowActions?: (r: T) => React.ReactNode;
   rowKey?: (r: T) => string | number;
   empty?: React.ReactNode;
@@ -67,8 +72,9 @@ type Props<T> = {
 
 export function CustomerGroupedList<T>({
   rows, loading, columns, customerId, customerName, search = "", matches, noun,
-  summary, onRowClick, rowActions, rowKey, empty,
+  summary, onRowClick, rowHref, rowActions, rowKey, empty,
 }: Props<T>) {
+  const [rowMenu, setRowMenu] = useState<RowMenuState>(null);
   const groups = useMemo<CustomerGroup<T>[]>(() => {
     const needle = search.trim().toLowerCase();
     const visible = !needle || !matches ? rows : rows.filter((r) =>
@@ -96,6 +102,7 @@ export function CustomerGroupedList<T>({
   const visibleCols = columns;
   return (
     <div className="space-y-3">
+      <RowLinkMenu menu={rowMenu} onClose={() => setRowMenu(null)} />
       {groups.map((g) => (
         <div key={g.customer_id} className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
           <button
@@ -129,8 +136,14 @@ export function CustomerGroupedList<T>({
                   {g.rows.map((r, i) => (
                     <tr
                       key={rowKey ? rowKey(r) : i}
-                      className={`border-t border-subtle ${onRowClick ? "row-hover cursor-pointer" : ""}`}
-                      onClick={onRowClick ? () => onRowClick(r) : undefined}
+                      className={`border-t border-subtle ${onRowClick || rowHref ? "row-hover cursor-pointer" : ""}`}
+                      onClick={onRowClick || rowHref ? (e) => {
+                        if (!isOwnDomClick(e)) return;
+                        const href = rowHref?.(r);
+                        if (href && wantsNewTab(e)) { openCrmInNewTab(href); return; }
+                        if (onRowClick) onRowClick(r); else if (href) crmNavigate(href);
+                      } : undefined}
+                      {...rowLinkHandlers(rowHref?.(r), setRowMenu)}
                     >
                       {visibleCols.map((c) => (
                         <td key={String(c.key)} className={`px-3 py-2.5 first:pl-4 align-top ${c.align === "right" ? "text-right tnum" : ""} ${c.className || ""}`}>

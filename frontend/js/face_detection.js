@@ -101,27 +101,9 @@ async function countFaces(video) {
   return 0;
 }
 
-/* Evidence (15 Sep 2026): a small JPEG of the camera frame travels with every
- * camera event so the Integrity tab can show WHAT the detector saw, not only
- * that it fired. 320px wide, ~15–30 KB. */
-const EVIDENCE_WIDTH = 320;
-let _evidenceCanvas = null;
-
-async function captureEvidence(video) {
-  try {
-    if (!videoReady(video)) return null;
-    if (!_evidenceCanvas) _evidenceCanvas = document.createElement("canvas");
-    const scale = EVIDENCE_WIDTH / video.videoWidth;
-    _evidenceCanvas.width = EVIDENCE_WIDTH;
-    _evidenceCanvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    const ctx = _evidenceCanvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, _evidenceCanvas.width, _evidenceCanvas.height);
-    return await new Promise((resolve) => _evidenceCanvas.toBlob(resolve, "image/jpeg", 0.6));
-  } catch (_) {
-    return null;
-  }
-}
+/* Camera events used to attach a JPEG snapshot (15–23 Sep 2026). Removed: the
+ * whole-session recording (session_recorder.js) shows what the camera saw at
+ * the event's timestamp, at higher fidelity and without a second store. */
 
 /* "No face" is informational: three consecutive empty scans (~6 s) log one
  * event, then at most one more every NO_FACE_INTERVAL_MS. Never a strike. */
@@ -142,8 +124,7 @@ async function scanOnce() {
       const now = Date.now();
       if (_noFaceStreak >= NO_FACE_SCANS && now - _lastNoFaceAt >= NO_FACE_INTERVAL_MS) {
         _lastNoFaceAt = now;
-        const evidence = await captureEvidence(video);
-        reportSecurityViolation("no_face", `No face detected for ${_noFaceStreak} scans`, { evidence });
+        reportSecurityViolation("no_face", `No face detected for ${_noFaceStreak} scans`);
       }
       return;
     }
@@ -152,12 +133,7 @@ async function scanOnce() {
     const now = Date.now();
     if (now - lastViolationAt < VIOLATION_DEBOUNCE_MS) return;
     lastViolationAt = now;
-    const evidence = await captureEvidence(video);
-    reportSecurityViolation(
-      "multiple_faces",
-      `${faceCount} faces detected via ${detectorMode || "unknown"}`,
-      { evidence }
-    );
+    reportSecurityViolation("multiple_faces", `${faceCount} faces detected via ${detectorMode || "unknown"}`);
   } catch (err) {
     try {
       console.warn("[face-detection] scan failed", err);

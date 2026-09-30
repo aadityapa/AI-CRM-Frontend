@@ -2,13 +2,15 @@
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Ban, Building2, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileDown, FileText,
-  IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search,
+  Ban, Building2, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText,
+  IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search, Undo2,
+  FileSpreadsheet, Landmark, ScrollText,
 } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
 import { useHasRole, useMe } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useCanApprove } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
@@ -26,7 +28,24 @@ import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
 import { SearchableSelect, type SearchableOption } from "../components/SearchableSelect";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
+import {
+  ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
+} from "../components/invoice/ProformaActions";
+import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 /* ---------------------------------------------------------------- helpers */
+
+/** "Proforma" / "Returned to GM" chip — orange, the document's own colour. */
+function ProformaKindBadge({ returned }: { returned: boolean }) {
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-xs font-bold text-white"
+      style={{ background: returned ? "#9a3412" : PROFORMA_COLOR }}
+      title={returned ? "Finance returned this proforma to the GM" : "Proforma — awaiting Finance review"}
+    >
+      {returned ? "Proforma · returned" : "Proforma"}
+    </span>
+  );
+}
 
 const inr = (v: number | null | undefined): string =>
   v == null ? "—" : `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -332,11 +351,13 @@ const PO_TABS = [
   { key: "Cancelled", label: "Cancelled" },
 ];
 
-export function PurchaseOrdersPage() {
+/** `embedded` — rendered as a tab of the Projects hub: the hub already carries
+ *  the page header, so only a compact action row is shown. */
+export function PurchaseOrdersPage({ embedded = false }: { embedded?: boolean } = {}) {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Finance");
   const canWrite = useCanAct("pos", "edit", canWriteRole);
-  const [tab, setTab] = useState("Active");
+  const [tab, setTab] = usePageTab<string>("status", "Active", PO_TABS.map((t) => t.key));
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -418,25 +439,56 @@ export function PurchaseOrdersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-lg font-bold text-primary">Purchase Orders</h1>
-        {canWrite && (
-          <button className={btnPrimary} onClick={() => { setEditPoId(null); setShowNew(true); }}>
-            <Plus size={15} /> New PO
-          </button>
-        )}
-      </div>
-      <Tabs tabs={PO_TABS} active={tab} onChange={setTab} />
+      {(() => {
+        const searchBox = (
+          <div className="flex min-w-0 max-w-sm flex-1 items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3 sm:min-w-[220px]">
+            <Search size={14} className="shrink-0 text-muted" />
+            <input
+              className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
+              placeholder="Search PO number, customer or employee…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        );
+        if (embedded) {
+          return (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Tabs tabs={PO_TABS} active={tab} onChange={setTab} />
+                {canWrite && (
+                  <button className={btnPrimary} onClick={() => { setEditPoId(null); setShowNew(true); }}>
+                    <Plus size={15} /> New PO
+                  </button>
+                )}
+              </div>
+              {searchBox}
+            </>
+          );
+        }
+        return (
+          <PageHeader
+            icon={FileSpreadsheet}
+            accent="violet"
+            eyebrow="Finance"
+            title="Purchase Orders"
+            subtitle="Every customer's POs grouped by customer — value, what has been drawn by invoices (before GST) and the balance left to bill."
+            stats={loading ? undefined : [
+              { label: rows.length === 1 ? "PO" : "POs", value: rows.length },
+              { label: groups.length === 1 ? "customer" : "customers", value: groups.length },
+            ]}
+            actions={canWrite ? (
+              <button className={HERO_BTN_SOLID} onClick={() => { setEditPoId(null); setShowNew(true); }}>
+                <Plus size={15} /> New PO
+              </button>
+            ) : undefined}
+          >
+            <Tabs tabs={PO_TABS} active={tab} onChange={setTab} />
+            <div className="mt-3">{searchBox}</div>
+          </PageHeader>
+        );
+      })()}
       {error && <ErrorBox error={error} />}
-      <div className="flex min-w-[220px] max-w-sm items-center gap-2 rounded-control border border-subtle bg-surface-1 px-3">
-        <Search size={14} className="shrink-0 text-muted" />
-        <input
-          className="h-9 w-full bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
-          placeholder="Search PO number, customer or employee…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
       {loading && <Spinner label="Loading purchase orders…" />}
       {!loading && groups.length === 0 && <TeachingEmpty page="pos" />}
       {!loading && groups.map((g) => (
@@ -1412,10 +1464,10 @@ export function PODetailPage() {
       .then((r) => {
         setPo(r.data);
         setError("");
-        if (r.data?.customer_id) {
-          crmGet<any>(`/api/customers/${r.data.customer_id}`)
-            .then((c) => setCustomerName(c.data?.name || "")).catch(() => {});
-        }
+        /* Name from the payload, else the open /names map below — never the
+           Customers-tab-gated /api/customers/{id}, which a Finance login
+           without that tab could not read ("#60" in the header). */
+        setCustomerName(r.data?.customer_name || "");
       })
       .catch((e) => setError(e?.message || "Failed to load purchase order"));
     crmGet<any[]>(`/api/purchase-orders/${id}/invoices`)
@@ -1473,36 +1525,42 @@ export function PODetailPage() {
     { key: "grand_total", label: "Grand Total", render: (r) => inr(r.grand_total) },
     { key: "paid_amount", label: "Paid", render: (r) => inr(r.paid_amount) },
     { key: "balance_amount", label: "Balance", render: (r) => inr(r.balance_amount ?? r.bank_receivables) },
-    { key: "payment_status", label: "Status", render: (r) => <StatusBadge status={r.payment_status} /> },
+    { key: "payment_status", label: "Status",
+      render: (r) => r.kind === "Proforma"
+        ? <ProformaKindBadge returned={!!r.returned_at} />
+        : <StatusBadge status={r.payment_status} /> },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CrmLink to="pos" className="text-sm font-semibold text-sky-600 hover:underline">Purchase Orders</CrmLink>
-          <span className="text-muted">/</span>
-          <h1 className="text-display text-lg font-bold text-primary">{po.po_number}</h1>
-          <StatusBadge status={po.status} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canWrite && po.status !== "Cancelled" && (
-            <button className={btnSecondary} onClick={() => setShowEdit(true)}>
+      <PageHeader
+        icon={FileSpreadsheet}
+        accent="violet"
+        eyebrow={<CrmLink to="pos" className="text-white/85 hover:text-white hover:underline">Purchase Orders</CrmLink>}
+        title={po.po_number}
+        subtitle={<span className="inline-flex flex-wrap items-center gap-2"><StatusBadge status={po.status} />
+          <span>{customerName || customers[po.customer_id] || `Customer #${po.customer_id}`}</span></span>}
+        stats={[
+          { label: "total value", value: inr(po.total_value) },
+          ...(po.balance_value != null ? [{ label: "balance", value: inr(po.balance_value) }] : []),
+          ...(po.end_date ? [{ label: "ends", value: fmtDate(po.end_date) }] : []),
+        ]}
+        actions={canWrite && po.status !== "Cancelled" ? (
+          <>
+            <button className={HERO_BTN} onClick={() => setShowEdit(true)}>
               <Pencil size={15} /> Edit
             </button>
-          )}
-          {canWrite && po.status !== "Cancelled" && (
-            <button className={btnSecondary} onClick={() => setShowRenew(true)}>
+            <button className={HERO_BTN} onClick={() => setShowRenew(true)}>
               <RefreshCw size={15} /> Renew PO
             </button>
-          )}
-          {canWrite && po.status === "Active" && (
-            <button className={btnDanger} onClick={() => setShowCancel(true)}>
-              <Ban size={15} /> Cancel PO
-            </button>
-          )}
-        </div>
-      </div>
+            {po.status === "Active" && (
+              <button className={`${HERO_BTN} !bg-rose-600 hover:!bg-rose-700`} onClick={() => setShowCancel(true)}>
+                <Ban size={15} /> Cancel PO
+              </button>
+            )}
+          </>
+        ) : undefined}
+      />
 
       {/* The renewal chain, stated on both ends. Finance used to track "which
           PO replaced which" outside the system entirely. */}
@@ -1531,7 +1589,7 @@ export function PODetailPage() {
 
       <Card title="PO Details" hero>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
-          <InfoItem label="Customer">{customerName || `#${po.customer_id}`}</InfoItem>
+          <InfoItem label="Customer">{customerName || customers[po.customer_id] || `#${po.customer_id}`}</InfoItem>
           <InfoItem label="Type">{po.po_type || "—"}</InfoItem>
           <InfoItem label="PO Date">{fmtDate(po.received_date)}</InfoItem>
           <InfoItem label="PO Start Date">{fmtDate(po.start_date)}</InfoItem>
@@ -1619,7 +1677,7 @@ export function PODetailPage() {
         <DataTable
           columns={invCols}
           rows={invoices}
-          onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`invoices/${r.id}`)} rowHref={(r: any) => `invoices/${r.id}`}
           emptyMessage="No invoices raised against this PO"
         />
       </Card>
@@ -1646,7 +1704,7 @@ export function PODetailPage() {
       {showRenew && (
         <RenewPoModal
           po={po}
-          customerName={customerName}
+          customerName={customerName || customers[po.customer_id] || ""}
           onClose={() => setShowRenew(false)}
           onRenewed={(newId, message) => {
             setShowRenew(false);
@@ -1919,19 +1977,26 @@ function RenewPoModal({
  * INVOICES — list
  * =================================================================== */
 
+/** "Proforma" is Finance's review queue (kind filter); the rest are TAX invoices by payment status. */
+const PROFORMA_TAB = "Proforma";
 const INVOICE_TABS = [
+  { key: PROFORMA_TAB, label: "Proforma" },
   { key: "Unpaid", label: "Unpaid" },
   { key: "Partially_Paid", label: "Partially Paid" },
   { key: "Paid", label: "Paid" },
 ];
 
-export function InvoicesPage() {
+/** `embedded` — rendered as a tab of the Projects hub: the hub already carries
+ *  the page header, so only a compact action row is shown. */
+export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Finance");
   const canWrite = useCanAct("invoices", "edit", canWriteRole);
-  const [tab, setTab] = useState("Unpaid");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+  /* `?tab=Proforma` deep link (28 Sep 2026: the work desk's "Proformas to
+     convert" queue lands here); an unknown value falls back to Unpaid. */
+  const [tab, setTab] = usePageTab<string>("tab", "Unpaid", INVOICE_TABS.map((x) => x.key));
+  const [search, setSearch] = useSessionState("inv.search", "");
+  const [page, setPage] = useSessionState("inv.page", 1);
   const [rows, setRows] = useState<any[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [loading, setLoading] = useState(true);
@@ -1967,7 +2032,8 @@ export function InvoicesPage() {
     setLoading(true);
     const t = window.setTimeout(() => {
       const params = {
-        payment_status: tab, search,
+        ...(tab === PROFORMA_TAB ? { kind: "Proforma" } : { payment_status: tab, kind: "Tax" }),
+        search,
         customer_id: customerFilter || undefined,
         project_id: projectFilter || undefined,
       };
@@ -1981,7 +2047,7 @@ export function InvoicesPage() {
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
   }, [tab, search, page, reloadKey, customerFilter, projectFilter, view]);
-  useEffect(() => { setPage(1); }, [customerFilter, projectFilter]);
+  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter]);
 
   const columns: Column<any>[] = [
     { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number}</span> },
@@ -1992,25 +2058,54 @@ export function InvoicesPage() {
     { key: "grand_total", label: "Grand Total", render: (r) => inr(r.grand_total) },
     { key: "paid_amount", label: "Paid", render: (r) => inr(r.paid_amount) },
     { key: "balance_amount", label: "Balance", render: (r) => inr(r.balance_amount) },
-    { key: "payment_status", label: "Status", render: (r) => <StatusBadge status={r.payment_status} /> },
+    { key: "payment_status", label: "Status",
+      render: (r) => r.kind === "Proforma"
+        ? <ProformaKindBadge returned={!!r.returned_at} />
+        : <StatusBadge status={r.payment_status} /> },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-lg font-bold text-primary">Invoices</h1>
-        <div className="flex flex-wrap gap-2">
-          <button className={btnSecondary} onClick={() => crmNavigate("invoices/tax-generator")}>
-            <FileText size={15} /> New Tax Invoice
-          </button>
-          {canWrite && (
-            <button className={btnPrimary} onClick={() => setShowNew(true)}>
-              <Plus size={15} /> New Invoice
+      {embedded ? (
+        <>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button className={btnSecondary} onClick={() => crmNavigate("invoices/tax-generator")}>
+              <FileText size={15} /> New Tax Invoice
             </button>
-          )}
-        </div>
-      </div>
-      <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+            {canWrite && (
+              <button className={btnPrimary} onClick={() => setShowNew(true)}>
+                <Plus size={15} /> New Invoice
+              </button>
+            )}
+          </div>
+          <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+        </>
+      ) : (
+        <PageHeader
+          icon={Receipt}
+          accent="violet"
+          eyebrow="Finance"
+          title="Invoices"
+          subtitle="Proformas raised by the GM, the tax invoices Finance issues from them, and what each customer has paid."
+          stats={view === "customer"
+            ? (loading ? undefined : [{ label: rows.length === 1 ? "invoice" : "invoices", value: rows.length }])
+            : (meta ? [{ label: meta.total === 1 ? "invoice" : "invoices", value: meta.total }] : undefined)}
+          actions={
+            <>
+              <button className={HERO_BTN} onClick={() => crmNavigate("invoices/tax-generator")}>
+                <FileText size={15} /> New Tax Invoice
+              </button>
+              {canWrite && (
+                <button className={HERO_BTN_SOLID} onClick={() => setShowNew(true)}>
+                  <Plus size={15} /> New Invoice
+                </button>
+              )}
+            </>
+          }
+        >
+          <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+        </PageHeader>
+      )}
       {error && <ErrorBox error={error} />}
       {view === "customer" ? (
         <div className="space-y-3">
@@ -2040,7 +2135,7 @@ export function InvoicesPage() {
                 <span>Balance <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.balance_amount || 0), 0))}</span></span>
               </>
             )}
-            onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
+            onRowClick={(r) => crmNavigate(`invoices/${r.id}`)} rowHref={(r: any) => `invoices/${r.id}`}
             rowKey={(r) => r.id}
             empty={<TeachingEmpty page="invoices" />}
             rowActions={(r) => (
@@ -2068,7 +2163,7 @@ export function InvoicesPage() {
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
-        onRowClick={(r) => crmNavigate(`invoices/${r.id}`)}
+        onRowClick={(r) => crmNavigate(`invoices/${r.id}`)} rowHref={(r: any) => `invoices/${r.id}`}
         filters={
           <>
             <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
@@ -2686,6 +2781,11 @@ export function InvoiceDetailPage() {
   });
   const [docxBusy, setDocxBusy] = useState(false);
   const [revKey, setRevKey] = useState(0);
+  // Proforma → Tax (23 Sep 2026): Finance converts / returns / corrects.
+  // Convert + Return are an APPROVAL button (`invoice.convert_proforma`) —
+  // `me.approvals` decides, the same answer the server gate gives.
+  const canConvert = useCanApprove("invoice.convert_proforma");
+  const [proformaModal, setProformaModal] = useState<"convert" | "return" | "edit" | null>(null);
   const me = useMe();
   const salesRole = useHasRole("Sales", "Sales_Head");
   const canRequestChange = canWrite || salesRole;
@@ -2704,6 +2804,8 @@ export function InvoiceDetailPage() {
   if (error) return <ErrorBox error={error} onRetry={load} />;
   if (!inv) return <Spinner label="Loading invoice…" />;
 
+  const isProforma = inv.kind === "Proforma";
+  const docLabel = isProforma ? "Proforma Invoice" : "Tax Invoice";
   const tds = inv.tds_record;
   const gst = inv.gst;
   const displayTax = gst != null ? Number(gst.total_gst) : Number(inv.tax_amount);
@@ -2780,8 +2882,8 @@ export function InvoiceDetailPage() {
     setDocxBusy(true);
     try {
       await downloadFile(`/api/invoices/${id}/tax-invoice.docx`,
-        `TaxInvoice_${inv.invoice_number || id}.docx`, "Word export");
-      showToast("Tax Invoice (Word) downloaded");
+        `${isProforma ? "ProformaInvoice" : "TaxInvoice"}_${inv.invoice_number || id}.docx`, "Word export");
+      showToast(`${docLabel} (Word) downloaded`);
     } catch (e: any) {
       showToast(e?.message || "Failed to download the Word file", "err");
     } finally {
@@ -2799,42 +2901,99 @@ export function InvoiceDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <CrmLink to="invoices" className="text-sm font-semibold text-sky-600 hover:underline">Invoices</CrmLink>
-        <span className="text-muted">/</span>
-        <h1 className="text-display text-lg font-bold text-primary">{inv.invoice_number}</h1>
-        <StatusBadge status={inv.payment_status} />
-        <div className="ml-auto flex flex-wrap gap-2">
-          {canRequestChange && (
-            <button type="button" className={btnSecondary} onClick={() => setShowEdit(true)}
+      <PageHeader
+        icon={isProforma ? ScrollText : Receipt}
+        accent={isProforma ? "amber" : "violet"}
+        eyebrow={<CrmLink to="invoices" className="text-white/85 hover:text-white hover:underline">Invoices</CrmLink>}
+        title={inv.invoice_number}
+        subtitle={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {isProforma ? (
+              <ProformaKindBadge returned={!!inv.returned_at} />
+            ) : (
+              <StatusBadge status={inv.payment_status} />
+            )}
+            {!isProforma && inv.proforma_number && (
+              <span className="text-xs text-white/85" title="The number this document carried as a Proforma">
+                from {inv.proforma_number}
+              </span>
+            )}
+          </span>
+        }
+        stats={[
+          ...(inv.grand_total != null ? [{ label: "grand total", value: inr(inv.grand_total) }] : []),
+          ...(!isProforma && inv.balance_amount != null ? [{ label: "balance", value: inr(inv.balance_amount) }] : []),
+          ...(inv.invoice_date ? [{ label: "dated", value: fmtDate(inv.invoice_date) }] : []),
+        ]}
+        actions={
+          <>
+          {isProforma && !inv.returned_at && (
+            <>
+              {canConvert && (
+                <>
+                  <button type="button" className={HERO_BTN_SOLID} onClick={() => setProformaModal("convert")}
+                    title="Generate the original tax invoice from this proforma">
+                    <FileCheck2 size={15} /> Generate original invoice
+                  </button>
+                  <button type="button" className={HERO_BTN} onClick={() => setProformaModal("return")}
+                    title="Send it back to the GM with a reason">
+                    <Undo2 size={15} /> Return to GM
+                  </button>
+                </>
+              )}
+              {canWrite && (
+                <button type="button" className={HERO_BTN} onClick={() => setProformaModal("edit")}
+                  title="Correct dates, buyer state or the printed columns">
+                  <Pencil size={15} /> Correct
+                </button>
+              )}
+            </>
+          )}
+          {!isProforma && canRequestChange && (
+            <button type="button" className={HERO_BTN} onClick={() => setShowEdit(true)}
               title="Request a change (reason required; approved by Sales / Sales Head)">
               <Pencil size={15} /> Edit
             </button>
           )}
           <button
             type="button"
-            className={btnPrimary}
+            className={isProforma ? HERO_BTN : HERO_BTN_SOLID}
             disabled={taxPdfBusy}
             onClick={downloadTaxInvoicePdf}
           >
-            <FileDown size={15} /> {taxPdfBusy ? "Opening…" : "Tax Invoice (PDF)"}
+            <FileDown size={15} /> {taxPdfBusy ? "Opening…" : `${docLabel} (PDF)`}
           </button>
           <button
             type="button"
-            className={btnSecondary}
+            className={HERO_BTN}
             disabled={docxBusy}
             onClick={() => void downloadTaxInvoiceDocx()}
           >
-            <FileText size={15} /> {docxBusy ? "Preparing…" : "Tax Invoice (Word)"}
+            <FileText size={15} /> {docxBusy ? "Preparing…" : `${docLabel} (Word)`}
           </button>
           <CrmLink
             to={`invoices/${inv.id}/tax-invoice`}
-            className={btnSecondary}
+            className={HERO_BTN}
           >
-            <FileText size={15} /> View Tax Invoice
+            <FileText size={15} /> View {docLabel}
           </CrmLink>
-        </div>
-      </div>
+          </>
+        }
+      />
+
+      {isProforma && <ProformaBanner inv={inv} />}
+      {proformaModal === "convert" && (
+        <ConvertProformaModal invoiceId={inv.id} invoiceDate={inv.invoice_date}
+          onClose={() => setProformaModal(null)} onDone={load} notify={showToast} />
+      )}
+      {proformaModal === "return" && (
+        <ReturnProformaModal invoiceId={inv.id}
+          onClose={() => setProformaModal(null)} onDone={load} notify={showToast} />
+      )}
+      {proformaModal === "edit" && (
+        <ProformaEditModal inv={inv}
+          onClose={() => setProformaModal(null)} onSaved={load} notify={showToast} />
+      )}
 
       <Card
         title="Invoice"
@@ -2860,7 +3019,8 @@ export function InvoiceDetailPage() {
             <InvoiceGstSection gst={gst} />
           </div>
         )}
-        {canWrite && (
+        {/* Money only moves on a TAX invoice — a Proforma takes no payments, TDS or change requests. */}
+        {canWrite && !isProforma && (
           <div className="mt-4 flex flex-wrap gap-2 border-t border-subtle pt-4">
             <button className={btnSecondary} onClick={generatePdf} disabled={pdfBusy}>
               <FileDown size={15} /> {pdfBusy ? "Generating…" : "Generate PDF"}
@@ -2879,8 +3039,10 @@ export function InvoiceDetailPage() {
         )}
       </Card>
 
-      <InvoiceRevisionsCard invoiceId={inv.id} meId={me.id} refreshKey={revKey}
-        onChanged={load} notify={(m, k) => showToast(m, k)} />
+      {!isProforma && (
+        <InvoiceRevisionsCard invoiceId={inv.id} meId={me.id} refreshKey={revKey}
+          onChanged={load} notify={(m, k) => showToast(m, k)} />
+      )}
 
       <Card title="Payment History">
         <DataTable columns={paymentCols} rows={inv.payments || []} emptyMessage="No payments recorded" />
@@ -3211,7 +3373,7 @@ export function TdsPage() {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Finance");
   const canWrite = useCanAct("invoices", "edit", canWriteRole);
-  const [tab, setTab] = useState("Pending");
+  const [tab, setTab] = usePageTab<string>("status", "Pending", TDS_TABS.map((t) => t.key));
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<any[]>([]);
@@ -3246,8 +3408,16 @@ export function TdsPage() {
   return (
     <div className="space-y-4">
       {toast}
-      <h1 className="text-display text-lg font-bold text-primary">TDS Register</h1>
-      <Tabs tabs={TDS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+      <PageHeader
+        icon={Landmark}
+        accent="violet"
+        eyebrow="Finance"
+        title="TDS Register"
+        subtitle="Tax deducted at source by customers on each invoice — what was deducted, what has been deposited and what is still to reconcile."
+        stats={meta ? [{ label: meta.total === 1 ? "record" : "records", value: meta.total }] : undefined}
+      >
+        <Tabs tabs={TDS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+      </PageHeader>
       {error && <ErrorBox error={error} />}
       <DataTable
         columns={columns}
@@ -3258,7 +3428,7 @@ export function TdsPage() {
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
-        onRowClick={(r) => crmNavigate(`invoices/${r.invoice_id}`)}
+        onRowClick={(r) => crmNavigate(`invoices/${r.invoice_id}`)} rowHref={(r: any) => `invoices/${r.invoice_id}`}
         emptyMessage={`No ${tab.replace(/_/g, " ").toLowerCase()} TDS records`}
         rowActions={canWrite ? (r) => (
           <RowActions

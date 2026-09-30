@@ -66,6 +66,11 @@
   text-align: left;
   margin: 0 0 8px;
 }
+/* Proforma (23 Sep 2026): same hex as B-V2 tax_invoice.PROFORMA_COLOR so the
+   on-screen sheet, the captured PDF and the server renders agree. */
+.headingProforma {
+  color: #c2410c;
+}
 
 .subheading {
   font-size: 18px;

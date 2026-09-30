@@ -4,14 +4,13 @@
  * preserved by opportunityFormState. Autosave is gated behind `isLoaded`.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { useReducedMotion } from "framer-motion";
+import { Briefcase, Plus, Trash2, Upload } from "lucide-react";
 import { crmGet, crmPost, crmPut, crmUpload } from "../../api";
 import { toDateKey } from "../../lib/calendarDates";
-import { motion as motionTok } from "../../../design-system/tokens/tokens";
 import { Modal, btnSecondary, ErrorBox, inputCls, useToast, ConfirmModal } from "../../components/ui";
 import {
-  OPPORTUNITY_SCHEMA, OPPORTUNITY_TYPES, sectionVisible, fieldVisible, fieldMatchesShowWhen,
+  OPPORTUNITY_SCHEMA, sectionVisible, fieldVisible, fieldMatchesShowWhen,
   STRICT_SEQUENTIAL_MODE, SALES_STAGE_OPTIONS, ONBOARDING_STATUS_OPTIONS,
   SALES_ONBOARDING_STATUS_VALUES,
   ROLE_OPTIONS, WORK_LOCATION_OPTIONS, BILLING_TYPE_OPTIONS, APPRAISAL_CYCLE_OPTIONS,
@@ -43,16 +42,15 @@ import {
 } from "./ctcSlab";
 import {
   WizardTopBar,
-  WizardStepper,
+  WizardFrame,
+  WizardStepCard,
   WizardStepHeader,
-  WizardStepProgress,
   WizardFooter,
   WizardFieldSkeleton,
   sectionHelper,
-  WizardAurora,
   type AutosaveState,
   type WizardStep,
-} from "../../components/WizardChrome";
+} from "../../components/wizard";
 import { fmtDateTime12 } from "../../../lib/datetime";
 
 type Opt = { value: string; label: string };
@@ -1477,7 +1475,6 @@ export function NewOpportunityForm({
     () => visibleSections.map((s) => ({
       key: s.key,
       title: s.title,
-      sublabel: sectionHelper(s.key).split(".")[0],
       status: sectionStatus(s.key),
     })),
     // sectionStatus closes over state/errors — recompute when those change
@@ -1495,6 +1492,12 @@ export function NewOpportunityForm({
             ? `Edit Opportunity${editOppLabel ? ` — ${editOppLabel}` : ""}`
             : "New Opportunity"
       }
+      eyebrow={approvalMode ? "Sales Head approval" : isEdit ? "Edit opportunity" : "New opportunity"}
+      subtitle={approvalMode
+        ? "Check every step, correct anything, then approve"
+        : "Customer, request, engagement, commercials and the documents — one step at a time"}
+      icon={Briefcase}
+      steps={wizardSteps}
       stepIndex={clampedStep}
       totalSteps={totalSteps}
       stepPct={stepPct}
@@ -1519,6 +1522,8 @@ export function NewOpportunityForm({
       onSubmit={() => void submit()}
       submitLabel={approvalMode ? "Save & Approve" : isEdit ? "Save Opportunity" : "Create Opportunity"}
       submitBusyLabel={isEdit ? "Saving…" : "Creating…"}
+      nextTitle={visibleSections[clampedStep + 1]?.title}
+      prevTitle={visibleSections[clampedStep - 1]?.title}
     />
   );
 
@@ -1769,100 +1774,57 @@ export function NewOpportunityForm({
   return (
     <>
     <Modal
-      title={header}
+      title={approvalMode ? "Review & Approve opportunity" : isEdit ? "Edit Opportunity" : "New Opportunity"}
+      hero={header}
       onClose={requestClose}
       fullScreen
       footer={footer}
       bodyClassName="!overflow-hidden !p-0 sm:!px-0 sm:!py-0"
       scopeClassName="crm-wizard wiz-noise"
       panelClassName="wiz-moonlit-panel"
-      headerClassName="wiz-moonlit-header"
       footerClassName="wiz-moonlit-footer"
     >
       {toast}
-      <div className="wiz-moonlit-shell relative flex h-full min-h-0 flex-col">
-        <WizardAurora />
-        <div className="relative z-10 flex h-full min-h-0 flex-col">
-        {/* Mobile / tablet: compact horizontal stepper under top bar */}
-        <div className="shrink-0 border-b border-subtle bg-surface-2/40 px-4 py-2.5 md:hidden">
-          <WizardStepper
-            steps={wizardSteps}
-            currentIndex={clampedStep}
-            maxReached={maxReached}
-            onSelect={goToStep}
-            orientation="horizontal"
-          />
-        </div>
-
-        <div className="flex min-h-0 flex-1">
-          {/* Desktop: vertical stepper rail */}
-          <aside className="hidden w-[260px] shrink-0 overflow-y-auto border-r border-subtle bg-surface-2/30 px-3 py-5 md:block lg:px-4">
-            <WizardStepper
-              steps={wizardSteps}
-              currentIndex={clampedStep}
-              maxReached={maxReached}
-              onSelect={goToStep}
-              orientation="vertical"
-              ariaLabel="Opportunity wizard steps"
-            />
-            <WizardStepProgress
-              pct={
-                currentSection
-                  ? sectionStatus(currentSection.key) === "complete"
-                    ? 100
-                    : sectionStatus(currentSection.key) === "partial"
-                      ? 55
-                      : sectionStatus(currentSection.key) === "error"
-                        ? 30
-                        : 0
-                  : 0
-              }
-            />
-          </aside>
-
-          {/* Scrollable content card */}
-          <div ref={bodyRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8">
-            {error && (
-              <div className="mb-4 max-w-3xl">
-                <ErrorBox error={error} />
-              </div>
-            )}
-            <AnimatePresence mode="wait" initial={false}>
-              {currentSection && (
-                <motion.section
-                  key={currentSection.key}
-                  id={`sec-${currentSection.key}`}
-                  initial={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * 28 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={reduce ? { opacity: 0 } : { opacity: 0, x: stepDir * -28 }}
-                  transition={
-                    reduce
-                      ? { duration: 0 }
-                      : { duration: motionTok.panel, ease: motionTok.easeOut }
-                  }
-                  className={`wiz-moonlit-form-card mx-auto rounded-card border border-subtle bg-surface-1 shadow-raised ${
-                    currentSection.key === "leaveHoliday"
-                      ? "max-w-7xl px-5 py-5 sm:px-6 sm:py-5"
-                      : "max-w-3xl px-5 py-6 sm:px-8 sm:py-8"
-                  }`}
-                >
-                  <WizardStepHeader
-                    title={currentSection.title}
-                    description={sectionHelper(currentSection.key, currentSection.title)}
-                    headingRef={stepHeadingRef}
-                  />
-                  {!state.isLoaded ? (
-                    <WizardFieldSkeleton rows={6} />
-                  ) : (
-                    renderStepBody(currentSection)
-                  )}
-                </motion.section>
-              )}
-            </AnimatePresence>
+      <WizardFrame
+        steps={wizardSteps}
+        currentIndex={clampedStep}
+        maxReached={maxReached}
+        onSelectStep={goToStep}
+        ariaLabel="Opportunity wizard steps"
+        contentRef={bodyRef}
+        stepProgressPct={
+          currentSection
+            ? ({ complete: 100, partial: 55, error: 30, empty: 0 } as const)[sectionStatus(currentSection.key)]
+            : 0
+        }
+      >
+        {error && (
+          <div className="mx-auto mb-4 max-w-3xl">
+            <ErrorBox error={error} />
           </div>
-        </div>
-        </div>
-      </div>
+        )}
+        {currentSection && (
+          <WizardStepCard
+            stepKey={currentSection.key}
+            stepDir={stepDir}
+            // The merged Commercials step is a wide table; the rest stay narrow.
+            width={currentSection.key === "leaveHoliday" ? "full" : "narrow"}
+          >
+            <WizardStepHeader
+              title={currentSection.title}
+              description={sectionHelper(currentSection.key, currentSection.title)}
+              headingRef={stepHeadingRef}
+              stepKey={currentSection.key}
+              step={{ index: clampedStep, total: totalSteps }}
+            />
+            {!state.isLoaded ? (
+              <WizardFieldSkeleton rows={6} />
+            ) : (
+              renderStepBody(currentSection)
+            )}
+          </WizardStepCard>
+        )}
+      </WizardFrame>
     </Modal>
     {confirmClose && (
       <ConfirmModal

@@ -2,12 +2,15 @@
  * assign CRM roles, activate/deactivate, and delete access. Users update their
  * own profile details from My Profile after first login. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { KeyRound, Lock, Plus, Send, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
 import { crmGet, crmPost, crmPut, crmDelete, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmNavigate } from "../routerHooks";
 import { AccessTemplatesPage } from "./AccessTemplates";
+import { RolesPanel } from "./RolesAdmin";
+import { ResetPasswordModal } from "../components/ResetPasswordModal";
 import {
   allManageableTabKeys,
   manageableTabsForRoles,
@@ -25,6 +28,7 @@ import {
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, FieldLabel } from "../components/wizard";
+import { usePageTab } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -142,6 +146,8 @@ type UserRow = {
   legacy_role: string;
   is_active: boolean;
   roles: string[];
+  /** Admin/CEO-defined roles (Access Control ▸ Roles). */
+  custom_roles?: string[];
   tab_access?: string[] | null;
   access_template_id?: number | null;
 };
@@ -159,10 +165,16 @@ function useDebounced<T>(value: T, ms = 350): T {
   return v;
 }
 
-function RoleChips({ roles }: { roles: string[] }) {
-  if (!roles.length) return <span className="text-xs text-muted">No CRM roles</span>;
+function RoleChips({ roles, custom = [] }: { roles: string[]; custom?: string[] }) {
+  if (!roles.length && !custom.length) return <span className="text-xs text-muted">No CRM roles</span>;
   return (
     <span className="flex flex-wrap gap-1">
+      {custom.map((r) => (
+        <span key={`c-${r}`} title="Custom role (Access Control ▸ Roles)"
+          className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+          {r}
+        </span>
+      ))}
       {roles.map((r) => (
         <span
           key={r}
@@ -179,20 +191,45 @@ function RoleChips({ roles }: { roles: string[] }) {
   );
 }
 
+/** A custom role as `GET /api/roles` lists it (Access Control ▸ Roles). */
+type CustomRoleOpt = { id: number; name: string; description: string; is_active: boolean; tab_access: Record<string, string> };
+
+const CUSTOM_SELECTED = "border-emerald-300 bg-emerald-50/60 dark:border-emerald-700 dark:bg-emerald-950/30";
+const CUSTOM_CHIP = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300";
+
+function customRoleSummary(r: CustomRoleOpt): string {
+  const keys = Object.keys(r.tab_access || {}).filter((k) => r.tab_access[k]);
+  if (!keys.length) return r.description || "Custom role";
+  const tabs = keys.slice(0, 4).map((k) => k.replace(/-/g, " ")).join(", ") + (keys.length > 4 ? ` +${keys.length - 4}` : "");
+  return r.description ? `${r.description} · ${tabs}` : tabs;
+}
+
 function RoleSelector({
   selected,
   onChange,
   userName,
+  customRoles,
+  selectedCustom = [],
+  onCustomChange,
 }: {
   selected: string[];
   onChange: (roles: string[]) => void;
   userName?: string;
+  /** Custom roles to offer as their own group (23 Sep 2026). Omit to show built-in only. */
+  customRoles?: CustomRoleOpt[];
+  selectedCustom?: number[];
+  onCustomChange?: (ids: number[]) => void;
 }) {
   const toggle = (role: string, checked: boolean) =>
     onChange(checked ? [...selected, role] : selected.filter((r) => r !== role));
+  const toggleCustom = (id: number, checked: boolean) =>
+    onCustomChange?.(checked ? [...selectedCustom, id] : selectedCustom.filter((r) => r !== id));
 
   const byGroup = (g: RoleGroup) =>
     CRM_ROLES.filter((r) => ROLE_META[r].group === g);
+  const customs = (customRoles || []).filter((r) => r.is_active || selectedCustom.includes(r.id));
+  const totalOffered = CRM_ROLES.length + customs.length;
+  const totalSelected = selected.length + selectedCustom.length;
 
   return (
     <div className="space-y-4">
@@ -204,7 +241,7 @@ function RoleSelector({
               <div className="text-sm font-bold text-primary">{userName}</div>
             </div>
             <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-              {selected.length} of {CRM_ROLES.length} selected
+              {totalSelected} of {totalOffered} selected
             </span>
           </div>
         </div>
@@ -261,10 +298,66 @@ function RoleSelector({
             </div>
           );
         })}
+
+        {customRoles && (
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted">
+              <ShieldCheck size={13} className="opacity-70" />
+              Custom roles
+              <span className="font-semibold normal-case tracking-normal text-muted">— created in Access Control ▸ Roles</span>
+            </div>
+            {customs.length === 0 ? (
+              <p className="rounded-card border border-dashed border-subtle px-3 py-2.5 text-xs text-muted">
+                No custom roles yet. Create one (e.g. <b>GM</b>) on the Roles tab and it will appear here.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {customs.map((r) => {
+                  const checked = selectedCustom.includes(r.id);
+                  return (
+                    <label
+                      key={`custom-${r.id}`}
+                      className={`flex cursor-pointer items-start gap-3 rounded-card border px-3 py-2.5 transition-colors duration-micro ${
+                        checked ? CUSTOM_SELECTED : "border-subtle hover:border-strong hover:bg-surface-2"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600"
+                        checked={checked}
+                        onChange={(e) => toggleCustom(r.id, e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-primary">{r.name}</span>
+                          <span className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${CUSTOM_CHIP}`}>Custom</span>
+                          {!r.is_active && <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-xs font-semibold text-muted">Inactive</span>}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-relaxed text-muted">{customRoleSummary(r)}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {selected.length > 0 && (
+      {totalSelected > 0 && (
         <div className="flex flex-wrap gap-1.5 border-t border-subtle pt-3">
+          {selectedCustom.map((id) => {
+            const r = (customRoles || []).find((c) => c.id === id);
+            return (
+              <span key={`cc-${id}`} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${CUSTOM_CHIP}`}>
+                {r?.name || `Role #${id}`}
+                <button type="button" className="rounded-full px-0.5 opacity-70 hover:opacity-100"
+                  aria-label={`Remove ${r?.name || id}`} onClick={() => toggleCustom(id, false)}>
+                  ×
+                </button>
+              </span>
+            );
+          })}
           {selected.map((r) => (
             <span
               key={r}
@@ -287,15 +380,38 @@ function RoleSelector({
   );
 }
 
-/** Compact grid for Create User (same visual language, less chrome). */
+/** Role picker for Create User / Invite (same visual language, less chrome).
+ * 25 Sep 2026: offers the custom roles too, so a GM or Sales Manager is
+ * created in one step — a custom role alone is enough to reach the CRM. A
+ * failed /api/roles fetch just hides the custom group. */
 function RoleCheckboxes({
   selected,
   onChange,
+  selectedCustom,
+  onCustomChange,
 }: {
   selected: string[];
   onChange: (roles: string[]) => void;
+  selectedCustom: number[];
+  onCustomChange: (ids: number[]) => void;
 }) {
-  return <RoleSelector selected={selected} onChange={onChange} />;
+  const [customRoles, setCustomRoles] = useState<CustomRoleOpt[] | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    crmGet<{ custom: CustomRoleOpt[] }>("/api/roles")
+      .then((res) => { if (alive) setCustomRoles((res.data?.custom || []).filter((r) => r.is_active)); })
+      .catch(() => { if (alive) setCustomRoles(undefined); });
+    return () => { alive = false; };
+  }, []);
+  return (
+    <RoleSelector
+      selected={selected}
+      onChange={onChange}
+      customRoles={customRoles}
+      selectedCustom={selectedCustom}
+      onCustomChange={onCustomChange}
+    />
+  );
 }
 
 /* -------------------------------------------------------- invite user */
@@ -310,6 +426,7 @@ function InviteUserModal({ onClose, onSaved, notify }: {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
+  const [customIds, setCustomIds] = useState<number[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -319,7 +436,7 @@ function InviteUserModal({ onClose, onSaved, notify }: {
       setError("Enter a valid email address");
       return;
     }
-    if (!roles.length) {
+    if (!roles.length && !customIds.length) {
       setError("Pick at least one role");
       return;
     }
@@ -330,6 +447,7 @@ function InviteUserModal({ onClose, onSaved, notify }: {
         email: email.trim().toLowerCase(),
         full_name: fullName.trim(),
         roles,
+        custom_roles: customIds,
       });
       notify(res.message || "Invitation sent");
       onSaved();
@@ -360,7 +478,8 @@ function InviteUserModal({ onClose, onSaved, notify }: {
         </label>
         <div>
           <span className="mb-1 block text-xs font-semibold text-secondary">CRM roles <span className="text-danger">*</span></span>
-          <RoleCheckboxes selected={roles} onChange={(r) => { setRoles(r); setError(""); }} />
+          <RoleCheckboxes selected={roles} onChange={(r) => { setRoles(r); setError(""); }}
+            selectedCustom={customIds} onCustomChange={(ids) => { setCustomIds(ids); setError(""); }} />
         </div>
         {error && <div className="text-xs font-semibold text-danger" role="alert">{error}</div>}
         <div className="flex justify-end gap-2 border-t border-subtle pt-4">
@@ -613,7 +732,9 @@ function ActionPermissionsPanel({ allRoles, actions, reload, notify }: {
         <div className="text-sm font-bold text-primary">Action permissions</div>
         <p className="mt-0.5 text-xs text-muted">
           Who may perform each action. Admin/CEO always can — ticking nobody means admins only.
-          Changes apply within a minute, without a restart.
+          Changes apply within a minute, without a restart. <b>Approval</b> actions for anyone on an
+          Access Template or a custom role are decided by that template's / role's <b>Approvals</b>{" "}
+          section instead — this list covers users with neither.
         </p>
       </div>
       <div className="divide-y divide-[color:var(--border-subtle)]">
@@ -678,6 +799,7 @@ function CreateUserModal({
 }) {
   const [form, setForm] = useState({ full_name: "", email: "", username: "", password: "" });
   const [roles, setRoles] = useState<string[]>([]);
+  const [customIds, setCustomIds] = useState<number[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [usernameTouched, setUsernameTouched] = useState(false);
@@ -700,7 +822,7 @@ function CreateUserModal({
     if (!form.username.trim()) errs.username = "Username is required";
     if (!form.password) errs.password = "Password is required";
     else if (form.password.length < 8) errs.password = "Password must be at least 8 characters";
-    if (roles.length === 0) errs.roles = "Assign at least one CRM role so they can access the app";
+    if (roles.length === 0 && customIds.length === 0) errs.roles = "Assign at least one CRM role so they can access the app";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setSaving(true);
@@ -711,6 +833,7 @@ function CreateUserModal({
         username: form.username.trim().toLowerCase(),
         password: form.password,
         roles,
+        custom_roles: customIds,
       });
       notify(res.message || "User created — they can log in with this email or username");
       onSaved();
@@ -775,7 +898,8 @@ function CreateUserModal({
           <div>
             <FieldLabel label="CRM roles" required />
             {errors.roles && <p className="mb-2 text-xs text-red-600 dark:text-red-400">{errors.roles}</p>}
-            <RoleCheckboxes selected={roles} onChange={setRoles} />
+            <RoleCheckboxes selected={roles} onChange={setRoles}
+              selectedCustom={customIds} onCustomChange={setCustomIds} />
           </div>
           <div className={wizFooterRow}>
             <button type="button" className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={saving}>Cancel</button>
@@ -801,15 +925,48 @@ function EditRolesModal({
   notify: Notify;
 }) {
   const [roles, setRoles] = useState<string[]>(user.roles);
+  const [customRoles, setCustomRoles] = useState<CustomRoleOpt[] | null>(null);
+  const [customIds, setCustomIds] = useState<number[]>([]);
+  const [customLoadError, setCustomLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const displayName = user.full_name || user.username;
-  const unchanged =
-    roles.length === user.roles.length && roles.every((r) => user.roles.includes(r));
+  const currentCustomNames = user.custom_roles || [];
+
+  // The user row carries custom-role NAMES; the dialog needs ids. One fetch,
+  // and the initial selection is derived from it so "Reset to current" works.
+  useEffect(() => {
+    let alive = true;
+    crmGet<{ custom: CustomRoleOpt[] }>("/api/roles")
+      .then((res) => {
+        if (!alive) return;
+        const list = res.data?.custom || [];
+        setCustomRoles(list);
+        setCustomIds(list.filter((r) => currentCustomNames.includes(r.name)).map((r) => r.id));
+      })
+      .catch((err: any) => {
+        if (!alive) return;
+        setCustomRoles([]);
+        setCustomLoadError(err?.message || "Could not load custom roles");
+      });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  const currentCustomIds = (customRoles || []).filter((r) => currentCustomNames.includes(r.name)).map((r) => r.id);
+  const sameSet = (a: (string | number)[], b: (string | number)[]) =>
+    a.length === b.length && a.every((x) => b.includes(x));
+  const unchanged = sameSet(roles, user.roles) && sameSet(customIds, currentCustomIds);
+  const nothingSelected = roles.length === 0 && customIds.length === 0;
 
   const submit = async () => {
     setSaving(true);
     try {
-      const res = await crmPost(`/api/users/${user.id}/roles`, { roles });
+      // Only send the custom set once the list resolved — a failed fetch must
+      // not silently strip the roles the user already holds.
+      const res = await crmPost(`/api/users/${user.id}/roles`, {
+        roles,
+        ...(customRoles && !customLoadError ? { custom_roles: customIds } : {}),
+      });
       notify(res.message || "Roles updated");
       onSaved();
       onClose();
@@ -833,18 +990,27 @@ function EditRolesModal({
         icon={<Shield size={20} aria-hidden />}
       >
       <p className="mb-3 text-sm text-muted">
-        Choose which CRM roles <b>{displayName}</b> should have. The selection below{" "}
-        <b>replaces all existing roles</b> — pick every role they need access to.
+        Choose which CRM roles <b>{displayName}</b> should have — built-in roles and any custom roles
+        (e.g. <b>GM</b>, <b>Sales Manager</b>). The selection below <b>replaces all existing roles</b>.
+        Picking a custom role also removes any Access Template, so the role alone decides their tabs.
       </p>
-      {roles.length === 0 && (
+      {nothingSelected && (
         <p className="mb-3 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
           No roles selected — this user will lose access to the CRM until roles are assigned.
+        </p>
+      )}
+      {customLoadError && (
+        <p className="mb-3 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          Custom roles could not be loaded ({customLoadError}) — saving will change built-in roles only.
         </p>
       )}
       <RoleSelector
         selected={roles}
         onChange={setRoles}
         userName={displayName}
+        customRoles={customRoles || []}
+        selectedCustom={customIds}
+        onCustomChange={setCustomIds}
       />
       <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--wiz-border)] pt-5">
         <div className="flex flex-wrap gap-2">
@@ -854,12 +1020,12 @@ function EditRolesModal({
             onClick={() => setRoles([...CRM_ROLES])}
             disabled={saving}
           >
-            Select all roles
+            Select all built-in
           </button>
           <button
             type="button"
             className={btnSecondary}
-            onClick={() => setRoles(user.roles)}
+            onClick={() => { setRoles(user.roles); setCustomIds(currentCustomIds); }}
             disabled={saving || unchanged}
           >
             Reset to current
@@ -867,8 +1033,8 @@ function EditRolesModal({
           <button
             type="button"
             className={btnSecondary}
-            onClick={() => setRoles([])}
-            disabled={saving || roles.length === 0}
+            onClick={() => { setRoles([]); setCustomIds([]); }}
+            disabled={saving || nothingSelected}
           >
             Clear all
           </button>
@@ -1125,7 +1291,8 @@ export function UsersAdminPage() {
   const me = useMe();
   // Access Control hub (target IA): ONE sidebar entry with Users and Access
   // Templates as tabs inside it, instead of two sibling pages.
-  const [hubTab, setHubTab] = useState<"users" | "templates">("users");
+  const [hubTab, setHubTab] = usePageTab<"users" | "roles" | "templates">("tab", "users", ["users", "roles", "templates"]);
+  const [resetFor, setResetFor] = useState<UserRow | null>(null);
   const [toast, notify] = useToast();
   const [rows, setRows] = useState<UserRow[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -1141,6 +1308,7 @@ export function UsersAdminPage() {
   const [busy, setBusy] = useState(false);
   const [portalBusyId, setPortalBusyId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<AccessTemplateOpt[]>([]);
+  const [customRoles, setCustomRoles] = useState<{ id: number; name: string; is_active: boolean }[]>([]);
   const [templateBusyId, setTemplateBusyId] = useState<number | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [flows, setFlows] = useState<EmailFlow[]>([]);
@@ -1187,6 +1355,9 @@ export function UsersAdminPage() {
   useEffect(() => {
     crmGet<AccessTemplateOpt[]>("/api/access-templates")
       .then((r) => setTemplates((r.data || []).filter((t) => t.is_active)))
+      .catch(() => {});
+    crmGet<{ custom: { id: number; name: string; is_active: boolean }[] }>("/api/roles")
+      .then((r) => setCustomRoles((r.data?.custom || []).filter((c) => c.is_active)))
       .catch(() => {});
   }, []);
 
@@ -1243,19 +1414,31 @@ export function UsersAdminPage() {
     }
   };
 
-  const assignTemplate = async (user: UserRow, templateId: number | null) => {
+  /** ONE source of access per user (23 Sep 2026): role default, an Access
+   *  Template, or a custom role. The server clears whichever was set before. */
+  const setAccessSource = async (user: UserRow, value: string) => {
+    const [kind, idStr] = value ? value.split(":") : ["default", ""];
     setTemplateBusyId(user.id);
     try {
-      const res = await crmPost("/api/access-templates/assign", {
-        user_id: user.id,
-        template_id: templateId,
-      });
-      notify(res.message || "Access template updated");
+      const res = await crmPost<{ access_template_id: number | null; custom_roles: string[]; roles?: string[] }>(
+        `/api/users/${user.id}/access-source`,
+        { kind, id: idStr ? Number(idStr) : null },
+      );
+      notify(res.message || "Access updated");
+      // A template can add the built-in role it is tagged with (a user needs a
+      // role to open the CRM), so the role chips are refreshed from the reply too.
       setRows((prev) =>
-        prev.map((r) => (r.id === user.id ? { ...r, access_template_id: templateId } : r)),
+        prev.map((r) => (r.id === user.id
+          ? {
+              ...r,
+              access_template_id: res.data?.access_template_id ?? null,
+              custom_roles: res.data?.custom_roles ?? [],
+              roles: res.data?.roles ?? r.roles,
+            }
+          : r)),
       );
     } catch (e: any) {
-      notify(e?.message || "Failed to assign template", "err");
+      notify(e?.message || "Failed to update access", "err");
     } finally {
       setTemplateBusyId(null);
     }
@@ -1281,27 +1464,50 @@ export function UsersAdminPage() {
     { key: "username", label: "Username", render: (r) => <span className="font-semibold text-primary">{r.username}</span> },
     { key: "full_name", label: "Full Name" },
     { key: "email", label: "Email" },
-    { key: "roles", label: "CRM Roles", render: (r) => <RoleChips roles={r.roles} /> },
+    {
+      key: "roles", label: "CRM Roles",
+      // No role at all = the CRM refuses them ("No CRM role is assigned"),
+      // whatever template they carry. Say so on the row, where it can be fixed.
+      render: (r) => (r.roles.length || (r.custom_roles || []).length)
+        ? <RoleChips roles={r.roles} custom={r.custom_roles} />
+        : (
+          <span className="rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger"
+            title="A template decides which tabs a user sees; a role is what lets them into the CRM. Use Edit Roles.">
+            No role — cannot open the CRM
+          </span>
+        ),
+    },
     {
       key: "access_template_id",
-      label: "Access Template",
-      render: (r) => (
-        <select
-          className={`${inputCls} min-w-[9rem] py-1 text-xs`}
-          value={r.access_template_id ?? ""}
-          disabled={templateBusyId === r.id}
-          onChange={(e) => {
-            const v = e.target.value;
-            assignTemplate(r, v ? Number(v) : null);
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <option value="">— Role default —</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </select>
-      ),
+      label: "Access",
+      render: (r) => {
+        // The one thing that decides this user's tabs: a custom role, an
+        // Access Template, or the built-in role defaults.
+        const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
+        const value = roleMatch ? `role:${roleMatch.id}` : r.access_template_id ? `template:${r.access_template_id}` : "";
+        return (
+          <select
+            className={`${inputCls} min-w-[10rem] py-1 text-xs`}
+            value={value}
+            disabled={templateBusyId === r.id}
+            onChange={(e) => setAccessSource(r, e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            title="Picking one clears the others"
+          >
+            <option value="">— Role default —</option>
+            {customRoles.length > 0 && (
+              <optgroup label="Custom roles">
+                {customRoles.map((c) => <option key={`r${c.id}`} value={`role:${c.id}`}>{c.name}</option>)}
+              </optgroup>
+            )}
+            {templates.length > 0 && (
+              <optgroup label="Access templates">
+                {templates.map((t) => <option key={`t${t.id}`} value={`template:${t.id}`}>{t.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+        );
+      },
     },
     { key: "is_active", label: "Status", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
     {
@@ -1339,6 +1545,9 @@ export function UsersAdminPage() {
           <button className={actionBtn} title="Choose which tabs this user can see" onClick={() => setTabAccessFor(r)}>
             <SlidersHorizontal size={13} /> Edit Tab Access
           </button>
+          <button className={actionBtn} title="Set or generate a new password for this user" disabled={r.id === me.id} onClick={() => setResetFor(r)}>
+            <KeyRound size={13} /> Reset Password
+          </button>
           <button
             className={actionBtn}
             title={r.is_active ? "Deactivate user" : "Activate user"}
@@ -1369,54 +1578,60 @@ export function UsersAdminPage() {
     },
   ];
 
-  if (hubTab === "templates") {
+  if (hubTab === "templates" || hubTab === "roles") {
     return (
       <div>
         {toast}
         <div className="mb-4">
-          <h1 className="text-display text-xl font-bold text-primary">Access Control</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Users get an Access Template (from the Users tab, or automatically from their role);
-            the template controls which tabs and fields they can see and edit.
-          </p>
+          <PageHeader
+            icon={ShieldCheck}
+            accent="slate"
+            eyebrow="Admin · CEO"
+            title="Access Control"
+            subtitle={hubTab === "roles"
+              ? "Roles are the job titles people sign in as. Create a custom role, choose the tabs it may open, then add its members — or reset a member's password from here."
+              : "Users get an Access Template (from the Users tab, or automatically from their role); the template controls which tabs and fields they can see and edit."}
+          >
+            <Tabs
+              tabs={[{ key: "users", label: "Users" }, { key: "roles", label: "Roles" }, { key: "templates", label: "Access Templates" }]}
+              active={hubTab}
+              onChange={(k) => setHubTab(k as "users" | "roles" | "templates")}
+            />
+          </PageHeader>
         </div>
-        <div className="mb-4">
-          <Tabs
-            tabs={[{ key: "users", label: "Users" }, { key: "templates", label: "Access Templates" }]}
-            active={hubTab}
-            onChange={(k) => setHubTab(k as "users" | "templates")}
-          />
-        </div>
-        <AccessTemplatesPage />
+        {hubTab === "roles" ? <RolesPanel notify={notify} /> : <AccessTemplatesPage />}
       </div>
     );
   }
   return (
     <div>
       {toast}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-display text-xl font-bold text-primary">Access Control</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Admin/CEO control who can access the application. Create an account with email and password,
-            assign roles and an Access Template, then the user signs in and updates their own profile.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button className={btnSecondary} onClick={() => setShowInvite(true)}>
-            <Send size={15} /> Invite User
-          </button>
-          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> Create User
-          </button>
-        </div>
-      </div>
       <div className="mb-4">
-        <Tabs
-          tabs={[{ key: "users", label: "Users" }, { key: "templates", label: "Access Templates" }]}
-          active={hubTab}
-          onChange={(k) => setHubTab(k as "users" | "templates")}
-        />
+        <PageHeader
+          icon={ShieldCheck}
+          accent="slate"
+          eyebrow="Admin · CEO"
+          title="Access Control"
+          subtitle="Admin/CEO control who can access the application. Create an account with email and password,
+            assign roles and an Access Template, then the user signs in and updates their own profile."
+          stats={meta ? [{ label: meta.total === 1 ? "user" : "users", value: meta.total }] : undefined}
+          actions={
+            <>
+              <button className={HERO_BTN} onClick={() => setShowInvite(true)}>
+                <Send size={15} /> Invite User
+              </button>
+              <button className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+                <Plus size={15} /> Create User
+              </button>
+            </>
+          }
+        >
+          <Tabs
+            tabs={[{ key: "users", label: "Users" }, { key: "roles", label: "Roles" }, { key: "templates", label: "Access Templates" }]}
+            active={hubTab}
+            onChange={(k) => setHubTab(k as "users" | "roles" | "templates")}
+          />
+        </PageHeader>
       </div>
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
@@ -1440,6 +1655,7 @@ export function UsersAdminPage() {
       {showInvite && <InviteUserModal onClose={() => setShowInvite(false)} onSaved={load} notify={notify} />}
       {rolesFor && <EditRolesModal user={rolesFor} onClose={() => setRolesFor(null)} onSaved={load} notify={notify} />}
       {tabAccessFor && <TabAccessModal user={tabAccessFor} onClose={() => setTabAccessFor(null)} onSaved={load} notify={notify} />}
+      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => setResetFor(null)} notify={notify} />}
       {toggleActiveFor && (
         <ConfirmModal
           title={toggleActiveFor.is_active ? "Deactivate user" : "Activate user"}

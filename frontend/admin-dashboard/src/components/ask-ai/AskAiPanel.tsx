@@ -38,6 +38,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { APP_NAME } from "../../lib/brand";
 import { CRM_NAV } from "../../crm/nav";
 import { crmNavigate, readCrmPath } from "../../crm/routerHooks";
 import { fetchHelpContext, postAssist, TOOL_LABELS, type ChatTurn } from "./askAiApi";
@@ -625,7 +626,7 @@ export function AskAiPanel({ open, onClose }: { open: boolean; onClose: () => vo
               </h3>
             </div>
             <p className="text-sm text-secondary">
-              I explain Karnex CRM workflows, rules and fields from the help guide. I can point you
+              I explain {APP_NAME} workflows, rules and fields from the help guide. I can point you
               to the right page — I never change your data.
             </p>
             {prompts.length > 0 && (

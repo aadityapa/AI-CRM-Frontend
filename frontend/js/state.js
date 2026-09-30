@@ -44,6 +44,8 @@ export const state = {
   currentQuestionIndex: 0,
   questionSource: "",
   isWarmupTurn: false,
+  /** Seconds allowed for the warm-up answer (server payload); 0 = no limit. */
+  warmupTimeLimitSec: 0,
   /** Silero VAD + Whisper segments (no continuous Whisper / Web Speech when true). */
   vadWhisperPipeline: true,
 };

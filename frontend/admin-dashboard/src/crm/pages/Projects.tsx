@@ -1,7 +1,8 @@
 /** Projects — list (status tabs) + detail (Overview, Team, Timesheet,
  * PO & Invoices, Communication Matrix) incl. one-click "Create PO". */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
+import { FolderKanban, Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
+import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -21,6 +22,10 @@ import { TeachingEmpty } from "../components/TeachingEmpty";
 import { CreateProjectWizard, EditProjectWizard } from "../components/EditProjectWizard";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { LOCATIONS, RateHistory } from "./ProjectEmployees";
+import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
+import { CloseProjectButton, ProjectClosureBanner } from "../components/ProjectClosure";
+import type { ProjectClosure } from "../components/ProjectClosure";
+import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -50,6 +55,9 @@ type Project = {
   initial_no_billing_qty?: number | null;
   initial_no_billing_period?: string | null;
   status: string;
+  /** Last working day (25 Sep 2026) — set only through "Close project". */
+  end_date?: string | null;
+  closure?: ProjectClosure | null;
   created_at: string | null;
 };
 
@@ -115,7 +123,6 @@ type ProjectDetail = Project & {
 
 const PROJECT_STATUSES = ["Active", "Completed", "On_Hold"];
 const WORK_MODES = ["Remote", "Onsite", "Hybrid"];
-const BILLING_UNITS = ["Hourly", "Daily", "Monthly"];
 const COMM_TYPES = ["Customer", "Internal"];
 const TS_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"];
 const MONTHS = ["January", "February", "March", "April", "May", "June",
@@ -147,17 +154,18 @@ const LazyReceipts = React.lazy(() =>
 /* ================================================================ LIST PAGE */
 
 export function ProjectsListPage() {
-  const [tab, setTab] = useState("Active");
+  const [tab, setTab] = usePageTab<string>("status", "Active", PROJECT_STATUSES as readonly string[]);
   const [rows, setRows] = useState<Project[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
-  const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  const [page, setPage] = useSessionState("prj.page", 1);
+  const [search, setSearch] = useSessionState("prj.search", "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [opps, setOpps] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
-  const [hubTab, setHubTab] = useState("projects");
+  // "hub", not "tab": the embedded Timesheets / Invoices pages own `tab`.
+  const [hubTab, setHubTab] = usePageTab<string>("hub", "projects");
   /* Hub-tab visibility mirrors each embedded page's own rules. */
   const peRole = useHasRole("Sales", "Sales_Head", "HR", "Finance");
   const canPE = useCanAct("project-employees", "view", peRole);
@@ -239,7 +247,7 @@ export function ProjectsListPage() {
     }
   }, [tab, page, search, customerFilter, colFilters, view]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [customerFilter]);
+  useChangeEffect(() => { setPage(1); }, [customerFilter]);
 
   useEffect(() => {
     crmGet<any[]>("/api/opportunities?limit=100").then((r) => setOpps(r.data || [])).catch(() => {});
@@ -286,19 +294,38 @@ export function ProjectsListPage() {
     { key: "billing_frequency", label: "Billing frequency", render: (r) => pretty(r.billing_frequency),
       filter: { type: "select", options: ["Monthly", "Bi_Weekly", "Weekly", "Quarterly", "Yearly"]
         .map((v) => ({ value: v, label: pretty(v) })) } },
-    { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
+    { key: "status", label: "Status", render: (r) => (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <StatusBadge status={r.status} />
+        {r.closure?.state === "scheduled" && r.end_date && (
+          <span className="whitespace-nowrap text-[11px] font-semibold text-warning" title="Last working day">
+            closes {fmtDate(r.end_date)}
+          </span>
+        )}
+      </span>
+    ) },
   ];
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Projects</h1>
-        {hubTab === "projects" && canCreate && (
-          <button className={btnPrimary} onClick={() => setShowNew(true)}>
+      <PageHeader
+        icon={FolderKanban}
+        accent="teal"
+        eyebrow="Delivery hub"
+        title="Projects"
+        subtitle="Projects, the people deployed on them, their timesheets, purchase orders, invoices and money received — one hub per engagement."
+        stats={hubTab === "projects" && !loading ? [
+          ...(view === "customer"
+            ? [{ label: rows.length === 1 ? "project" : "projects", value: rows.length }]
+            : meta ? [{ label: meta.total === 1 ? "project" : "projects", value: meta.total }] : []),
+          { label: "status", value: pretty(tab) },
+        ] : undefined}
+        actions={hubTab === "projects" && canCreate ? (
+          <button className={HERO_BTN_SOLID} onClick={() => setShowNew(true)}>
             <Plus size={15} /> New Project
           </button>
-        )}
-      </div>
+        ) : undefined}
+      >
       <Tabs
         tabs={[
           { key: "projects", label: "Projects" },
@@ -312,19 +339,10 @@ export function ProjectsListPage() {
         active={hubTab}
         onChange={setHubTab}
       />
-      {hubTab !== "projects" ? (
-        <React.Suspense fallback={<Spinner label="Loading…" />}>
-          {hubTab === "employees" && canPE && <LazyProjectEmployees />}
-          {hubTab === "timesheets" && canTs && <LazyTimesheets />}
-          {hubTab === "pos" && canPos && <LazyPurchaseOrders />}
-          {hubTab === "invoices" && canInv && <LazyInvoices />}
-          {hubTab === "receipts" && canInv && <LazyReceipts />}
-        </React.Suspense>
-      ) : (
-      <>
-      {/* Status filter as a segmented pill group (redesign mock, 28 Aug 2026)
-          — reads as a filter over one list, not as three separate pages. */}
-      <div className="inline-flex w-fit items-center gap-1 rounded-control bg-surface-2 p-1 ring-1 ring-inset ring-subtle">
+      {hubTab === "projects" && (
+      /* Status filter as a segmented pill group (redesign mock, 28 Aug 2026)
+          — reads as a filter over one list, not as three separate pages. */
+      <div className="mt-3 inline-flex w-fit max-w-full flex-wrap items-center gap-1 rounded-control bg-surface-2 p-1 ring-1 ring-inset ring-subtle">
         {PROJECT_STATUSES.map((s) => (
           <button
             key={s}
@@ -340,6 +358,18 @@ export function ProjectsListPage() {
           </button>
         ))}
       </div>
+      )}
+      </PageHeader>
+      {hubTab !== "projects" ? (
+        <React.Suspense fallback={<Spinner label="Loading…" />}>
+          {hubTab === "employees" && canPE && <LazyProjectEmployees embedded />}
+          {hubTab === "timesheets" && canTs && <LazyTimesheets embedded />}
+          {hubTab === "pos" && canPos && <LazyPurchaseOrders embedded />}
+          {hubTab === "invoices" && canInv && <LazyInvoices embedded />}
+          {hubTab === "receipts" && canInv && <LazyReceipts />}
+        </React.Suspense>
+      ) : (
+      <>
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : view === "customer" ? (
@@ -363,7 +393,7 @@ export function ProjectsListPage() {
                 <span>Monthly <span className="font-semibold text-primary tnum">{rs.filter((r) => r.billing_frequency === "Monthly").length}</span></span>
               </>
             )}
-            onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
+            onRowClick={(r) => crmNavigate(`projects/${r.id}`)} rowHref={(r: any) => `projects/${r.id}`}
             rowKey={(r) => r.id}
             empty={<TeachingEmpty page="projects" />}
             rowActions={canCreate ? (r) => (
@@ -391,7 +421,7 @@ export function ProjectsListPage() {
           search={search}
           onSearch={(q) => { setSearch(q); setPage(1); }}
           onPage={setPage}
-          onRowClick={(r) => crmNavigate(`projects/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`projects/${r.id}`)} rowHref={(r: any) => `projects/${r.id}`}
           columnFilters={columnFilterValues}
           onColumnFilter={onColumnFilter}
           filters={
@@ -448,7 +478,7 @@ export function ProjectDetailPage() {
   const { id } = useCrmParams();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = usePageTab<string>("tab", "overview");
   const [toast, showToast] = useToast();
 
   const load = useCallback(async () => {
@@ -479,10 +509,18 @@ export function ProjectDetailPage() {
   return (
     <div className="space-y-4">
       <CrmBreadcrumb items={crumbs} />
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-display text-xl font-bold text-primary">{project.name}</h1>
-        <StatusBadge status={project.status} />
-      </div>
+      <PageHeader
+        icon={FolderKanban}
+        accent="teal"
+        eyebrow={project.customer_name ? `Project · ${project.customer_name}` : "Project"}
+        title={project.name}
+        subtitle={project.branch_name ? <>Branch: {project.branch_name}</> : undefined}
+        stats={[
+          { label: "status", value: pretty(project.status || "—") },
+          ...(project.team ? [{ label: project.team.length === 1 ? "person on the team" : "people on the team", value: project.team.length }] : []),
+        ]}
+      />
+      <ProjectClosureBanner projectId={project.id} closure={project.closure} onCancelled={load} notify={showToast} />
       <Tabs
         tabs={[
           { key: "overview", label: "Overview" },
@@ -536,6 +574,8 @@ function OverviewTab({
             <Pencil size={15} /> Edit project
           </button>
         )}
+        <CloseProjectButton projectId={project.id} projectName={project.name} closure={project.closure}
+                            onClosed={reload} notify={showToast} />
         {/* Create PO removed from the project page (user decision, 27 Aug
             2026) — POs are raised from the Purchase Orders tab, where the
             full wizard (addresses, GST, employee) lives. */}
@@ -550,6 +590,7 @@ function OverviewTab({
         <Info label="Customer" value={project.customer_name || `#${project.customer_id}`} />
         <Info label="Opportunity" value={project.opportunity_title || (project.opportunity_id ? `#${project.opportunity_id}` : "— (not linked to a sales opportunity)")} />
         <Info label="Status" value={<StatusBadge status={project.status} />} />
+        <Info label="Last working day" value={project.end_date ? fmtDate(project.end_date) : "— (open-ended)"} />
         <Info label="Billing cycle" value={`Day ${project.billing_cycle_start_day} – ${project.billing_cycle_end_day}`} />
         <Info label="Billing frequency" value={pretty(project.billing_frequency)} />
         <Info label="Max billable hrs/day" value={capValue(project.max_billable_hours_day, project.effective_policy?.max_billable_hours_per_day, project.effective_policy?.is_max_billable_hours_per_day)} />
@@ -796,7 +837,7 @@ function TeamTab({
 
   return (
     <div className="space-y-3">
-      {canManage && (
+      {canManage && project.closure?.state !== "closed" && (
         <div className="flex justify-end">
           <button className={btnPrimary} onClick={() => setShowAssign(true)}>
             <UserPlus size={15} /> Assign employee
@@ -810,7 +851,7 @@ function TeamTab({
         onSearch={setSearch}
         emptyMessage={search.trim() ? "No employees match your search" : "No employees assigned"}
         searchPlaceholder="Search team…"
-        onRowClick={(r) => crmNavigate(`project-employees/${r.pe_id ?? r.id}`)}
+        onRowClick={(r) => crmNavigate(`project-employees/${r.pe_id ?? r.id}`)} rowHref={(r: any) => `project-employees/${r.pe_id ?? r.id}`}
       />
       {showAssign && (
         <AssignEmployeeModal
@@ -847,7 +888,7 @@ function AssignEmployeeModal({
   const [experienceYears, setExperienceYears] = useState("");
   const [workMode, setWorkMode] = useState("");
   const [billingRate, setBillingRate] = useState("");
-  const [billingUnit, setBillingUnit] = useState("Monthly");
+  const [billingUnit, setBillingUnit] = useState("");   // no default — see lib/billingUnits
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
@@ -859,6 +900,7 @@ function AssignEmployeeModal({
     const errs: Record<string, string> = {};
     if (!employeeId) errs.employee = "Employee is required";
     if (billingRate.trim() === "" || Number(billingRate) < 0) errs.rate = "Billing rate is required";
+    if (!billingUnit) errs.unit = BILLING_UNIT_REQUIRED;
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true);
@@ -911,9 +953,10 @@ function AssignEmployeeModal({
           <Field label="Billing rate" required error={errors.rate}>
             <input type="number" min={0} className={inputCls} value={billingRate} onChange={(e) => setBillingRate(e.target.value)} />
           </Field>
-          <Field label="Billing unit">
+          <Field label="Rate is priced per" required error={errors.unit}>
             <select className={inputCls} value={billingUnit} onChange={(e) => setBillingUnit(e.target.value)}>
-              {BILLING_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              <option value="">Select unit…</option>
+              {BILLING_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
             </select>
           </Field>
         </div>
@@ -1357,6 +1400,7 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
       search={search}
       onSearch={setSearch}
       onRowClick={(r) => { if (r.id) crmNavigate(`timesheets/${r.id}`); }}
+      rowHref={(r: any) => (r.id ? `timesheets/${r.id}` : null)}
       emptyMessage={search.trim() ? "No timesheets match your search" : "No timesheets for this project"}
       searchPlaceholder="Search timesheets…"
       filters={

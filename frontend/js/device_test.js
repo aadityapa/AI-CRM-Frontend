@@ -38,15 +38,34 @@ const STATUS_BADGE_TEXT = {
   testing: "Checking",
   ok: "Ready",
   error: "Failed",
-  // Used only by the webcam tile when the candidate's system has no camera
-  // (or the candidate explicitly skips). The webcam is NOT a hard requirement
-  // for the interview — mic + speaker + internet are.
+  // Retained for the legacy "no camera" path. With CAMERA_REQUIRED on (the
+  // default since 22 Sep 2026) the webcam tile can no longer reach this
+  // state — see _markWebcamUnavailable.
   skipped: "Optional",
 };
 
-// Webcam tile may pass in either "ok" (live preview confirmed) or "skipped"
-// (no camera hardware detected, or candidate chose to skip).
-const WEBCAM_PASS_STATES = new Set(["ok", "skipped"]);
+/**
+ * 22 Sep 2026 — the camera is now MANDATORY for every candidate.
+ *
+ * It was optional because candidates on camera-less machines had to be able to
+ * sit the interview. That is no longer acceptable: an AI interview with no
+ * video cannot be proctored at all — no identity check, no "is anyone else in
+ * the room", and nothing to record. A candidate without a working camera must
+ * be rescheduled, not quietly interviewed blind.
+ *
+ * Everything else about this gate is unchanged. This is the ONE switch; set it
+ * to false and the previous optional behaviour returns intact.
+ */
+const CAMERA_REQUIRED = true;
+
+// With the camera mandatory only a confirmed live preview passes. When
+// CAMERA_REQUIRED is off, the historical "skipped" state passes too.
+const WEBCAM_PASS_STATES = CAMERA_REQUIRED ? new Set(["ok"]) : new Set(["ok", "skipped"]);
+
+/** True when a candidate cannot proceed without a working camera. */
+export function isCameraRequired() {
+  return CAMERA_REQUIRED;
+}
 
 /**
  * sessionStorage flag used by candidate.js to suppress the duplicate
@@ -99,10 +118,12 @@ function _persistDeviceTestState(tileState) {
       ts: Date.now(),
       mic: tileState.mic === "ok",
       speaker: tileState.speaker === "ok",
-      // Webcam is OPTIONAL — treat "skipped" as "no camera available" rather
-      // than "denied" so candidate.js can keep the interview running mic-only.
+      // With the camera mandatory, `camera` is the only one that matters and
+      // Continue cannot be reached without it. `cameraSkipped` stays on the
+      // payload so older readers of this blob keep working.
       camera: tileState.webcam === "ok",
       cameraSkipped: tileState.webcam === "skipped",
+      cameraRequired: CAMERA_REQUIRED,
       network: tileState.network === "ok",
       microphone_verified: tileState.mic === "ok",
       speaker_verified: tileState.speaker === "ok",
@@ -176,9 +197,9 @@ function _stopMediaTracks(stream) {
 }
 
 function _allTilesPass(state) {
-  // Webcam is OPTIONAL: candidates on camera-less systems must still be able
-  // to continue. Accept either confirmed "ok" or auto/manual "skipped" for the
-  // webcam tile; mic/speaker/network are mandatory.
+  // Mic, speaker, internet and — since 22 Sep 2026 — the camera must all pass.
+  // WEBCAM_PASS_STATES carries the camera rule so there is exactly one place
+  // that decides it.
   return (
     state.mic === "ok" &&
     state.speaker === "ok" &&
@@ -541,22 +562,52 @@ async function _hasNoCameraDevice() {
   }
 }
 
-/** Mark the webcam tile as optional/skipped and unblock Continue. */
-function _markWebcamSkipped(tileState, reason) {
+/**
+ * The camera could not be used.
+ *
+ * With CAMERA_REQUIRED on this is a BLOCKING failure: the tile shows an error,
+ * Continue stays disabled and the candidate is told what to do. It does not
+ * pretend the check passed, because an interview with no video cannot be
+ * proctored or recorded.
+ *
+ * With CAMERA_REQUIRED off it keeps the historical behaviour exactly: mark the
+ * tile optional and let the candidate through.
+ */
+function _markWebcamUnavailable(tileState, reason) {
+  const hint = _qs(".device-test-tile-hint", _tile("webcam"));
+  const confirm = _qs('[data-action="webcam-confirm"]', _tile("webcam"));
+  const skipBtn = _qs('[data-action="webcam-skip"]', _tile("webcam"));
+  if (CAMERA_REQUIRED) {
+    tileState.webcam = "error";
+    _setTileStatus("webcam", "error");
+    if (hint) {
+      hint.textContent = reason ||
+        "A working camera is required for this interview. Connect one, allow camera " +
+        "access in your browser, then click Test camera again.";
+    }
+    if (confirm) confirm.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    _setStatusMsg(
+      "The camera is required. If you cannot enable one on this device, close this " +
+      "page and contact your recruiter to reschedule."
+    );
+    _refreshContinueButton(tileState);
+    return;
+  }
   tileState.webcam = "skipped";
   _setTileStatus("webcam", "skipped");
-  const hint = _qs(".device-test-tile-hint", _tile("webcam"));
   if (hint) {
     hint.textContent = reason ||
       "No camera detected on this device. The interview will continue without video.";
   }
-  const confirm = _qs('[data-action="webcam-confirm"]', _tile("webcam"));
   if (confirm) confirm.disabled = true;
-  const skipBtn = _qs('[data-action="webcam-skip"]', _tile("webcam"));
   if (skipBtn) skipBtn.disabled = true;
   _setStatusMsg("");
   _refreshContinueButton(tileState);
 }
+
+//: Previous name. Kept so nothing that already calls it has to change.
+const _markWebcamSkipped = _markWebcamUnavailable;
 
 async function _runWebcamTest(tileState) {
   _setTileStatus("webcam", "testing");
@@ -603,17 +654,25 @@ async function _runWebcamTest(tileState) {
       return;
     }
     if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      tileState.webcam = "error";
       _setTileStatus("webcam", "error");
       _setStatusMsg(
-        "Camera permission was blocked. If your system has a camera, allow it in " +
-          "the browser's address bar and try again — or click \"Skip — no camera\" " +
-          "if you do not have one."
+        CAMERA_REQUIRED
+          ? "Camera permission was blocked. This interview is recorded, so the camera " +
+            "is required — allow it from the icon in your browser's address bar, then " +
+            "click Test camera again."
+          : "Camera permission was blocked. If your system has a camera, allow it in " +
+            "the browser's address bar and try again — or click \"Skip — no camera\" " +
+            "if you do not have one."
       );
     } else {
+      tileState.webcam = "error";
       _setTileStatus("webcam", "error");
       _setStatusMsg(
         `Camera test failed: ${name || "unknown error"}. ` +
-          "Click \"Skip — no camera\" if you do not have a webcam."
+          (CAMERA_REQUIRED
+            ? "A working camera is required. Close other apps using the camera and try again."
+            : "Click \"Skip — no camera\" if you do not have a webcam.")
       );
     }
   } finally {
@@ -631,13 +690,22 @@ function _confirmWebcam(tileState) {
 /** Explicit "Skip — no camera" path so a candidate can bypass even when their
  *  OS reports a (broken / virtual) camera that getUserMedia cannot use. */
 function _skipWebcam(tileState) {
+  if (CAMERA_REQUIRED) {
+    // The button is hidden when the camera is mandatory, but a stale page or
+    // a keyboard activation could still reach this. Refuse, and say why.
+    _setStatusMsg(
+      "The camera cannot be skipped — this interview is recorded and proctored. " +
+      "Allow camera access, or contact your recruiter to reschedule."
+    );
+    return;
+  }
   _stopMediaTracks(_webcamStream);
   _webcamStream = null;
   const preview = _qs("[data-webcam-preview]", _tile("webcam"));
   if (preview) {
     try { preview.srcObject = null; } catch (_) { /* ignore */ }
   }
-  _markWebcamSkipped(tileState, "Skipped by candidate. The interview will continue without video.");
+  _markWebcamUnavailable(tileState, "Skipped by candidate. The interview will continue without video.");
 }
 
 async function _runNetworkTest(tileState) {
@@ -690,7 +758,13 @@ function _resetGate(tileState) {
   const webcamConfirm = _qs('[data-action="webcam-confirm"]', _tile("webcam"));
   if (webcamConfirm) webcamConfirm.disabled = true;
   const webcamSkip = _qs('[data-action="webcam-skip"]', _tile("webcam"));
-  if (webcamSkip) webcamSkip.disabled = false;
+  if (webcamSkip) {
+    // Hidden from JS rather than removed from index.html, so the markup stays
+    // valid for a deployment that turns CAMERA_REQUIRED back off.
+    webcamSkip.disabled = CAMERA_REQUIRED;
+    webcamSkip.hidden = CAMERA_REQUIRED;
+    if (CAMERA_REQUIRED) webcamSkip.style.display = "none";
+  }
   const micHint = _qs(".device-test-tile-hint", _tile("mic"));
   if (micHint) {
     micHint.textContent = "Click Test mic and speak for 3 seconds. We need to detect your voice.";
@@ -699,7 +773,9 @@ function _resetGate(tileState) {
   // "skipped" run within the same browser session).
   const hint = _qs(".device-test-tile-hint", _tile("webcam"));
   if (hint) {
-    hint.textContent = "Click Test camera and confirm you can see your live preview.";
+    hint.textContent = CAMERA_REQUIRED
+      ? "Required. Click Test camera and confirm you can see your live preview — this interview is recorded."
+      : "Click Test camera and confirm you can see your live preview.";
   }
   const preview = _qs("[data-webcam-preview]", _tile("webcam"));
   if (preview) {

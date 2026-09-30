@@ -375,7 +375,8 @@ function FieldControl({
   const stateRing = isFlash
     ? "shadow-focus-ring"
     : isNext && !reduce
-      ? "ring-1 ring-strong"
+      // "Fill this next" — an outline clear of the label, not a ring hugging it.
+      ? "outline outline-2 outline-offset-4 outline-indigo-200 dark:outline-indigo-800"
       : "";
 
   const iconKind = forceReadonly ? undefined : guessFieldIcon(f.key, f.type);
@@ -391,7 +392,7 @@ function FieldControl({
       <Field label={f.label} required={f.required} error={undefined}>
         <div className="relative">
           {Lead && needsPad && (
-            <span className="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-[color:var(--wiz-muted)]">
+            <span className="pointer-events-none absolute left-3.5 top-[21px] z-[1] -translate-y-1/2 text-[color:var(--wiz-muted)]">
               <Lead size={15} aria-hidden />
             </span>
           )}
@@ -405,7 +406,7 @@ function FieldControl({
             {wrapped}
           </div>
           {(showLock || isFilled) && !f.addNew && (
-            <span className="pointer-events-none absolute right-3.5 top-1/2 z-[1] -translate-y-1/2">
+            <span className="pointer-events-none absolute right-3.5 top-[21px] z-[1] -translate-y-1/2">
               {showLock ? (
                 <Lock size={14} className="text-[color:var(--wiz-muted)]" aria-hidden />
               ) : (

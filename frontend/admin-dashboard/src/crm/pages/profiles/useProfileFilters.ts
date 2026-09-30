@@ -14,6 +14,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 export type ProfileFilters = {
   bucket: "active" | "rejected";
+  /** The stage strip (29 Sep 2026): a `services/candidate_status.STAGES` key, sent as `phase`. */
+  phase: string;
+  /** Derived candidate-status keys, CSV (sent as `status_key`). */
   status: string;
   opportunityId: string;
   taOwnerId: string;
@@ -27,6 +30,7 @@ export type ProfileFilters = {
 
 const DEFAULTS: ProfileFilters = {
   bucket: "active",
+  phase: "",
   status: "",
   opportunityId: "",
   taOwnerId: "",
@@ -41,7 +45,11 @@ const DEFAULTS: ProfileFilters = {
 /** Prefixed so these cannot collide with the router's own `view`/`p` params. */
 const PARAM = {
   bucket: "f_bucket",
-  status: "f_status",
+  phase: "f_stage",
+  // "f_state", not the old "f_status" (25 Sep 2026): the value is now a
+  // derived candidate-status key, and a bookmark carrying a stage name must
+  // not turn into a 400 — the old param is simply ignored.
+  status: "f_state",
   opportunityId: "f_opp",
   taOwnerId: "f_ta",
   customerId: "f_cust",
@@ -59,6 +67,7 @@ function read(): ProfileFilters {
   const page = Number(p.get(PARAM.page));
   return {
     bucket: bucket === "rejected" ? "rejected" : "active",
+    phase: p.get(PARAM.phase) || "",
     status: p.get(PARAM.status) || "",
     opportunityId: p.get(PARAM.opportunityId) || "",
     taOwnerId: p.get(PARAM.taOwnerId) || "",
@@ -121,6 +130,7 @@ export function useProfileFilters() {
   const isFiltered = useMemo(
     () =>
       filters.status !== "" ||
+      filters.phase !== "" ||
       filters.opportunityId !== "" ||
       filters.taOwnerId !== "" ||
       filters.customerId !== "" ||

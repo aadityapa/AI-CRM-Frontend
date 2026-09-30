@@ -25,7 +25,7 @@ describe("RBAC — Interview Platform nav visibility", () => {
     expect(allowedInterviewNav(["Admin"])).toEqual([
       "dashboard", "templates", "candidates", "ats", "promptLogs", "integrityLogs",
     ]));
-  it("TA sees Dashboard/Reports/ATS/Integrity (no Templates, no AI Logs)", () =>
+  it("TA sees Dashboard/Reports/ATS/Integrity (no Templates, no AI Costs)", () =>
     expect(allowedInterviewNav(["TA"])).toEqual(["dashboard", "candidates", "ats", "integrityLogs"]));
   it("HR matches TA", () =>
     expect(allowedInterviewNav(["HR"])).toEqual(["dashboard", "candidates", "ats", "integrityLogs"]));
@@ -57,9 +57,9 @@ describe("RBAC — Templates is Admin/RMG only", () => {
     expect(canAccessInterviewView([r], "templates")).toBe(false));
 });
 
-describe("RBAC — AI Logs is Admin only", () => {
-  it("TA cannot access AI Logs", () => expect(canAccessInterviewView(["TA"], "promptLogs")).toBe(false));
-  it("Admin can access AI Logs", () => expect(canAccessInterviewView(["Admin"], "promptLogs")).toBe(true));
+describe("RBAC — AI Costs is Admin only", () => {
+  it("TA cannot access AI Costs", () => expect(canAccessInterviewView(["TA"], "promptLogs")).toBe(false));
+  it("Admin can access AI Costs", () => expect(canAccessInterviewView(["Admin"], "promptLogs")).toBe(true));
 });
 
 describe("RBAC — CRM access", () => {

@@ -13,7 +13,11 @@ import React, { createContext, useContext, useEffect, useState } from "react";
  * `tab` is here for the same reason as the filters: it is meaningful only to
  * the page that reads it, so carrying it onto the next page would land the
  * reader on an arbitrary tab (or none) after following any other link. */
-const CRM_FILTER_KEYS = ["project_id", "employee_id", "tab", "q", "pdf", "edit"] as const;
+const CRM_FILTER_KEYS = [
+  "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus",
+  // page-state params (crm/lib/pageState.ts) — each belongs to one page only
+  "sub", "status", "rtab", "phase", "opp_tab", "hub",
+] as const;
 
 function splitPathQuery(path: string): { pathPart: string; queryPart: string } {
   const raw = path.replace(/^\/+/, "");
@@ -51,9 +55,23 @@ export function crmUrl(path: string): string {
   return `${window.location.pathname}?${params.toString()}`;
 }
 
+/** True only while crmNavigate's own synthetic popstate is being dispatched —
+ *  listeners use it to tell a NEW page (scroll to the top) from the browser's
+ *  Back / Forward (restore where the reader was). dispatchEvent is synchronous,
+ *  so the flag is exact. */
+let pushNavigationInFlight = false;
+export function isPushNavigation(): boolean {
+  return pushNavigationInFlight;
+}
+
 export function crmNavigate(path: string): void {
   window.history.pushState({}, "", crmUrl(path));
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  pushNavigationInFlight = true;
+  try {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  } finally {
+    pushNavigationInFlight = false;
+  }
 }
 
 type RouterCtx = { path: string; params: Record<string, string> };

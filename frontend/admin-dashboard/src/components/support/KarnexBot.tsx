@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import "./karnex-bot.css";
+import { APP_NAME } from "../../lib/brand";
 
 export type BotSide = "left" | "right";
 export type BotDock = { side: BotSide; /** distance from the bottom edge, px */ bottom: number };
@@ -25,7 +26,7 @@ const DEFAULT_DOCK: BotDock = { side: "right", bottom: 24 };
 
 /** Change here and the greeting, header and aria labels follow. */
 export const BOT_NAME = "Karnex Support Agent";
-export const BOT_TAGLINE = "Ask me anything about hiring, CRM or your account";
+export const BOT_TAGLINE = `Ask me anything about ${APP_NAME} — hiring, CRM or your account`;
 
 function readDock(): BotDock {
   try {

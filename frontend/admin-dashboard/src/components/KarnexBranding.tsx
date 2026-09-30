@@ -1,7 +1,10 @@
 /**
  * Unified Karnex branding — transparent SVG logo + product copy.
  * Served from /assets/karnex-logo.svg (light surfaces) and karnex-logo-light.svg (dark).
+ * The product name / tagline come from lib/brand.ts.
  */
+import { APP_NAME, APP_NAME_UPPER } from "../lib/brand";
+
 export function KarnexBranding({
   size = "md",
   className = "",
@@ -39,7 +42,7 @@ export function KarnexBranding({
       >
         <img
           src={src}
-          alt="KARNEX — Enterprise AI Interview Platform"
+          alt={`KARNEX — ${APP_NAME}`}
           className="block max-w-full object-contain dark:hidden"
           style={{ height: logoH, width: "auto" }}
           draggable={false}
@@ -57,13 +60,8 @@ export function KarnexBranding({
       </div>
       <div className="pl-0.5 text-xs">
         <p className="m-0 font-bold uppercase tracking-[0.28em] text-muted">
-          AI HR SUITE
+          {APP_NAME_UPPER}
         </p>
-        {!isSm && (
-          <p className="m-0 mt-0.5 text-xs font-medium text-muted">
-            Enterprise AI Interview Platform
-          </p>
-        )}
       </div>
     </div>
   );

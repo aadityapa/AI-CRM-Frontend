@@ -1,69 +1,80 @@
 /** Candidate Profiles (candidate x opportunity): pipeline list + detail with
  * Overview / Skill Evaluation / Offers / Activity Log / AI Interview (Phase 5 integration).
- * Status transitions render ONLY detail.allowed_next_statuses (computed server-side per role);
- * every transition requires a comment (min 5 chars).
+ * Status transitions render ONLY detail.allowed_next_statuses (computed server-side per role),
+ * as the header's named "Next step" buttons (`StageActionBar`, 28 Sep 2026 — they replaced
+ * the Change Status dropdown); rejections, backward moves and customer feedback need a note.
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * zebra-free 48px table rows, right-aligned numerics, one primary action per screen. */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ArrowRight, ArrowRightLeft, Bot, Copy, ExternalLink, FileText, GitBranch, Pencil, Plus, Save, Send, Trash2, UserCheck, UsersRound, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowRightLeft, BadgeCheck, Bot, CalendarPlus, Check, Copy, ExternalLink, FileText, GitBranch, IndianRupee, Link2, MapPin, Pencil, Plus, Route, Save, Send, Trash2, UserCheck, UsersRound, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { CANDIDATE_STAGE_BUCKETS } from "../lib/candidateStageBuckets";
 import { DuplicateProfileNotice, duplicateProfileFromError } from "../components/DuplicateProfileNotice";
 import type { DuplicateProfile } from "../components/DuplicateProfileNotice";
 import { BudgetFlagModal, BudgetReplyModal, SubmitForApprovalModal } from "../components/OfferApprovalGate";
-import { CrmApiError, crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
+import { CrmApiError, crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
-import type { Meta } from "../api";
-import { displayEmail, realEmail } from "../lib/candidateEmail";
+import { realEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
-import { InterviewerSelect } from "../components/InterviewerSelect";
+import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
+import { RmgVerdictHero } from "../components/ScreeningDecisionModal";
+import { DialogActions } from "../components/dialogKit";
+import { AiInterviewOverview, useCanOpenAiReport } from "../components/AiInterviewOverview";
+import { InterviewRoundsModal } from "../components/InterviewRoundsModal";
+import { hrOfferVisible, type HrOffer } from "../lib/hrOffer";
 import { SearchableSelect } from "../components/SearchableSelect";
 /** Sentinel option in the Employee picker: no Karnex employee on the panel. */
 const EXTERNAL_PANELLIST = "__external__";
 /** Fallback HR verdicts when the options call has not resolved — mirrors interview_rounds.HR_RESULTS. */
 const HR_VERDICTS = ["Hire", "Not Recommend", "Drop"];
-import { useCanAct, useCrmAccess } from "../useAccess";
-import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
-import { DataTable } from "../components/DataTable";
-import type { Column } from "../components/DataTable";
-import { RowActions, afterListDelete } from "../components/RowActions";
+import { useCanAct, useCanApprove, useCrmAccess } from "../useAccess";
+import { CrmLink, useCrmParams } from "../routerHooks";
 import { FileLink, FileUploadButton } from "../components/FileUpload";
-import {
-  TableCustomizerButton, sortToQuery, useTableLayout,
-} from "../components/TableCustomizer";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
-import { AiInterviewCell } from "../components/AiInterviewCell";
 import { ProfilesListPage as ProfilesDirectory } from "./profiles/ProfilesListPage";
+import { FastTrackBanner, type InternalEmployee } from "../components/FastTrackToSales";
+import { GoManualModal } from "../components/InterviewRouteChoice";
 import { SalesHeadApprovalBanner } from "../components/SalesHeadApprovalBanner";
 import { RoundProgress } from "../components/RoundProgress";
-import {
-  ScheduleAiInterviewModal,
-  toInputValue,
-} from "../components/ScheduleAiInterviewModal";
+import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
+import type { CandidateStatus } from "../components/CandidateStatusBadge";
+import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal";
+import { useHandoverNote } from "../components/handoverNote";
+import { SalesReadinessPanel } from "../components/SalesReadinessPanel";
+import { BACKWARD_MOVES, StageActionBar } from "../components/StageActions";
 import type { AiScheduleResult as SharedAiScheduleResult } from "../components/ScheduleAiInterviewModal";
 import {
   AiThinking, ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
-  btnDanger, btnPrimary, btnSecondary, inputCls, statusLabel, useToast, selfWithdrewLabel } from "../components/ui";
+  btnDanger, btnPrimary, btnSecondary, inputCls, statusLabel, useToast } from "../components/ui";
 import {
   SectionHeaderBanner, FieldLabel, WizardField,
 } from "../components/wizard";
-import { fmtDateTime12 } from "../../lib/datetime";
+import { fmtDateTime12, isoToIstInput } from "../../lib/datetime";
+import { CustomerSlotPicker, offerFor } from "../components/CustomerSlots";
+import {
+  CUSTOMER_ROUND_ROLES, ROUND_KIND_LABEL, isCustomerRoundKind, isFeedbackDue, type CustomerSlotOffer,
+} from "../lib/interviewRounds";
+import { usePageTab } from "../lib/pageState";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
  * Visual-only wrapper: no field, state, or submit logic lives here. */
 function WizFormShell({
-  title, subtitle, icon, children,
+  title, subtitle, icon, children, bare,
 }: {
   title: string;
   subtitle: string;
   icon: React.ReactNode;
   children: React.ReactNode;
+  /** No banner — for a dialog whose own header already names the task. */
+  bare?: boolean;
 }) {
   return (
-    <div className="crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] px-4 py-6 sm:px-6 sm:py-8">
+    <div className={`crm-wizard wiz-noise min-h-full w-full bg-[color:var(--wiz-bg)] ${bare ? "px-1 py-1" : "px-4 py-6 sm:px-6 sm:py-8"}`}>
       <div className="mx-auto w-full max-w-3xl">
-        <SectionHeaderBanner title={title} description={subtitle} icon={icon} />
+        {!bare && <SectionHeaderBanner title={title} description={subtitle} icon={icon} />}
         {children}
       </div>
     </div>
@@ -72,15 +83,6 @@ function WizFormShell({
 
 /* Shared footer container for the reskinned single-screen dialogs. */
 const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--wiz-border)] pt-5";
-
-/** Column order this page ships with, until a user saves their own layout.
- * Keys match both the table columns and the server-side sort keys. */
-const DEFAULT_PROFILE_COLUMNS = [
-  "candidate_name", "email", "phone", "experience_years", "notice_period",
-  "opportunity", "pipeline_status", "ai_interview", "current_ctc", "expected_ctc",
-  "approved_ctc_budget", "interview_round", "interview_status", "interview_datetime",
-  "resume_url", "resignation_certificate_url", "created_at",
-];
 
 /* ------------------------------------------------------------------ */
 /* Shared types + helpers                                              */
@@ -120,7 +122,8 @@ type ProfileRow = {
   resignation_certificate_url?: string | null;
   resignation_status?: boolean;
   last_working_day?: string | null;
-  stage?: string | null;
+  /** The derived status every screen shows (server-side, 25 Sep 2026). */
+  candidate_status?: CandidateStatus | null;
   employee_ref?: string | null;
   created_by_name?: string | null;
   /** RMG screening gate (25 Aug 2026). NULL = legacy profile, not gated. */
@@ -207,6 +210,8 @@ type InterviewRoundOptions = {
   hr_results?: string[];
   user_roles: string[];
   employees: { id: number; full_name: string; email: string; employee_code: string | null }[];
+  /** The customer's slots Sales passed to TA (29 Sep 2026) — offered as picks. */
+  customer_slots?: CustomerSlotOffer | null;
 };
 
 type SkillEvaluation = {
@@ -231,6 +236,12 @@ type Offer = {
 };
 
 type ProfileDetail = ProfileRow & {
+  /** Existing Karnex employee this candidate IS (server-derived, 25 Sep 2026). */
+  internal_employee?: InternalEmployee | null;
+  /** HR's offered CTC (30 Sep 2026) — present for HR / Admin / CEO ONLY. */
+  hr_offer?: HrOffer | null;
+  /** Why the internal fast-track to Sales is unavailable; null = available. */
+  fast_track_block?: string | null;
   candidate: {
     id: number;
     full_name: string;
@@ -328,12 +339,8 @@ type AiInterviewLink = {
 
 type AiScheduleResult = SharedAiScheduleResult;
 
-/** Pipeline order — the filter dropdown and the status column both read this. */
-const ACTIVE_STATUSES = [
-  "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening",
-  "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval",
-  "HR_Screening", "HR_Interviewing", "Preboarding", "Joined",
-];
+/** Closing pipeline stages — the status modal asks for a note on these. (The
+ *  list's Status filter speaks the derived candidate status instead.) */
 const REJECTED_STATUSES = [
   "Sales_Rejected", "RMG_Rejected", "Customer_Rejected",
   // Round-specific customer rejections (Aug 2026) — must be listed here or the
@@ -377,12 +384,6 @@ function hikePreview(current: string, expected: string): string | null {
   return (((e - c) / c) * 100).toFixed(2);
 }
 
-function numOrNull(s: string): number | null {
-  if (s.trim() === "") return null;
-  const n = parseFloat(s);
-  return isFinite(n) ? n : null;
-}
-
 /* ------------------------------------------------------------------ */
 /* LIST PAGE                                                           */
 /* ------------------------------------------------------------------ */
@@ -395,7 +396,6 @@ export function ProfilesListPage(props: { title?: string; subtitle?: string } = 
     <ProfilesDirectory
       {...props}
       helpers={{ fmtLac, fmtHike, fmtDate, fmtDateTime, roundLabel }}
-      statuses={{ active: ACTIVE_STATUSES, rejected: REJECTED_STATUSES }}
       renderCreateModal={(close, onCreated) => (
         <NewProfileModal onClose={close} onCreated={onCreated} />
       )}
@@ -695,25 +695,6 @@ function SkipAiL1Banner({ profileId, onDone, showToast }: {
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const res = await crmPost(`/api/candidate-profiles/${profileId}/skip-ai-l1`, {
-        note: note.trim() || undefined,
-        request_manual_l1: true,
-      });
-      showToast(res.message || "Manual route chosen — TA notified to schedule the L1");
-      setOpen(false);
-      onDone();
-    } catch (e: any) {
-      showToast(e?.message || "Could not switch to the manual route", "err");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>
@@ -726,33 +707,17 @@ function SkipAiL1Banner({ profileId, onDone, showToast }: {
               a human L1, then the L2, then submit them to Sales for the customer rounds.
             </p>
           </div>
-          <button className={btnSecondary} onClick={() => setOpen(true)} disabled={busy}>
+          <button className={btnSecondary} onClick={() => setOpen(true)}>
             <UsersRound size={15} /> Go manual — skip AI L1
           </button>
         </div>
       </div>
       {open && (
-        <Modal title="Skip the AI interview — go manual?" onClose={() => !busy && setOpen(false)}>
-          <p className="text-sm text-secondary">
-            The candidate moves to <b>RMG Review</b> and the TA who applied them is asked to
-            arrange a human <b>L1</b> round. After the L1 feedback you can request the L2, then
-            submit the candidate to Sales for the customer interviews.
-          </p>
-          <label className="mt-4 block text-xs font-semibold text-muted">Reason (optional)</label>
-          <textarea
-            rows={3}
-            className={inputCls}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. Known candidate — assessing directly in the L2 round"
-          />
-          <div className="mt-5 flex justify-end gap-2">
-            <button className={btnSecondary} onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
-            <button className={btnPrimary} onClick={() => void submit()} disabled={busy}>
-              {busy ? "Switching…" : "Go manual & notify TA"}
-            </button>
-          </div>
-        </Modal>
+        <GoManualModal
+          profileId={profileId}
+          onClose={() => setOpen(false)}
+          onDone={(msg) => { setOpen(false); showToast(msg); onDone(); }}
+        />
       )}
     </>
   );
@@ -760,9 +725,12 @@ function SkipAiL1Banner({ profileId, onDone, showToast }: {
 
 
 function RmgDecisionBanner({
-  profileId, aiLinks, skillEvaluations, rounds, noticePeriod, onViewReport, onDone, showToast,
+  profileId, candidateName, candidateEmail, context, aiLinks, skillEvaluations, rounds, noticePeriod, onViewReport, onDone, showToast,
 }: {
   profileId: number;
+  candidateName: string;
+  candidateEmail?: string | null;
+  context?: string | null;
   aiLinks: AiInterviewLink[] | null;
   /** The candidate's notice period on record, if any — drives the default
    *  of the "ask TA to collect it" tick on Submit to Sales. */
@@ -781,7 +749,7 @@ function RmgDecisionBanner({
   onDone: () => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
-  const [busy, setBusy] = useState<"l2" | "sales" | "reject" | "f2f" | null>(null);
+  const [busy, setBusy] = useState<"l2" | "sales" | "reject" | null>(null);
   const [f2fOpen, setF2fOpen] = useState(false);
   /* Which round the scheduling modal is booking. The manual L1 and the L2 are
      the same form with a different label (1 Sep 2026). */
@@ -804,11 +772,7 @@ function RmgDecisionBanner({
   /* The RMG taking the call — prefilled with whoever is scheduling, since
      that is the answer nine times out of ten (user request, 28 Aug 2026).
      Editable: another RMG may be running the round. */
-  const [f2fInterviewer, setF2fInterviewer] = useState(me?.full_name || me?.username || "");
-  const [f2fWhen, setF2fWhen] = useState("");
-  const [f2fLink, setF2fLink] = useState("");
-  const [f2fNote, setF2fNote] = useState("");
-  const [f2fErrs, setF2fErrs] = useState<{ when?: string; link?: string; who?: string }>({});
+  const myName = me?.full_name || me?.username || "";
   /* Decision modal (was window.prompt — a native prompt can't show a
    * field-level error and some browsers let users suppress it entirely,
    * which made Submit/Reject silently dead). */
@@ -825,12 +789,16 @@ function RmgDecisionBanner({
     : null;
   const unrated = (skillEvaluations || []).filter((s) => s.reviewer_rated == null).length;
 
+  /* Submit to Sales is pre-written from the interviews (28 Sep 2026, user ask)
+     — the same note the Screening Desk uses (`useHandoverNote`). */
+  const handover = useHandoverNote(profileId, decision === "sales");
+  useEffect(() => {
+    if (decision === "sales" && handover.note) setDecisionComment((c) => (c.trim() ? c : handover.note));
+  }, [decision, handover.note]);
   const openDecision = (kind: "sales" | "reject") => {
     setDecision(kind);
     setDecisionErr("");
-    setDecisionComment(kind === "sales"
-      ? "L1 & L2 Done - RMG Review Completed, Forwarding to Sales Team"
-      : "");
+    setDecisionComment("");
   };
 
   const submitDecision = async () => {
@@ -854,36 +822,6 @@ function RmgDecisionBanner({
       onDone();
     } catch (e: any) {
       showToast(e?.message || "Transition failed", "err");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const scheduleF2f = async () => {
-    /* Empty fields used to POST {null,null,null}: the server accepted it,
-     * logged an "L2 scheduled" event with no date, and emailed the candidate
-     * an invite with no time and no link. Both fields are required now. */
-    const errs: { when?: string; link?: string; who?: string } = {};
-    if (!f2fWhen.trim()) errs.when = "Pick the date and time of the call";
-    if (!f2fLink.trim()) errs.link = "Paste the meeting link the candidate should join";
-    else if (!/^https?:\/\/\S+$/i.test(f2fLink.trim())) errs.link = "Enter a full link starting with https://";
-    if (f2fRound === "L1" && !f2fInterviewer.trim()) errs.who = "Pick the employee taking this interview";
-    setF2fErrs(errs);
-    if (errs.when || errs.link || errs.who) return;
-    setBusy("f2f");
-    try {
-      const res = await crmPost<any>(`/api/candidate-profiles/${profileId}/l2-face-to-face`, {
-        scheduled_at: f2fWhen.trim(),
-        meeting_link: f2fLink.trim(),
-        note: f2fNote.trim() || null,
-        interviewer: f2fInterviewer.trim() || null,
-        round: f2fRound,
-      });
-      showToast(res.message || `${f2fRound} face-to-face recorded — TA notified`);
-      setF2fOpen(false);
-      onDone();
-    } catch (e: any) {
-      showToast(e?.message || `Failed to record the ${f2fRound} round`, "err");
     } finally {
       setBusy(null);
     }
@@ -958,70 +896,33 @@ function RmgDecisionBanner({
         </div>
       </div>
       {f2fOpen && (
-        <Modal title={f2fRound === "L1" ? "Schedule manual L1 round" : "Schedule L2 face-to-face round"}
-          onClose={() => { if (busy !== "f2f") setF2fOpen(false); }}>
-          <div className="space-y-4">
-            <p className="text-sm text-secondary">
-              Candidate and RMG join a live call (e.g. Microsoft Teams). This logs the round, notifies TA
-              to coordinate, and emails the candidate the details when an email is on file. The profile
-              stays in RMG Review — decide after the call.
-            </p>
-            <Field label="Interviewer name" required={f2fRound === "L1"} error={f2fErrs.who}>
-              <InterviewerSelect
-                value={f2fInterviewer}
-                onChange={(v) => { setF2fInterviewer(v); setF2fErrs((p) => ({ ...p, who: undefined })); }}
-                err={f2fErrs.who}
-                placeholder={f2fRound === "L1"
-                  ? "Search the employee taking this interview…"
-                  : "Search the RMG taking this call…"}
-              />
-              <p className="mt-1 text-[11px] text-muted">
-                {f2fRound === "L1"
-                  ? "The internal employee running the round — they are named on the candidate's invite."
-                  : "Defaults to you; change it if another RMG is running the round."}
-              </p>
-            </Field>
-            <Field label="Date & time" required error={f2fErrs.when}>
-              <input
-                type="datetime-local"
-                className={`${inputCls}${f2fErrs.when ? " input-error" : ""}`}
-                value={f2fWhen}
-                onChange={(e) => { setF2fWhen(e.target.value); setF2fErrs((p) => ({ ...p, when: undefined })); }}
-              />
-            </Field>
-            <Field label="Meeting link (Teams / Meet)" required error={f2fErrs.link}>
-              <input
-                className={`${inputCls}${f2fErrs.link ? " input-error" : ""}`}
-                placeholder="https://teams.microsoft.com/…"
-                value={f2fLink}
-                onChange={(e) => { setF2fLink(e.target.value); setF2fErrs((p) => ({ ...p, link: undefined })); }}
-              />
-            </Field>
-            <Field label="Note for the candidate / TA (optional)">
-              <textarea
-                className={inputCls}
-                rows={2}
-                value={f2fNote}
-                onChange={(e) => setF2fNote(e.target.value)}
-                placeholder="e.g. Please keep your project portfolio ready."
-              />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <button className={btnSecondary} onClick={() => setF2fOpen(false)} disabled={busy === "f2f"}>
-                Cancel
-              </button>
-              <button className={btnPrimary} onClick={() => void scheduleF2f()} disabled={busy === "f2f"}>
-                {busy === "f2f" ? "Saving…" : "Schedule & notify"}
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <ScheduleManualRoundModal
+          profileId={profileId}
+          round={f2fRound}
+          candidateName={candidateName}
+          candidateEmail={candidateEmail}
+          context={context}
+          defaultInterviewer={myName}
+          interviewerHint={f2fRound === "L1"
+            ? "The employee taking the interview — named on the candidate's invite."
+            : "Defaults to you; change it if another RMG is running the round."}
+          onClose={() => setF2fOpen(false)}
+          onDone={(msg) => { setF2fOpen(false); showToast(msg); onDone(); }}
+        />
       )}
       {decision && (
         <Modal
           title={decision === "sales" ? "Submit to Sales team" : "Reject candidate"}
+          medium
           onClose={() => { if (busy == null) setDecision(null); }}
           dirty={decisionComment.trim().length > 0 && decision === "reject"}
+          hero={<RmgVerdictHero sales={decision === "sales"} name={candidateName} position={context} />}
+          footer={
+            <DialogActions tone={decision === "sales" ? "emerald" : "rose"} icon={decision === "sales" ? Send : X}
+              busy={busy != null} busyLabel="Working…"
+              label={decision === "sales" ? "Submit to Sales team" : "Reject candidate"}
+              onCancel={() => setDecision(null)} onConfirm={() => void submitDecision()} />
+          }
         >
           <div className="space-y-4">
             <p className="text-sm text-secondary">
@@ -1037,7 +938,11 @@ function RmgDecisionBanner({
               </p>
             )}
             {decision === "sales" && (
-              <label className="flex cursor-pointer items-start gap-2 rounded-control border border-subtle bg-surface-2/60 px-3 py-2 text-sm text-secondary">
+              <SalesReadinessPanel profileId={profileId} checks={handover.checks}
+                onChecks={handover.setChecks} onError={(m) => showToast(m, "err")} />
+            )}
+            {decision === "sales" && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-control border border-subtle bg-surface-2 px-3 py-2 text-sm text-secondary">
                 <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand-600"
                   checked={askNotice} onChange={(e) => setAskNotice(e.target.checked)} />
                 <span>
@@ -1051,32 +956,23 @@ function RmgDecisionBanner({
               </label>
             )}
             <Field
-              label={decision === "sales" ? "Comment for the activity log" : "Rejection reason"}
+              label={decision === "sales" ? "Your recommendation to Sales" : "Rejection reason"}
               required
               error={decisionErr}
             >
               <textarea
                 className={`${inputCls}${decisionErr ? " input-error" : ""}`}
-                rows={3}
+                rows={decision === "sales" ? 7 : 3}
                 value={decisionComment}
                 onChange={(e) => { setDecisionComment(e.target.value); setDecisionErr(""); }}
                 placeholder={decision === "sales"
-                  ? "Why is this candidate being submitted to Sales?"
+                  ? (handover.loading ? "Writing the summary from the interviews…" : "Why is this candidate being submitted to Sales?")
                   : "Why is this candidate being rejected? (min 5 characters)"}
               />
+              {decision === "sales" && handover.note && (
+                <p className="mt-1 text-xs text-muted">Written from the recorded interviews and skill ratings — edit anything before you submit.</p>
+              )}
             </Field>
-            <div className="flex justify-end gap-2">
-              <button className={btnSecondary} onClick={() => setDecision(null)} disabled={busy != null}>
-                Cancel
-              </button>
-              <button
-                className={decision === "sales" ? btnPrimary : btnDanger}
-                onClick={() => void submitDecision()}
-                disabled={busy != null}
-              >
-                {busy != null ? "Working…" : decision === "sales" ? "Submit to Sales team" : "Reject candidate"}
-              </button>
-            </div>
           </div>
         </Modal>
       )}
@@ -1093,36 +989,39 @@ const PROFILE_TAB_LABELS: Record<string, string> = {
   skills: "Skill Evaluation",
   // "offers" removed 15 Sep 2026 (user decision): offer terms are captured
   // inline in the Customer Approval move; the history tab is gone.
+  // HR's Offered CTC (30 Sep 2026) is a card in Overview ▸ Commercials, HR only
+  // (`lib/hrOffer.ts`) — its separate tab was removed the same day (user decision).
   activity: "Activity Log",
   ai: "AI Interview",
 };
 const PROFILE_TABS = Object.keys(PROFILE_TAB_LABELS);
-
-/** The tab a `?tab=` deep link asks for, or "overview". Unknown values are
- *  ignored rather than rendering an empty page. */
-function initialProfileTab(): string {
-  try {
-    const t = new URLSearchParams(window.location.search).get("tab") || "";
-    return PROFILE_TABS.includes(t) ? t : "overview";
-  } catch {
-    return "overview";
-  }
-}
 
 export function ProfileDetailPage() {
   const { id } = useCrmParams();
   const [toast, showToast] = useToast();
   const [detail, setDetail] = useState<ProfileDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState(initialProfileTab);
-  const isRmg = useHasRole("RMG");
-  const isSalesHead = useHasRole("Sales_Head");
+  /* ?tab= in the address, pushed on every click (29 Sep 2026): Back / Forward
+     step through the tabs, and a Back from any other page lands on the tab
+     left — crm/lib/pageState.ts. */
+  const [tab, setTab] = usePageTab<string>("tab", "overview", PROFILE_TABS);
+  // Approval buttons (25 Sep 2026): `me.approvals`, the server gate's answer.
+  const canScreen = useCanApprove("profile.rmg_screening");
+  // Whoever may screen acts as RMG on the technical ladder (28 Sep 2026 —
+  // a GM custom role has no built-in role; the server rule is
+  // action_permissions.screens_as_rmg). Admin/CEO and RMG pass through it.
+  const isRmg = canScreen;
+  const canDecideTerms = useCanApprove("profile.sales_head_decision");
+  const canResolveBudget = useCanApprove("profile.budget_resolve");
   // Sales submits the terms; Sales Head may too (they own the account when
   // no Sales person is on it). Admin/CEO pass through useHasRole.
   const isSales = useHasRole("Sales", "Sales_Head");
   const isHrUser = useHasRole("HR");
   const isTaUser = useHasRole("TA");
   const [submitApprovalOpen, setSubmitApprovalOpen] = useState(false);
+  // "View feedback" opens every round in a pop-up, the latest AI verdict open.
+  const [roundsOpen, setRoundsOpen] = useState(false);
+  const canOpenAiReport = useCanOpenAiReport();
   const [hrRoundOpen, setHrRoundOpen] = useState(false);
   const [hrFeedbackOpen, setHrFeedbackOpen] = useState(false);
   /* The HR tail (3 Sep 2026): HR asks TA for the round; at Pre-Onboarding HR
@@ -1148,41 +1047,40 @@ export function ProfileDetailPage() {
     const rows = (detail?.interview_events || []).filter((e) => e.kind === "HR_Interview");
     return rows.length ? rows[rows.length - 1] : null;
   }, [detail?.interview_events]);
+  /* Customer rounds whose time is over with no verdict (29 Sep 2026): Sales /
+     Sales Head / Sales Manager get a named button at the top of the page — the
+     SAME rule the feedback-due reminder and "My tasks" use. */
+  const canRecordCustomer = useHasRole(...CUSTOMER_ROUND_ROLES);
+  const customerFeedbackDue = useMemo(
+    () => (detail?.interview_events || []).filter((e) => isCustomerRoundKind(e.kind) && isFeedbackDue(e)),
+    [detail?.interview_events]);
+  const [customerFeedbackEvent, setCustomerFeedbackEvent] = useState<InterviewEventRow | null>(null);
   /* The Commercials form's unsaved figures (rupees), mirrored in the header
      cards. null = nothing being edited / just saved. */
   const [draft, setDraft] = useState<CommercialsDraft | null>(null);
+  /* The move picked on the header's Next-step bar (opens the status dialog). */
+  const [moveTo, setMoveTo] = useState<string | null>(null);
+  /* Moves a dedicated panel below already offers WITH its own guard — kept
+     off the Next-step bar so there is one way to make them: RMG's Submit to
+     Sales / Reject (the L1 / L2 ladder must be judged first), and Sales'
+     terms submission at Customer Shortlisted (Sales Head approves them). */
+  const panelMoves = useMemo(() => {
+    const out: string[] = [];
+    if (isRmg && detail?.pipeline_status === "RMG_Review") out.push("Sales_Screening", "RMG_Rejected");
+    if (isSales && detail?.pipeline_status === "Shortlisted") out.push("Customer_Approval");
+    return out;
+  }, [isRmg, isSales, detail?.pipeline_status]);
   /* Sub-tab access (25 Aug 2026): a template can hide detail tabs. */
   const profileAcc = useCrmAccess("profiles");
   useEffect(() => {
     if (!profileAcc.subTabVisible(`tab:${tab}`)) {
       const first = PROFILE_TABS.find((k) => profileAcc.subTabVisible(`tab:${k}`));
-      if (first) setTab(first);
+      if (first) setTab(first, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  /* Keep ?tab= in step with the visible tab so the URL is copy-pasteable and a
-   * reload stays put. replaceState, not pushState: clicking through five tabs
-   * should not cost five presses of Back to leave the profile. */
-  const selectTab = (key: string) => {
-    setTab(key);
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (key === "overview") params.delete("tab");
-      else params.set("tab", key);
-      const qs = params.toString();
-      window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
-    } catch { /* URL sync is a convenience; never block the tab switch */ }
-  };
-
-  /* A deep link that arrives while this page is already mounted (the
-   * notification bell navigates in-place) changes only the query string, so
-   * re-read it on every popstate — including crmNavigate's synthetic one. */
-  useEffect(() => {
-    const onPop = () => setTab(initialProfileTab());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  const selectTab = (key: string) => setTab(key);
 
   /** Newest offer, shown to Sales Head as the terms they are approving. */
   const latestOffer = useMemo(() => {
@@ -1262,138 +1160,185 @@ export function ProfileDetailPage() {
         <span>Profile #{detail.id}</span>
       </div>
 
-      {/* ---------- Header card ---------- */}
-      <div className="glass fx-gradient-border rounded-card shadow-raised mb-6 p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-display text-xl font-bold text-primary">
-                {detail.candidate ? (
-                  <CrmLink to={`candidates/${detail.candidate.id}`} className="hover:underline">
-                    {detail.candidate.full_name || `Candidate #${detail.candidate.id}`}
-                  </CrmLink>
-                ) : (
-                  `Candidate #${detail.candidate_id}`
-                )}
-              </h1>
-              {aiLatest ? (
-                /* A recruiter override outranks the AI verdict in the header —
-                   this badge is the at-a-glance status, so it must say what a
-                   human decided when a human decided. The AI score stays in the
-                   text and the full detail is on the AI Interview tab. */
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ring-subtle ${
-                    (aiLatest.hr_decision || "").toLowerCase() === "selected"
-                      ? "bg-success-soft text-success"
-                      : (aiLatest.hr_decision || "").toLowerCase() === "rejected"
-                        ? "bg-danger-soft text-danger"
-                        : aiLatest.hr_decision
-                          ? "bg-warning-soft text-warning"
-                          : aiLatest.result === "Passed"
-                            ? "bg-success-soft text-success"
-                            : "bg-danger-soft text-danger"
-                  }`}
-                  title={
-                    aiLatest.is_overridden
-                      ? `Recruiter marked this ${aiLatest.hr_decision_label}` +
-                        (aiLatest.hr_decision_by ? ` (${aiLatest.hr_decision_by})` : "") +
-                        `. The AI scored ${aiLatest.overall_score_percent}% and recorded ${aiLatest.result}.`
-                      : `AI L1 ${aiLatest.result} at ${aiLatest.overall_score_percent}%`
-                  }
-                >
-                  {aiLatest.hr_decision_label ? <UserCheck size={12} /> : <Bot size={12} />}
-                  {aiLatest.hr_decision_label
-                    ? <>AI L1 {aiLatest.hr_decision_label} · {aiLatest.overall_score_percent}%</>
-                    : <>AI L1 {aiLatest.result} · {aiLatest.overall_score_percent}%</>}
-                </span>
-              ) : aiPendingCount > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning ring-1 ring-inset ring-subtle">
-                  <AlertTriangle size={12} /> AI interview pending
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted">
-              <span>
-                {[realEmail(detail.candidate?.email), detail.candidate?.phone]
-                  .filter(Boolean).join(" · ") || "No contact details"}
+      {/* ---------- Header card (redesigned 28 Sep 2026, user ask: "make the
+          Candidate Profile page attractive for every login") ----------
+          A gradient identity band (who · how to reach them · which deal),
+          the candidate's journey through the stages, the figures, and the
+          "Next step" bar — every move THIS login may make, as named buttons
+          (it replaced the Change Status dropdown). */}
+      <div className="mb-6 overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+        <div className="relative bg-gradient-to-r from-brand-700 via-indigo-700 to-violet-700 px-5 py-5 text-white sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-4">
+              <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/15 text-lg font-bold ring-2 ring-white/40" aria-hidden>
+                {initialsOf(detail.candidate?.full_name || detail.candidate_name)}
               </span>
-              {/* The resume is the thing RMG needs most while reviewing an
-                  application — the payload always carried it, it was just never shown. */}
-              {detail.candidate?.cv_url ? (
-                <FileLink url={detail.candidate.cv_url} label="View CV" />
-              ) : (
-                <span className="text-xs">No CV on file</span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-display text-2xl font-bold leading-tight">
+                    {detail.candidate ? (
+                      <CrmLink to={`candidates/${detail.candidate.id}`} className="text-white hover:underline">
+                        {detail.candidate.full_name || `Candidate #${detail.candidate.id}`}
+                      </CrmLink>
+                    ) : (
+                      `Candidate #${detail.candidate_id}`
+                    )}
+                  </h1>
+                  {aiLatest ? (
+                    /* A recruiter override outranks the AI verdict in the header —
+                       this badge is the at-a-glance status, so it must say what a
+                       human decided when a human decided. */
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        (aiLatest.hr_decision || "").toLowerCase() === "selected"
+                          ? "bg-success-soft text-success"
+                          : (aiLatest.hr_decision || "").toLowerCase() === "rejected"
+                            ? "bg-danger-soft text-danger"
+                            : aiLatest.hr_decision
+                              ? "bg-warning-soft text-warning"
+                              : aiLatest.result === "Passed"
+                                ? "bg-success-soft text-success"
+                                : "bg-danger-soft text-danger"
+                      }`}
+                      title={
+                        aiLatest.is_overridden
+                          ? `Recruiter marked this ${aiLatest.hr_decision_label}` +
+                            (aiLatest.hr_decision_by ? ` (${aiLatest.hr_decision_by})` : "") +
+                            `. The AI scored ${aiLatest.overall_score_percent}% and recorded ${aiLatest.result}.`
+                          : `AI L1 ${aiLatest.result} at ${aiLatest.overall_score_percent}%`
+                      }
+                    >
+                      {aiLatest.hr_decision_label ? <UserCheck size={12} /> : <Bot size={12} />}
+                      {aiLatest.hr_decision_label
+                        ? <>AI L1 {aiLatest.hr_decision_label} · {aiLatest.overall_score_percent}%</>
+                        : <>AI L1 {aiLatest.result} · {aiLatest.overall_score_percent}%</>}
+                    </span>
+                  ) : aiPendingCount > 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning">
+                      <AlertTriangle size={12} /> AI interview pending
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-white/85">
+                  <span>
+                    {[realEmail(detail.candidate?.email), detail.candidate?.phone]
+                      .filter(Boolean).join(" · ") || "No contact details"}
+                  </span>
+                  {/* The resume is what a reviewer needs most — one click away. */}
+                  {detail.candidate?.cv_url ? (
+                    <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-semibold">
+                      <FileLink url={detail.candidate.cv_url} label="View CV" />
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs">No CV on file</span>
+                  )}
+                </div>
+                <div className="mt-1.5 text-sm text-white/90">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/60">Opportunity</span>{" "}
+                  {detail.opportunity ? (
+                    <CrmLink to={`opportunities/${detail.opportunity.id}`} className="font-semibold text-white underline-offset-2 hover:underline">
+                      {detail.opportunity.opp_id ? `${detail.opportunity.opp_id} — ` : ""}
+                      {detail.opportunity.title || `Opportunity #${detail.opportunity.id}`}
+                    </CrmLink>
+                  ) : (
+                    <span>Opportunity #{detail.opportunity_id}</span>
+                  )}
+                  {detail.opportunity?.customer_name && <span className="text-white/75"> · {detail.opportunity.customer_name}</span>}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-2">
+              <span className="rounded-full bg-white px-1 py-0.5 shadow-raised">
+                <CandidateStatusBadge status={detail.candidate_status} stage={detail.pipeline_status}
+                  withdrawnFrom={(detail as any).withdrawn_from_status} />
+              </span>
+              {/* Positive-only since 2 Sep 2026 — imported approvals still show. */}
+              {detail.commercial_approved && (
+                <span className="inline-flex items-center rounded-full bg-success-soft px-2.5 py-0.5 text-xs font-semibold text-success">
+                  Commercial approved
+                </span>
               )}
             </div>
-            {/* The ladder so far. Pipeline status says WHERE they are; this
-                says what happened on the way, without opening a tab. */}
-            <div className="mt-2">
-              <RoundProgress
-                rounds={detail.interview_events || []}
-                aiScore={aiLatest?.overall_score_percent}
-                aiResult={aiLatest?.effective_result || aiLatest?.result}
-                fmtDateTime={fmtDateTime}
-                onOpen={() => selectTab("interviews")}
+          </div>
+        </div>
+
+        {/* Where the candidate is on the journey — the same stages as the
+            Stage column and its filter chips. */}
+        <StageJourney stageKey={detail.candidate_status?.stage?.key}
+          closed={REJECTION_LIKE.has(detail.pipeline_status)} />
+
+        <div className="space-y-4 px-5 pb-5 sm:px-6">
+          {/* The ladder so far. The stage says WHERE they are; this says what
+              happened on the way, without opening a tab. */}
+          <RoundProgress
+            rounds={detail.interview_events || []}
+            aiScore={aiLatest?.overall_score_percent}
+            aiResult={aiLatest?.effective_result || aiLatest?.result}
+            fmtDateTime={fmtDateTime}
+            aiReportLink={canOpenAiReport ? aiLatest?.report_link : null}
+            onOpen={() => setRoundsOpen(true)}
+          />
+          {roundsOpen && (
+            <InterviewRoundsModal profileId={Number(id)} candidateName={detail.candidate_name}
+              onClose={() => setRoundsOpen(false)}
+              onChanged={(msg) => { setRoundsOpen(false); if (msg) showToast(msg); void load(); }} />
+          )}
+          {/* LIVE (2 Sep 2026): while the Commercials form is being edited these
+              mirror the draft, so the figures about to be saved show here first. */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <HeaderStat accent="from-sky-500 to-blue-600" label="Current CTC (Lac)"
+              value={fmtLac(draft?.current_ctc !== undefined ? draft.current_ctc : detail.current_ctc)} />
+            <HeaderStat accent="from-violet-500 to-fuchsia-600" label="Expected CTC (Lac)"
+              value={fmtLac(draft?.expected_ctc !== undefined ? draft.expected_ctc : detail.expected_ctc)} />
+            <HeaderStat accent="from-amber-500 to-orange-600" label="Hike %"
+              value={draft ? (draft.hike != null ? `${draft.hike}%` : "—") : fmtHike(detail.hike_percent)} />
+            <HeaderStat accent="from-emerald-500 to-teal-600"
+              label={`Approved Budget (Lac)${detail.ctc_slab_band ? ` · ${detail.ctc_slab_band} yrs` : ""}`}
+              value={fmtLac(detail.approved_ctc_budget)} />
+            <HeaderStat accent="from-indigo-500 to-violet-600" label="CTC Approval (Lac)"
+              value={fmtLac(draft?.ctc_approval_amount !== undefined ? draft.ctc_approval_amount : detail.ctc_approval_amount)} />
+          </div>
+          {(detail.allowed_next_statuses || []).length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 rounded-card border border-subtle bg-surface-2 px-4 py-3">
+              <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted">Next step</span>
+              <StageActionBar
+                currentStatus={detail.pipeline_status}
+                allowed={detail.allowed_next_statuses || []}
+                exclude={panelMoves}
+                onPick={setMoveTo}
               />
             </div>
-            <div className="mt-2 text-sm text-secondary">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted">Opportunity</span>{" "}
-              {detail.opportunity ? (
-                <CrmLink
-                  to={`opportunities/${detail.opportunity.id}`}
-                  className="font-semibold text-brand-600 hover:underline dark:text-brand-300"
-                >
-                  {detail.opportunity.opp_id ? `${detail.opportunity.opp_id} — ` : ""}
-                  {detail.opportunity.title || `Opportunity #${detail.opportunity.id}`}
-                </CrmLink>
-              ) : (
-                <span>Opportunity #{detail.opportunity_id}</span>
-              )}
-              {detail.opportunity?.customer_name && (
-                <span className="text-muted"> · {detail.opportunity.customer_name}</span>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <StatusBadge status={detail.pipeline_status} label={selfWithdrewLabel(detail.pipeline_status, (detail as any).withdrawn_from_status)} />
-            {/* Positive-only since 2 Sep 2026: the checkbox that set this was
-                removed from the Commercials panel, so a permanent "not
-                approved" chip would nag about something nobody can act on
-                here. Imported approvals still show. */}
-            {detail.commercial_approved && (
-              <span className="inline-flex items-center rounded-full bg-success-soft px-2.5 py-0.5 text-xs font-semibold text-success ring-1 ring-inset ring-subtle">
-                Commercial approved
-              </span>
-            )}
-          </div>
-        </div>
-        {/* Hike % stays here — only the LIST column was replaced. The approved
-            budget is added alongside so the two can be compared at a glance. */}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {/* LIVE (2 Sep 2026, user request): while the Commercials form is
-              being edited these mirror the draft, so HR sees the figures they
-              are about to save — hike included — before pressing Save. Saved
-              values return the moment the draft clears. */}
-          <HeaderStat label="Current CTC (Lac)"
-            value={fmtLac(draft?.current_ctc !== undefined ? draft.current_ctc : detail.current_ctc)} />
-          <HeaderStat label="Expected CTC (Lac)"
-            value={fmtLac(draft?.expected_ctc !== undefined ? draft.expected_ctc : detail.expected_ctc)} />
-          <HeaderStat label="Hike %"
-            value={draft ? (draft.hike != null ? `${draft.hike}%` : "—") : fmtHike(detail.hike_percent)} />
-          <HeaderStat
-            label={`Approved CTC Budget (Lac)${detail.ctc_slab_band ? ` · ${detail.ctc_slab_band} yrs` : ""}`}
-            value={fmtLac(detail.approved_ctc_budget)}
-          />
-          <HeaderStat label="CTC Approval (Lac)"
-            value={fmtLac(draft?.ctc_approval_amount !== undefined ? draft.ctc_approval_amount : detail.ctc_approval_amount)} />
+          )}
         </div>
       </div>
+      {moveTo && (
+        <TransitionModal
+          profileId={detail.id}
+          currentStatus={detail.pipeline_status}
+          allowed={detail.allowed_next_statuses || []}
+          initialStatus={moveTo}
+          candidateName={detail.candidate?.full_name || detail.candidate_name}
+          opportunityLabel={
+            [detail.opportunity?.opp_id, detail.opportunity?.title ?? detail.opportunity?.customer_name]
+              .filter(Boolean)
+              .join(" · ") || null
+          }
+          hasOffer={(detail.offers || []).length > 0}
+          onClose={() => setMoveTo(null)}
+          onDone={(msg) => {
+            setMoveTo(null);
+            showToast(msg || "Status updated");
+            load();
+            loadAi();
+          }}
+        />
+      )}
 
       {/* RMG screening gate (25 Aug 2026): TA applied → RMG clears for AI L1. */}
       {detail.rmg_screening_status === "Pending" && (
         <RmgScreeningBanner
           profile={detail}
-          isRmg={isRmg}
+          isRmg={canScreen}
           onDone={load}
           showToast={showToast}
         />
@@ -1412,6 +1357,17 @@ export function ProfileDetailPage() {
         </div>
       )}
 
+      {/* Internal candidate (25 Sep 2026): an existing employee can skip L1/L2
+          and go straight to Sales — only when the server says it applies. */}
+      <FastTrackBanner
+        profileId={detail.id}
+        candidateName={detail.candidate?.full_name || detail.candidate_name || "This candidate"}
+        employee={detail.internal_employee}
+        block={detail.fast_track_block}
+        onDone={(msg) => { showToast(msg); load(); }}
+        onError={(msg) => showToast(msg, "err")}
+      />
+
       {/* AI L1 IS OPTIONAL (user decision, 28 Aug 2026): RMG can take a
           shortlisted candidate straight to review — no AI round — and then
           run the manual L2 / submit-to-Sales path from the banner below. */}
@@ -1427,6 +1383,9 @@ export function ProfileDetailPage() {
       {isRmg && detail.pipeline_status === "RMG_Review" && (
         <RmgDecisionBanner
           profileId={detail.id}
+          candidateName={detail.candidate?.full_name || detail.candidate_name || "the candidate"}
+          candidateEmail={detail.candidate?.email}
+          context={detail.opportunity_title}
           aiLinks={aiLinks}
           skillEvaluations={detail.skill_evaluations || []}
           rounds={detail}
@@ -1447,15 +1406,19 @@ export function ProfileDetailPage() {
         <div className="mb-4 rounded-card border border-emerald-300/60 bg-emerald-50/70 p-4 dark:border-emerald-800/50 dark:bg-emerald-950/25">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-bold text-emerald-800 dark:text-emerald-300">Customer shortlisted — submit the terms</div>
+              <div className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+                {detail.candidate_status?.key === "terms_sent_back"
+                  ? "Sales Head sent the terms back — revise and resubmit"
+                  : "Customer shortlisted — submit the terms"}
+              </div>
               <p className="mt-0.5 text-sm text-secondary">
                 Enter the candidate&rsquo;s rate and the customer onboarding date. Sales Head approves them,
-                and the candidate moves to Pre Onboarding.
+                and the candidate moves to HR Discussion.
                 {detail.approved_ctc_budget != null && <> Approved budget: <b>{fmtLac(detail.approved_ctc_budget)} L</b>.</>}
               </p>
             </div>
             <button className={btnPrimary} onClick={() => setSubmitApprovalOpen(true)}>
-              <Send size={15} /> Submit for Sales Head approval
+              <Send size={15} /> {detail.candidate_status?.key === "terms_sent_back" ? "Resubmit the terms" : "Submit for Sales Head approval"}
             </button>
           </div>
         </div>
@@ -1465,6 +1428,12 @@ export function ProfileDetailPage() {
           profileId={detail.id}
           candidateName={detail.candidate?.full_name || `Candidate #${detail.candidate_id}`}
           expectedCtc={detail.expected_ctc}
+          currentCtc={detail.current_ctc}
+          approvedBudgetLac={detail.approved_ctc_budget}
+          budgetBand={detail.ctc_slab_band}
+          opportunityLabel={[detail.opportunity?.opp_id, detail.opportunity?.title, detail.opportunity?.customer_name]
+            .filter(Boolean).join(" · ") || null}
+          sentBack={detail.candidate_status?.key === "terms_sent_back"}
           existing={latestOffer}
           onClose={() => setSubmitApprovalOpen(false)}
           onDone={(msg) => { setSubmitApprovalOpen(false); showToast(msg); load(); }}
@@ -1472,8 +1441,8 @@ export function ProfileDetailPage() {
       )}
 
       {/* The HR tail (3 Sep 2026, user flow):
-            HR Screening    — HR reviews the details and REQUESTS the round; TA books it.
-            HR Interviewing — booked (auto); HR records Hire / Not Recommend → Pre-Onboarding (auto).
+            HR Discussion (HR_Screening) — HR reviews the details and REQUESTS the round; TA books it.
+            HR Round (HR_Interviewing)   — booked (auto); HR records Hire / Not Recommend → Pre-Onboarding (auto).
           TA sees the schedule button at both stages (a re-book is allowed). */}
       {(isHrUser || isTaUser)
         && (detail.pipeline_status === "HR_Screening" || detail.pipeline_status === "HR_Interviewing") && (
@@ -1481,7 +1450,7 @@ export function ProfileDetailPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-bold text-primary">
-                {detail.pipeline_status === "HR_Screening" ? "HR Screening" : "HR Interviewing"}
+                {statusLabel(detail.pipeline_status)}
               </div>
               <p className="mt-0.5 text-sm text-secondary">
                 {detail.hr_result
@@ -1489,7 +1458,7 @@ export function ProfileDetailPage() {
                   : detail.hr_scheduled
                     ? <>The HR round is booked. HR records <b>Hire</b> or <b>Not Recommend</b> on it — either verdict moves the candidate to Pre Onboarding.</>
                     : detail.hr_requested
-                      ? <>HR asked for the HR round — <b>TA</b> books it with the candidate; the stage moves to HR Interviewing once it is scheduled.</>
+                      ? <>HR asked for the HR round — <b>TA</b> books it with the candidate; the stage moves to HR Round once it is scheduled.</>
                       : isHrUser
                         ? <>Sales Head approved the terms. Review the candidate&rsquo;s details, then request the HR round from TA.</>
                         : <>Sales Head approved the terms. HR reviews the details and requests the round; you can also book it now.</>}
@@ -1542,7 +1511,7 @@ export function ProfileDetailPage() {
                 {detail.budget_status === "Out_of_Budget" ? (
                   <>You flagged this to Sales{detail.budget_flagged_at ? ` on ${fmtDate(detail.budget_flagged_at)}` : ""}: <i>{detail.budget_note}</i>. Sales Head and the Sales person are discussing it with the customer and will reply here.</>
                 ) : detail.budget_status === "Resolved" ? (
-                  <>Sales replied{detail.budget_resolved_at ? ` on ${fmtDate(detail.budget_resolved_at)}` : ""}: <i>{detail.budget_resolution_note}</i>. If the terms now fit, complete the onboarding details below and mark <b>Joined</b> with Change Status; otherwise leave the candidate here or raise the flag again.</>
+                  <>Sales replied{detail.budget_resolved_at ? ` on ${fmtDate(detail.budget_resolved_at)}` : ""}: <i>{detail.budget_resolution_note}</i>. If the terms now fit, complete the onboarding details below and press <b>Joined</b> in the Next-step bar above; otherwise leave the candidate here or raise the flag again.</>
                 ) : (
                   <>Re-check <b>Current CTC</b>, <b>Expected CTC</b> and the <b>Customer Onboarding Date</b> against the approved terms{latestOffer ? <> (approved: <b>{latestOffer.rate_value != null ? `₹${Number(latestOffer.rate_value).toLocaleString("en-IN")} ${(latestOffer.rate_unit || "yearly").toLowerCase()}` : `${fmtLac(latestOffer.ctc)} L`}</b>{latestOffer.joining_date ? `, onboarding ${fmtDate(latestOffer.joining_date)}` : ""})</> : null}.
                     In budget: fill the Workflow block (official email, Karnex onboarding date, department…) and mark <b>Joined</b> — no further approval.
@@ -1570,9 +1539,36 @@ export function ProfileDetailPage() {
         />
       )}
 
+      {canRecordCustomer && customerFeedbackDue.length > 0 && (
+        <div className="mb-4 rounded-card border border-amber-300 bg-amber-50/80 p-4 dark:border-amber-800/60 dark:bg-amber-950/25">
+          <div className="text-sm font-bold text-amber-900 dark:text-amber-200">Customer feedback due</div>
+          <p className="mt-0.5 text-sm text-secondary">
+            The interview time is over — record the customer's verdict so the candidate moves to the next step.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {customerFeedbackDue.map((e) => (
+              <button key={e.id} className={btnPrimary} onClick={() => setCustomerFeedbackEvent(e)}>
+                <Plus size={15} /> Add {ROUND_KIND_LABEL[e.kind] || e.kind} feedback
+                <span className="font-normal opacity-80">· {fmtDateTime12(e.scheduled_at)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {customerFeedbackEvent && (
+        <InterviewRoundModal
+          profileId={detail.id}
+          existing={customerFeedbackEvent}
+          initialMode="feedback"
+          onClose={() => setCustomerFeedbackEvent(null)}
+          onSaved={() => { setCustomerFeedbackEvent(null); showToast("Customer feedback recorded"); load(); }}
+          showToast={showToast}
+        />
+      )}
+
       {/* Sales' side of the budget hold: HR's flag with the figures, and the
           reply (optionally with revised terms) that goes back to HR. */}
-      {isSales && detail.budget_status === "Out_of_Budget" && (
+      {canResolveBudget && detail.budget_status === "Out_of_Budget" && (
         <div className="mb-4 rounded-card border border-rose-300 bg-rose-50/70 p-4 dark:border-rose-800/60 dark:bg-rose-950/25">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -1630,7 +1626,7 @@ export function ProfileDetailPage() {
         />
       )}
 
-      {isSalesHead && detail.pipeline_status === "Customer_Approval" && (
+      {canDecideTerms && detail.pipeline_status === "Customer_Approval" && (
         <SalesHeadApprovalBanner
           profileId={detail.id}
           candidateName={detail.candidate?.full_name || `Candidate #${detail.candidate_id}`}
@@ -1693,12 +1689,52 @@ export function ProfileDetailPage() {
   );
 }
 
-function HeaderStat({ label: l, value }: { label: string; value: React.ReactNode }) {
+function HeaderStat({ label: l, value, accent }: { label: string; value: React.ReactNode; accent: string }) {
   return (
-    <div className="glass fx-gradient-border fx-lift rounded-card px-3 py-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted">{l}</div>
-      <div className="font-display text-sm font-bold tabular-nums text-primary">{value}</div>
+    <div className="fx-lift relative overflow-hidden rounded-card border border-subtle bg-surface-1 px-3 pb-2.5 pt-3 shadow-raised">
+      <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${accent}`} aria-hidden />
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{l}</div>
+      <div className="font-display mt-0.5 text-lg font-bold tabular-nums text-primary">{value}</div>
     </div>
+  );
+}
+
+function initialsOf(name?: string | null): string {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+/** The live stages in order — the Stage column's words (B-V2 `candidate_status.STAGES`). */
+const JOURNEY = CANDIDATE_STAGE_BUCKETS.filter((b) => b.key !== "all" && b.key !== "closed");
+
+/** The candidate's journey: done · here · still to come. A closed candidacy
+ *  marks the stage it closed in, in red. */
+function StageJourney({ stageKey, closed }: { stageKey?: string | null; closed: boolean }) {
+  const at = JOURNEY.findIndex((s) => s.key === stageKey);
+  return (
+    <ol className="flex gap-1 overflow-x-auto px-5 py-4 sm:px-6" aria-label="Candidate journey">
+      {JOURNEY.map((s, i) => {
+        const done = at >= 0 && i < at;
+        const here = i === at;
+        return (
+          <li key={s.key} className="flex min-w-[92px] flex-1 flex-col items-center gap-1.5 text-center"
+            aria-current={here ? "step" : undefined}>
+            <div className="flex w-full items-center">
+              <span className={`h-0.5 flex-1 ${i === 0 ? "invisible" : done || here ? "bg-brand-500" : "bg-surface-3"}`} aria-hidden />
+              <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                here ? (closed ? "bg-rose-600 text-white ring-4 ring-rose-200 dark:ring-rose-900" : "bg-brand-600 text-white ring-4 ring-brand-200 dark:ring-brand-900")
+                  : done ? "bg-brand-500 text-white" : "bg-surface-2 text-muted ring-1 ring-inset ring-subtle"}`}>
+                {done ? <Check size={13} aria-hidden /> : here && closed ? <X size={13} aria-hidden /> : i + 1}
+              </span>
+              <span className={`h-0.5 flex-1 ${i === JOURNEY.length - 1 ? "invisible" : done ? "bg-brand-500" : "bg-surface-3"}`} aria-hidden />
+            </div>
+            <span className={`text-[11px] font-semibold leading-tight ${here ? (closed ? "text-danger" : "text-primary") : done ? "text-secondary" : "text-muted"}`}>
+              {s.label}{here && closed ? " · closed" : ""}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -1722,7 +1758,7 @@ function expDefault(d: ProfileDetail): string {
   return "";
 }
 
-function OverviewTab({
+export function OverviewTab({
   detail,
   onReload,
   onDraftChange,
@@ -1766,6 +1802,12 @@ function OverviewTab({
   const [currentCtc, setCurrentCtc] = useState(rupeesToLac(detail.current_ctc));
   const [expectedCtc, setExpectedCtc] = useState(rupeesToLac(detail.expected_ctc));
   const [approvalAmount, setApprovalAmount] = useState(rupeesToLac(detail.ctc_approval_amount));
+  /* HR's offered CTC (30 Sep 2026): present only when the server sent `hr_offer`
+     (HR / Admin / CEO), editable in its Pre-Onboarding window, saved through
+     the same endpoint as the Offered CTC tab. */
+  const hrOffer = hrOfferVisible(detail) ? detail.hr_offer ?? null : null;
+  const [offeredCtc, setOfferedCtc] = useState(rupeesToLac(hrOffer?.offered_ctc));
+  const canEditOffered = !!hrOffer?.editable;
   // Workflow references: issued outside this system, so they can only be typed.
   const [offerRef, setOfferRef] = useState(detail.offer_letter_reference ?? "");
   const [empRef, setEmpRef] = useState(detail.employee_ref ?? "");
@@ -1793,24 +1835,6 @@ function OverviewTab({
   const [relocation, setRelocation] = useState<"" | "yes" | "no">(
     detail.relocation_applicable == null ? "" : detail.relocation_applicable ? "yes" : "no");
   const [saving, setSaving] = useState(false);
-  const [showTransition, setShowTransition] = useState(false);
-  // Workflow actions. Scheduling and feedback reuse the Interviews tab's modal
-  // rather than duplicating that form here.
-  const canSubmitToCustomer = useHasRole("Sales", "Sales_Head");
-  const [submitting, setSubmitting] = useState(false);
-
-  const submitToCustomer = async () => {
-    setSubmitting(true);
-    try {
-      const res = await crmPost(`/api/candidate-profiles/${detail.id}/submit-to-customer`, {});
-      showToast(res.message || "Submitted to the customer");
-      onReload();
-    } catch (e: any) {
-      showToast(e?.message || "Failed to record the submission", "err");
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   useEffect(() => {
     /* THE ×1,00,000 BUG (2 Sep 2026, user report). These inputs are in LAC
@@ -1821,6 +1845,7 @@ function OverviewTab({
     setCurrentCtc(rupeesToLac(detail.current_ctc));
     setExpectedCtc(rupeesToLac(detail.expected_ctc));
     setApprovalAmount(rupeesToLac(detail.ctc_approval_amount));
+    setOfferedCtc(rupeesToLac(detail.hr_offer?.offered_ctc));
     setOfferRef(detail.offer_letter_reference ?? "");
     setEmpRef(detail.employee_ref ?? "");
     setOnboardingDate(detail.customer_onboarding_date ?? "");
@@ -1834,7 +1859,6 @@ function OverviewTab({
     setRelocation(detail.relocation_applicable == null ? "" : detail.relocation_applicable ? "yes" : "no");
   }, [detail]);
 
-  const allowed = detail.allowed_next_statuses || [];
   const hike = hikePreview(currentCtc, expectedCtc);
 
   /* Mirror the unsaved figures into the header (2 Sep 2026, user request):
@@ -1883,6 +1907,12 @@ function OverviewTab({
         body.relocation_applicable = relocation === "" ? null : relocation === "yes";
       }
       await crmPut(`/api/candidate-profiles/${detail.id}`, body);
+      // HR's offered CTC has its own HR-only endpoint — only when it changed.
+      const offeredRupees = lacToRupees(offeredCtc);
+      const savedOffered = hrOffer?.offered_ctc == null ? null : Math.round(Number(hrOffer.offered_ctc));
+      if (canEditOffered && offeredRupees != null && offeredRupees > 0 && offeredRupees !== savedOffered) {
+        await crmPut(`/api/candidate-profiles/${detail.id}/hr-offer`, { offered_ctc: offeredRupees, note: hrOffer?.note ?? null });
+      }
       // Preferred location belongs to the CANDIDATE, so it goes to the
       // candidate record — only when it actually changed, so an untouched
       // form never issues a second write.
@@ -1891,7 +1921,7 @@ function OverviewTab({
       const candidatePatch: Record<string, string | null> = {};
       if (preferredLocation.trim() !== prefBefore) candidatePatch.preferred_locations = preferredLocation.trim() || null;
       if (candidateCity.trim() !== cityBefore) candidatePatch.city = candidateCity.trim() || null;
-      if (canEditOnboarding && detail.candidate?.id && Object.keys(candidatePatch).length > 0) {
+      if ((canEditOnboarding || canEdit) && detail.candidate?.id && Object.keys(candidatePatch).length > 0) {
         await crmPut(`/api/candidates/${detail.candidate.id}`, candidatePatch);
       }
       showToast("Profile updated");
@@ -1903,338 +1933,291 @@ function OverviewTab({
     }
   };
 
+  /* Location editing (29 Sep 2026): the owners (TA / Sales / RMG) may fill the
+     candidate's locations too — the TA reminder links here — not only HR in
+     its onboarding window. Both save to the CANDIDATE record. */
+  const canEditLocation = canEditOnboarding || canEdit;
+  const locMissing = [
+    !candidateCity.trim() && "Candidate Location",
+    !preferredLocation.trim() && "Candidate Preferred Location",
+  ].filter(Boolean) as string[];
+  const savedLocMissing = !(detail.candidate?.city || "").trim() || !(detail.candidate?.preferred_locations || "").trim();
+  const customerLoc = (detail.opportunity?.location || "").trim();
+  const locFit = (() => {
+    if (!customerLoc || (!candidateCity.trim() && !preferredLocation.trim())) return null;
+    const words = (v: string) => v.toLowerCase().split(/[,/;]+/).map((x) => x.trim()).filter(Boolean);
+    const cust = words(customerLoc);
+    const hit = (v: string) => words(v).some((w) => cust.some((c) => c.includes(w) || w.includes(c)));
+    if (hit(candidateCity)) return { tone: "ok" as const, text: "Lives in the customer's city" };
+    if (hit(preferredLocation)) return { tone: "info" as const, text: "Willing to work at the customer's location" };
+    return { tone: "warn" as const, text: "Neither location matches the customer's — relocation likely" };
+  })();
+  const journey: [string, string | null | undefined][] = [
+    ["Technical screening", detail.technical_submission_date],
+    ["Submitted to Sales", detail.sales_submission_date],
+    ["Submitted to customer", detail.customer_submission_date],
+  ];
+
   return (
-    <div className={`${cardCls} p-6`}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-primary">Commercials</h2>
-        <span title={allowed.length === 0 ? "No transitions available for your role" : undefined}>
-          {/* Secondary by design — "Save changes" below is this screen's one primary action. */}
-          <button className={btnSecondary} disabled={allowed.length === 0} onClick={() => setShowTransition(true)}>
-            <ArrowRightLeft size={15} /> Change Status
-          </button>
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Field label="Current CTC (Lac)">
-          <input
-            type="number" min={0} step={0.01} placeholder="e.g. 22.00" className={inputCls} value={currentCtc} disabled={!canEditCtc}
-            onChange={(e) => setCurrentCtc(e.target.value)}
-          />
-        </Field>
-        <Field label="Expected CTC (Lac)">
-          <input
-            type="number" min={0} step={0.01} placeholder="e.g. 25.00" className={inputCls} value={expectedCtc} disabled={!canEditExpected}
-            onChange={(e) => setExpectedCtc(e.target.value)}
-          />
-        </Field>
-        <Field label="CTC Approval (Lac)">
-          <input
-            type="number" min={0} step={0.01} placeholder="e.g. 26.00" className={inputCls} value={approvalAmount} disabled={!canEditApproval}
-            onChange={(e) => setApprovalAmount(e.target.value)}
-          />
-        </Field>
-      </div>
-
-      {/* Workflow. The handover dates are stamped by the pipeline itself when the
-          profile reaches each stage, so they stay read-only — a typed date would
-          drift from the status history that turnaround time is measured against.
-          The references have no automated source and so are editable here.
-          Stage, Commercial Approval Status and Created by used to sit in this
-          block; the first two restated the pipeline status and the checkbox
-          below, and nothing ever wrote the third. */}
-      {canViewWorkflow && (
-      <div className="mt-5 rounded-xl border border-subtle bg-surface-2 p-4">
-        <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
-          Workflow
+    <div className="space-y-4">
+      {/* Locations missing — Sales and HR match them against the customer's
+          work location (29 Sep 2026, user ask). The owner fills them below. */}
+      {savedLocMissing && (
+        <div className="flex flex-wrap items-start gap-3 rounded-card border border-amber-300 bg-amber-50 p-3.5 dark:border-amber-700 dark:bg-amber-950">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-amber-500 text-white">
+            <MapPin size={17} aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-amber-900 dark:text-amber-200">Location details missing</p>
+            <p className="text-sm text-secondary">
+              {(() => {
+                const gone = [!(detail.candidate?.city || "").trim() && "Candidate Location",
+                  !(detail.candidate?.preferred_locations || "").trim() && "Candidate Preferred Location"].filter(Boolean);
+                const it = gone.length > 1 ? "them" : "it";
+                return <>{gone.join(" and ")} {gone.length > 1 ? "are" : "is"} not filled — Sales and HR match {it} against the customer&rsquo;s work location.
+                  {" "}{canEditLocation ? `Add ${it} in Locations below and save.` : `Ask the TA who added this candidate to add ${it}.`}</>;
+              })()}
+            </p>
+          </div>
         </div>
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3">
-          {([
-            ["Submitted for Technical", detail.technical_submission_date,
-             "Stamped when the profile reaches Technical Screening"],
-            ["Submitted to Sales", detail.sales_submission_date,
-             "Stamped when the profile reaches Sales Screening"],
-            ["Submitted to Customer", detail.customer_submission_date,
-             "Stamped when the profile is submitted to the customer"],
-          ] as [string, string | null | undefined, string][]).map(([label, value, hint]) => (
-            <div key={label}>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</dt>
-              <dd className="mt-0.5 text-sm text-primary" title={value ? undefined : hint}>
-                {value ? fmtDate(value) : <span className="text-muted">Not yet</span>}
-              </dd>
-            </div>
-          ))}
-        </dl>
+      )}
 
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Emp ID">
-            <input
-              className={inputCls} value={empRef} disabled={!canEditOnboarding}
-              placeholder="e.g. KRX-0042"
-              onChange={(e) => setEmpRef(e.target.value)}
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              Becomes the Employees record's ID at Joined. For an existing employee (e.g. an internal trainee
-              placed with a customer) type their current Emp ID — that record is updated instead of a new one.
-            </p>
-          </Field>
-          <Field label="Offer Letter Reference">
-            <input
-              className={inputCls} value={offerRef} disabled={!canEditOffers}
-              placeholder="e.g. KRX/OL/2026/0142"
-              onChange={(e) => setOfferRef(e.target.value)}
-            />
-          </Field>
-          <Field label="Department">
-            <select className={inputCls} value={departmentId} disabled={!canEditOnboarding}
-              onChange={(e) => setDepartmentId(e.target.value)}>
-              <option value="">Select…</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            <p className="mt-1 text-[11px] text-muted">Goes onto the Employees record at Joined.</p>
-          </Field>
-          <Field label="Designation">
-            <select className={inputCls} value={designationId} disabled={!canEditOnboarding}
-              onChange={(e) => setDesignationId(e.target.value)}>
-              <option value="">Select…</option>
-              {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            <p className="mt-1 text-[11px] text-muted">Prefilled from the candidate record when TA set one.</p>
-          </Field>
-          <Field label="Official Email" required={detail.pipeline_status === "Preboarding"}>
-            <input
-              type="email" className={inputCls} value={officialEmail} disabled={!canEditOnboarding}
-              placeholder="name@karnex.in"
-              onChange={(e) => setOfficialEmail(e.target.value)}
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              The Karnex mailbox HR issues — needed before <b>Joined</b>; it becomes the Employees record&rsquo;s email.
-            </p>
-          </Field>
-          {/* Employee Reference was here until 2 Sep 2026 (user request) —
-              the Employees record carries the employee code; a second box on
-              the candidate was a place for the two to disagree. Read-only
-              locations take its place: where the customer wants them and
-              where the candidate is, side by side, so HR sees a relocation
-              at a glance. Both come from their own records, never retyped. */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        {/* Commercials */}
+        <OverviewSection icon={IndianRupee} tone="from-emerald-500 to-teal-600" title="Commercials"
+          subtitle="In Lac per annum" className="xl:col-span-3"
+          aside={hike !== null ? (
+            <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${Number(hike) > 30 ? "bg-warning-soft text-warning" : "bg-info-soft text-info"}`}>
+              {Number(hike) >= 0 ? "+" : ""}{hike}% hike
+            </span>
+          ) : null}>
+          <div className={`grid grid-cols-1 gap-3 sm:grid-cols-3 ${hrOffer ? "xl:grid-cols-4" : ""}`}>
+            {([
+              ["Current CTC", currentCtc, setCurrentCtc, canEditCtc, "e.g. 22.00", "What they earn today"],
+              ["Expected CTC", expectedCtc, setExpectedCtc, canEditExpected, "e.g. 25.00", "What they are asking"],
+              /* HR only (30 Sep 2026): the CTC HR offers at Pre-Onboarding, right after
+                 the ask — present only when the server sent `hr_offer`; a blank never
+                 erases it. Saved through the HR-only endpoint by the same Save button. */
+              ...(hrOffer ? [[
+                "Offered CTC", offeredCtc, setOfferedCtc, canEditOffered, "e.g. 24.00",
+                canEditOffered ? "What HR offers — the salary at Joined" : (hrOffer.edit_block || "HR's offered figure"),
+              ] as const] : []),
+              ["CTC Approval", approvalAmount, setApprovalAmount, canEditApproval, "e.g. 26.00", "Sales Head's approved figure"],
+            ] as [string, string, (v: string) => void, boolean, string, string][]).map(([label, value, set, editable, ph, hint]) => (
+              <label key={label} className={`block rounded-card border px-3 py-2.5 ${label.startsWith("Offered") ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950" : "border-subtle bg-surface-2"}`}>
+                <span className="text-[11px] font-bold uppercase tracking-wide text-muted">{label}</span>
+                <span className="mt-1 flex items-baseline gap-1">
+                  <span className="text-lg font-bold text-muted">₹</span>
+                  <input type="number" min={0} step={0.01} placeholder={ph} value={value} disabled={!editable}
+                    onChange={(e) => set(e.target.value)} aria-label={`${label} (Lac)`}
+                    className="w-full min-w-0 bg-transparent text-xl font-bold text-primary tnum placeholder:text-sm placeholder:font-normal placeholder:text-muted focus:outline-none disabled:cursor-default" />
+                  <span className="text-sm font-semibold text-muted">L</span>
+                </span>
+                <span className="mt-0.5 block text-[11px] text-muted">{hint}</span>
+              </label>
+            ))}
+          </div>
+        </OverviewSection>
+
+        {/* Journey */}
+        {canViewWorkflow && (
+          <OverviewSection icon={Route} tone="from-indigo-500 to-blue-600" title="Hand-offs"
+            subtitle="Stamped by the pipeline — not editable" className="xl:col-span-2">
+            <ol className="space-y-2.5">
+              {journey.map(([label, value], i) => (
+                <li key={label} className="flex items-center gap-3">
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${value ? "bg-emerald-500 text-white" : "bg-surface-2 text-muted ring-1 ring-inset ring-subtle"}`}>
+                    {value ? <Check size={14} aria-hidden /> : i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm font-semibold text-primary">{label}</span>
+                  <span className={`text-sm ${value ? "text-secondary tnum" : "text-muted"}`}>{value ? fmtDate(value) : "Not yet"}</span>
+                </li>
+              ))}
+            </ol>
+          </OverviewSection>
+        )}
+      </div>
+
+      {/* Locations */}
+      <OverviewSection icon={MapPin} tone="from-sky-500 to-cyan-600" title="Locations"
+        subtitle="Where the customer needs them · where they are · where they will work"
+        aside={locFit ? (
+          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${locFit.tone === "ok" ? "bg-success-soft text-success" : locFit.tone === "info" ? "bg-info-soft text-info" : "bg-warning-soft text-warning"}`}>
+            {locFit.text}
+          </span>
+        ) : null}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Customer Location">
-            <div className={`${inputCls} flex items-center bg-surface-2/60 text-secondary`}
-              title="Work Location set on the opportunity">
-              {detail.opportunity?.location || <span className="text-muted">Not set on the opportunity</span>}
+            <div className={`${inputCls} flex items-center bg-surface-2 text-secondary`} title="Work Location set on the opportunity">
+              {customerLoc || <span className="text-muted">Not set on the opportunity</span>}
             </div>
           </Field>
-          <Field label="Candidate Location">
-            {/* Prefilled from the candidate record when TA set it; HR fills it
-                when TA did not (4 Sep 2026, user request). Saves back to the
-                CANDIDATE, like Preferred Location. */}
-            <input
-              className={inputCls} value={candidateCity} disabled={!canEditOnboarding}
-              placeholder="e.g. Bangalore"
-              onChange={(e) => setCandidateCity(e.target.value)}
-            />
+          <Field label="Candidate Location" required error={locMissing.includes("Candidate Location") && canEditLocation ? "Missing — add it" : undefined}>
+            <input className={inputCls} value={candidateCity} disabled={!canEditLocation}
+              placeholder="e.g. Bangalore" onChange={(e) => setCandidateCity(e.target.value)} />
           </Field>
-          <Field label="Candidate Preferred Location">
-            {/* TA's entry from the candidate record; HR fills it when TA did
-                not. Saves back to the CANDIDATE (one source of truth), so the
-                next opportunity this person is put forward for sees it too. */}
-            <input
-              className={inputCls} value={preferredLocation} disabled={!canEditOnboarding}
-              placeholder="e.g. Bangalore, Pune"
-              onChange={(e) => setPreferredLocation(e.target.value)}
-            />
+          <Field label="Candidate Preferred Location" required error={locMissing.includes("Candidate Preferred Location") && canEditLocation ? "Missing — add it" : undefined}>
+            <input className={inputCls} value={preferredLocation} disabled={!canEditLocation}
+              placeholder="e.g. Bangalore, Pune" onChange={(e) => setPreferredLocation(e.target.value)} />
           </Field>
-          {/* TWO onboarding dates (2 Sep 2026, user request). They are different
-              events and routinely different days: Karnex = the day the person
-              joins us (payroll, employee record); Customer = the day the client
-              onboards them onto the project (billing starts). One field meant
-              whichever HR typed, the other was lost. */}
-          <Field label="Karnex Onboarding Date">
-            <input
-              type="date" className={inputCls} value={karnexOnboardingDate}
-              disabled={!canEditOnboarding}
-              onChange={(e) => setKarnexOnboardingDate(e.target.value)}
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              Their joining date with Karnex — this is what the Employees record uses.
-            </p>
-          </Field>
-          <Field label="Customer Onboarding Date">
-            <input
-              type="date" className={inputCls} value={onboardingDate} disabled={!canEditOnboarding}
-              onChange={(e) => setOnboardingDate(e.target.value)}
-            />
-            <p className="mt-1 text-[11px] text-muted">
-              The day the customer onboards them onto the project.
-            </p>
-          </Field>
-          {/* HR-verified at onboarding (2 Sep 2026, user request). The resume's
-              experience figure is the candidate's claim at apply time; this is
-              the number HR signed off for this placement. */}
-          <Field label="Total Experience (years)">
-            <input
-              type="number" min={0} max={60} step={0.5} className={inputCls}
-              value={totalExp} disabled={!canEditOnboarding}
-              placeholder={detail.experience_years != null
-                ? `Resume says ${detail.experience_years}`
-                : "e.g. 4.5"}
-              onChange={(e) => setTotalExp(e.target.value)}
-            />
-          </Field>
-          <Field label="Relocation Applicable">
-            {/* A checkbox, as asked (2 Sep 2026). Unticked saves as "No" once
-                HR has saved this block at all — so the column reads null only
-                on profiles HR never touched. */}
+          <Field label="Relocation">
             <label className={`flex h-10 cursor-pointer items-center gap-2 rounded-input border border-subtle px-3 text-sm font-semibold text-secondary ${!canEditOnboarding ? "cursor-default opacity-60" : ""}`}>
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-brand-600"
-                checked={relocation === "yes"}
-                disabled={!canEditOnboarding}
-                onChange={(e) => setRelocation(e.target.checked ? "yes" : "no")}
-              />
+              <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={relocation === "yes"}
+                disabled={!canEditOnboarding} onChange={(e) => setRelocation(e.target.checked ? "yes" : "no")} />
               Relocation applicable
             </label>
           </Field>
         </div>
-        {hrOnly && !hrWindow && (
-          <p className="mt-3 text-xs text-muted">
-            HR can edit the CTCs and this workflow block once the candidate reaches{" "}
-            <b>HR Screening</b>.
-          </p>
-        )}
+      </OverviewSection>
 
-        <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3">
-          <div>
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted">CV</dt>
-            <dd className="mt-0.5 text-sm">
-              {detail.resume_url ? (
-                <FileLink url={detail.resume_url} label={detail.cv_original_filename || "View CV"} />
-              ) : (
-                <span className="text-muted">—</span>
-              )}
-            </dd>
+      {/* Onboarding & employee record — the Workflow grant */}
+      {canViewWorkflow && (
+        <OverviewSection icon={BadgeCheck} tone="from-violet-500 to-fuchsia-600" title="Onboarding & employee record"
+          subtitle="HR confirms these at Pre-Onboarding; they become the Employees record at Joined">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Emp ID">
+              <input className={inputCls} value={empRef} disabled={!canEditOnboarding} placeholder="e.g. KRX-0042"
+                onChange={(e) => setEmpRef(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted">For an existing employee, type their current Emp ID — that record is updated instead.</p>
+            </Field>
+            <Field label="Offer Letter Reference">
+              <input className={inputCls} value={offerRef} disabled={!canEditOffers} placeholder="e.g. KRX/OL/2026/0142"
+                onChange={(e) => setOfferRef(e.target.value)} />
+            </Field>
+            <Field label="Official Email" required={detail.pipeline_status === "Preboarding"}>
+              <input type="email" className={inputCls} value={officialEmail} disabled={!canEditOnboarding}
+                placeholder="name@karnex.in" onChange={(e) => setOfficialEmail(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted">Needed before Joined.</p>
+            </Field>
+            <Field label="Total Experience (years)">
+              <input type="number" min={0} max={60} step={0.5} className={inputCls} value={totalExp} disabled={!canEditOnboarding}
+                placeholder={detail.experience_years != null ? `Resume says ${detail.experience_years}` : "e.g. 4.5"}
+                onChange={(e) => setTotalExp(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted">HR-verified for this placement.</p>
+            </Field>
+            <Field label="Department">
+              <select className={inputCls} value={departmentId} disabled={!canEditOnboarding} onChange={(e) => setDepartmentId(e.target.value)}>
+                <option value="">Select…</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Designation">
+              <select className={inputCls} value={designationId} disabled={!canEditOnboarding} onChange={(e) => setDesignationId(e.target.value)}>
+                <option value="">Select…</option>
+                {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Karnex Onboarding Date">
+              <input type="date" className={inputCls} value={karnexOnboardingDate} disabled={!canEditOnboarding}
+                onChange={(e) => setKarnexOnboardingDate(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted">Joining date with Karnex — the Employees record uses it.</p>
+            </Field>
+            <Field label="Customer Onboarding Date">
+              <input type="date" className={inputCls} value={onboardingDate} disabled={!canEditOnboarding}
+                onChange={(e) => setOnboardingDate(e.target.value)} />
+              <p className="mt-1 text-[11px] text-muted">The day the customer onboards them — billing starts.</p>
+            </Field>
           </div>
-          <div>
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Resignation Certificate
-            </dt>
-            <dd className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
-              {detail.resignation_certificate_url ? (
-                <FileLink url={detail.resignation_certificate_url} label="View" />
-              ) : (
-                <span className="text-muted">Not uploaded yet</span>
-              )}
-              {/* Uploaded onto the CANDIDATE (one resignation, however many
-                  opportunities) — HR can attach it from here when TA has not. */}
-              {canEditOnboarding && detail.candidate?.id && (
-                <FileUploadButton
-                  path={`/api/candidates/${detail.candidate.id}/resignation-certificate`}
-                  label={detail.resignation_certificate_url ? "Replace" : "Upload"}
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  onDone={() => { showToast("Resignation certificate uploaded"); onReload(); }}
-                  onError={(m) => showToast(m || "Upload failed", "err")}
-                />
-              )}
-            </dd>
-          </div>
-        </dl>
-        {detail.comments_text && (
-          <div className="mt-3">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted">Comments</div>
-            <p className="mt-1 whitespace-pre-wrap text-sm text-secondary">{detail.comments_text}</p>
-          </div>
-        )}
-      </div>
+          {hrOnly && !hrWindow && (
+            <p className="mt-3 text-xs text-muted">HR can edit the CTCs and this block once the candidate reaches <b>HR Discussion</b>.</p>
+          )}
+        </OverviewSection>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-4">
-          {/* The "Commercial approved" checkbox lived here until 2 Sep 2026
-              (user request). Commercial sign-off is Sales Head's decision on
-              the pipeline (Customer Approval), not an HR tick-box on the
-              candidate — two places to say it meant they disagreed. */}
-          {hike !== null && (
-            <span className="rounded-control bg-info-soft px-2.5 py-1 text-xs font-semibold text-info">
-              Hike preview: {hike}%
-            </span>
-          )}
+      {/* Documents */}
+      <OverviewSection icon={FileText} tone="from-slate-500 to-slate-700" title="Documents & notes">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <DocTile label="CV" present={!!detail.resume_url}>
+            {detail.resume_url ? <FileLink url={detail.resume_url} label={detail.cv_original_filename || "View CV"} /> : <span className="text-muted">Not uploaded</span>}
+          </DocTile>
+          <DocTile label="Resignation Certificate" present={!!detail.resignation_certificate_url}>
+            {detail.resignation_certificate_url ? <FileLink url={detail.resignation_certificate_url} label="View" /> : <span className="text-muted">Not uploaded yet</span>}
+            {canEditOnboarding && detail.candidate?.id && (
+              <FileUploadButton
+                path={`/api/candidates/${detail.candidate.id}/resignation-certificate`}
+                label={detail.resignation_certificate_url ? "Replace" : "Upload"}
+                accept=".pdf,.jpg,.jpeg,.png"
+                onDone={() => { showToast("Resignation certificate uploaded"); onReload(); }}
+                onError={(m) => showToast(m || "Upload failed", "err")}
+              />
+            )}
+          </DocTile>
         </div>
-        {canEdit && (
+        {detail.comments_text && (
+          <blockquote className="mt-3 rounded-control border-l-4 border-brand-500 bg-surface-2 px-3 py-2 text-sm text-secondary">
+            <p className="whitespace-pre-wrap">{detail.comments_text}</p>
+          </blockquote>
+        )}
+      </OverviewSection>
+
+      {/* Save bar */}
+      {(canEdit || canEditLocation) && (
+        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-surface-1 px-4 py-3 shadow-overlay">
+          <p className="text-xs text-muted">Created {fmtDate(detail.created_at)} · Last updated {fmtDate(detail.updated_at)}</p>
           <button className={btnPrimary} onClick={save} disabled={saving}>
             <Save size={15} /> {saving ? "Saving…" : "Save changes"}
           </button>
-        )}
-      </div>
-
-      {/*
-        Workflow actions.
-
-        "Schedule Technical Interview" and "Submit Technical Feedback" were
-        removed (Aug 2026). Both were pure navigation — they jumped to the
-        Interviews tab and opened a modal that tab already offers. Neither was
-        role-gated, so Sales saw two buttons labelled "Technical" leading to a
-        tab where they can only write the customer round: a dead end presented
-        as an action.
-
-        "Submit to Customer" stays, but only while it is still doable. Once
-        submitted it used to become a disabled button reading "Submitted
-        8/8/2026" — a status display shaped like a control, duplicating the
-        "Submitted to Customer" row in the Workflow list directly above.
-      */}
-      {canSubmitToCustomer && !detail.customer_submission_date && (
-        <div className="mt-5 flex flex-wrap gap-2 border-t border-subtle pt-4">
-          <button
-            className={btnPrimary}
-            onClick={submitToCustomer}
-            disabled={submitting}
-            title="Stamp today's date and move to Customer Screening"
-          >
-            <ArrowRight size={15} /> {submitting ? "Submitting…" : "Submit to Customer"}
-          </button>
         </div>
-      )}
-
-      <div className="mt-6 border-t border-subtle pt-4 text-xs text-muted">
-        Created {fmtDate(detail.created_at)} · Last updated {fmtDate(detail.updated_at)}
-      </div>
-
-      {showTransition && (
-        <TransitionModal
-          profileId={detail.id}
-          currentStatus={detail.pipeline_status}
-          allowed={allowed}
-          candidateName={detail.candidate?.full_name || detail.candidate_name}
-          opportunityLabel={
-            [detail.opportunity?.opp_id, detail.opportunity?.title ?? detail.opportunity?.customer_name]
-              .filter(Boolean)
-              .join(" · ") || null
-          }
-          hasOffer={(detail.offers || []).length > 0}
-          onClose={() => setShowTransition(false)}
-          onDone={(msg) => {
-            setShowTransition(false);
-            showToast(msg || "Status updated");
-            onReload();
-          }}
-        />
       )}
     </div>
   );
 }
 
-function TransitionModal({
+function OverviewSection({ icon: Icon, tone, title, subtitle, aside, className = "", children }: {
+  icon: LucideIcon; tone: string; title: string;
+  subtitle?: string; aside?: React.ReactNode; className?: string; children: React.ReactNode;
+}) {
+  return (
+    <section className={`${cardCls} p-4 sm:p-5 ${className}`}>
+      <header className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-gradient-to-br text-white shadow-raised ${tone}`}>
+            <Icon size={17} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-primary">{title}</h2>
+            {subtitle && <p className="text-xs text-muted">{subtitle}</p>}
+          </div>
+        </div>
+        {aside}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function DocTile({ label, present, children }: { label: string; present: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 rounded-card border border-subtle bg-surface-2 px-3 py-2.5">
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control ${present ? "bg-success-soft text-success" : "bg-surface-1 text-muted"}`}>
+        <FileText size={15} aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-muted">{label}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+export function TransitionModal({
   profileId,
   currentStatus,
   allowed,
   candidateName,
   opportunityLabel,
   hasOffer,
+  initialStatus,
   onClose,
   onDone,
 }: {
   profileId: number;
   currentStatus: string;
   allowed: string[];
+  /** The move picked on the page's action bar — the dialog opens on it and
+   *  only asks for what that move needs (28 Sep 2026: named buttons replaced
+   *  the "Change Status" dropdown). */
+  initialStatus?: string;
   /** Shown in the dialog — a reviewer moving several candidates in a row needs
    *  to see WHO they are about to move, not just from-status → to-status. */
   candidateName?: string | null;
@@ -2244,7 +2227,7 @@ function TransitionModal({
   onClose: () => void;
   onDone: (message?: string) => void;
 }) {
-  const [newStatus, setNewStatus] = useState("");
+  const [newStatus, setNewStatus] = useState(initialStatus && allowed.includes(initialStatus) ? initialStatus : "");
   const [comment, setComment] = useState("");
   // Offer fields, shown inline when moving to Customer Approved.
   const [offerCtc, setOfferCtc] = useState("");
@@ -2333,22 +2316,17 @@ function TransitionModal({
 
   const isReject = !!newStatus && REJECTION_LIKE.has(newStatus);
   /**
-   * Mirrors _record_customer_round_from_transition on the server.
-   *
-   * Two moments make this field the customer's actual interview feedback:
-   *   - ARRIVING at L1/L2 Feedback — that round's verdict is in
-   *   - LEAVING the customer's ladder with a decision
-   * Everything else is just a reason for the activity log.
+   * Mirrors _record_customer_round_from_transition on the server: LEAVING the
+   * customer's ladder with a decision makes this field the customer's verdict.
+   * Moving ON to the customer's L1 / L2 round needs no feedback (29 Sep 2026,
+   * user decision) — it lines the round up; the verdict is recorded on the
+   * round. Everything else is just a reason for the activity log.
    */
   const CUSTOMER_LADDER = ["Customer_Interview", "L1_Feedback", "L2_Feedback"];
-  const arrivingAtFeedback = ["L1_Feedback", "L2_Feedback"].includes(newStatus);
-  const closingTheLadder =
+  const leavingCustomerInterview =
     CUSTOMER_LADDER.includes(currentStatus) &&
     ["Shortlisted", "Customer_Approval", "Customer_Rejected",
      "Customer_L1_Rejected", "Customer_L2_Rejected"].includes(newStatus);
-  const leavingCustomerInterview = arrivingAtFeedback || closingTheLadder;
-  const feedbackRoundLabel =
-    newStatus === "L1_Feedback" ? "L1" : newStatus === "L2_Feedback" ? "L2" : null;
 
   /**
    * Is a written note required? Mirrors comment_required_for() on the server.
@@ -2358,16 +2336,10 @@ function TransitionModal({
    * It is asked for where nothing else records the information: rejections,
    * backward moves, and the customer's feedback.
    */
-  const BACKWARD: Record<string, string[]> = {
-    Customer_Screening: ["Sales_Screening"],
-    Customer_Interview: ["Customer_Screening"],
-    L1_Feedback: ["Customer_Interview"],
-    L2_Feedback: ["L1_Feedback"],
-  };
   const noteRequired =
     isReject ||
     leavingCustomerInterview ||
-    (BACKWARD[currentStatus] || []).includes(newStatus);
+    (BACKWARD_MOVES[currentStatus] || []).includes(newStatus);
 
   /** Customer Approved needs an offer; collect it here rather than sending the
    *  user to the Offers tab and back. */
@@ -2443,16 +2415,18 @@ function TransitionModal({
           </AnimatePresence>
         </div>
 
-        <WizardField label="New status" required>
-          <select className={inputCls} value={newStatus} onChange={(e) => setNewStatus(e.target.value)}>
-            <option value="">Select new status…</option>
-            {allowed.map((s) => (
-              <option key={s} value={s} className={REJECTION_LIKE.has(s) ? "font-semibold text-danger" : ""}>
-                {REJECTION_LIKE.has(s) ? `⛔ ${label(s)}` : label(s)}
-              </option>
-            ))}
-          </select>
-        </WizardField>
+        {!initialStatus && (
+          <WizardField label="New status" required>
+            <select className={inputCls} value={newStatus} onChange={(e) => setNewStatus(e.target.value)}>
+              <option value="">Select new status…</option>
+              {allowed.map((s) => (
+                <option key={s} value={s} className={REJECTION_LIKE.has(s) ? "font-semibold text-danger" : ""}>
+                  {REJECTION_LIKE.has(s) ? `⛔ ${label(s)}` : label(s)}
+                </option>
+              ))}
+            </select>
+          </WizardField>
+        )}
 
         <AnimatePresence>
           {isReject && (
@@ -2471,22 +2445,9 @@ function TransitionModal({
           )}
         </AnimatePresence>
 
-        {/*
-          Two different things wear the same input.
-
-          Leaving an interview stage with a verdict, what you type IS the
-          interview feedback — it is saved as a round and shows on the
-          Interviews tab. Every other move just needs to say why, for the
-          activity log.
-
-          Both stay mandatory. Making routine moves noteless would leave the
-          activity log — the only record most stages have — unable to explain
-          why anything moved.
-        */}
-        {/* The customer's slot, inline (2 Sep 2026, user request): moving to a
-            customer-interview stage asks for the panel, date/time and link.
-            Sales types what the customer gave them; the round lands on the
-            Interviews tab, the candidate is invited and TA is told. */}
+        {/* The customer's slots, inline: moving to a customer-interview stage
+            offers the slots the customer gave Sales. Nothing is booked — TA is
+            told (slots or not), agrees one with the candidate and schedules. */}
         <AnimatePresence>
           {customerSlotStage && (
             <motion.div
@@ -2498,8 +2459,8 @@ function TransitionModal({
             >
               <div className="space-y-3 rounded-xl border border-subtle bg-surface-2 p-3">
                 <p className="text-xs font-semibold text-secondary">
-                  {newStatus === "L2_Feedback" ? "Customer L2" : "Customer L1"} — slots the customer gave you
-                  <span className="ml-1 font-normal text-muted">— optional; the first slot is booked, the rest go to the candidate as alternatives; TA is notified</span>
+                  {newStatus === "Customer_Interview" ? "Customer L1" : "Customer L2"} — slots the customer gave you
+                  <span className="ml-1 font-normal text-muted">— optional; TA is sent these slots, checks which one suits the candidate and schedules the round (nothing is booked yet)</span>
                 </p>
                 <div className="space-y-2">
                   {slots.map((x, i) => (
@@ -2594,16 +2555,16 @@ function TransitionModal({
 
         {/* The note is only asked for where it records something nothing else
             does — see noteRequired. Routine progress does not need one. */}
-        {noteRequired && (
+        {(noteRequired || customerSlotStage) && (
         <WizardField
-          label={leavingCustomerInterview ? "Feedback" : "Reason"}
-          required
+          label={leavingCustomerInterview ? "Feedback" : noteRequired ? "Reason" : "Note for TA (optional)"}
+          required={noteRequired}
           error={commentError}
           info={
-            feedbackRoundLabel
-              ? `Saved as the customer's ${feedbackRoundLabel} round — it will appear on the Interviews tab.`
-              : leavingCustomerInterview
-                ? "Saved against the customer round — it will appear on the Interviews tab."
+            leavingCustomerInterview
+              ? "Saved against the customer round — it will appear on the Interviews tab."
+              : !noteRequired
+                ? "Goes to TA with the request to schedule, and to the activity log."
                 : undefined
           }
         >
@@ -2611,11 +2572,11 @@ function TransitionModal({
             className={`${inputCls} ${commentError ? "input-error" : ""}`}
             rows={leavingCustomerInterview ? 3 : 2}
             placeholder={
-              feedbackRoundLabel
-                ? `What did the customer say after their ${feedbackRoundLabel} round? (min 5 characters)`
-                : leavingCustomerInterview
-                  ? "What did the customer say? (min 5 characters)"
-                  : "Why is this moving? (min 5 characters)"
+              leavingCustomerInterview
+                ? "What did the customer say? (min 5 characters)"
+                : noteRequired
+                  ? "Why is this moving? (min 5 characters)"
+                  : "e.g. Customer prefers mornings; panel is the hiring manager"
             }
             value={comment}
             onChange={(e) => setComment(e.target.value)}
@@ -2918,8 +2879,10 @@ function InterviewsTab({
    */
   // TA coordinates interviews, so TA can record any round alongside the round's
   // owner (RMG for internal, Sales for customer). Mirrors ROUND_WRITE_ROLES.
-  const canWriteTechnical = useHasRole("RMG", "TA");
-  const canWriteCustomer = useHasRole("Sales", "Sales_Head", "TA");
+  const screensAsRmg = useCanApprove("profile.rmg_screening");
+  const isTaUser = useHasRole("TA");
+  const canWriteTechnical = screensAsRmg || isTaUser;
+  const canWriteCustomer = useHasRole(...CUSTOMER_ROUND_ROLES, "TA");
   // HR's own round (2 Sep 2026): TA books it, but the VERDICT is HR's alone
   // (the server refuses a result from anyone else). Same page, two rights.
   const canWriteHr = useHasRole("HR", "TA");
@@ -2958,14 +2921,13 @@ function InterviewsTab({
           {l.overall_score_percent != null && (
             <div className="text-xs text-muted">{l.overall_score_percent}%</div>
           )}
-          {l.report_link && (
-            <a href={l.report_link} target="_blank" rel="noopener noreferrer"
-              className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
-              Full report
-            </a>
-          )}
         </div>
       </div>
+      {/* The verdict inline (23 Sep 2026): score, dimensions, strengths / gaps,
+          skills — what a reviewer reads BEFORE deciding to open the full
+          report. Also the only view of it a Sales login can reach (the report
+          page needs the Interview Platform's Reports tab). */}
+      <AiInterviewOverview profileId={profileId} linkId={l.id} reportLink={l.report_link} />
     </div>
   ));
 
@@ -3248,6 +3210,34 @@ function InterviewsTab({
 
 /* ---------- Add / edit an interview round ---------- */
 
+/** Control class for the schedule form — `inputCls` ends in `w-full`, so the
+ *  segmented / inline controls here size themselves (see F-V2 CLAUDE.md). */
+/** 30 → "30 min", 60 → "1 h", 90 → "1 h 30". */
+const durationLabel = (m: number) =>
+  m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60}` : ""}`;
+const SCHED_CONTROL =
+  "rounded-control border border-subtle bg-surface-1 px-3 py-2 text-sm text-primary focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60";
+
+/** One numbered step of the schedule form: a number that turns into a tick
+ *  once the step is complete, the title, a one-line hint. */
+function ScheduleStep({ n, title, done, hint, children }: {
+  n: number; title: string; done: boolean; hint?: string; children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-card border border-subtle bg-surface-1 p-3" aria-label={title}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold ${
+          done ? "bg-success text-white" : "bg-surface-2 text-secondary"}`} aria-hidden>
+          {done ? <Check size={13} /> : n}
+        </span>
+        <span className="whitespace-nowrap text-sm font-bold text-primary">{title}</span>
+        {hint && <span className="min-w-0 truncate text-xs text-muted">— {hint}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function InterviewRoundModal({
   profileId,
   existing,
@@ -3284,11 +3274,15 @@ export function InterviewRoundModal({
     existing?.employee_id ? String(existing.employee_id) : "",
   );
   const [interviewer, setInterviewer] = useState(existing?.interviewer || "");
+  /* An external (non-employee) panellist was chosen — only then is the name typed. */
+  const [panelExternal, setPanelExternal] = useState(() => !existing?.employee_id && !!existing?.interviewer);
   const [duration, setDuration] = useState<string>(
     existing?.duration_minutes ? String(existing.duration_minutes) : "30",
   );
   const [status, setStatus] = useState(existing?.status || "Completed");
-  const [when, setWhen] = useState(toInputValue(existing?.scheduled_at));
+  /* IST wall clock (28 Sep 2026): slicing the stored UTC instant showed the UTC
+     clock, and saving it back moved the round 5h30 earlier on every edit. */
+  const [when, setWhen] = useState(isoToIstInput(existing?.scheduled_at || existing?.raw_when));
   const [result, setResult] = useState(existing?.result || "");
   const [feedback, setFeedback] = useState(existing?.feedback || "");
   const [userRole, setUserRole] = useState(
@@ -3304,12 +3298,12 @@ export function InterviewRoundModal({
      date/panel/link, and what's missing is the outcome. */
   const [mode, setMode] = useState<"schedule" | "feedback">(
     initialMode ?? (existing ? "feedback" : "schedule"));
-  const isCustomerRound = kind === "Customer_Interview" || kind === "Customer_L2";
+  const isCustomerRound = isCustomerRoundKind(kind);
   /* Whose verdict this round's feedback is — names the tab and decides who
      may open it (2 Sep 2026). TA books rounds; the owners judge them. */
   const feedbackOwner = isCustomerRound ? "Sales" : kind === "HR_Interview" ? "HR" : "RMG";
-  const isRmgUser = useHasRole("RMG");
-  const isSalesUser = useHasRole("Sales", "Sales_Head");
+  const isRmgUser = useCanApprove("profile.rmg_screening");   // RMG, GM, Admin/CEO — the server's screens_as_rmg
+  const isSalesUser = useHasRole(...CUSTOMER_ROUND_ROLES);
   const isHrUser = useHasRole("HR");
   const canRecordFeedback = isCustomerRound ? isSalesUser : kind === "HR_Interview" ? isHrUser : isRmgUser;
   /* Declared AFTER canRecordFeedback — referencing it earlier is a TDZ
@@ -3355,6 +3349,51 @@ export function InterviewRoundModal({
       .catch((e: any) => setOptsError(e?.message || "Failed to load form options"));
   }, [profileId]);
 
+  /* The customer's slots Sales passed on (29 Sep 2026): TA asks the candidate
+     which one suits and picks it here — date, meeting link, panel and length
+     are filled in, and saving sends the candidate the link. Only an offer for
+     THIS round is shown (an L1 offer never pre-fills the L2). */
+  const slotOffer = mode === "schedule" && isCustomerRound ? offerFor(opts?.customer_slots, kind) : null;
+  const [pickedSlot, setPickedSlot] = useState<number | null>(null);
+  const applySlot = (i: number) => {
+    const offer = slotOffer;
+    const slot = offer?.slots[i];
+    if (!offer || !slot) return;
+    setPickedSlot(i);
+    if (slot.scheduled_at) setWhen(slot.scheduled_at);
+    /* The slot's own link — and a link carried over from ANOTHER slot is
+       cleared, never left pointing at the wrong meeting. A link TA typed stays. */
+    setMeetingLink((cur) => {
+      const fromAnotherSlot = offer.slots.some((x) => x.meeting_link && x.meeting_link === cur.trim());
+      return slot.meeting_link || (fromAnotherSlot ? "" : cur);
+    });
+    if (offer.interviewer && !employeeId) setInterviewer((v) => v || offer.interviewer || "");
+    if (offer.duration_minutes && (opts?.durations || []).includes(offer.duration_minutes)) {
+      setDuration(String(offer.duration_minutes));
+    }
+  };
+  /* Whatever Sales entered arrives filled in (29 Sep 2026, user ask): a new
+     round with nothing typed yet takes the first slot (TA clicks another if
+     the candidate prefers it) with its link, the panel and the length. An
+     existing round keeps its own values. */
+  useEffect(() => {
+    if (slotOffer && !isEdit && !when && pickedSlot === null) applySlot(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slotOffer]);
+
+  /* The schedule form's checklist (29 Sep 2026 redesign) — the same rules
+     `submit` enforces, shown BEFORE the click as the summary strip. */
+  const linkValid = /^https?:\/\/\S+$/i.test(meetingLink.trim());
+  const roundLocked = isEdit || !!initialKind;
+  const scheduleMissing = [
+    !kind && "the round",
+    !when && "a date & time",
+    isCustomerRound && !linkValid && "the customer's meeting link",
+    !employeeId && !interviewer.trim() && "the panel",
+  ].filter(Boolean) as string[];
+  const scheduleReady = scheduleMissing.length === 0;
+  const chosenPanellist = (opts?.employees || []).find((e) => String(e.id) === employeeId);
+
   const submit = async () => {
     if (!kind) return setError("Interview Round is required");
     if (!employeeId && !interviewer.trim()) {
@@ -3362,6 +3401,15 @@ export function InterviewRoundModal({
     }
     if (mode === "schedule" && !when) {
       return setError("Interview date & time is required when scheduling a round");
+    }
+    /* A customer round is useless to the candidate without the customer's
+       meeting link — TA adds it here (29 Sep 2026, user rule; the server
+       refuses it too). */
+    if (mode === "schedule" && isCustomerRound && !meetingLink.trim()) {
+      return setError("Add the customer's meeting link — the candidate is emailed it with the invite");
+    }
+    if (meetingLink.trim() && !linkValid) {
+      return setError("Enter the full meeting link, starting with https://");
     }
     if (mode === "feedback" && isCustomerRound && !result) {
       return setError("Pick the customer's Result — it is what moves the pipeline forward");
@@ -3379,7 +3427,9 @@ export function InterviewRoundModal({
       // Scheduling records the plan, never a verdict — a result here would
       // auto-advance the pipeline for an interview that has not happened.
       status: mode === "schedule" ? "Scheduled" : (status || "Completed"),
-      scheduled_at: when ? new Date(when).toISOString() : null,
+      // The IST wall clock as typed — the server reads a naive time as IST
+      // (`read_as_ist`), whatever zone this browser is in.
+      scheduled_at: when || null,
       result: mode === "schedule" ? null : (result || null),
       feedback: mode === "schedule" ? (feedback.trim() || null) : (feedback.trim() || null),
       meeting_link: meetingLink.trim() || null,
@@ -3403,13 +3453,18 @@ export function InterviewRoundModal({
 
   return (
     <Modal
-      title={mode === "schedule" ? "Schedule interview round" : (isEdit ? "Edit interview feedback" : "Add interview feedback")}
+      title={mode === "schedule"
+        ? `Schedule ${roundLocked ? (ROUND_KIND_LABEL[kind] || roundLabel(kind)) : "interview round"}`
+        : (isEdit ? "Edit interview feedback" : "Add interview feedback")}
       onClose={onClose}
       medium
     >
       <WizFormShell
+        bare={mode === "schedule"}
         title={mode === "schedule" ? "Schedule interview round" : (isEdit ? "Edit interview feedback" : "Add interview feedback")}
-        subtitle="Record the round, the panel and the outcome. Everything here shows on the candidate's Interviews tab."
+        subtitle={mode === "schedule"
+          ? "Pick the time, add the meeting link and the panel — the candidate is emailed the invite."
+          : "Record the outcome of the round. Everything here shows on the candidate's Interviews tab."}
         icon={<GitBranch size={18} />}
       >
         {optsError && <ErrorBox error={optsError} />}
@@ -3418,7 +3473,10 @@ export function InterviewRoundModal({
           <Spinner label="Loading form…" />
         ) : (
           <>
-            <div className="mb-4 rounded-card border border-subtle bg-surface-2/40 p-3">
+            {/* The Schedule / Feedback switch shows only when this user has
+                both jobs — TA (who only schedules) gets no one-button bar. */}
+            {canRecordFeedback && (
+            <div className="mb-4 rounded-card border border-subtle bg-surface-2 p-3">
               <div className="flex flex-wrap gap-2">
                 {([
                   { key: "schedule", label: "Schedule interview", locked: false },
@@ -3456,6 +3514,7 @@ export function InterviewRoundModal({
                     : "Records what happened in the round: result and written feedback."}
               </p>
             </div>
+            )}
             {compactFeedback && (
               /* Everything below was captured when the round was scheduled —
                  restate it, don't re-ask. Switch to "Schedule interview" to change it. */
@@ -3477,6 +3536,179 @@ export function InterviewRoundModal({
                 )}
               </div>
             )}
+            {mode === "schedule" ? (
+              /* Schedule, redesigned (29 Sep 2026, user ask "best to best"):
+                 the round up top, then three numbered steps — WHEN (the
+                 customer's slots as cards, or any time) · WHERE (the link) ·
+                 WHO (the panel) — and a summary of exactly what the candidate
+                 is sent. Category / user role follow the round and sit under
+                 "More options". */
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-3 rounded-card border border-subtle bg-surface-2 p-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-sm" aria-hidden>
+                    <CalendarPlus size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Round</div>
+                    {roundLocked ? (
+                      <div className="text-base font-bold text-primary">{ROUND_KIND_LABEL[kind] || roundLabel(kind)}</div>
+                    ) : (
+                      <select className={`${SCHED_CONTROL} mt-0.5 font-semibold`} value={kind} aria-label="Interview round"
+                        onChange={(e) => { kindTouched.current = true; setKind(e.target.value); }}>
+                        {kind && !(opts?.rounds || []).some((r) => r.value === kind) && (
+                          <option value={kind}>{roundLabel(kind)}</option>
+                        )}
+                        {(opts?.rounds || []).filter((r) => r.writable !== false || r.value === kind).map((r) => (
+                          <option key={r.value} value={r.value} disabled={r.writable === false}>{r.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                    isCustomerRound ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200"
+                                    : "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200"}`}>
+                    {isCustomerRound ? "Customer's panel" : kind === "HR_Interview" ? "HR panel" : "Karnex panel"}
+                  </span>
+                </div>
+
+                <ScheduleStep n={1} title="When" done={!!when}
+                  hint={when ? fmtDateTime12(when) : "Pick the date and time the candidate confirmed"}>
+                  {slotOffer && (
+                    <CustomerSlotPicker offer={slotOffer} picked={pickedSlot} onPick={applySlot} />
+                  )}
+                  <div className="mt-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold text-secondary">
+                        {slotOffer ? "Or another time (IST)" : "Date & time (IST)"}
+                      </span>
+                      <input type="datetime-local" className={`${SCHED_CONTROL} w-full`} value={when}
+                        onChange={(e) => { setWhen(e.target.value); setPickedSlot(null); }} />
+                    </label>
+                    <div>
+                      <span className="mb-1 block text-xs font-semibold text-secondary">Length</span>
+                      <div role="radiogroup" aria-label="Interview length" className="flex flex-wrap gap-1">
+                        {(opts?.durations || []).map((d) => (
+                          <button key={d} type="button" role="radio" aria-checked={duration === String(d)}
+                            onClick={() => setDuration(String(d))}
+                            className={`rounded-control border px-2.5 py-1.5 text-xs font-semibold transition-colors duration-micro ${
+                              duration === String(d) ? "border-brand-600 bg-brand-600 text-white"
+                                : "border-subtle bg-surface-1 text-secondary hover:text-primary"}`}>
+                            {durationLabel(d)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </ScheduleStep>
+
+                <ScheduleStep n={2} title="Meeting link" done={linkValid}
+                  hint={isCustomerRound ? "Required — the customer's Teams / Zoom / Meet link" : "The candidate is emailed it with the invite"}>
+                  <div className="relative">
+                    <Link2 size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
+                    <input className={`${SCHED_CONTROL} w-full pl-9 ${meetingLink.trim() && !linkValid ? "input-error" : ""}`}
+                      value={meetingLink} onChange={(e) => setMeetingLink(e.target.value)}
+                      placeholder="https://teams.microsoft.com/…" aria-label="Meeting link" />
+                  </div>
+                  {meetingLink.trim() && !linkValid && (
+                    <p className="mt-1 text-xs font-semibold text-danger">Enter the full link, starting with https://</p>
+                  )}
+                </ScheduleStep>
+
+                <ScheduleStep n={3} title="Panel" done={!!employeeId || !!interviewer.trim()}
+                  hint={isCustomerRound ? "Who from the customer takes the round" : "Who from Karnex takes the round"}>
+                  {!isCustomerRound && employeeId ? (
+                    /* The chosen employee as a card — the free-text box only
+                       exists for someone who is NOT on the employee list. */
+                    <div className="flex items-center gap-3 rounded-control border border-subtle bg-surface-1 px-3 py-2">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-sky-600 text-xs font-bold text-white" aria-hidden>
+                        {(chosenPanellist?.full_name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-primary">{chosenPanellist?.full_name || "Employee"}</div>
+                        <div className="truncate text-xs text-muted">{chosenPanellist?.employee_code || "From the employee record"}</div>
+                      </div>
+                      <button type="button" className={btnSecondary} onClick={() => { setEmployeeId(""); setPanelExternal(false); }}>Change</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {!isCustomerRound && !panelExternal && (
+                        <SearchableSelect
+                          value=""
+                          onChange={(v) => {
+                            if (v === EXTERNAL_PANELLIST) { setPanelExternal(true); setEmployeeId(""); }
+                            else { setEmployeeId(v); setInterviewer(""); }
+                          }}
+                          placeholder="Search employee by name or code…"
+                          options={[
+                            ...(opts?.employees || []).map((emp) => ({
+                              value: String(emp.id),
+                              label: emp.employee_code ? `${emp.full_name} (${emp.employee_code})` : emp.full_name,
+                            })),
+                            { value: EXTERNAL_PANELLIST, label: "+ Someone not on the list (external)" },
+                          ]}
+                        />
+                      )}
+                      {(isCustomerRound || panelExternal) && (
+                        <div className="flex items-center gap-2">
+                          <input className={`${SCHED_CONTROL} w-full`} value={interviewer}
+                            onChange={(e) => setInterviewer(e.target.value)}
+                            aria-label={isCustomerRound ? "Customer panellist" : "External panellist"}
+                            placeholder={isCustomerRound ? "e.g. Anoop — Engineering Manager" : "External panellist's name"} />
+                          {panelExternal && !isCustomerRound && (
+                            <button type="button" className={btnSecondary}
+                              onClick={() => { setPanelExternal(false); setInterviewer(""); }}>Pick an employee</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </ScheduleStep>
+
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-secondary">Note for the panel (optional)</span>
+                  <textarea rows={2} className={`${SCHED_CONTROL} w-full`} value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    placeholder="Anything the panel should know before the round…" />
+                </label>
+
+                <details className="rounded-card border border-subtle bg-surface-1 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-secondary">
+                    More options · {category || "—"} · run by {userRole || "—"}
+                  </summary>
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    <WizardField label="Interview Category">
+                      <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
+                        {(opts?.categories || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </WizardField>
+                    <WizardField label="User Role" info="Which team conducts this round.">
+                      <select className={inputCls} value={userRole} onChange={(e) => setUserRole(e.target.value)}>
+                        <option value="">—</option>
+                        {(opts?.user_roles || []).map((r) => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </WizardField>
+                  </div>
+                </details>
+
+                <div className={`flex items-start gap-3 rounded-card border p-3 text-sm ${
+                  scheduleReady ? "border-success bg-success-soft" : "border-subtle bg-surface-2"}`}>
+                  <Send size={16} className={`mt-0.5 shrink-0 ${scheduleReady ? "text-success" : "text-muted"}`} aria-hidden />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-primary">
+                      {scheduleReady ? "Ready — the candidate is emailed the invite" : "Still needed before the invite can go"}
+                    </div>
+                    <div className="mt-0.5 text-xs text-secondary">
+                      {scheduleReady
+                        ? [ROUND_KIND_LABEL[kind] || roundLabel(kind), fmtDateTime12(when), duration && `${duration} min`,
+                           (interviewer || chosenPanellist?.full_name) && `with ${interviewer || chosenPanellist?.full_name}`,
+                           meetingLink.trim() ? "meeting link + calendar invite" : "calendar invite"]
+                            .filter(Boolean).join(" · ")
+                        : scheduleMissing.join(" · ")}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               {!compactFeedback && (<>
               <WizardField label="Interview Category" required>
@@ -3621,21 +3853,17 @@ export function InterviewRoundModal({
                 </WizardField>
               )}
 
-              <WizardField
-                label={mode === "schedule" ? "Notes (optional)" : "Overall Feedback"}
-                className="sm:col-span-2"
-              >
+              <WizardField label="Overall Feedback" className="sm:col-span-2">
                 <textarea
-                  rows={mode === "schedule" ? 3 : 6}
+                  rows={6}
                   className={inputCls}
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
-                  placeholder={mode === "schedule"
-                    ? "Anything the panel should know before the round…"
-                    : "Technical depth, communication, strengths, gaps, and your recommendation…"}
+                  placeholder="Technical depth, communication, strengths, gaps, and your recommendation…"
                 />
               </WizardField>
             </div>
+            )}
 
             <div className="mt-6 flex justify-end gap-2">
               <button type="button" className={btnSecondary} onClick={onClose} disabled={busy}>

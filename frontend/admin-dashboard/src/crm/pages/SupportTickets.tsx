@@ -7,7 +7,8 @@
  * (server-side). Routes: `support-tickets`, `support-tickets/:id`.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, Send } from "lucide-react";
+import { ChevronLeft, LifeBuoy, Send } from "lucide-react";
+import { PageHeader } from "../components/PageHeader";
 
 import { crmGet, crmPatch, crmPost, qs } from "../api";
 import type { Meta } from "../api";
@@ -103,16 +104,26 @@ export function SupportTicketsPage({ embedded = false }: { embedded?: boolean } 
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          {embedded ? (
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
             <h2 className="text-base font-bold text-primary">Support Tickets</h2>
-          ) : (
-            <h1 className="text-display text-xl font-bold text-primary">Support Tickets</h1>
-          )}
-          <p className="text-sm text-muted">Issues users raised from the Help &amp; Support bot. Reply, set status, assign.</p>
+            <p className="text-sm text-muted">Issues users raised from the Help &amp; Support bot. Reply, set status, assign.</p>
+          </div>
+          {meta && <span className="text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "ticket" : "tickets"}</span>}
         </div>
-      </div>
+      ) : (
+        <div className="mb-4">
+          <PageHeader
+            icon={LifeBuoy}
+            accent="rose"
+            eyebrow="Admin · CEO"
+            title="Support Tickets"
+            subtitle={<>Issues users raised from the Help &amp; Support bot. Reply, set status, assign.</>}
+            stats={meta ? [{ label: meta.total === 1 ? "ticket" : "tickets", value: meta.total }] : undefined}
+          />
+        </div>
+      )}
       {error ? <ErrorBox error={error} onRetry={load} /> : (
         <DataTable
           columns={columns}
@@ -123,7 +134,7 @@ export function SupportTicketsPage({ embedded = false }: { embedded?: boolean } 
           onSearch={setSearch}
           searchPlaceholder="Ticket no, subject, user…"
           onPage={setPage}
-          onRowClick={(r) => crmNavigate(`support-tickets/${r.id}`)}
+          onRowClick={(r) => crmNavigate(`support-tickets/${r.id}`)} rowHref={(r: any) => `support-tickets/${r.id}`}
           emptyMessage="No tickets match."
           filters={
             <>

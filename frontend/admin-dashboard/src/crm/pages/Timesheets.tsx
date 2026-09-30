@@ -4,11 +4,12 @@
  * submit/approve/reject workflow. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, BellRing, CalendarDays, Check, ChevronDown, Clock, FilePlus2, RefreshCw, History, MessageSquare, Plus, Receipt, Save, Send, X } from "lucide-react";
+import { AlertTriangle, BellRing, CalendarDays, CalendarClock, Check, ChevronDown, Clock, FilePlus2, RefreshCw, History, MessageSquare, Plus, Receipt, Save, Send, Upload, X } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { crmTabVisibleFromMe, useCanAct } from "../useAccess";
+import { crmTabVisibleFromMe, useCanAct, useCanApprove } from "../useAccess";
 import { PayrollPage } from "./Payroll";
 import { MyLeavePage } from "./MyLeave";
 import { LeaveApplicationsPage } from "./LeaveApplications";
@@ -27,6 +28,19 @@ import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
 import { fmtDateTime12 } from "../../lib/datetime";
+import { InvoiceFormatPicker, PROFORMA_COLOR, normalizeFormat } from "../components/invoice/ProformaActions";
+import type { InvoiceFormat } from "../components/invoice/types";
+import { BILLING_UNITS, unitWord } from "../lib/billingUnits";
+import { toDateKey } from "../lib/calendarDates";
+import { usePageTab } from "../lib/pageState";
+import { PoPicker, type PoOption } from "../components/PoPicker";
+import { DialogActions, DialogHero, DialogSection, WhatHappens, useCtrlEnter } from "../components/dialogKit";
+
+/** The sheet's invoice as every timesheet payload prints it (B-V2 `services.timesheets.invoice_ref`). */
+type InvoiceRef = {
+  id: number; invoice_number: string; payment_status: string;
+  kind?: "Proforma" | "Tax"; returned_at?: string | null; returned_reason?: string | null;
+};
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -103,7 +117,7 @@ type BillingPolicy = {
 
 type TimesheetDetail = Timesheet & {
   /** Linked invoice (3 Sep 2026, invoice undo) — null until generated. */
-  invoice?: { id: number; invoice_number: string; payment_status: string } | null;
+  invoice?: InvoiceRef | null;
   can_reject?: boolean;
   can_generate_invoice?: boolean;
   created_at?: string | null;
@@ -209,13 +223,40 @@ type InvoiceLineItem = {
       Monthly → rate ÷ working days (same denominator as the LOP deduction). */
   per_day_charge?: number | null;
   per_hour_charge?: number | null;
+  /** Server's rate/unit sanity check (25 Sep 2026) — e.g. an hourly rate saved
+      "per Month". Plain language; null when the pair looks right. */
+  rate_unit_warning?: string | null;
+  project_employee_id?: number | null;
   amount: number;
 };
+
+/** The server's "this rate looks typed against the wrong unit" note, with a
+ * link to where the unit is corrected. Never blocks anything. */
+function RateUnitWarning({ line }: { line?: InvoiceLineItem | null }) {
+  if (!line?.rate_unit_warning) return null;
+  return (
+    <div role="alert"
+      className="flex items-start gap-2 rounded-control border border-warning bg-warning-soft px-3 py-2 text-xs text-warning">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
+      <span>
+        {line.rate_unit_warning}
+        {line.project_employee_id != null && (
+          <>
+            {" "}
+            <CrmLink to={`project-employees/${line.project_employee_id}`} className="font-semibold underline">
+              Open Commercial Details
+            </CrmLink>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
 
 type InvoicePreview = {
   line_items: InvoiceLineItem[];
   totals: { sub_total: number };
-  linked_invoice: { id: number; invoice_number: string; payment_status: string } | null;
+  linked_invoice: InvoiceRef | null;
   can_generate: boolean;
 };
 
@@ -505,7 +546,7 @@ type ReportRow = {
   reason_for_rejection?: string | null;
   rejection_reason?: string | null;
   can_generate_invoice?: boolean;
-  invoice?: { id: number; invoice_number: string; payment_status: string } | null;
+  invoice?: InvoiceRef | null;
   attachments?: AttachmentRow[];
 };
 
@@ -531,15 +572,25 @@ const REPORT_TABS = [
 
 type ReportTab = typeof REPORT_TABS[number]["key"];
 
-export function TimesheetsListPage() {
-  const isStaff = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG"));
+/** `embedded` — rendered as a tab of the Projects hub: the hub already carries
+ *  the page header, so the tabs and actions sit in a compact row instead. */
+export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } = {}) {
+  /* Sales fills and submits the sheets (23 Sep 2026 flow), so the working
+     tabs (Due · Submit for Approval) include them for untemplated users too. */
+  const isStaff = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
+  /* The approver (GM) needs the Approvals tab whatever their tab grants —
+     `me.approvals` is the one answer (25 Sep 2026). Both hooks always run. */
+  const mayApproveTs = useCanApprove("timesheet.approve");
+  const mayRaiseProforma = useCanApprove("timesheet.generate_invoice");
+  const isApprover = mayApproveTs || mayRaiseProforma;
   // Inner tabs mirror their old sidebar entries' gating (roles + Access
   // Templates), so nobody gains or loses access in the move (Aug 2026):
   //  - core timesheet tabs: the page's original roles (TA never had them)
   //  - Payroll: Admin/HR/Finance   - My Leave: every CRM role
   //  - Leave Applications: Admin/HR
   const me = useMe();
-  const tsRoleOk = useCanAct("timesheets", "view", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
+  const tsRoleOk = useCanAct("timesheets", "view", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"))
+    || isApprover;
   const payrollRoleOk = useCanAct("payroll", "view", useHasRole("HR", "Finance"));
   const myLeaveRoleOk = useCanAct("my-leave", "view", useHasRole("Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"));
   const leaveAppsRoleOk = useCanAct("leave-applications", "view", useHasRole("HR"));
@@ -549,9 +600,8 @@ export function TimesheetsListPage() {
   const canManage = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
   // Force delete (also removes the linked invoice) — Sales/Sales_Head/RMG + Admin/CEO.
   const canForceDelete = useCanAct("timesheets", "create", useHasRole("Sales", "Sales_Head", "RMG", "Admin", "CEO"));
-  const [tab, setTab] = useState<ReportTab>(() =>
-    isStaff ? "due" : tsRoleOk ? "all" : "myleave",
-  );
+  const [tab, setTab] = usePageTab<ReportTab>("tab",
+    isStaff ? "due" : isApprover ? "approvals" : tsRoleOk ? "all" : "myleave");
   const [rows, setRows] = useState<Timesheet[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
   const [page, setPage] = useState(1);
@@ -644,51 +694,81 @@ export function TimesheetsListPage() {
     if (t.key === "myleave") return showMyLeave;
     if (t.key === "leaveApps") return showLeaveApps;
     if (t.key === "all") return tsRoleOk;
-    return tsRoleOk && isStaff; // due / submission / approvals
+    if (t.key === "approvals") return tsRoleOk && (isStaff || isApprover);
+    return tsRoleOk && isStaff; // due / submission
   });
   // If the current tab is not visible for this user (e.g. an Access Template
   // hides it), snap to the first tab they CAN see instead of a blank page.
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some((t) => t.key === tab)) {
-      setTab(visibleTabs[0].key);
+      setTab(visibleTabs[0].key, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, visibleTabs.map((t) => t.key).join(",")]);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-display text-xl font-bold text-primary">Timesheets</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          {canManage && (
-            <button className={btnSecondary} onClick={() => setShowImport(true)}>
-              Import Excel
-            </button>
-          )}
-          {canManage && (
-            <button className={btnPrimary} onClick={() => openNew()}>
-              <Plus size={15} /> New Timesheet
-            </button>
-          )}
-        </div>
-      </div>
-
-      {visibleTabs.length > 1 && (
-        <div className="flex flex-wrap gap-2 border-b border-subtle pb-2">
-          {visibleTabs.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={`rounded-control px-3 py-1.5 text-sm font-semibold transition-colors ${
-                tab === t.key ? "bg-brand-600 text-white" : "text-secondary hover:bg-surface-2"
-              }`}
-              onClick={() => setTab(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {(() => {
+        const tabStrip = visibleTabs.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5 rounded-control bg-surface-2 p-1 ring-1 ring-inset ring-subtle">
+            {visibleTabs.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                className={`rounded-control px-3 py-1.5 text-sm font-semibold transition-colors ${
+                  tab === t.key ? "bg-brand-600 text-white shadow-sm" : "text-secondary hover:bg-surface-1 hover:text-primary"
+                }`}
+                onClick={() => setTab(t.key)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        ) : null;
+        if (embedded) {
+          return (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {tabStrip ?? <span />}
+              <div className="flex flex-wrap items-center gap-2">
+                {canManage && (
+                  <button className={btnSecondary} onClick={() => setShowImport(true)}
+                    title="Excel is read into the grid; a PDF or any other file is attached to the month's sheet">
+                    Import / Upload
+                  </button>
+                )}
+                {canManage && (
+                  <button className={btnPrimary} onClick={() => openNew()}>
+                    <Plus size={15} /> New Timesheet
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <PageHeader
+            icon={CalendarClock}
+            accent="ocean"
+            eyebrow="Attendance"
+            title="Timesheets"
+            subtitle="Fill and submit the month's sheets, approve them, raise the Proforma — and the leave and payroll that hang off them."
+            stats={tab === "all" && meta ? [{ label: meta.total === 1 ? "timesheet" : "timesheets", value: meta.total }] : undefined}
+            actions={canManage ? (
+              <>
+                <button className={HERO_BTN} onClick={() => setShowImport(true)}
+                  title="Excel is read into the grid; a PDF or any other file is attached to the month's sheet">
+                  <Upload size={15} /> Import / Upload
+                </button>
+                <button className={HERO_BTN_SOLID} onClick={() => openNew()}>
+                  <Plus size={15} /> New Timesheet
+                </button>
+              </>
+            ) : undefined}
+          >
+            {tabStrip}
+          </PageHeader>
+        );
+      })()}
 
       {tab === "due" && isStaff && (
         <TimesheetDueReport showToast={showToast} onAdd={(r) => openNew({
@@ -702,7 +782,7 @@ export function TimesheetsListPage() {
       {tab === "submission" && isStaff && (
         <SubmitForApprovalReport showToast={showToast} />
       )}
-      {tab === "approvals" && isStaff && (
+      {tab === "approvals" && (isStaff || isApprover) && (
         <TimesheetApprovalsReport showToast={showToast} />
       )}
       {tab === "payroll" && showPayroll && <PayrollPage embedded />}
@@ -750,7 +830,7 @@ export function TimesheetsListPage() {
                     <span>Draft <span className="font-semibold text-primary tnum">{rs.filter((r) => r.status === "Draft").length}</span></span>
                   </>
                 )}
-                onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)}
+                onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)} rowHref={(r: any) => `timesheets/${r.id}`}
                 rowKey={(r) => r.id}
                 empty={<TeachingEmpty page="timesheets" />}
                 rowActions={canManage ? (r) => (
@@ -776,7 +856,7 @@ export function TimesheetsListPage() {
               headerRight={meta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{meta.total} {meta.total === 1 ? "timesheet" : "timesheets"}, page {meta.page}/{Math.max(1, meta.pages || 1)}</span> : undefined}
               loading={loading}
               onPage={setPage}
-              onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)}
+              onRowClick={(r) => crmNavigate(`timesheets/${r.id}`)} rowHref={(r: any) => `timesheets/${r.id}`}
               emptyMessage={<TeachingEmpty page="timesheets" />}
               filters={
                 <>
@@ -860,6 +940,8 @@ export function TimesheetsListPage() {
 type TsImportResult = {
   months: { period: string; timesheet_id: number | null; applied: number; skipped: string | null
     counts?: Record<string, number>;
+    /** Non-Excel upload (23 Sep 2026): the file was attached to the month's sheet, not parsed. */
+    attached?: boolean;
   }[];
   failed_rows: { row: number; error: string }[];
   summary: string;
@@ -879,6 +961,14 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<TsImportResult | null>(null);
+  // An .xlsx or a PDF is READ into the day grid (25 Sep 2026). Any other file
+  // (image, Word…) — or a PDF with nothing readable, e.g. a scan — is attached
+  // to ONE month's sheet as the source document, so a PDF also names its month:
+  // it completes bare day numbers (1 2 3 …) and is the fallback for a scan.
+  const isExcel = !!file && /\.xlsx$/i.test(file.name);
+  const isPdf = !!file && /\.pdf$/i.test(file.name);
+  const readable = isExcel || isPdf;
+  const [month, setMonth] = useState(() => toDateKey(new Date()).slice(0, 7));
 
   // Employees mapped to the CHOSEN project — historic data belongs to a
   // (project, employee) assignment, never to a free-floating person.
@@ -914,8 +1004,12 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
     setBusy(true);
     try {
       const { crmUpload } = await import("../api");
+      const [y, m] = month.split("-").map(Number);
       const res = await crmUpload<TsImportResult>(
-        `/api/timesheets/bulk-import${qs({ project_id: projectId, employee_id: employeeId })}`,
+        `/api/timesheets/bulk-import${qs({
+          project_id: projectId, employee_id: employeeId,
+          ...(isExcel || !month ? {} : { year: y, month: m }),
+        })}`,
         file,
       );
       setResult(res.data);
@@ -931,7 +1025,7 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
   };
 
   return (
-    <Modal title="Import timesheets from Excel" onClose={onClose} wide>
+    <Modal title="Import timesheet" onClose={onClose} wide>
       {!result ? (
         <div className="space-y-4">
           <div className="rounded-card border border-subtle bg-surface-2/40 p-4 text-sm text-secondary">
@@ -943,10 +1037,15 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
                   Download the Excel template
                 </button>{" "}
                 — one row per day: date, hours, status, leave type. Rows may span several months.
+                A customer's own Excel sheet (dates across, one code per day) also reads.
               </li>
               <li>Pick the project and the employee the data belongs to.</li>
-              <li>Upload — each month becomes (or updates) a Draft sheet with billables computed
-                by the normal rules. Submitted/Approved months are never touched.</li>
+              <li>Upload an <b>.xlsx</b> or a <b>PDF</b> — the day grid is filled from it (a row of dates with
+                a row of codes P / WO / H / L / A / HD under it, or one day per row). Each month becomes (or
+                updates) a Draft sheet with billables computed by the normal rules. Submitted/Approved months
+                are never touched.</li>
+              <li>Any other file (image, Word…), or a scanned PDF, is attached to the chosen month's sheet
+                as the source document; fill the day grid in the editor.</li>
             </ol>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -972,14 +1071,26 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
           </div>
           <input
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.xls,.csv,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt,.zip"
             className="block w-full text-sm text-secondary file:mr-3 file:rounded-control file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-700"
             onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
+          {file && !isExcel && (
+            <label className="block sm:w-64">
+              <span className="mb-1 block text-xs font-semibold text-muted">Month this file belongs to</span>
+              <input type="month" className={inputCls} value={month} onChange={(e) => setMonth(e.target.value)} />
+              <span className="mt-1 block text-[11px] text-muted">
+                {isPdf
+                  ? "Used when the PDF shows day numbers only — and, if nothing can be read (a scan), the PDF is attached to this month instead."
+                  : `${file.name} will be attached to that month's sheet — it is not read into the grid.`}
+              </span>
+            </label>
+          )}
           <div className="flex justify-end gap-2">
             <button className={btnSecondary} onClick={onClose}>Cancel</button>
-            <button className={btnPrimary} onClick={upload} disabled={!file || !projectId || !employeeId || busy}>
-              {busy ? "Importing…" : "Upload & import"}
+            <button className={btnPrimary} onClick={upload}
+              disabled={!file || !projectId || !employeeId || busy || (!isExcel && !month)}>
+              {busy ? (readable ? "Importing…" : "Attaching…") : readable ? "Upload & import" : "Upload & attach"}
             </button>
           </div>
         </div>
@@ -998,6 +1109,7 @@ export function TimesheetImportModal({ projects, initialProjectId, onClose, onDo
                   <span className="font-semibold text-primary">{m.period}</span>
                 )}
                 {m.applied > 0 && <span className="text-success">{m.applied} day(s) applied</span>}
+                {m.attached && <span className="text-success">file attached — fill the grid in the editor</span>}
                 {m.counts && Object.keys(m.counts).length > 0 && (
                   <span className="text-xs text-muted">
                     ({Object.entries(m.counts)
@@ -1508,10 +1620,16 @@ function LeaveAppliedChip({
 
 export function TimesheetDetailPage() {
   const { id } = useCrmParams();
-  /* HR reviews timesheets but does not decide them — approval sits with RMG,
-     Sales and (via isSuperAdmin) Admin/CEO. Anyone who can reach this page can
-     still read every entry; only the decision is gated. */
-  const canApprove = useCanAct("timesheets", "edit", useHasRole("RMG", "Sales"));
+  /* Approval sits with the GM (23 Sep 2026 flow: Sales fills and submits,
+     the GM verifies, Finance invoices) and Admin/CEO. 25 Sep 2026: these are
+     APPROVAL buttons — Timesheets: Edit (what Sales needs to fill the sheet)
+     used to satisfy this check and put Approve in front of the person who
+     filled it. The answer now comes from the server (`me.approvals`: the
+     template's / role's Approvals, else the action's role list). Anyone who
+     can reach this page can still read every entry. */
+  const canApprove = useCanApprove("timesheet.approve");
+  const canReject = useCanApprove("timesheet.reject");
+  const canDecide = canApprove || canReject;
   /* Admin/CEO only (3 Sep 2026, user decision): the one role that may undo
      an invoice raised by mistake together with the sheet behind it. */
   const isAdmin = useHasRole("Admin", "CEO");
@@ -1529,6 +1647,10 @@ export function TimesheetDetailPage() {
   const [showReject, setShowReject] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, showToast] = useToast();
+  /* "Fill from file" (25 Sep 2026): the customer's Excel or PDF for THIS
+     month fills the grid through the same server reader as Import / Upload. */
+  const fillInputRef = useRef<HTMLInputElement>(null);
+  const [filling, setFilling] = useState(false);
 
   const defaultPolicy: BillingPolicy = {
     week_off_billable: false,
@@ -1888,8 +2010,8 @@ export function TimesheetDetailPage() {
             next.leave_reason = "";
           }
         }
-        // Soft hour-cap: clamp Week Off / Working hours to project max when set.
-        if (patch.hours_worked !== undefined && next.day_type !== "Holiday") {
+        // Soft hour-cap: clamp worked hours (any day type) to project max when set.
+        if (patch.hours_worked !== undefined) {
           const cap = ts.max_billable_hours_day;
           const parsed = Number(next.hours_worked || 0);
           if (cap != null && Number(cap) > 0 && parsed > Number(cap)) {
@@ -2105,6 +2227,51 @@ export function TimesheetDetailPage() {
             >
               Fix week-offs / holidays
             </button>
+            <button
+              type="button"
+              disabled={filling}
+              className="rounded-control border border-brand-600 bg-surface-2 px-2.5 py-1 text-xs font-semibold text-brand-600 transition-colors duration-micro hover:bg-brand-600 hover:text-white disabled:opacity-60 dark:text-brand-300"
+              title="Upload the customer's timesheet (Excel or PDF) — the days of this month are filled from it"
+              onClick={() => fillInputRef.current?.click()}
+            >
+              {filling ? "Reading file…" : "Fill from file (Excel / PDF)"}
+            </button>
+            <input
+              ref={fillInputRef}
+              type="file"
+              accept=".xlsx,.pdf"
+              className="hidden"
+              aria-label="Timesheet file to fill this month from"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                if (dirty && !window.confirm(
+                  "This sheet has unsaved changes. Filling from the file replaces the days it covers — continue?")) return;
+                setFilling(true);
+                try {
+                  const { crmUpload } = await import("../api");
+                  const res = await crmUpload<TsImportResult>(
+                    `/api/timesheets/bulk-import${qs({
+                      project_id: ts.project_id, employee_id: ts.employee_id, year: ts.year, month: ts.month,
+                    })}`,
+                    file,
+                  );
+                  const d = res.data;
+                  const mine = d?.months?.find((m) => m.timesheet_id === ts.id);
+                  const failed = d?.failed_rows || [];
+                  const ok = !!mine && !mine.skipped && (mine.applied > 0 || !!mine.attached) && !failed.length;
+                  const detail = failed.length ? ` — ${failed.slice(0, 2).map((f) => f.error).join("; ")}` : "";
+                  showToast(`${res.message || d?.summary || "Filled from file"}${detail}`, ok ? "ok" : "err");
+                  setDirty(false);
+                  await load();
+                } catch (err: any) {
+                  showToast(err?.message || "Could not read the file", "err");
+                } finally {
+                  setFilling(false);
+                }
+              }}
+            />
             </>
           )}
           {editable && (
@@ -2123,7 +2290,7 @@ export function TimesheetDetailPage() {
               Excess leave converts to Loss of Pay ({leaveSplit.totalLop} day{leaveSplit.totalLop === 1 ? "" : "s"}) — non-billable.
             </span>
           )}
-          {ts.status === "Submitted" && canApprove && (
+          {ts.status === "Submitted" && canDecide && (
             /* The decision itself lives at the FOOT of the page, after every
                day of the period. This is only a pointer to it. */
             <a
@@ -2183,8 +2350,11 @@ export function TimesheetDetailPage() {
               const isWeekOff = e.day_type === "Week_Off";
               const hoursNum = Number(e.hours_worked || 0);
               const weekendWorked = (isWeekOff || isCalendarHoliday) && hoursNum > 0;
-              const hoursEditable = editable && !isCalendarHoliday
-                && (e.day_type === "Working" || isWeekOff);
+              // Holidays too (25 Sep 2026): some employees work on a holiday. The
+              // day stays a Holiday; its hours are billed or credited as comp-off
+              // exactly like week-off work (server: compute_billables).
+              const hoursEditable = editable
+                && (e.day_type === "Working" || isWeekOff || isCalendarHoliday || e.day_type === "Holiday");
               const zebra = i % 2 === 1 ? "bg-black/[0.02] dark:bg-white/[0.02]" : "";
               const weekendHl = weekendWorked
                 ? (policy.comp_off_billable
@@ -2416,7 +2586,7 @@ export function TimesheetDetailPage() {
           scrolling past every day of the period, so the decision follows the
           review instead of preceding it. Invoicing is a consequence of
           approval, so it reads after it. */}
-      {ts.status === "Submitted" && canApprove && (
+      {ts.status === "Submitted" && canDecide && (
         <div id="approval-decision" className="elev-1 rounded-panel p-4 sm:p-5">
           <h2 className="text-sm font-bold tracking-wide text-primary">Approval Decision</h2>
           <p className="mt-1 text-xs text-muted">
@@ -2424,12 +2594,16 @@ export function TimesheetDetailPage() {
             for invoicing, or reject it back to {employeeName || "the employee"} with a reason.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
-            <button className={btnPrimary} onClick={() => setConfirm("approve")}>
-              <Check size={15} /> Approve
-            </button>
-            <button className={btnDanger} onClick={() => setShowReject(true)}>
-              <X size={15} /> Reject
-            </button>
+            {canApprove && (
+              <button className={btnPrimary} onClick={() => setConfirm("approve")}>
+                <Check size={15} /> Approve
+              </button>
+            )}
+            {canReject && (
+              <button className={btnDanger} onClick={() => setShowReject(true)}>
+                <X size={15} /> Reject
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -2438,7 +2612,7 @@ export function TimesheetDetailPage() {
           this is the correction path when policy/rates changed after approval
           and the frozen figures no longer match reality. The server 409s once
           an invoice has been generated. */}
-      {ts.status === "Approved" && canApprove && (
+      {ts.status === "Approved" && canReject && (
         <div className="elev-1 rounded-panel p-4 sm:p-5">
           <h2 className="text-sm font-bold tracking-wide text-primary">Approved</h2>
           {ts.invoice ? (
@@ -2693,30 +2867,14 @@ function Stat({ label, value, hint }: { label: string; value: React.ReactNode; h
  * open; Finance/Admin can generate the invoice when the server says can_generate. */
 /* ---------------------------------------------------- PO selection (invoice) */
 
-type PoOption = {
-  id: number;
-  po_number: string;
-  po_type?: string | null;
-  status: string;
-  start_date?: string | null;
-  end_date?: string | null;
-  total_value?: number | null;
-  used_value?: number | null;
-  balance_value?: number | null;
-  expired?: boolean;
-  selectable?: boolean;
-  project_allocated?: number | null;
-  project_used?: number | null;
-  employee_id?: number | null;
-  employee_name?: string | null;
-  employee_match?: boolean;
-};
-
 type PoOptionsPayload = {
   pos: PoOption[];
   selected_po_id: number | null;
   suggested_po_id?: number | null;
   timesheet_employee_name?: string | null;
+  /** For the dialog header (30 Sep 2026): whose month, billed to whom. */
+  project_name?: string | null;
+  customer_name?: string | null;
   rate: {
     month: string;
     billing_unit: string;
@@ -2727,6 +2885,10 @@ type PoOptionsPayload = {
     project_employee_id?: number;
     current_rate_row?: { id: number; effective_from: string; rate: number | null } | null;
   };
+  /** The customer's saved column choice — pre-fills the GM's format step (23 Sep 2026). */
+  invoice_format?: InvoiceFormat | null;
+  /** Set when Finance returned this sheet's Proforma: raising again REPLACES it (same number). */
+  returned_proforma?: { invoice_number: string; reason: string | null; returned_at: string | null } | null;
 };
 
 const UNIT_LABELS: Record<string, string> = {
@@ -2749,7 +2911,7 @@ const dShort = (iso?: string | null) =>
  * The rate panel restates what this month will actually bill (straight from
  * Project Employee → Commercial Details, split shown if a change lands
  * mid-month) so the person committing PO budget can see what they commit. */
-function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
+export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   timesheetId: number;
   onClose: () => void;
   onGenerated: () => void;
@@ -2765,6 +2927,9 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   const [rateMode, setRateMode] = useState<null | "edit" | "add">(null);
   const [rateDate, setRateDate] = useState("");
   const [rateValue, setRateValue] = useState("");
+  // What the rates are priced per — correctable right here (25 Sep 2026), since
+  // this dialog is where a wrong unit shows up as a wrong invoice.
+  const [rateUnit, setRateUnit] = useState("");
   const [savingRate, setSavingRate] = useState(false);
 
   // The exact calculation this invoice will be raised with — shown IN the
@@ -2774,10 +2939,12 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   const [calc, setCalc] = useState<InvoicePreview | null>(null);
   const [qtyStr, setQtyStr] = useState("");
   const [rateStr, setRateStr] = useState("");
-  // Invoice number (11 Sep 2026): prefilled with the next INV-YYYY-NNN, editable
-  // so a customer-dictated number can be used from the start.
-  const [invoiceNo, setInvoiceNo] = useState("");
-  const [suggestedNo, setSuggestedNo] = useState("");
+  // Client-specific invoice format (23 Sep 2026): the GM confirms which
+  // optional columns this customer's document prints. Pre-filled from the
+  // customer's saved choice; the confirmed choice is saved back for next month.
+  // The Proforma number (PI-YYYY-NNN) is assigned by the server; Finance types
+  // the tax number when it generates the original invoice.
+  const [format, setFormat] = useState<Required<InvoiceFormat>>(normalizeFormat(null));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2785,16 +2952,11 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
     try {
       const res = await crmGet<PoOptionsPayload>(`/api/timesheets/${timesheetId}/po-options`);
       setData(res.data);
+      setFormat(normalizeFormat(res.data?.invoice_format));
       // Preselect the one obvious PO (tagged to this employee, live, covering
-      // this month) so Finance just confirms; else the project's funding PO.
+      // this month) so the GM just confirms; else the project's funding PO.
       const pre = res.data?.suggested_po_id ?? res.data?.selected_po_id;
       if (pre != null) setPoId(String(pre));
-      crmGet<{ invoice_number: string }>("/api/invoices/next-number")
-        .then((r) => {
-          const n = r.data?.invoice_number || "";
-          setSuggestedNo(n);
-          setInvoiceNo((cur) => cur || n);
-        }).catch(() => undefined);
       crmGet<InvoicePreview>(`/api/timesheets/${timesheetId}/invoice-preview`)
         .then((r) => {
           setCalc(r.data);
@@ -2817,26 +2979,6 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
   const noPos = !loading && !error && pos.length === 0;
   const canGenerate = noPos || (!!selected && selected.selectable !== false);
 
-  /* Grouped picker (28 Aug 2026): with per-employee POs, "find the right PO"
-     was a hunt through the customer's whole PO book. Order: this employee's
-     POs → POs already funding this project → the rest; live before expired
-     within each group. Pure presentation — every PO stays selectable. */
-  const byLiveness = (a: PoOption, b: PoOption) =>
-    Number(!!a.expired) - Number(!!b.expired) ||
-    String(b.start_date || "").localeCompare(String(a.start_date || ""));
-  const poGroups = [
-    { label: data?.timesheet_employee_name
-        ? `${data.timesheet_employee_name}'s POs` : "This employee's POs",
-      items: pos.filter((p) => p.employee_match).sort(byLiveness) },
-    { label: "Allocated to this project",
-      items: pos.filter((p) => !p.employee_match && p.project_allocated != null).sort(byLiveness) },
-    { label: "Other customer POs",
-      items: pos.filter((p) => !p.employee_match && p.project_allocated == null).sort(byLiveness) },
-  ].filter((g) => g.items.length > 0);
-  const poLabel = (p: PoOption) =>
-    `${p.po_number}${p.employee_name ? ` — ${p.employee_name}` : ""}` +
-    ` — balance ${inr(p.balance_value)} of ${inr(p.total_value)}` +
-    (p.expired ? " (expired)" : p.selectable === false ? ` (${p.status.toLowerCase()})` : "");
   // Soft cross-check, never a block: a PO tagged to a DIFFERENT employee is
   // usually the expensive mistake here, but shared POs are legitimate.
   const mismatch = selected && selected.employee_id != null && !selected.employee_match;
@@ -2863,16 +3005,15 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
       if (li && Number.isFinite(rateN) && rateN > 0 && rateN !== Number(li.rate_per_unit)) {
         overrides.rate_per_unit = rateN;
       }
-      const typedNo = invoiceNo.trim();
       const res = await crmPost<{ invoice: any; timesheet_id: number }>(
         `/api/timesheets/${timesheetId}/generate-invoice`,
         {
           ...(selected ? { po_id: selected.id } : {}),
-          ...(typedNo ? { invoice_number: typedNo } : {}),
+          invoice_format: format,
           ...overrides,
         },
       );
-      showToast(res.message || "Invoice generated");
+      showToast(res.message || "Proforma invoice raised");
       onGenerated();
       onClose();
     } catch (e: any) {
@@ -2887,6 +3028,7 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
     setRateMode(mode);
     setRateDate(mode === "edit" ? (cur?.effective_from || "") : "");
     setRateValue(mode === "edit" ? (cur?.rate != null ? String(cur.rate) : "") : "");
+    setRateUnit(data?.rate.billing_unit || "");
   };
 
   const saveRate = async () => {
@@ -2897,6 +3039,10 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
     }
     setSavingRate(true);
     try {
+      // Unit first: the server relabels the whole rate history with it.
+      if (rateUnit && rateUnit !== data?.rate.billing_unit) {
+        await crmPut(`/api/projects/employees/${peId}/billing-unit`, { billing_unit: rateUnit });
+      }
       if (rateMode === "edit" && data?.rate.current_rate_row) {
         await crmPut(`/api/projects/employees/${peId}/rates/${data.rate.current_rate_row.id}`,
           { effective_from: rateDate, rate: Number(rateValue) });
@@ -2918,297 +3064,308 @@ function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: {
     }
   };
 
-  const row = "flex items-baseline justify-between gap-4 text-sm";
-  const lbl = "text-muted";
-  const val = "font-semibold text-primary";
+  // The figure the right-hand card prints and the PO drawdown is measured
+  // against — the reviewer's qty × rate when both parse, else the server's.
+  const li0: any = calc?.line_items?.[0];
+  const qtyN = Number(qtyStr);
+  const rateN = Number(rateStr);
+  const liveAmount = li0 && Number.isFinite(qtyN) && Number.isFinite(rateN)
+    ? Math.round(qtyN * rateN * 100) / 100 : Number(li0?.amount ?? calc?.totals?.sub_total ?? 0);
+  const edited = !!li0 && (qtyN !== Number(li0.total_billed_qty) || rateN !== Number(li0.rate_per_unit));
+  const balanceAfter = selected && selected.balance_value != null ? selected.balance_value - liveAmount : null;
+  const reissue = !!data?.returned_proforma;
+  const title = reissue ? "Reissue proforma invoice" : "Raise proforma invoice";
+  const month = data ? monthLabel(data.rate.month) : "";
+  const footerHint = !canGenerate
+    ? <span className="text-warning">Pick the purchase order this invoice draws from</span>
+    : balanceAfter != null && balanceAfter < 0
+      ? <span className="text-danger">This PO cannot cover the invoice — {inr(Math.abs(balanceAfter))} short</span>
+      : edited ? <span className="text-warning">Qty / rate edited — the change is logged</span> : "Ctrl + Enter to raise";
+  const rateForm = rateMode !== null && data?.rate;
+  useCtrlEnter(() => { if (canGenerate && !generating && !loading && rateMode === null) void generate(); });
 
   return (
-    <Modal title="Select PO for this invoice" onClose={onClose}>
+    <Modal
+      title={title}
+      xl
+      onClose={() => { if (!generating) onClose(); }}
+      dirty={edited || rateMode !== null}
+      hero={
+        <DialogHero tone="amber" icon={Receipt} eyebrow="Proforma invoice" title={title}
+          subtitle="Confirm the customer's format, the rate this month bills at and the PO it draws from. Finance generates the tax invoice from this Proforma."
+          person={data?.timesheet_employee_name
+            ? { name: data.timesheet_employee_name, meta: [data.project_name, data.customer_name].filter(Boolean).join(" · ") || undefined }
+            : null}
+          chips={month ? <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold ring-1 ring-white/20">{month}</span> : null}
+          flow={{ steps: ["Timesheet approved", reissue ? "Proforma reissued" : "Proforma raised", "Finance checks", "Tax invoice"], current: 1 }} />
+      }
+      footer={loading || error ? undefined : (
+        <div className="space-y-2">
+          {genError && (
+            <div role="alert" className="rounded-card border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+              {genError}
+              {/PO balance/i.test(genError) && selected && (
+                <div className="mt-1 text-xs font-normal">
+                  {selected.po_number} has {inr(selected.balance_value)} left — less than this invoice's total.
+                  Pick another PO, or top up / re-allocate this one under Purchase Orders.
+                </div>
+              )}
+            </div>
+          )}
+          <DialogActions tone="amber" icon={FilePlus2}
+            label={reissue ? "Reissue Proforma" : "Raise Proforma Invoice"} busyLabel="Raising…"
+            busy={generating} disabled={!canGenerate} onCancel={onClose} onConfirm={generate} hint={footerHint} />
+        </div>
+      )}
+    >
       {loading ? (
         <Spinner label="Loading PO options…" />
       ) : error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : (
-        <div className="space-y-4">
-          {/* Invoice number FIRST (11 Sep 2026, user request) — the thing most
-              likely to need a change sits at the top, not below the PO card. */}
-          <div className="rounded-card border border-brand-200 bg-brand-50/60 px-4 py-3 dark:border-brand-800 dark:bg-brand-900/20">
-            <label className="block">
-              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-muted">Invoice number</span>
-              <input className={`${inputCls} !w-72 text-sm font-semibold`} value={invoiceNo}
-                onChange={(e) => setInvoiceNo(e.target.value)} placeholder={suggestedNo || "INV-2026-001"}
-                maxLength={64} autoFocus />
-            </label>
-            <p className="mt-1 text-[11px] text-muted">
-              {suggestedNo ? `Next in sequence: ${suggestedNo}. ` : ""}
-              Keep it, or type the number the customer expects — it must be unique, and it can be changed later via a change request.
-            </p>
-          </div>
-          {data?.rate && (
-            <div className="rounded-card border border-subtle bg-surface-2/60 px-4 py-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-bold uppercase tracking-wide text-muted">
-                  Rate applied — {monthLabel(data.rate.month)}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="space-y-4">
+            {data?.returned_proforma && (
+              <div className="flex items-start gap-3 rounded-card border px-4 py-3 text-sm" style={{ borderColor: PROFORMA_COLOR, background: "#fff7ed", color: "#7c2d12" }}>
+                <AlertTriangle size={18} className="mt-0.5 shrink-0" style={{ color: PROFORMA_COLOR }} aria-hidden />
+                <div className="min-w-0">
+                  <div className="font-bold" style={{ color: PROFORMA_COLOR }}>Finance returned {data.returned_proforma.invoice_number}</div>
+                  {data.returned_proforma.reason && <p className="mt-0.5">{data.returned_proforma.reason}</p>}
+                  <p className="mt-1 text-xs">Raising it again replaces the returned document under the same number.</p>
                 </div>
-                {data.rate.project_employee_id != null && rateMode === null && (
-                  <div className="flex gap-1.5">
-                    {data.rate.current_rate_row && (
-                      <button type="button"
-                        className={`${btnSecondary} !px-2 !py-1 text-xs`}
-                        title="Adjust the rate this month bills from"
-                        onClick={() => openRateForm("edit")}
-                      >
-                        Edit Rate
-                      </button>
-                    )}
-                    <button type="button"
-                      className={`${btnSecondary} !px-2 !py-1 text-xs`}
-                      title="Start a new rate from a new Effective From date"
-                      onClick={() => openRateForm("add")}
-                    >
-                      Add Rate
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="mt-1 text-lg font-bold text-primary">
-                {inr(data.rate.rate)}{" "}
-                <span className="text-sm font-semibold text-secondary">
-                  {UNIT_LABELS[data.rate.billing_unit] || data.rate.billing_unit}
-                </span>
-              </div>
-              {data.rate.rate_split && (
-                <div className="mt-1 space-y-0.5 text-xs text-secondary">
-                  <div className="font-semibold text-warning">Rate changes mid-month — billed per stretch:</div>
-                  {data.rate.sub_periods.map((s, i) => (
-                    <div key={i}>{dShort(s.from)} – {dShort(s.to)}: {inr(s.rate)}</div>
-                  ))}
-                </div>
-              )}
-              <div className="mt-1 text-[11px] text-muted">{data.rate.source}</div>
-              {rateMode !== null && (
-                <div className="mt-3 rounded-card border border-subtle bg-surface-1 p-3">
-                  <div className="text-xs font-bold text-primary">
-                    {rateMode === "edit" ? "Edit the current rate" : "Add a new rate"}
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-muted">
-                    {rateMode === "edit"
-                      ? "Changes the stored Commercial Details row this month bills from."
-                      : "The previous rate automatically ends the day before this one starts."}
-                  </p>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Field label="Effective from" required>
-                      <input type="date" className={inputCls} value={rateDate}
-                        onChange={(e) => setRateDate(e.target.value)} />
-                    </Field>
-                    <Field label={`Rate (${UNIT_LABELS[data.rate.billing_unit] || data.rate.billing_unit})`} required>
-                      <input type="number" min={0} step="0.01" className={inputCls} value={rateValue}
-                        onChange={(e) => setRateValue(e.target.value)} placeholder="0.00" />
-                    </Field>
-                  </div>
-                  <div className="mt-2 flex justify-end gap-2">
-                    <button type="button" className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
-                      onClick={() => setRateMode(null)} disabled={savingRate}>Cancel</button>
-                    <button type="button" className={`${btnPrimary} !px-2.5 !py-1 text-xs`}
-                      onClick={saveRate} disabled={savingRate}>
-                      {savingRate ? "Saving…" : rateMode === "edit" ? "Save Rate" : "Add Rate"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {noPos ? (
-            <div className="rounded-card border border-subtle bg-warning-soft px-4 py-3 text-sm text-warning">
-              This customer has no purchase orders — the invoice will be generated without a PO.
-            </div>
-          ) : (
-            <>
-              <Field label="Purchase Order" required>
-                <select className={inputCls} value={poId}
-                  onChange={(e) => { setPoId(e.target.value); setGenError(""); }}>
-                  <option value="">Select PO…</option>
-                  {/* Expired POs stay selectable (labelled) — billing often
-                      continues while a renewal is signed. Only cancelled POs
-                      are disabled. */}
-                  {poGroups.map((g) => (
-                    <optgroup key={g.label} label={g.label}>
-                      {g.items.map((p) => (
-                        <option key={p.id} value={p.id} disabled={p.selectable === false}>
-                          {poLabel(p)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </Field>
-              {isSuggested && (
-                <div className="rounded-card border border-success/30 bg-success-soft px-3 py-2 text-xs font-semibold text-success">
-                  Suggested automatically — this PO is raised for{" "}
-                  {data?.timesheet_employee_name || "this employee"} and covers this month. Just verify and generate.
-                </div>
-              )}
-              {mismatch && (
-                <div className="rounded-card border border-warning/30 bg-warning-soft px-3 py-2 text-xs font-semibold text-warning">
-                  Heads up: this PO is raised for <b>{selected!.employee_name}</b>, not{" "}
-                  <b>{data?.timesheet_employee_name || "this timesheet's employee"}</b>. You can still
-                  use it (shared POs are fine) — just make sure it's the PO you mean to draw down.
-                </div>
-              )}
-              {selected && (
-                <div className="space-y-1.5 rounded-card border border-subtle px-4 py-3">
-                  <div className={row}>
-                    <span className={lbl}>PO</span>
-                    <span className={val}>{selected.po_number}{selected.po_type ? ` · ${selected.po_type}` : ""}</span>
-                  </div>
-                  {selected.employee_name && (
-                    <div className={row}>
-                      <span className={lbl}>Raised for</span>
-                      <span className={val}>{selected.employee_name}</span>
-                    </div>
-                  )}
-                  <div className={row}><span className={lbl}>Total PO amount</span><span className={val}>{inr(selected.total_value)}</span></div>
-                  <div className={row}><span className={lbl}>Used amount</span><span className={val}>{inr(selected.used_value)}</span></div>
-                  <div className={row}>
-                    <span className={lbl}>Balance amount</span>
-                    <span className={`${val} text-success`}>{inr(selected.balance_value)}</span>
-                  </div>
-                  <div className={row}><span className={lbl}>PO starts</span><span className={val}>{dShort(selected.start_date)}</span></div>
-                  {selected.end_date && (
-                    <div className={row}>
-                      <span className={lbl}>PO ends</span>
-                      <span className={val}>
-                        {dShort(selected.end_date)}
-                        {selected.expired && (
-                          <span className="ml-2 inline-flex items-center rounded-control bg-warning-soft px-1.5 py-0.5 text-[11px] font-bold text-warning">
-                            Expired
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  )}
-                  {selected.project_allocated != null && (
-                    <div className={row}>
-                      <span className={lbl}>This project</span>
-                      <span className={val}>{inr(selected.project_used)} used of {inr(selected.project_allocated)} allocated</span>
-                    </div>
-                  )}
-                  <div className={row}><span className={lbl}>Status</span><StatusBadge status={selected.status} /></div>
-                </div>
-              )}
-            </>
-          )}
-
-          {calc && calc.line_items?.length > 0 && (
-            <div className="rounded-card border border-subtle bg-surface-2/40 px-4 py-3">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">
-                This invoice will be raised as
-              </p>
-              {calc.line_items.slice(0, 1).map((li: any, i: number) => {
-                const qtyN = Number(qtyStr);
-                const rateN = Number(rateStr);
-                const liveAmount = Number.isFinite(qtyN) && Number.isFinite(rateN)
-                  ? Math.round(qtyN * rateN * 100) / 100 : Number(li.amount);
-                const edited = qtyN !== Number(li.total_billed_qty) || rateN !== Number(li.rate_per_unit);
-                return (
-                  <div key={i} className="space-y-2 text-sm">
-                    <div className="font-semibold text-primary">{li.description}</div>
-                    <div className="flex flex-wrap items-end gap-3">
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] font-semibold text-muted">Qty</span>
-                        <input type="number" min={0} step="0.01" className={`${inputCls} !w-28 text-xs`}
-                          value={qtyStr} onChange={(e) => setQtyStr(e.target.value)} />
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-[11px] font-semibold text-muted">Rate</span>
-                        <input type="number" min={0} step="0.01" className={`${inputCls} !w-36 text-xs`}
-                          value={rateStr} onChange={(e) => setRateStr(e.target.value)} />
-                      </label>
-                      <div className="pb-1 text-xs text-secondary">
-                        {Number(li.loss_of_pay_days || 0) > 0 && (
-                          <span className="mr-4 text-danger">LOP {li.loss_of_pay_days}</span>
-                        )}
-                        {Number(li.no_billing_days_excluded || 0) > 0 && (
-                          <span className="mr-4 text-warning" title={li.no_billing_until
-                            ? `Initial no-billing period runs until ${li.no_billing_until}`
-                            : undefined}>
-                            No-billing period: {li.no_billing_days_excluded} day{Number(li.no_billing_days_excluded) === 1 ? "" : "s"} excluded
-                          </span>
-                        )}
-                        <span className="font-semibold text-primary">Amount {inr(liveAmount)}</span>
-                      </div>
-                    </div>
-                    {edited && (
-                      <p className="text-[11px] font-semibold text-warning">
-                        Edited from the computed calculation (qty {li.total_billed_qty}, rate {inr(li.rate_per_unit)}) —
-                        the change is recorded in the activity log.
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-              <div className="mt-2 flex justify-between border-t border-subtle pt-2 text-sm">
-                <span className="font-semibold text-secondary">Sub-total</span>
-                <span className="font-bold text-primary">
-                  {inr(Number.isFinite(Number(qtyStr)) && Number.isFinite(Number(rateStr))
-                    ? Math.round(Number(qtyStr) * Number(rateStr) * 100) / 100
-                    : calc.totals?.sub_total)}
-                </span>
-              </div>
-              <p className="mt-1.5 text-[11px] text-muted">
-                Verify — or correct qty/rate here — then Generate. The invoice is created exactly
-                from these figures.
-              </p>
-              {/* Approval froze these figures. Silence here is what made the
-                  old behaviour dangerous — a policy edit after approval used
-                  to change the bill with nobody deciding it. */}
-              {(calc.totals as any)?.figures_drifted ? (
-                <p className="mt-2 rounded-control bg-warning/10 px-2.5 py-2 text-[11px] font-semibold text-warning">
-                  ⚠ Billing policy or calendar changed after approval. A live recompute
-                  now gives {inr((calc.totals as any).live_sub_total)}, but the figures
-                  frozen at approval (shown above) are what will be billed. If the new
-                  figures are the intended ones, reject and re-approve this timesheet.
-                </p>
-              ) : (calc.totals as any)?.frozen_at ? (
-                <p className="mt-1 text-[11px] text-muted">
-                  Figures frozen at approval
-                  {(() => { const d = new Date((calc.totals as any).frozen_at); return Number.isNaN(d.getTime()) ? "" : ` on ${d.toLocaleDateString()}`; })()}.
-                </p>
-              ) : null}
-            </div>
-          )}
-
-          <div className="border-t border-subtle pt-4">
-            {genError && (
-              <div role="alert"
-                className="mb-3 rounded-card border border-danger/40 bg-danger-soft px-3 py-2 text-sm font-semibold text-danger">
-                {genError}
-                {/PO balance/i.test(genError) && selected && (
-                  <div className="mt-1 text-xs font-normal">
-                    {selected.po_number} has {inr(selected.balance_value)} left — less than this
-                    invoice's total. Pick another PO, or top up / re-allocate this one under
-                    Purchase Orders.
-                  </div>
-                )}
               </div>
             )}
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" className={btnSecondary} onClick={onClose} disabled={generating}>Cancel</button>
-              <button
-                type="button"
-                className={btnPrimary}
-                disabled={!canGenerate || generating}
-                title={!canGenerate ? "Select a PO first" : undefined}
-                onClick={generate}
-              >
-                <FilePlus2 size={15} /> {generating ? "Generating…" : "Generate Invoice"}
-              </button>
-            </div>
+
+            {/* Invoice format FIRST (23 Sep 2026): the customer-specific column
+                choice is what the GM is here to confirm; the PI number is assigned
+                by the server and Finance types the tax number at conversion. */}
+            <DialogSection n={1} title="Invoice format for this customer" tone="amber" done
+              hint="Which optional columns this customer's document prints. Confirmed here, remembered on the customer for next month; Finance can still correct it.">
+              <InvoiceFormatPicker value={format} onChange={setFormat} />
+            </DialogSection>
+
+            {data?.rate && (
+              <DialogSection n={2} title={`Rate this month bills at — ${month}`} tone="amber" done={data.rate.rate != null && data.rate.rate > 0}
+                hint={data.rate.source}
+                action={data.rate.project_employee_id != null && rateMode === null ? (
+                  <div className="flex gap-1.5">
+                    {data.rate.current_rate_row && (
+                      <button type="button" className={`${btnSecondary} !h-8 !px-2.5 text-xs`}
+                        title="Adjust the rate this month bills from" onClick={() => openRateForm("edit")}>
+                        Edit rate
+                      </button>
+                    )}
+                    <button type="button" className={`${btnSecondary} !h-8 !px-2.5 text-xs`}
+                      title="Start a new rate from a new Effective From date" onClick={() => openRateForm("add")}>
+                      Add rate
+                    </button>
+                  </div>
+                ) : undefined}>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <div className="text-2xl font-bold tabular-nums text-primary">
+                      {inr(data.rate.rate)}
+                      <span className="ml-2 text-sm font-semibold text-secondary">{UNIT_LABELS[data.rate.billing_unit] || data.rate.billing_unit}</span>
+                    </div>
+                    {data.rate.rate_split && (
+                      <div className="mt-1.5 space-y-0.5 text-xs text-secondary">
+                        <div className="font-semibold text-warning">Rate changes mid-month — billed per stretch:</div>
+                        {data.rate.sub_periods.map((s, i) => (
+                          <div key={i}>{dShort(s.from)} – {dShort(s.to)}: {inr(s.rate)}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {data.rate.current_rate_row && (
+                    <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-semibold text-muted">
+                      In force since {dShort(data.rate.current_rate_row.effective_from)}
+                    </span>
+                  )}
+                </div>
+                {rateMode === null && <div className="mt-2"><RateUnitWarning line={li0} /></div>}
+                {rateForm && (
+                  <div className="mt-3 rounded-card border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+                    <div className="text-xs font-bold text-primary">{rateMode === "edit" ? "Edit the current rate" : "Add a new rate"}</div>
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      {rateMode === "edit"
+                        ? "Changes the stored Commercial Details row this month bills from."
+                        : "The previous rate automatically ends the day before this one starts."}
+                    </p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <Field label="Effective from" required>
+                        <input type="date" className={inputCls} value={rateDate} onChange={(e) => setRateDate(e.target.value)} />
+                      </Field>
+                      <Field label="Priced per" required>
+                        <select className={inputCls} value={rateUnit} onChange={(e) => setRateUnit(e.target.value)}>
+                          {BILLING_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                        </select>
+                      </Field>
+                      <Field label={`Rate (${UNIT_LABELS[rateUnit] || rateUnit})`} required>
+                        <input type="number" min={0} step="0.01" className={inputCls} value={rateValue}
+                          onChange={(e) => setRateValue(e.target.value)} placeholder="0.00" />
+                      </Field>
+                    </div>
+                    {rateUnit && rateUnit !== data.rate.billing_unit && (
+                      <p className="mt-2 text-[11px] font-semibold text-warning">
+                        Changes the unit of EVERY rate for this employee on this project; approved sheets not yet invoiced are recalculated.
+                      </p>
+                    )}
+                    <div className="mt-2 flex justify-end gap-2">
+                      <button type="button" className={`${btnSecondary} !px-2.5 !py-1 text-xs`} onClick={() => setRateMode(null)} disabled={savingRate}>Cancel</button>
+                      <button type="button" className={`${btnPrimary} !px-2.5 !py-1 text-xs`} onClick={saveRate} disabled={savingRate}>
+                        {savingRate ? "Saving…" : rateMode === "edit" ? "Save rate" : "Add rate"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </DialogSection>
+            )}
+
+            <DialogSection n={3} title="Purchase order it draws from" tone="amber" done={canGenerate}
+              hint={noPos ? undefined : "The PO is drawn at conversion by the value before GST. This employee's POs come first."}>
+              {noPos ? (
+                <div className="rounded-card border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                  This customer has no purchase orders — the invoice will be generated without a PO.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* The picker (30 Sep 2026): this employee's POs first — tagged to
+                      them or billed for them before — then the project's, then the
+                      whole book; search, live / expired, sort. Expired POs stay
+                      selectable (billing often continues while a renewal is signed);
+                      only cancelled POs are off. */}
+                  <PoPicker pos={pos} value={poId ? Number(poId) : null}
+                    onChange={(id) => { setPoId(String(id)); setGenError(""); }}
+                    employeeName={data?.timesheet_employee_name}
+                    suggestedId={data?.suggested_po_id}
+                    monthLabel={month || undefined} />
+                  {isSuggested && (
+                    <div className="flex items-start gap-2 rounded-card border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      <Check size={14} className="mt-px shrink-0" aria-hidden />
+                      Suggested automatically — this PO is raised for {data?.timesheet_employee_name || "this employee"} and covers this month. Just verify and raise.
+                    </div>
+                  )}
+                  {mismatch && (
+                    <div className="flex items-start gap-2 rounded-card border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                      <AlertTriangle size={14} className="mt-px shrink-0" aria-hidden />
+                      <span>This PO is raised for <b>{selected!.employee_name}</b>, not <b>{data?.timesheet_employee_name || "this timesheet's employee"}</b>. You can still use it (shared POs are fine) — just make sure it's the PO you mean to draw down.</span>
+                    </div>
+                  )}
+                  {selected && (
+                    <div className="rounded-card border border-subtle bg-surface-1 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-sm font-bold text-primary">
+                          {selected.po_number}{selected.po_type ? <span className="ml-1.5 text-xs font-semibold text-muted">· {selected.po_type}</span> : null}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {selected.expired && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">Expired</span>}
+                          <StatusBadge status={selected.status} />
+                        </div>
+                      </div>
+                      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
+                        <PoStat label="PO value" value={inr(selected.total_value)} />
+                        <PoStat label="Used" value={inr(selected.used_value)} />
+                        <PoStat label="Balance" value={inr(selected.balance_value)} tone="ok" />
+                        <PoStat label="Period" value={`${dShort(selected.start_date)}${selected.end_date ? ` – ${dShort(selected.end_date)}` : ""}`} />
+                        {selected.employee_name && <PoStat label="Raised for" value={selected.employee_name} />}
+                        {selected.project_allocated != null && (
+                          <PoStat label="This project" value={`${inr(selected.project_used)} of ${inr(selected.project_allocated)}`} />
+                        )}
+                      </dl>
+                    </div>
+                  )}
+                </div>
+              )}
+            </DialogSection>
           </div>
+
+          <aside className="space-y-3 lg:sticky lg:top-0 lg:self-start">
+            {li0 ? (
+              <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+                <div className="border-b border-subtle bg-surface-2 px-4 py-2.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted">This invoice will be raised as</p>
+                  <p className="mt-0.5 text-sm font-semibold text-primary">{li0.description}</p>
+                </div>
+                <div className="space-y-3 p-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-semibold text-muted">Qty</span>
+                      <input type="number" min={0} step="0.01" className={`${inputCls} text-sm tabular-nums`}
+                        value={qtyStr} onChange={(e) => setQtyStr(e.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-semibold text-muted">Rate</span>
+                      <input type="number" min={0} step="0.01" className={`${inputCls} text-sm tabular-nums`}
+                        value={rateStr} onChange={(e) => setRateStr(e.target.value)} />
+                    </label>
+                  </div>
+                  {(Number(li0.loss_of_pay_days || 0) > 0 || Number(li0.no_billing_days_excluded || 0) > 0) && (
+                    <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold">
+                      {Number(li0.loss_of_pay_days || 0) > 0 && (
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">LOP {li0.loss_of_pay_days} d</span>
+                      )}
+                      {Number(li0.no_billing_days_excluded || 0) > 0 && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                          title={li0.no_billing_until ? `Initial no-billing period runs until ${li0.no_billing_until}` : undefined}>
+                          No-billing: {li0.no_billing_days_excluded} d excluded
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-baseline justify-between border-t border-subtle pt-3">
+                    <span className="text-xs font-semibold text-secondary">Sub-total (before GST)</span>
+                    <span className="text-xl font-bold tabular-nums text-primary">{inr(liveAmount)}</span>
+                  </div>
+                  {balanceAfter != null && (
+                    <div className={`rounded-card px-3 py-2 text-xs ${balanceAfter < 0
+                      ? "bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                      : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"}`}>
+                      <div className="flex justify-between"><span>PO balance now</span><b className="tabular-nums">{inr(selected!.balance_value)}</b></div>
+                      <div className="flex justify-between"><span>After this invoice</span><b className="tabular-nums">{inr(balanceAfter)}</b></div>
+                    </div>
+                  )}
+                  {edited && (
+                    <p className="text-[11px] font-semibold text-warning">
+                      Edited from the computed calculation (qty {li0.total_billed_qty}, rate {inr(li0.rate_per_unit)}) — the change is recorded in the activity log.
+                    </p>
+                  )}
+                  {/* Approval froze these figures. Silence here is what made the
+                      old behaviour dangerous — a policy edit after approval used
+                      to change the bill with nobody deciding it. */}
+                  {(calc?.totals as any)?.figures_drifted ? (
+                    <p className="rounded-control bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                      ⚠ Billing policy or calendar changed after approval. A live recompute now gives {inr((calc!.totals as any).live_sub_total)},
+                      but the figures frozen at approval (shown here) are what will be billed. If the new figures are the intended ones, reject and re-approve this timesheet.
+                    </p>
+                  ) : (calc?.totals as any)?.frozen_at ? (
+                    <p className="text-[11px] text-muted">
+                      Figures frozen at approval
+                      {(() => { const d = new Date((calc!.totals as any).frozen_at); return Number.isNaN(d.getTime()) ? "" : ` on ${d.toLocaleDateString()}`; })()}.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-card border border-subtle bg-surface-1 p-4 text-xs text-muted">The invoice preview is still loading.</div>
+            )}
+            <WhatHappens tone="amber" title="What happens next" items={[
+              { icon: Receipt, text: "A Proforma number (PI-…) is assigned; nothing is drawn from the PO yet." },
+              { icon: Send, text: "Finance reviews it and generates the tax invoice — or returns it to you with a reason." },
+              { icon: Check, text: "At conversion the PO is drawn by the value before GST; the format is remembered on the customer." },
+            ]} />
+          </aside>
         </div>
       )}
     </Modal>
+  );
+}
+
+function PoStat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "ok" }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] text-muted">{label}</dt>
+      <dd className={`truncate font-semibold tabular-nums ${tone === "ok" ? "text-success" : "text-primary"}`}>{value}</dd>
+    </div>
   );
 }
 
@@ -3220,7 +3377,9 @@ function InvoiceDetailsSection({
   summary?: Summary | null;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const canInvoice = useCanAct("invoices", "create", useHasRole("Finance", "RMG"));
+  // The GM raises the PROFORMA (23 Sep 2026); Finance converts it on the invoice page.
+  // An approval button — decided by the server's `me.approvals`, not a tab grant.
+  const canInvoice = useCanApprove("timesheet.generate_invoice");
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -3275,9 +3434,19 @@ function InvoiceDetailsSection({
         to={`invoices/${preview.linked_invoice.id}/tax-invoice`}
         className={`rounded-control text-xs font-semibold text-sky-600 hover:underline dark:text-sky-300 ${focusRing}`}
       >
-        Tax Invoice
+        {preview.linked_invoice.kind === "Proforma" ? "Proforma Invoice" : "Tax Invoice"}
       </CrmLink>
-      <StatusBadge status={preview.linked_invoice.payment_status} />
+      {preview.linked_invoice.kind === "Proforma" ? (
+        <span className="rounded-full px-2 py-0.5 text-xs font-bold text-white"
+          style={{ background: preview.linked_invoice.returned_at ? "#9a3412" : PROFORMA_COLOR }}
+          title={preview.linked_invoice.returned_at
+            ? `Returned by Finance: ${preview.linked_invoice.returned_reason || ""}`
+            : "Awaiting Finance review"}>
+          {preview.linked_invoice.returned_at ? "Proforma · returned" : "Proforma"}
+        </span>
+      ) : (
+        <StatusBadge status={preview.linked_invoice.payment_status} />
+      )}
     </span>
   ) : (
     breakdownBtn
@@ -3347,10 +3516,10 @@ function InvoiceDetailsSection({
                   <div className="font-semibold text-primary">
                     Rate basis: {inr(li.rate_per_unit)}
                     {" / "}
-                    {li.billing_unit === "Yearly" ? "Month (Yearly contract ÷ 12)"
-                      : li.billing_unit === "Monthly" ? "Month"
-                      : li.billing_unit === "Daily" ? "Day" : "Hour"}
-                    <span className="ml-1 font-normal text-secondary">— from project rate ({li.billing_unit})</span>
+                    {li.billing_unit === "Yearly" ? "Month (Yearly contract ÷ 12)" : unitWord(li.billing_unit)}
+                    <span className="ml-1 font-normal text-secondary">
+                      — from the employee&apos;s Commercial Details (priced per {unitWord(li.billing_unit).toLowerCase()})
+                    </span>
                   </div>
                   <div className="mt-0.5 text-secondary">
                     {Number(li.working_days_in_period || 0) > 0 && (
@@ -3364,6 +3533,7 @@ function InvoiceDetailsSection({
                   </div>
                 </div>
               )}
+              <RateUnitWarning line={li} />
               <div className="space-y-1.5 border-t border-subtle pt-3">
                 <div className="flex justify-between">
                   <span className="text-secondary">Qty × Rate</span>
@@ -3371,7 +3541,7 @@ function InvoiceDetailsSection({
                     {num(li?.total_billed_qty)} × {inr(li?.rate_per_unit)}
                     {li?.billing_unit ? (
                       <span className="text-secondary">
-                        {" / "}{li.billing_unit === "Hourly" ? "Hour" : li.billing_unit === "Daily" ? "Day" : "Month"}
+                        {" / "}{li.billing_unit === "Yearly" ? "Month" : unitWord(li.billing_unit)}
                       </span>
                     ) : null}
                   </span>
@@ -3470,7 +3640,14 @@ function InvoiceDetailsSection({
                           <th className={cell}>Description of Service</th>
                           <th className={`${cell} text-right`}>Monthly Cost</th>
                           <th className={`${cell} text-right`}>Total Billed Hour / Qty</th>
-                          <th className={`${cell} text-right`}>Rate Per Hour / Day</th>
+                          <th className={`${cell} text-right`}>
+                            {(() => {
+                              // The column holds the rate in its OWN unit — a monthly
+                              // price under "Per Hour / Day" read as a tiny hourly rate.
+                              const u = preview.line_items[0]?.billing_unit;
+                              return u ? `Rate Per ${u === "Yearly" ? "Month" : unitWord(u)}` : "Rate Per Unit";
+                            })()}
+                          </th>
                           <th className={`${cell} text-right`}>Leave</th>
                           <th className={`${cell} text-right`}>Comp-off</th>
                           <th className={`${cell} text-right`}>LOP</th>
@@ -3512,6 +3689,9 @@ function InvoiceDetailsSection({
                       </tfoot>
                     </table>
                   </div>
+                  {preview.line_items[0]?.rate_unit_warning && (
+                    <div className="mt-3"><RateUnitWarning line={preview.line_items[0]} /></div>
+                  )}
                   {canInvoice && (
                     <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
                       {/* Approved but not invoiced: re-freeze against the CURRENT
@@ -3538,18 +3718,20 @@ function InvoiceDetailsSection({
                         </button>
                       )}
                       <span className="text-xs text-muted">
-                        Opens a review popup: verify or edit Qty and Rate, pick the funding PO,
-                        then confirm — nothing is created until you do.
+                        Opens a review popup: confirm the customer's invoice format, verify or edit Qty and
+                        Rate, pick the funding PO, then raise the proforma — Finance generates the original
+                        invoice from it.
                       </span>
-                      {/* Opens the verification dialog — editable calculation +
-                          PO selection. The invoice cannot be generated until
-                          both are confirmed there. */}
+                      {/* Opens the verification dialog — format + editable
+                          calculation + PO selection. Nothing is created until
+                          all three are confirmed there. */}
                       <button
                         className={btnPrimary}
                         disabled={!preview.can_generate}
                         onClick={() => setSelectingPo(true)}
                       >
-                        <FilePlus2 size={15} /> Verify &amp; Generate Invoice…
+                        <FilePlus2 size={15} />
+                        {preview.linked_invoice?.returned_at ? "Reissue Proforma…" : "Verify & Raise Proforma…"}
                       </button>
                     </div>
                   )}
@@ -4004,8 +4186,10 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
   /* Who may decide, not who may look. HR keeps full visibility of this tab —
      they just get "Open" instead of "Review", because the decision is RMG's,
      Sales's or (via isSuperAdmin) Admin/CEO's. */
-  const canAct = useCanAct("timesheets", "edit", useHasRole("RMG", "Sales"));
-  const canInvoice = useCanAct("invoices", "create", useHasRole("Finance", "RMG"));
+  // 23 Sep 2026 flow: the GM approves and raises the Proforma; Sales only
+  // fills and submits. Approval buttons follow `me.approvals` (25 Sep 2026).
+  const canAct = useCanApprove("timesheet.approve");
+  const canInvoice = useCanApprove("timesheet.generate_invoice");
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4083,7 +4267,9 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
                 const id = r.id ?? r.timesheet_id!;
                 const submitted = r.status === "Submitted";
                 const approved = r.status === "Approved";
-                const hasInvoice = !!r.invoice;
+                // A Proforma Finance RETURNED is raised again (replaced), so it does not block.
+                const returnedProforma = r.invoice?.kind === "Proforma" && !!r.invoice?.returned_at;
+                const hasInvoice = !!r.invoice && !returnedProforma;
                 return (
                   <tr
                     key={id}
@@ -4115,10 +4301,10 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
                           <button type="button"
                             className={`${btnSecondary} !px-2 !py-1 text-xs`}
                             disabled={!approved || hasInvoice}
-                            title="Select the funding PO, then generate"
+                            title="Confirm the invoice format and funding PO, then raise the proforma"
                             onClick={() => setInvoicingId(id)}
                           >
-                            Generate Invoice…
+                            {returnedProforma ? "Reissue Proforma…" : "Raise Proforma…"}
                           </button>
                         )}
                       </div>

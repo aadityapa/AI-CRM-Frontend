@@ -1,0 +1,24 @@
+# Karnex Orbit
+# Only the home page is public. The CRM, the API and candidate links
+# (interviews, applications, slot bookings) are private.
+User-agent: *
+Allow: /$
+Allow: /favicon.ico
+Allow: /favicon.svg
+Allow: /assets/
+Disallow: /admin
+Disallow: /api/
+Disallow: /auth
+Disallow: /hr
+Disallow: /job
+Disallow: /interview
+Disallow: /candidate
+Disallow: /ats
+Disallow: /apply
+Disallow: /book
+Disallow: /proctor
+Disallow: /thank-you.html
+Disallow: /interview-terminated.html
+Disallow: /*?invite=
+
+Sitemap: https://karnexgroup.com/sitemap.xml
