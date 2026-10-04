@@ -13,8 +13,13 @@
 /** Domain used by tools/import_candidates_json.py and import_candidates_full.py. */
 export const PLACEHOLDER_EMAIL_DOMAIN = "import.karnex.in";
 
+/** Synthesised by the resume path when a CV carries no address
+ *  (`resume-<id>@noemail.karnex.local`, B-V2 `services/slot_booking`). */
+export const NO_EMAIL_MARKER = "@noemail.";
+
 export function isPlaceholderEmail(email?: string | null): boolean {
-  return (email || "").trim().toLowerCase().endsWith(`@${PLACEHOLDER_EMAIL_DOMAIN}`);
+  const e = (email || "").trim().toLowerCase();
+  return e.endsWith(`@${PLACEHOLDER_EMAIL_DOMAIN}`) || e.includes(NO_EMAIL_MARKER);
 }
 
 /** The address to show, or null when there isn't a real one. */

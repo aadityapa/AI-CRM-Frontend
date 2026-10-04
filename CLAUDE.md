@@ -1461,6 +1461,192 @@ Applied Candidates). Harness `desk.html?task=feedback` / `?row=1`, `tasks.html?t
 errors, vitest 6 + 2 + RmgTaskBoard 4 + WorkDesk 7, `vite build` green, both desks rendered light / dark with no console
 errors; backend 72 pass on the touched suites.
 
+**1 Oct 2026 — Applied Candidates chips are STAGES; RMG / GM / Admin get the Opportunities pipeline strip
+(`OpportunitiesWorkspace.test.tsx` now 14; server half in B-V2 `CLAUDE.md`):** two screenshot asks. (1) **Applied
+Candidates** (`Requirements.tsx` `ResumesTab`): the 33-status chip strip is gone — the chips are `CANDIDATE_STAGE_BUCKETS`
+again (All · Sourcing … Onboarding · Closed, `STAGE_TONE` = the Stage column's colours), URL param **`phase`** (was
+`status`), sent as `?phase=` via `bucketPhase`, counts from the server's `status_counts.phases[bucket]`; the Archive list
+offers All · Closed only. `useCandidateStatusCatalogue` / `CANDIDATE_STATUS_TONE` left the file. (2)
+**`OpportunitiesWorkspace`**: `PIPELINE_TAB_ROLES` and `APPLICANTS_TAB_ROLES` gain **RMG**, so an RMG login gets Pipeline T&M
+· Pipeline SOW · Applicants with the stage tabs (Active · Pending Approval · Customer Hold · Sales Hold · Closed · Rejected ·
+Archived · Project · Project Employee) like Sales / Admin; the **Requirements** button now shows for anyone holding both
+Pipeline and Requirements who is not Sales / Sales Head / Admin (`NO_REQUIREMENTS_TAB_ROLES`) — RMG by role, a GM by grant —
+because the sourcing list (RMG Review Queue, pending position changes) lives only there. TA keeps the full-page sourcing
+list. `OpportunitiesListPage` hides the Project / Project Employee tabs for a login without that sidebar entry
+(`navRoles()` from `CRM_NAV` + `useCanAct`), so RMG gets no dead tab. Harness `applied.html?phase=<stage>`. Verified: tsc
+green, eslint 0 errors, vitest 14/14, `vite build` green, the chips rendered with no console errors; backend 62 pass.
+
+**1 Oct 2026 — "Re-apply" on a withdrawn Applied Candidates row (`TaDecision.test.ts` now 7; server half in B-V2
+`CLAUDE.md`):** `TaDecision.tsx` gains the `reapply` decision (emerald `RotateCcw` button, `DecisionDialog` "Apply to this
+opportunity again", flow Self Withdrawn → Sourcing → Technical Screening, note optional, one-tap picks); `taDecisionsFor`
+returns `["reapply"]` for `profile_pipeline_status === "Self_Withdrawn"` (a rejected row still gets nothing new). The closed-row
+branch of `ResumesTab` (`Requirements.tsx`) mounts `TaFlowButtons` for a TA on a withdrawn row only, and the done-chip tooltip
+says Re-apply reopens it. Harness `applied.html?ta=1&sub=archive`. Verified: tsc green, eslint 0 errors, vitest 7/7,
+`vite build` green, the row + dialog rendered with no console errors; backend 33 pass.
+
+**1 Oct 2026 — HR Interviewing + Joined chips, priority & sourcing team on the opportunity page, availability and the
+closing note on Applied Candidates, re-apply after a rejection, employee emails off (`TaDecision.test.ts` re-pinned;
+server half + migration 0117 in B-V2 `CLAUDE.md`):** (1) `crm/lib/candidateStageBuckets.ts` gains **HR Interviewing**
+(fuchsia) and **Joined** (lime) chips / `STAGE_TONE`s — the server's new phases. (2) **`crm/components/PositionTeamPanel.tsx`**
+— `PositionTeamPanel` (Priority select or `PriorityPill` + the sourcing team as `TaChip`s + Assign / Change TAs →
+`AssignTasModal`, a `DecisionDialog` with a checkbox grid of active TA logins, search past 6, optional note with picks; PUT
+`/api/requirements/{id}/ta-assignments`) mounted on the OPPORTUNITY page under `PositionsPanel` (RMG / GM work there) and
+on the requirement page (`showPriority={false}` — its band already has the control). The server's `meta.can_assign` decides
+who may edit; everyone sees the team. `PriorityPill` moved here from `Requirements.tsx`. `Opportunity.requirement_priority`.
+TA's Opportunities list: rows print the assigned TAs under the title and an **Assigned to me** checkbox (`assigned_to_me=true`,
+remembered per session) sits with the filters — never the default. (3) **Applied Candidates**: new **Availability** column
+(`AvailabilityCell`: "Notice 30 days" + "LWD 13 Oct 2026 · in 12 d" — amber within 30 days, green once passed, "Resigned ·
+LWD not set"), and on a closed row the Status cell prints **`ClosedNoteBox`** (`TaDecision.tsx`: "Rejected — Laddagiri · 25
+Sept 2026" + the reason, rose; a withdrawal grey) from the row's `closed_note`. (4) **Re-apply on every closed row**:
+`isClosedCandidacy` / `CLOSED_CANDIDACY_STATUSES` (the server's bucket) replace the Self_Withdrawn-only check in
+`taDecisionsFor` and the closed-row branch; `TaDecisionModal` takes `closedNote` (shown as the notice) and `rejected` (the
+reason becomes required, flow "Rejected → Sourcing → Technical Screening"). (5) Settings ▸ Operations gains "Email employees
+on the HR master" (`notify.employee_emails`, off by default — the timesheet-due mail a deployed employee received). Harness
+`src/__story/team.tsx` (+ `team.html`, `?empty=1`, `?ro=1`); `applied.tsx` rows carry `closed_note` + availability. Verified:
+tsc green, eslint 0 errors, vitest TaDecision 7 + OpportunitiesWorkspace 14, `vite build` green, Applied Candidates (live /
+archive / re-apply dialog) and the team panel + dialog rendered with no console errors; backend 212 pass on the touched suites.
+
+**1 Oct 2026 (later) — tick-and-send for Technical Screening, priority inline on the list, the ATS breakdown as a
+pop-up (UI only; no server change):** three screenshot asks. (1) **Applied Candidates** (`Requirements.tsx` `ResumesTab`):
+a TA on the live list gets row checkboxes (`DataTable selectable`) and a `BulkActionBar` — **"Send N for Technical
+Screening"** (`POST /api/candidate-profiles/send-for-screening` with the ticked profile ids) beside the unchanged per-row
+button; only rows `taDecisionsFor` offers "screen" to count (a ticked row past Sourcing reads "N not at Sourcing —
+skipped"). (2) **TA's Opportunities list** (`RequirementsListPage`): the priority pill is an inline `<select>` —
+`PositionTeamPanel.InlinePriority` (PATCH `/priority`, the row updates in place) — for RMG / Sales Head by role or a
+screener by approval (`useCanApprove("profile.rmg_screening")` — both hooks always called); everyone else keeps
+`PriorityPill`. (3) **`crm/components/AtsBreakdownModal.tsx`** replaces the full-page `BreakdownModal` (+ `BreakdownStat` /
+`BreakdownBar`, deleted from `Requirements.tsx`): an `xl` dialog on the dialog kit — purple `DialogHero` with the
+`ScoreIndicator lg` ring and chips (keyword · AI fit · experience · blend), four stat tiles, Coverage bars, the AI reviewer
+card (summary · strengths · gaps), matched / missing skills, JD terms found / not found, Other checks + the JD preview in a
+`<details>`, and a footer with Open resume · Open profile · Close; the partial-score warning stays; a position with nothing
+to score against says so instead of "0 of 0". Harness `applied.html?ta=1` (row 1 carries a full breakdown, row 5 is a
+sendable Sourcing row). Verified: tsc green, eslint 0 errors, `vite build` green, both rendered with no console errors.
+
+**1 Oct 2026 (evening) — ONE row design on every role's Opportunities list (server half in B-V2 `CLAUDE.md`):** user ask
+with a screenshot of TA's list — "this same UI for all roles for Opportunities, functionality as per role". `OpportunitiesListPage`
+(`Opportunities.tsx`, the Sales / RMG / GM / Admin pipeline strip) now prints the position row: Opportunity ID chip · Title +
+priority (`InlinePriority` for RMG / Sales Head / a screener by approval — change it without opening the deal; `PriorityPill`
+for everyone else) + experience band · Customer + work mode · location · Positions pill (`PositionsCell` restyled; the amber
+"Change" chip stays) · Budget · Status (`requirement_display_status`; a deal with no requirement yet badges its approval /
+stage) · Target date + the due / overdue chip (`dueChip` on the stored requirement status, so a Closed Won deal never reads
+overdue) · then Type (SOW / all-types lists only — T&M has one type) · RFI Value · Created, all still sortable / filterable.
+Row click, `rowHref`, Apply · Edit · Delete, the stage tabs and column filters are untouched. **`crm/lib/positionRows.ts`**
+(PURE) is the shared vocabulary — `fmtRange`, `dueChip`, `REQ_TERMINAL_STATUSES`, `fmtRowDate` — `Requirements.tsx` imports
+them (its local copies are gone). Harness `src/__story/opps.tsx` (+ `opps.html`, `?sales=1`). Verified: tsc green, eslint 0
+errors, vitest OpportunitiesWorkspace 14, `vite build` green, RMG (priority changed in the row) and Sales renders with no
+console errors; backend 68 pass.
+
+**1 Oct 2026 (night) — the sourcing team on EVERY role's Opportunities list (UI only):** checked on the user's ask —
+RMG (by role), GM (`screens_as_rmg`), Sales Head and Admin / CEO assign TAs through `PositionTeamPanel` on the opportunity
+page (`ASSIGN_WRITE`, `meta.can_assign`); everyone who can read the position sees the team. The gap was the pipeline list:
+TA's `RequirementsListPage` already printed the assigned TAs under the title, the Sales / RMG / GM / Admin
+`OpportunitiesListPage` did not. Its Title cell now prints the same `TaChip`s from the row's `assigned_tas` (already on
+the list payload via `positions_by_opportunity`). `Opportunity.assigned_tas` typed. tsc green, eslint 0 errors.
+
+**1 Oct 2026 (night) — "Customer Hold" / "Sales Hold" candidate statuses (server-only; B-V2 `CLAUDE.md`):** a
+candidate on a HELD deal now badges the hold (amber, group "Opportunity on hold") on every screen that prints
+`candidate_status` / `profile_status`; `CandidateStatusBadge`, the Status filter and the chips picked it up from the
+catalogue with no code change.
+
+**1 Oct 2026 (night, last) — assign TAs at approval and from the list (server half in B-V2 `CLAUDE.md`):**
+`PositionTeamPanel.tsx` exports **`TaPicker`** (the checkbox grid, extracted from `AssignTasModal`),
+**`fetchTaAssignments(id)`** (the ONE read of `…/ta-assignments` → assignments · options · `canAssign`) and
+**`AssignTasButton`** ("Assign TAs" / "Change TAs"): it fetches the team only when clicked, refuses with a toast when the
+server's `meta.can_assign` says no, opens `AssignTasModal` and hands the saved rows back through `onChanged`. Mounted
+under the TA chips on BOTH lists — `OpportunitiesListPage` (Sales / RMG / GM / Admin strip, `canSetPriority` rows with a
+requirement) and `RequirementsListPage` (TA / RMG strip, `canSetPriority`) — so RMG / GM / Sales Head assign without
+opening the deal; the row's chips update in place. **`JdSkillsModal` approve mode** gains step 4 **"Who sources it"**
+(`TaPicker` over the team endpoint's options, pre-ticked with the current team) before the note; the approval POST
+carries `ta_user_ids` (only when options loaded, so an older server is unaffected) and the "When you approve" line names
+the count. Verified: tsc green, eslint 0 errors, `vite build` green; backend 80 pass on the touched suites.
+
+**1 Oct 2026 (night) — JD & skills: ONE card, any role on the position fixes a missing JD (UI only; the server's
+`JD_EDIT_ROLES` is unchanged):** screenshot ask — "when an opportunity is missing the JD, TA or any role can upload the JD &
+skills; show it like this, make it the best". **`crm/components/JdSkillsCard.tsx`** replaces the amber banner + the Skills
+card + the Job Description card on the position page's Details tab (`Requirements.tsx`; `JdSkillsModal` is mounted by the
+card now, `showJdSkills` / `jdSkillsMissing` / the `Star` import are gone): a header with a **readiness ring** over the three
+things the ATS needs (PURE `jdSkillsState`: JD text · JD file · skills → done / total, `ready`, `missing`), the **Edit JD &
+skills** (ready) / **Add JD & skills** (amber, missing) button, and for a reader without the grant "Ask RMG, Sales or TA";
+while something is missing a **setup panel** — three checklist tiles (done / to do), "why it matters" (ATS · AI L1 · TA
+sourcing) and one "Upload JD & add skills" call to action (the dialog's drop zone takes the file; the text is read out of it);
+then Skills (mandatory first, solid + star; optional after; required level in the tooltip; "N mandatory drive the ATS score")
+and the RMG JD (collapsed past `JD_PREVIEW_LINES`=14 with "Show the full JD", files as violet chips) beside the customer's
+reference JD. ⚠️ `canEditJdSkills` is now `!terminal && (isAdmin || useCanAct("requirements","edit", useHasRole(RMG · Sales ·
+Sales_Head · TA)))` — the one client mirror of `JD_EDIT_ROLES`, so a GM / custom role with the requirements Edit grant gets the
+button (the role-only check hid it). **`JdSkillsCardForRequirement({requirementId, toast})`** is the self-fetching twin
+(`GET /api/requirements/{id}`, renders nothing it cannot load) mounted on the **opportunity page** under `PositionTeamPanel`
+(`Opportunities.tsx`) — Sales has no route to the position page and RMG / GM work from there; it opens EXPANDED only while
+something is missing. Verified: tsc green, eslint 0 errors, `vite build` green.
+
+**1 Oct 2026 (night) — the list-row "Assign TAs" is a chip (UI only):** `PositionTeamPanel.ASSIGN_CHIP` — a dashed
+pill the size of the `TaChip`s beside it ("Assign TAs", "Change" once a team exists) — is `AssignTasButton`'s default
+look on both lists for every role; the opportunity-page panel keeps its full button (`className`).
+
+**1 Oct 2026 (night, later) — Opportunities · Customers · Candidates lists in ONE design, an Actions column
+(UI only; no server change):** screenshot asks — hide RFI Value, move Assign TAs to the end under a column named
+Actions, redesign the three lists for every role without touching functionality. (1) **`DataTable` gains
+`rowActionsLabel`** (blank by default — every existing table renders as before; with a label the actions column is
+headed and sized to its content). (2) **`PageHeader.tsx` now exports `StagePills` + `STAGE_PILL_DOT`** (moved out of
+`Requirements.tsx`; keys for both the TA strip and the pipeline strip + Customer statuses). (3) **Opportunities list**
+(`OpportunitiesListPage`): the plain h1 + `Tabs` became the `PageHeader` (ocean, eyebrow "Pipeline · T&M / SOW", stats:
+total in the tab · positions open · high priority · past target date — from the page in hand) with the stage tabs as
+`StagePills`; the **RFI Value column and its filter are gone** (`rfi_min/max` no longer sent); the **Assign TAs chip
+moved from under the title into the last column, now headed "Actions"** (Assign / Apply / Edit / Delete, each by right —
+`rowActions` renders when `canWrite || canApply || canSetPriority`); the TA chips stay under the title. The same move on
+TA's `RequirementsListPage` (Assign TAs → Actions, before Apply). (4) **Customers list**: an identity tile (initials,
+stable gradient per name) + name + legal entity ("No legal entity yet" in amber), Location (city · state · country),
+Type (NN / EN / EE with its words), Billing ("PO on file" / "No PO yet" from `has_po`), Status, Since; the status
+`<select>` became `StagePills` (All · Active · Inactive) in the header; `Customer` type gains `city / state / country /
+has_po` (the server already sent them). (5) **Candidates list**: 11 columns → 6 — Candidate (avatar · name · email ·
+phone), Location, Experience (+ domain under), CTC (current → expected, Lac), CV (On file / No CV chips), Added (date +
+"by <TA>"); filters, search, bulk ZIP, Apply / Edit / Delete unchanged. Verified: tsc green, eslint 0 errors on the
+touched files, vitest OpportunitiesWorkspace 14, `vite build` green.
+
+**1 Oct 2026 (night) — "Template requested" instead of a second request (server half in B-V2 `CLAUDE.md`):**
+`RequirementDetailPage` (`Requirements.tsx`) reads the opportunity's template requests (`?opportunity_id=`, the server's
+one-per-opportunity rule) into `openTemplateRequest` (latest not Cancelled). While one exists TA's **Request template**
+button becomes an emerald **"Template requested · TR-…"** chip that opens Template Requests, and the amber "No AI L1
+template yet" card says which request RMG is building; once a template is linked the button is gone. Raising one no longer
+navigates away (the page refreshes in place), and a 409 refreshes the state so the chip appears. The Preferred location fix
+is server-side only (the profile reads the candidate record, which the upload now fills).
+
+**1 Oct 2026 (night) — the bulk upload's opening email + TA records the reply (`TaDecision.test.ts` now 9; server half
+in B-V2 `CLAUDE.md`):** user ask — every bulk-uploaded candidate gets a professional "we have an opening, are you
+interested?" mail, replies to the TA, and TA confirms the details and moves them to Technical Screening. (1) **Applied
+Candidates ▸ Bulk upload (ZIP)**: a checkbox beside the button, **"Email each candidate about the opening"** (on by
+default, remembered in `localStorage["crm.zip.openingMail"]`, try/catch), sent as the `send_opening_email` form field;
+the progress toast and the results dialog count the mails ("N emailed about the opening (M had no usable email)") and
+each applied line says "emailed <address>" or "no email in the CV". (2) **`TaDecision.tsx`**: decisions `interested`
+(emerald ThumbsUp → `DecisionDialog` with **`ConfirmDetails`** — Email · Phone · Experience · Current / Expected CTC ·
+Notice · Current / Preferred location from the row, a blank reads "Not captured" in amber, **Edit details** closes the
+dialog and opens `EditApplicantModal` on that row; confirm = "Confirm & send for screening") and `not_interested`
+(fuchsia → Self Withdrawn, note optional). `taDecisionsFor` gives a Sourcing row whose `opening_mail.state === "sent"`
+**Interested · Not interested · Hold · Reject** (the answer replaces Technical Screening / Self Withdraw); held / no-mail
+rows are unchanged. `OpeningMailChip` (sky "Opening email sent · 2 d ago — awaiting reply" / emerald "Replied:
+interested" / rose "Replied: not interested") sits in the Status cell; **`SendOpeningMailButton`** ("Opening email", or
+"Resend email" while awaiting) shows for TA on a Sourcing row with a real address (`POST …/opening-email`). Bulk row
+selection counts awaiting-reply rows as sendable. `confirmDetailsFor(row)` + `ZIP_OPENING_MAIL_KEY` live at the top of
+`Requirements.tsx`. (3) `crm/lib/candidateEmail.isPlaceholderEmail` now also catches the resume path's
+`resume-<id>@noemail.karnex.local` (`NO_EMAIL_MARKER`), so it is never shown or mailed. Verified: tsc green, eslint 0
+errors, vitest TaDecision 9/9, `vite build` green.
+
+**2 Oct 2026 — the JD & skills card moved INTO the Opportunity Details tab (UI only):** screenshot ask — "remove this
+JD & Skills section from here, show it when I open the Opportunity Details tab; keep the page simple". On the
+opportunity page (`Opportunities.tsx`) `JdSkillsCardForRequirement` no longer sits above the tab strip (under
+`PositionTeamPanel`); it renders inside `tab === "details"`, right after the "Opportunity Details" card. The header
+area now holds only the positions + priority / sourcing-team panels. Behaviour of the card is unchanged; the position
+page already had it inside its Details tab. tsc green.
+
+**2 Oct 2026 (later) — RMG / GM fill each missing part of the JD & skills card in place (server half in B-V2
+`CLAUDE.md`):** screenshot — a GM saw "Ask RMG, Sales or TA to add it" with Skills / RMG JD / Customer JD all empty.
+(1) `canEdit` on BOTH mounts (`JdSkillsCardForRequirement`, `Requirements.tsx` `canEditJdSkills`) now also admits
+`useCanApprove("profile.rmg_screening")` — whoever screens as RMG (GM custom role), mirroring the server's
+`JD_EDIT_GATE`. (2) `JdSkillsCard.tsx`: a missing section shows a dashed **`AddTile`** to an editor — **Add skills** and
+**Add the RMG JD** open `JdSkillsModal`, **Upload the customer's JD** opens a file picker (`.pdf/.doc/.docx/.txt`,
+≤ 15 MB) and posts `crmUpload /api/requirements/{id}/attachments {kind: customer_jd}` then `onSaved(null)` (re-read);
+filled sections get a small `SectionAction` (Edit skills · Edit JD · + Add another customer JD). A reader without the
+right still sees the plain "No … yet" text; the hint reads "Ask RMG / GM, Sales or TA". tsc green, eslint 0, `vite build` green.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```

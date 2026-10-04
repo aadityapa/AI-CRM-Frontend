@@ -35,3 +35,31 @@ describe("roundHasStarted", () => {
     expect(roundHasStarted("not a date", now)).toBe(true);
   });
 });
+
+describe("taDecisionsFor — the opening email (1 Oct 2026)", () => {
+  const at = (extra: Record<string, unknown> = {}) =>
+    ({ profile_status: { stage: { key: "sourcing" } }, profile_pipeline_status: "Sourcing", ...extra });
+  it("asks for the candidate's answer while the reply is awaited", () => {
+    expect(taDecisionsFor(at({ opening_mail: { state: "sent" } })))
+      .toEqual(["interested", "not_interested", "hold", "reject"]);
+  });
+  it("a held candidate keeps the hold buttons; no mail keeps the usual set", () => {
+    expect(taDecisionsFor(at({ opening_mail: { state: "sent" }, budget_status: TA_HOLD })))
+      .toEqual(["release", "reject", "withdraw"]);
+    expect(taDecisionsFor(at())).toEqual(["screen", "hold", "reject", "withdraw"]);
+  });
+});
+
+describe("taDecisionsFor — re-apply (1 Oct 2026)", () => {
+  it("offers Re-apply alone to any closed candidacy (a rejection asks why — server rule)", () => {
+    expect(taDecisionsFor({ profile_pipeline_status: "Self_Withdrawn",
+      profile_status: { stage: { key: "closed" } } })).toEqual(["reapply"]);
+    expect(taDecisionsFor({ profile_pipeline_status: "Rejected",
+      profile_status: { stage: { key: "closed" } } })).toEqual(["reapply"]);
+    expect(taDecisionsFor({ profile_pipeline_status: "Customer_L1_Rejected",
+      profile_status: { stage: { key: "closed" } } })).toEqual(["reapply"]);
+    // Joined is closed for actions but not a candidacy to reopen.
+    expect(taDecisionsFor({ profile_pipeline_status: "Joined",
+      profile_status: { stage: { key: "joined" } } })).toEqual(["withdraw"]);
+  });
+});

@@ -12,6 +12,8 @@
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
+import { focusRing } from "./ui";
+
 export type HeroStat = {
   label: string;
   value: ReactNode;
@@ -42,6 +44,56 @@ export const HERO_BTN_SOLID =
   "inline-flex items-center gap-1.5 rounded-control bg-[#ffffff] px-3 py-2 text-sm font-bold text-[#1d4ed8] "
   + "shadow-raised transition-colors hover:bg-[#eff6ff] focus-visible:outline-none focus-visible:ring-2 "
   + "focus-visible:ring-white disabled:opacity-50";
+
+/** Dot colour per stage key on `StagePills` (the Opportunities / position lists). */
+export const STAGE_PILL_DOT: Record<string, string> = {
+  "ta-active": "bg-emerald-500", "ta-customer-hold": "bg-amber-500", "ta-sales-hold": "bg-orange-500",
+  "ta-closed": "bg-slate-500", "ta-rejected": "bg-rose-500", "ta-archived": "bg-slate-400", "ta-all": "bg-brand-500",
+  draft: "bg-slate-400", pending: "bg-amber-500", rejected: "bg-rose-500", active: "bg-emerald-500",
+  closed: "bg-slate-500", approval: "bg-violet-500", engineering: "bg-indigo-500", all: "bg-brand-500",
+  Active: "bg-emerald-500", Pending: "bg-amber-500", On_Hold: "bg-amber-500", Sales_Hold: "bg-orange-500",
+  Closed: "bg-slate-500", Rejected: "bg-rose-500", Archived: "bg-slate-400",
+  Projects: "bg-sky-500", ProjectEmployees: "bg-teal-500",
+  Inactive: "bg-slate-400", "": "bg-brand-500",
+};
+
+/** The pill strip of list tabs inside a `PageHeader` (ONE look on every role's
+ *  Opportunities list, 1 Oct 2026). Only the open tab's total is known. */
+export function StagePills({ tabs, active, onChange, activeCount, label = "Opportunity stages" }: {
+  tabs: { key: string; label: string }[];
+  active: string;
+  onChange: (key: string) => void;
+  activeCount?: number;
+  label?: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={label}>
+      {tabs.map((t) => {
+        const on = t.key === active;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(t.key)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors ${focusRing} ${
+              on
+                ? "bg-brand-600 text-white ring-brand-600 shadow-raised"
+                : "bg-surface-2 text-secondary ring-subtle hover:text-primary"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${on ? "bg-white" : STAGE_PILL_DOT[t.key] || "bg-slate-400"}`} aria-hidden />
+            {t.label}
+            {on && activeCount !== undefined && (
+              <span className="rounded-full bg-white/25 px-1.5 text-[11px] tabular-nums">{activeCount}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function PageHeader({
   icon: Icon,

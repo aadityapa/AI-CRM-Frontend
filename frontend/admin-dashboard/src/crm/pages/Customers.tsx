@@ -3,8 +3,8 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Banknote, Building2, Eye, Lock, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
-import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
+import { Banknote, Building2, Eye, Lock, MapPin, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
@@ -66,7 +66,27 @@ export type Customer = {
   status: string;
   created_at?: string | null;
   customer_type?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  has_po?: boolean;
 };
+
+/** Customer Type codes (the server's NN / EN / EE rule) in words. */
+const CUSTOMER_TYPE_WORD: Record<string, string> = { NN: "New customer", EN: "Existing · new domain", EE: "Existing" };
+const TILE_TONES = [
+  "from-sky-500 to-indigo-600", "from-emerald-500 to-teal-600", "from-amber-500 to-orange-600",
+  "from-violet-500 to-fuchsia-600", "from-rose-500 to-pink-600", "from-cyan-500 to-blue-600",
+];
+/** A stable gradient per customer name (the identity tile on the list). */
+function tileTone(name: string) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TILE_TONES[h % TILE_TONES.length];
+}
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "?";
+}
 
 type Branch = {
   id: number;
@@ -193,23 +213,53 @@ export function CustomersListPage() {
     );
   }, [rows, entityFilter]);
 
+  /* ONE row design for every role (1 Oct 2026 redesign): an identity tile +
+     name + legal entity, where the account is, what kind of customer it is,
+     status, since when — the same cells whatever the login; only the Actions
+     column follows the role's rights. */
   const columns: Column<Customer>[] = [
-    { key: "name", label: "Name", sortable: true, render: (r) => <span className="font-semibold text-primary">{r.name}</span> },
-    {
-      key: "legal_entity_name",
-      label: "Legal Entity",
-      render: (r) =>
-        r.legal_entity_name ? (
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-subtle bg-surface-2/60 px-2 py-0.5 text-sm text-primary">
-            <Lock size={12} className="text-muted" aria-hidden />
-            {r.legal_entity_name}
+    { key: "name", label: "Customer", sortable: true,
+      render: (r) => (
+        <div className="flex min-w-[14rem] items-center gap-3">
+          <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-gradient-to-br text-xs font-bold text-white shadow-raised ${tileTone(r.name)}`} aria-hidden>
+            {initials(r.name)}
           </span>
-        ) : (
-          <span className="text-muted">—</span>
-        ),
-    },
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-primary">{r.name}</div>
+            {r.legal_entity_name ? (
+              <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted" title="Legal entity (printed on invoices)">
+                <Lock size={11} className="shrink-0" aria-hidden /> <span className="truncate">{r.legal_entity_name}</span>
+              </div>
+            ) : (
+              <div className="mt-0.5 text-xs text-amber-600">No legal entity yet</div>
+            )}
+          </div>
+        </div>
+      ) },
+    { key: "location", label: "Location",
+      render: (r) => {
+        const loc = [r.city, r.state, r.country].filter(Boolean).join(", ");
+        return loc ? (
+          <span className="inline-flex items-center gap-1.5 text-sm text-primary">
+            <MapPin size={13} className="shrink-0 text-muted" aria-hidden /> {loc}
+          </span>
+        ) : <span className="text-muted">—</span>;
+      } },
+    { key: "customer_type", label: "Type",
+      render: (r) => r.customer_type ? (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-secondary"
+          title={CUSTOMER_TYPE_WORD[r.customer_type] || r.customer_type}>
+          {r.customer_type}
+          <span className="font-normal text-muted">· {CUSTOMER_TYPE_WORD[r.customer_type] || ""}</span>
+        </span>
+      ) : <span className="text-muted">—</span> },
+    { key: "has_po", label: "Billing",
+      render: (r) => r.has_po
+        ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><Banknote size={12} aria-hidden /> PO on file</span>
+        : <span className="text-xs text-muted">No PO yet</span> },
     { key: "status", label: "Status", sortable: true, render: (r) => <StatusBadge status={r.status} /> },
-    { key: "created_at", label: "Created", sortable: true, render: (r) => fmtDate(r.created_at) },
+    { key: "created_at", label: "Since", sortable: true, align: "right",
+      render: (r) => <span className="whitespace-nowrap text-sm text-secondary">{fmtDate(r.created_at)}</span> },
   ];
 
   return (
@@ -236,7 +286,15 @@ export function CustomersListPage() {
               <Plus size={15} /> New Customer
             </button>
           ) : undefined}
-        />
+        >
+          <StagePills
+            label="Customer status"
+            tabs={[{ key: "", label: "All" }, ...CUSTOMER_STATUSES.map((st) => ({ key: st, label: st }))]}
+            active={status}
+            onChange={setStatus}
+            activeCount={!loading && meta ? meta.total : undefined}
+          />
+        </PageHeader>
       </div>
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
@@ -255,12 +313,6 @@ export function CustomersListPage() {
         emptyMessage={<TeachingEmpty page="customers" />}
         filters={
           <>
-            <select className={`${inputCls} !w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
-              <option value="">All statuses</option>
-              {CUSTOMER_STATUSES.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
             <select
               className={`${inputCls} !w-40`}
               value={entityFilter}
@@ -273,6 +325,7 @@ export function CustomersListPage() {
             </select>
           </>
         }
+        rowActionsLabel="Actions"
         rowActions={(r) => (
           <RowActions
             entity="customer"

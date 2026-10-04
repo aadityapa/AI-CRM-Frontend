@@ -3,17 +3,26 @@
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * one primary action per screen, right-aligned numerics in tables. */
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Mail, Pencil, Plus, UserPlus } from "lucide-react";
+import {
+  Briefcase,
+  AlertTriangle, Building2, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, GraduationCap, Mail, MapPin,
+  Pencil, Plus, UserPlus, UsersRound, Wallet,
+} from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
+import { CRM_NAV } from "../nav";
 import { useCanAct, useCanApprove, useCrmAccess } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
 import { fmtDateShort } from "../../lib/datetime";
 import { DataTable } from "../components/DataTable";
 import { PositionsPanel } from "../components/PositionsPanel";
+import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
+import { AssignTasButton, InlinePriority, PositionTeamPanel, PriorityPill, TaChip, type TaAssignment } from "../components/PositionTeamPanel";
+import { JdSkillsCardForRequirement } from "../components/JdSkillsCard";
+import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
@@ -92,6 +101,18 @@ type Opportunity = {
   positions_change_pending?: boolean | null;
   requirement_id?: number | null;
   requirement_status?: string | null;
+  /** The position's urgency + the TAs working it (1 Oct 2026) — from the headcount map. */
+  requirement_priority?: string | null;
+  assigned_tas?: TaAssignment[];
+  /** The position row's facts (1 Oct 2026) — the list prints TA's row for every role. */
+  requirement_experience_min?: number | null;
+  requirement_experience_max?: number | null;
+  requirement_budget_ctc_min?: number | null;
+  requirement_budget_ctc_max?: number | null;
+  requirement_target_closure_date?: string | null;
+  requirement_work_mode?: string | null;
+  requirement_location_name?: string | null;
+  requirement_display_status?: string | null;
   customer_type?: string | null;
   hiring_manager_email?: string | null;
   hiring_manager_contact?: string | null;
@@ -183,6 +204,11 @@ const LIST_TABS = [
 
 const PENDING_APPROVAL_STATUS = "Pending_Sales_Head_Approval";
 
+/** The sidebar's own role list for a hub page — the two pipeline-side tabs
+ *  follow it, so a login that has no Project Employees entry (RMG, 1 Oct 2026)
+ *  gets no dead tab here either. */
+const navRoles = (path: string): string[] => CRM_NAV.find((n) => n.path === path)?.roles ?? [];
+
 const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
 const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : "—");
 
@@ -200,7 +226,13 @@ function PositionsCell({ row }: { row: Opportunity }) {
   const open = Number(row.positions_open ?? 0);
   const filled = open === 0;
   return (
-    <span className="inline-flex items-center justify-end gap-1.5 tabular-nums">
+    <span className="inline-flex items-center gap-1.5 tabular-nums">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ring-subtle"
+            title={`${open} open of ${total}`}>
+        <UsersRound size={12} className="text-muted" aria-hidden />
+        <span className={filled ? "text-success" : "text-primary"}>{open}</span>
+        <span className="font-semibold text-muted">/ {total}</span>
+      </span>
       {row.positions_change_pending && (
         <span
           className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
@@ -209,8 +241,6 @@ function PositionsCell({ row }: { row: Opportunity }) {
           Change
         </span>
       )}
-      <span className={filled ? "font-semibold text-success" : "font-semibold text-primary"}>{open}</span>
-      <span className="text-muted">/ {total}</span>
     </span>
   );
 }
@@ -223,7 +253,17 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const canWrite = useCanAct("opportunities", "edit", canWriteRole);
   // Roles allowed to create a Candidate Profile.
   const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
-  const [tab, setTab] = usePageTab<string>("status", "Active", LIST_TABS.map((t) => t.key));
+  /* Priority is editable in the row for whoever the server's PATCH admits —
+     RMG / Sales Head by role, a GM through the screening approval, Admin
+     (1 Oct 2026, user ask: "RMG changes the priority without opening it"). */
+  const screens = useCanApprove("profile.rmg_screening");
+  const prioRole = useHasRole("RMG", "Sales_Head");   // both hooks always run — never `a || useX()`
+  const canSetPriority = screens || prioRole;
+  const canProjects = useCanAct("projects", "view", useHasRole(...navRoles("projects")));
+  const canProjectEmployees = useCanAct("project-employees", "view", useHasRole(...navRoles("project-employees")));
+  const listTabs = LIST_TABS.filter((t) =>
+    (t.key !== "Projects" || canProjects) && (t.key !== "ProjectEmployees" || canProjectEmployees));
+  const [tab, setTab] = usePageTab<string>("status", "Active", listTabs.map((t) => t.key));
   // "" = All stages (the tab's whole stage set) — see TAB_STAGES note above.
   const [stage, setStage] = useState<string>("");
   const [rows, setRows] = useState<Opportunity[]>([]);
@@ -282,8 +322,6 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
         opp_id: colFilters.opp_id?.text || undefined,
         title: colFilters.title?.text || undefined,
         customer_id: colFilters.customer_name?.value || undefined,
-        rfi_min: colFilters.rfi_value?.min || undefined,
-        rfi_max: colFilters.rfi_value?.max || undefined,
         created_from: colFilters.created_at?.from || undefined,
         created_to: colFilters.created_at?.to || undefined,
       };
@@ -326,45 +364,133 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
 
   const stages = TAB_STAGES[tab] || [];
 
+  /* ONE row design for every role (1 Oct 2026, user ask: "this same UI for all
+     roles for Opportunities — functionality as per role"): the cells TA's
+     position list prints (id chip · title + priority + band · customer +
+     location · positions pill · budget · status · target date), fed by the
+     requirement facts the list endpoint now carries. Sorting, the header
+     filters, the stage tabs, Apply / Edit / Delete are untouched. */
   const columns: Column<Opportunity>[] = [
-    { key: "opp_id", label: "Opp ID", sortable: true, filter: { type: "text", placeholder: "e.g. OPP-2026" } },
-    { key: "title", label: "Title", sortable: true, filter: { type: "text", placeholder: "Contains…" } },
-    { key: "customer_name", label: "Customer", sortable: true, render: (r) => r.customer_name || "—",
-      filter: { type: "select", options: customerOpts } },
-    { key: "opp_type", label: "Type", sortable: true, render: (r) => String(r.opp_type || "—").replace(/_/g, " "),
-      // One family per tab: T&M has a single type, so no filter to offer there.
-      ...(typeOpts.length > 1 ? { filter: { type: "select" as const, options: typeOpts } } : {}) },
-    // Stage & Approval columns removed (14 Aug 2026): the tab strip + the two
-    // dropdown filters carry that state, so the columns were pure repetition.
-    // Positions (21 Sep 2026, user request): open / total, so a Sales lead can
-    // see what is still to source without opening the requirement. Server-
-    // computed per page; not sortable, because sorting one page of a derived
-    // value would order only that page and read like a lie.
-    { key: "positions_open", label: "Positions", align: "right", render: (r) => <PositionsCell row={r} /> },
-    { key: "rfi_value", label: "RFI Value", sortable: true, align: "right", render: (r) => fmtMoney(r.rfi_value),
-      filter: { type: "number-range", minLabel: "Min ₹", maxLabel: "Max ₹" } },
+    { key: "opp_id", label: "Opportunity ID", sortable: true, filter: { type: "text", placeholder: "e.g. OPP-2026" },
+      render: (r) => (
+        <span className="inline-flex whitespace-nowrap rounded-control bg-brand-50 px-2 py-0.5 font-mono text-xs font-bold text-brand-700 ring-1 ring-inset ring-subtle dark:bg-indigo-500/15 dark:text-indigo-200">
+          {r.opp_id}
+        </span>
+      ) },
+    { key: "title", label: "Title", sortable: true, filter: { type: "text", placeholder: "Contains…" },
+      render: (r) => (
+        <div className="min-w-[16rem]">
+          <div className="font-semibold text-primary">{r.title}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {r.requirement_id != null && (canSetPriority
+              ? <InlinePriority requirementId={r.requirement_id} value={r.requirement_priority} toast={showToast}
+                  onChanged={(p) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, requirement_priority: p } : x)))} />
+              : r.requirement_priority && <PriorityPill p={r.requirement_priority} />)}
+            {(r.requirement_experience_min != null || r.requirement_experience_max != null) && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted">
+                <GraduationCap size={12} aria-hidden /> {fmtRange(r.requirement_experience_min, r.requirement_experience_max, "yrs")}
+              </span>
+            )}
+          </div>
+          {(r.assigned_tas?.length ?? 0) > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1" title="TAs assigned to source this position">
+              {(r.assigned_tas || []).map((a) => <TaChip key={a.id} a={a} />)}
+            </div>
+          )}
+        </div>
+      ) },
+    { key: "customer_name", label: "Customer", sortable: true, filter: { type: "select", options: customerOpts },
+      render: (r) => {
+        const loc = [r.requirement_work_mode, r.requirement_location_name].filter(Boolean).join(" · ");
+        return (
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-primary">
+              <Building2 size={13} className="shrink-0 text-muted" aria-hidden />
+              <span className="truncate">{r.customer_name || "—"}</span>
+            </div>
+            {loc && (
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
+                <MapPin size={12} className="shrink-0" aria-hidden /> <span className="truncate">{loc}</span>
+              </div>
+            )}
+          </div>
+        );
+      } },
+    // Positions (21 Sep 2026): open / total — server-computed per page, not
+    // sortable (sorting one page of a derived value would read like a lie).
+    { key: "positions_open", label: "Positions", render: (r) => <PositionsCell row={r} /> },
+    { key: "budget", label: "Budget",
+      render: (r) => (
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-primary">
+          <Wallet size={13} className="text-muted" aria-hidden />
+          {fmtRange(r.requirement_budget_ctc_min, r.requirement_budget_ctc_max, "")}
+        </span>
+      ) },
+    // ONE status wording (`display_status_for`): the sourcing status while the
+    // deal is live, the Sales wording once it is settled or parked; a deal
+    // with no requirement yet badges its approval / stage.
+    { key: "status", label: "Status",
+      render: (r) => (
+        <StatusBadge
+          status={r.requirement_display_status
+            || (r.approval_status && r.approval_status !== "Approved" ? r.approval_status : r.pipeline_stage)}
+          label={r.requirement_display_status ? undefined
+            : (r.approval_status && r.approval_status !== "Approved" ? undefined : pipelineStageLabel(r.pipeline_stage))}
+        />
+      ) },
+    { key: "target_closure_date", label: "Target date",
+      render: (r) => {
+        const due = dueChip(r.requirement_target_closure_date, r.requirement_status);
+        return (
+          <div className="whitespace-nowrap">
+            <span className="inline-flex items-center gap-1.5 text-primary">
+              <CalendarDays size={13} className="text-muted" aria-hidden /> {fmtRowDate(r.requirement_target_closure_date)}
+            </span>
+            {due && <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${due.cls}`}>{due.label}</div>}
+          </div>
+        );
+      } },
+    // One family per tab: T&M has a single type, so the column is only worth
+    // its space (and its filter) on the SOW / all-types lists.
+    ...(typeOpts.length > 1 ? [{ key: "opp_type", label: "Type", sortable: true,
+      render: (r: Opportunity) => String(r.opp_type || "—").replace(/_/g, " "),
+      filter: { type: "select" as const, options: typeOpts } }] : []),
     { key: "created_at", label: "Created", sortable: true, align: "right", render: (r) => fmtDate(r.created_at),
       filter: { type: "date-range" } },
   ];
 
-  return (
-    <div>
-      {/* Page header: 24px title, muted 14px subtitle, THE primary action right. */}
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-display text-xl font-bold text-primary">Opportunities</h1>
-          <p className="mt-1 text-sm text-muted">Track and manage the sales pipeline.</p>
-        </div>
-        {canWrite && (
-          <button className={btnPrimary} onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> New Opportunity
-          </button>
-        )}
-      </div>
+  /* Header figures — from the page already loaded, nothing fetched. */
+  const isListTab = tab !== "Projects" && tab !== "ProjectEmployees";
+  const activeTab = listTabs.find((t) => t.key === tab);
+  const pageOpen = rows.reduce((n, r) => n + (Number(r.positions_open) || 0), 0);
+  const pageHigh = rows.filter((r) => r.requirement_priority === "High").length;
+  const pageOverdue = rows.filter((r) => dueChip(r.requirement_target_closure_date, r.requirement_status)?.cls.includes("danger")).length;
 
-      <div className="mb-4">
-        <Tabs tabs={LIST_TABS} active={tab} onChange={switchTab} />
-      </div>
+  return (
+    <div className="space-y-4">
+      {/* ONE header for every role's Opportunities list (1 Oct 2026): the same
+          gradient band + stage pills TA's position list wears. */}
+      <PageHeader
+        icon={Briefcase}
+        title="Opportunities"
+        eyebrow={typeFilter === "SOW" ? "Pipeline · SOW" : typeFilter === "T&M" ? "Pipeline · T&M" : "Pipeline"}
+        subtitle="Track and manage the sales pipeline — every position, its team and where it stands."
+        accent="ocean"
+        stats={isListTab ? [
+          { label: activeTab ? activeTab.label.toLowerCase() : "opportunities", value: meta ? meta.total : "—", title: "Total in the open tab" },
+          { label: "positions open", value: pageOpen, title: "Open positions on this page" },
+          { label: "high priority", value: pageHigh },
+          ...(pageOverdue ? [{ label: "past target date", value: pageOverdue }] : []),
+        ] : undefined}
+        actions={canWrite ? (
+          <button type="button" className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+            <Plus size={16} /> New Opportunity
+          </button>
+        ) : undefined}
+      >
+        <StagePills tabs={listTabs} active={tab} onChange={switchTab}
+          activeCount={isListTab && !loading && meta ? meta.total : undefined} />
+      </PageHeader>
 
       {tab === "Projects" ? (
         <ProjectsListPage />
@@ -417,8 +543,14 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           // apply icon used to sit INSIDE the canWrite (Sales) block, so TA
           // and RMG — the roles the backend allows — never saw it on the
           // list and had to open every opportunity to apply.
-          rowActions={(canWrite || canApply) ? (r) => (
+          rowActionsLabel="Actions"
+          rowActions={(canWrite || canApply || canSetPriority) ? (r) => (
             <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {canSetPriority && r.requirement_id != null && (
+                <AssignTasButton requirementId={r.requirement_id} label={r.opp_id || r.title} assigned={r.assigned_tas}
+                  toast={showToast}
+                  onChanged={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))} />
+              )}
               {canApply && (
                 <button
                   type="button"
@@ -2081,6 +2213,19 @@ export function OpportunityDetailPage() {
         />
       ) : null}
 
+      {/* Priority + the TAs assigned to source it (1 Oct 2026, user ask) —
+          RMG / GM work from THIS page, so the position's urgency and its team
+          live here, not on the requirement page they never open. */}
+      {opp.requirement_id ? (
+        <PositionTeamPanel
+          requirementId={opp.requirement_id}
+          label={opp.opp_id}
+          priority={opp.requirement_priority}
+          toast={showToast}
+          onChanged={reloadOpp}
+        />
+      ) : null}
+
       {/* Requirements-style tabs (Aug 2026): one surface per question — what
           was sold (Opportunity Details), who applied (Applicants), what to
           test for (Skill Evaluation), and what happened (Activity Log). */}
@@ -2140,6 +2285,12 @@ export function OpportunityDetailPage() {
               </div>
             )}
           </CollapsibleCard>
+          {/* JD & skills (2 Oct 2026, user ask): lives INSIDE this tab, not above
+              the tabs — the page header stays simple. Any role on the position
+              (RMG · Sales · Sales Head · TA · GM by grant) adds a missing JD here. */}
+          {opp.requirement_id ? (
+            <JdSkillsCardForRequirement requirementId={opp.requirement_id} toast={showToast} />
+          ) : null}
           {attachments.length > 0 && (
             <CollapsibleCard
               title={`Attachments (${attachments.length})`}

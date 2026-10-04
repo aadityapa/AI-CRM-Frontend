@@ -27,6 +27,7 @@ import { DialogActions, DialogFailure, DialogHero, DialogSection, WhatHappens, u
 import { FileLink } from "./FileUpload";
 import { SearchableSelect } from "./SearchableSelect";
 import { Modal, focusRing, inputCls } from "./ui";
+import { TaPicker, fetchTaAssignments, type TaOption } from "./PositionTeamPanel";
 
 /** A JD file on the requirement (`kind: "rmg_jd"`). */
 export type JdFile = { id: number; file_url: string; file_name: string | null; kind?: string | null };
@@ -112,6 +113,28 @@ export function JdSkillsModal({
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  /* Approve mode (1 Oct 2026, user ask): the sourcing team is picked in the
+     same click as the approval — `ta_user_ids` on `engineering-approve`. The
+     options come from the team endpoint (a writer gets them). */
+  const [taOptions, setTaOptions] = useState<TaOption[]>([]);
+  const [taPicked, setTaPicked] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    if (!approve) return;
+    let cancelled = false;
+    fetchTaAssignments(req.id)
+      .then((r) => {
+        if (cancelled) return;
+        setTaOptions(r.options);
+        setTaPicked(new Set(r.assignments.map((a) => a.user_id)));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [approve, req.id]);
+  const toggleTa = (id: number) => setTaPicked((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const uploadJd = async (file: File) => {
     setErr("");
@@ -218,6 +241,7 @@ export function JdSkillsModal({
           comment: comment.trim() || undefined,
           rmg_jd_text: rmgJdText,
           skills,
+          ...(taOptions.length ? { ta_user_ids: Array.from(taPicked) } : {}),
         });
         toast(res.message || "Position approved — TA can source now");
         onSaved(res.data);
@@ -402,7 +426,14 @@ export function JdSkillsModal({
           </DialogSection>
 
           {approve && (
-            <DialogSection n={4} title="Note for TA" tone={tone} optional done={comment.trim().length > 0}
+            <DialogSection n={4} title="Who sources it" tone={tone} optional done={taPicked.size > 0}
+              hint="Tick the TAs to work this position — they are told the moment you approve. Leave empty to let every TA pick it up.">
+              <TaPicker options={taOptions} picked={taPicked} onToggle={toggleTa} />
+            </DialogSection>
+          )}
+
+          {approve && (
+            <DialogSection n={5} title="Note for TA" tone={tone} optional done={comment.trim().length > 0}
               hint="Anything the recruiter should know when sourcing — goes with the approval.">
               <input className={inputCls} value={comment} onChange={(e) => setComment(e.target.value)}
                 placeholder="e.g. Customer wants automotive background; night shift; joining within 30 days" />
@@ -422,7 +453,9 @@ export function JdSkillsModal({
           <WhatHappens tone={tone} title={approve ? "When you approve" : "Once saved"} items={[
             { icon: ScanLine, text: "Every resume on this position is ATS-scored on the mandatory skills and the JD keywords." },
             { icon: Bot, text: "The AI L1 interview asks questions from this JD." },
-            { icon: Users, text: approve ? "The position opens for sourcing — TA is told." : "Suggested Candidates are matched against these skills." },
+            { icon: Users, text: approve
+                ? (taPicked.size ? `The position opens for sourcing — the ${taPicked.size} assigned TA(s) are told.` : "The position opens for sourcing — every TA is told.")
+                : "Suggested Candidates are matched against these skills." },
             ...(approve ? [{ icon: Sparkles, text: "The approval is logged with your note." }] : []),
           ]} />
         </aside>

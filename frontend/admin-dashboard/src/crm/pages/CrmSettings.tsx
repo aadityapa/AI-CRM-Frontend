@@ -388,6 +388,8 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
         hint: "Moves a closed project's team to the bench the day after its last working day. Off means scheduled closes never happen." },
       { key: "scheduler.prompt_log_retention", label: "AI call log retention", type: "bool",
         hint: "Drops the stored prompt and response text from AI call logs past the retention window and purges the expired response cache. Tokens, audio minutes and cost are kept, so AI Costs history is never lost." },
+      { key: "notify.employee_emails", label: "Email employees on the HR master", type: "bool",
+        hint: "Off (the default since 1 Oct 2026): a project employee deployed at a customer receives NO email from Karnex Orbit — no timesheet-due reminders, leave decisions or approvals. Bell notifications to a linked login still appear. Turn on only if employees are meant to act in the app themselves." },
       { key: "scheduler.interview_feedback_due", label: "Interview feedback reminders", type: "bool",
         hint: "When an interview's time is over and no verdict is recorded, reminds whoever owns the round (RMG / GM, HR or Sales) — then once a day until it is recorded. Runs on every scheduler pass, not at the run hour." },
       { key: "scheduler.pe_leave_credit_lookback", label: "Leave repair window (months)",

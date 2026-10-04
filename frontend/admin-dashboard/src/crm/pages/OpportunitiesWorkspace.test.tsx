@@ -71,8 +71,23 @@ describe("OpportunitiesWorkspace sub-tabs", () => {
     ]);
   });
 
-  it("RMG sees no tab buttons (Requirements is deep-link only now)", () => {
-    expect(visibleOpportunitySubTabs(["RMG"])).toEqual([]);
+  it("RMG sees the pipeline strip too (1 Oct 2026), plus a Requirements button for the sourcing list", () => {
+    expect(visibleOpportunitySubTabs(["RMG"])).toEqual(["pipeline", "sow", "applicants"]);
+    render(
+      <CrmMeProvider value={me(["RMG"])}>
+        <OpportunitiesWorkspace />
+      </CrmMeProvider>,
+    );
+    expect(screen.getByText("Pipeline T&M")).toBeTruthy();
+    expect(screen.getByText("Pipeline SOW")).toBeTruthy();
+    expect(screen.getByText("Requirements")).toBeTruthy();
+    expect(screen.getByText("Applicants")).toBeTruthy();
+    expect(screen.queryByText("Template Requests")).toBeNull();
+    expect(screen.getByTestId("pipeline-view")).toBeTruthy();
+  });
+
+  it("TA keeps the sourcing list full-page (no pipeline strip)", () => {
+    expect(visibleOpportunitySubTabs(["TA"])).toEqual([]);
   });
 
   it("gives Admin the Template Requests sub-tab (their sidebar entry is hidden)", () => {

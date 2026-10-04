@@ -22,7 +22,9 @@ export const CANDIDATE_STAGE_BUCKETS: StageBucket[] = [
   { key: "customer_interviewing", label: "Customer Interviewing" },
   { key: "selection", label: "Customer Shortlisted" },
   { key: "hr_screening", label: "HR Screening" },
+  { key: "hr_interviewing", label: "HR Interviewing" },
   { key: "onboarding", label: "Onboarding" },
+  { key: "joined", label: "Joined" },
   { key: "closed", label: "Closed" },
 ];
 
@@ -38,7 +40,9 @@ export const STAGE_TONE: Record<string, string> = {
   customer_interviewing: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
   selection: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
   hr_screening: "bg-teal-100 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300",
+  hr_interviewing: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950/50 dark:text-fuchsia-300",
   onboarding: "bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300",
+  joined: "bg-lime-100 text-lime-800 dark:bg-lime-950/50 dark:text-lime-300",
   closed: "bg-surface-2 text-muted",
   all: "bg-surface-1 text-secondary",
 };

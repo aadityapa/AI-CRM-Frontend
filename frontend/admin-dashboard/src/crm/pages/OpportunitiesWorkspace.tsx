@@ -13,14 +13,24 @@ import { usePageTab } from "../lib/pageState";
 export type OppWorkspaceTab =
   | "pipeline" | "sow" | "requirements" | "applicants" | "template-requests";
 
-/** Roles that see the Pipeline (opportunities table) sub-tab. */
-export const PIPELINE_TAB_ROLES = ["Admin", "Sales", "Sales_Head"] as const;
+/** Roles that see the Pipeline (opportunities table) sub-tab. RMG joined on
+ *  1 Oct 2026 (user ask: "the Pipeline T&M / SOW / Applicants strip with the
+ *  stage tabs for RMG, GM and Admin / CEO too") — a GM reaches the same
+ *  layout through the Opportunities grant (`grantDriven` below). */
+export const PIPELINE_TAB_ROLES = ["Admin", "Sales", "Sales_Head", "RMG"] as const;
 
 /** Roles that see the Requirements sub-tab. */
 export const REQUIREMENTS_TAB_ROLES = ["Admin", "Sales", "Sales_Head", "RMG", "TA"] as const;
 
 /** Roles that see the cross-opportunity Applicants sub-tab. */
-export const APPLICANTS_TAB_ROLES = ["Admin", "Sales", "Sales_Head"] as const;
+export const APPLICANTS_TAB_ROLES = ["Admin", "Sales", "Sales_Head", "RMG"] as const;
+
+/** Roles for whom the Requirements BUTTON stays hidden (14 Aug 2026: Sales /
+ *  Admin never wanted it). Everyone else with both Pipeline and Requirements —
+ *  RMG by role, a GM by grant — needs it: the pipeline list is their new
+ *  landing (1 Oct 2026), but the sourcing list (the RMG Review Queue, the
+ *  pending position changes) lives only here. */
+const NO_REQUIREMENTS_TAB_ROLES = ["Admin", "Sales", "Sales_Head"] as const;
 
 /** Union used by the single sidebar "Opportunities" nav entry. */
 export const OPPORTUNITIES_NAV_ROLES = [
@@ -76,10 +86,12 @@ export function OpportunitiesWorkspace({
   // useHasRole("Admin") is true for CEO too (isSuperAdmin shortcut).
   const isAdminCeo = useHasRole("Admin");
   // The Requirements BUTTON was removed for the role-based strip (14 Aug 2026:
-  // Sales / Admin never wanted it; RMG / TA get the list full-page below). A
-  // grant-driven user who holds BOTH Pipeline and Requirements has no other
-  // way to reach the sourcing list, so the button comes back for them only.
-  const showRequirementsTab = grantDriven && canRequirements && canPipeline;
+  // Sales / Admin never wanted it; TA gets the list full-page below). A user
+  // who holds BOTH Pipeline and Requirements — RMG by role (1 Oct 2026), a
+  // grant-driven GM — has no other way to reach the sourcing list, so the
+  // button shows for them only.
+  const hidesRequirementsTab = useHasRole(...NO_REQUIREMENTS_TAB_ROLES);
+  const showRequirementsTab = canRequirements && canPipeline && !hidesRequirementsTab;
 
   const tabs = useMemo(() => {
     const out: { key: OppWorkspaceTab; label: string }[] = [];

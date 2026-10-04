@@ -209,6 +209,18 @@ const ctcToLacInput = (raw: unknown): string => {
   return String(Number(lakhs.toFixed(2)));
 };
 const candName = (c: Candidate) => c.full_name || [c.first_name, c.last_name].filter(Boolean).join(" ");
+const AVATAR_TONES = [
+  "from-sky-500 to-indigo-600", "from-emerald-500 to-teal-600", "from-amber-500 to-orange-600",
+  "from-violet-500 to-fuchsia-600", "from-rose-500 to-pink-600", "from-cyan-500 to-blue-600",
+];
+/** A stable gradient per name (the list avatar). */
+const avatarTone = (name: string) => {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_TONES[h % AVATAR_TONES.length];
+};
+const initialsOf = (name: string) =>
+  name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "?";
 const locLabel = (l: LocationOpt) => [l.city, l.state, l.country].filter(Boolean).join(", ");
 
 const WRITE_ROLES = ["TA", "RMG", "Sales", "Sales_Head", "HR"];
@@ -322,37 +334,69 @@ export function CandidatesListPage() {
     load();
   }, [load]);
 
+  /* ONE row design for every role (1 Oct 2026 redesign): identity (initials ·
+     name · email · phone) · where · experience + domain · pay (current →
+     expected) · CV · who added them and when. The same cells whatever the
+     login; only the Actions column follows the role's rights. */
   const columns: Column<Candidate>[] = [
-    { key: "full_name", label: "Name", render: (r) => <span className="font-semibold">{candName(r)}</span> },
-    { key: "email", label: "Email", render: (r) => displayEmail(r.email) },
-    { key: "phone", label: "Phone", render: (r) => r.phone || "—" },
-    { key: "city", label: "City", render: (r) => r.city || "—" },
-    {
-      key: "experience_years",
-      label: "Exp (yrs)",
-      align: "right",
-      render: (r) => (r.experience_years ?? "—"),
-    },
-    { key: "technical_domain", label: "Domain", render: (r) => r.technical_domain || "—" },
-    { key: "current_ctc", label: "Current CTC (Lac)", align: "right", render: (r) => fmtLac(r.current_ctc) },
-    { key: "expected_ctc", label: "Expected CTC (Lac)", align: "right", render: (r) => fmtLac(r.expected_ctc) },
-    { key: "created_by_name", label: "Added by", render: (r) => r.created_by_name || "—" },
-    { key: "created_at", label: "Added on", render: (r) => (r.created_at ? new Date(r.created_at).toLocaleDateString() : "—") },
-    {
-      key: "cv_url",
-      label: "CV",
-      render: (r) =>
-        r.cv_url ? (
-          <span
-            className="inline-flex items-center gap-1 text-xs font-semibold text-success"
-            title={r.cv_original_filename || "Resume on file"}
-          >
-            <FileText size={13} /> Yes
-          </span>
-        ) : (
-          <span className="text-xs text-muted">—</span>
-        ),
-    },
+    { key: "full_name", label: "Candidate",
+      render: (r) => {
+        const name = candName(r);
+        const email = displayEmail(r.email);
+        return (
+          <div className="flex min-w-[15rem] items-center gap-3">
+            <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-xs font-bold text-white shadow-raised ${avatarTone(name)}`} aria-hidden>
+              {initialsOf(name)}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-primary">{name}</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
+                {email && <span className="inline-flex items-center gap-1 truncate"><Mail size={11} aria-hidden /> {email}</span>}
+                {r.phone && <span className="inline-flex items-center gap-1 whitespace-nowrap"><Phone size={11} aria-hidden /> {r.phone}</span>}
+              </div>
+            </div>
+          </div>
+        );
+      } },
+    { key: "city", label: "Location",
+      render: (r) => r.city
+        ? <span className="inline-flex items-center gap-1.5 text-sm text-primary"><MapPin size={13} className="shrink-0 text-muted" aria-hidden /> {r.city}</span>
+        : <span className="text-muted">—</span> },
+    { key: "experience_years", label: "Experience",
+      render: (r) => (
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm text-primary">
+            <GraduationCap size={13} className="text-muted" aria-hidden />
+            {r.experience_years != null ? `${r.experience_years} yrs` : "—"}
+          </div>
+          {r.technical_domain && <div className="mt-0.5 truncate text-xs text-muted" title={r.technical_domain}>{r.technical_domain}</div>}
+        </div>
+      ) },
+    { key: "current_ctc", label: "CTC (Lac)",
+      render: (r) => (
+        <div className="whitespace-nowrap text-sm">
+          <span className="inline-flex items-center gap-1 text-primary"><Wallet size={13} className="text-muted" aria-hidden /> {fmtLac(r.current_ctc)}</span>
+          <span className="mx-1 text-muted">→</span>
+          <span className="font-semibold text-primary">{fmtLac(r.expected_ctc)}</span>
+          <div className="text-[11px] text-muted">current → expected</div>
+        </div>
+      ) },
+    { key: "cv_url", label: "CV",
+      render: (r) => r.cv_url ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+          title={r.cv_original_filename || "Resume on file"}>
+          <FileText size={12} aria-hidden /> On file
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">No CV</span>
+      ) },
+    { key: "created_at", label: "Added",
+      render: (r) => (
+        <div className="whitespace-nowrap text-sm">
+          <div className="text-primary">{r.created_at ? new Date(r.created_at).toLocaleDateString() : "—"}</div>
+          {r.created_by_name && <div className="text-xs text-muted">by {r.created_by_name}</div>}
+        </div>
+      ) },
   ];
 
   const uploadCandidateZip = async (f: File) => {
@@ -499,6 +543,7 @@ export function CandidatesListPage() {
             </>
           }
           emptyMessage={<TeachingEmpty page="candidates" />}
+          rowActionsLabel="Actions"
           rowActions={canWrite ? (r) => (
             <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               {/* Every candidate gets this — applying creates a Candidate Profile,

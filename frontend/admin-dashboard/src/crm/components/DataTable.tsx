@@ -177,6 +177,7 @@ export function DataTable<T extends { id?: number | string }>({
   onRowClick,
   rowHref,
   rowActions,
+  rowActionsLabel = "",
   filters,
   emptyMessage = "No records found",
   selectable = false,
@@ -205,6 +206,9 @@ export function DataTable<T extends { id?: number | string }>({
   rowHref?: (row: T) => string | null | undefined;
   /** Optional last column (right-aligned). Clicks inside stopPropagation from row navigation. */
   rowActions?: (row: T) => React.ReactNode;
+  /** Header text over the actions column ("Actions"); blank by default so every
+   *  existing table renders as before. */
+  rowActionsLabel?: string;
   filters?: React.ReactNode;
   /** ReactNode so empty lists can teach (what this page is for, what to do). */
   emptyMessage?: React.ReactNode;
@@ -257,9 +261,9 @@ export function DataTable<T extends { id?: number | string }>({
         ...columns,
         {
           key: "_row_actions",
-          label: "",
+          label: rowActionsLabel,
           align: "right",
-          className: "w-24",
+          className: rowActionsLabel ? "w-px whitespace-nowrap" : "w-24",
           render: (row) => rowActions(row),
         },
       ]
