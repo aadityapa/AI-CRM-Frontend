@@ -28,7 +28,7 @@ import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
 import { fmtDateTime12 } from "../../lib/datetime";
-import { InvoiceFormatPicker, PROFORMA_COLOR, normalizeFormat } from "../components/invoice/ProformaActions";
+import { InvoiceFormatPicker, PROFORMA_COLOR, RoundOffToggle, normalizeFormat } from "../components/invoice/ProformaActions";
 import type { InvoiceFormat } from "../components/invoice/types";
 import { BILLING_UNITS, unitWord } from "../lib/billingUnits";
 import { toDateKey } from "../lib/calendarDates";
@@ -2945,6 +2945,8 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   // The Proforma number (PI-YYYY-NNN) is assigned by the server; Finance types
   // the tax number when it generates the original invoice.
   const [format, setFormat] = useState<Required<InvoiceFormat>>(normalizeFormat(null));
+  // Round the grand total to the rupee (5 Oct 2026) — Finance can still change it.
+  const [roundOff, setRoundOff] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3010,6 +3012,7 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
         {
           ...(selected ? { po_id: selected.id } : {}),
           invoice_format: format,
+          round_off: roundOff,
           ...overrides,
         },
       );
@@ -3142,6 +3145,7 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
             <DialogSection n={1} title="Invoice format for this customer" tone="amber" done
               hint="Which optional columns this customer's document prints. Confirmed here, remembered on the customer for next month; Finance can still correct it.">
               <InvoiceFormatPicker value={format} onChange={setFormat} />
+              <div className="mt-2"><RoundOffToggle value={roundOff} onChange={setRoundOff} /></div>
             </DialogSection>
 
             {data?.rate && (

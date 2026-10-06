@@ -1285,7 +1285,7 @@ export function ProfileDetailPage() {
           )}
           {/* LIVE (2 Sep 2026): while the Commercials form is being edited these
               mirror the draft, so the figures about to be saved show here first. */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <HeaderStat accent="from-sky-500 to-blue-600" label="Current CTC (Lac)"
               value={fmtLac(draft?.current_ctc !== undefined ? draft.current_ctc : detail.current_ctc)} />
             <HeaderStat accent="from-violet-500 to-fuchsia-600" label="Expected CTC (Lac)"
@@ -1295,8 +1295,6 @@ export function ProfileDetailPage() {
             <HeaderStat accent="from-emerald-500 to-teal-600"
               label={`Approved Budget (Lac)${detail.ctc_slab_band ? ` · ${detail.ctc_slab_band} yrs` : ""}`}
               value={fmtLac(detail.approved_ctc_budget)} />
-            <HeaderStat accent="from-indigo-500 to-violet-600" label="CTC Approval (Lac)"
-              value={fmtLac(draft?.ctc_approval_amount !== undefined ? draft.ctc_approval_amount : detail.ctc_approval_amount)} />
           </div>
           {(detail.allowed_next_statuses || []).length > 0 && (
             <div className="flex flex-wrap items-center gap-3 rounded-card border border-subtle bg-surface-2 px-4 py-3">
@@ -1748,7 +1746,6 @@ function StageJourney({ stageKey, closed }: { stageKey?: string | null; closed: 
 type CommercialsDraft = {
   current_ctc: number | null;
   expected_ctc: number | null;
-  ctc_approval_amount: number | null;
   hike: string | null;
 };
 
@@ -1791,17 +1788,21 @@ export function OverviewTab({
   const fld = (key: string) => canEdit && acc.canEditField(key);
   const canEditCtc = fld("current_ctc");
   const canEditExpected = fld("expected_ctc");
-  const canEditApproval = fld("approved_ctc") && !hrOnly;
   /* The whole Workflow block rides ONE field grant, `workflow` (3 Sep 2026,
      user request): Admin/CEO decide per Access Template which logins see it
      (view) and which may fill it in (edit). Untemplated users keep the role
      behaviour — canViewField is true when no template restricts the tab. */
   const canViewWorkflow = acc.canViewField("workflow");
-  const canEditOffers = fld("workflow");
-  const canEditOnboarding = fld("workflow");
+  /* "Onboarding & employee record" (6 Oct 2026, user rule): it exists only after the
+     Sales Head approval — at Pre-Onboarding (filled) and Joined (read) — and only HR
+     and Admin / CEO see or fill it. Mirrors enforce_onboarding_record_owner. */
+  const isAdminUser = useHasRole();
+  const showOnboardingRecord = canViewWorkflow && (isHr || isAdminUser)
+    && (detail.pipeline_status === "Preboarding" || detail.pipeline_status === "Joined");
+  const canEditOnboarding = showOnboardingRecord && detail.pipeline_status === "Preboarding" && fld("workflow");
+  const canEditOffers = canEditOnboarding;
   const [currentCtc, setCurrentCtc] = useState(rupeesToLac(detail.current_ctc));
   const [expectedCtc, setExpectedCtc] = useState(rupeesToLac(detail.expected_ctc));
-  const [approvalAmount, setApprovalAmount] = useState(rupeesToLac(detail.ctc_approval_amount));
   /* HR's offered CTC (30 Sep 2026): present only when the server sent `hr_offer`
      (HR / Admin / CEO), editable in its Pre-Onboarding window, saved through
      the same endpoint as the Offered CTC tab. */
@@ -1844,7 +1845,6 @@ export function OverviewTab({
        ₹1,00,000 Cr after two saves ("100000000000" in the screenshot). */
     setCurrentCtc(rupeesToLac(detail.current_ctc));
     setExpectedCtc(rupeesToLac(detail.expected_ctc));
-    setApprovalAmount(rupeesToLac(detail.ctc_approval_amount));
     setOfferedCtc(rupeesToLac(detail.hr_offer?.offered_ctc));
     setOfferRef(detail.offer_letter_reference ?? "");
     setEmpRef(detail.employee_ref ?? "");
@@ -1869,17 +1869,14 @@ export function OverviewTab({
     if (!onDraftChange) return;
     const cur = lacToRupees(currentCtc);
     const exp = lacToRupees(expectedCtc);
-    const appr = lacToRupees(approvalAmount);
     const same = (a: number | null, b?: number | null) =>
       (a ?? null) === (b == null ? null : Math.round(Number(b)));
-    if (same(cur, detail.current_ctc) && same(exp, detail.expected_ctc)
-        && same(appr, detail.ctc_approval_amount)) {
+    if (same(cur, detail.current_ctc) && same(exp, detail.expected_ctc)) {
       onDraftChange(null);
       return;
     }
-    onDraftChange({ current_ctc: cur, expected_ctc: exp, ctc_approval_amount: appr, hike });
-  }, [currentCtc, expectedCtc, approvalAmount, hike, detail.current_ctc, detail.expected_ctc,
-      detail.ctc_approval_amount, onDraftChange]);
+    onDraftChange({ current_ctc: cur, expected_ctc: exp, hike });
+  }, [currentCtc, expectedCtc, hike, detail.current_ctc, detail.expected_ctc, onDraftChange]);
 
   const save = async () => {
     setSaving(true);
@@ -1889,7 +1886,6 @@ export function OverviewTab({
       const body: Record<string, unknown> = {};
       if (canEditCtc) body.current_ctc = lacToRupees(currentCtc);
       if (canEditExpected) body.expected_ctc = lacToRupees(expectedCtc);
-      if (canEditApproval) body.ctc_approval_amount = lacToRupees(approvalAmount);
       if (canEditOffers) {
         // Send null rather than "" so clearing a reference actually clears it.
         body.offer_letter_reference = offerRef.trim() || null;
@@ -1991,7 +1987,7 @@ export function OverviewTab({
               {Number(hike) >= 0 ? "+" : ""}{hike}% hike
             </span>
           ) : null}>
-          <div className={`grid grid-cols-1 gap-3 sm:grid-cols-3 ${hrOffer ? "xl:grid-cols-4" : ""}`}>
+          <div className={`grid grid-cols-1 gap-3 ${hrOffer ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             {([
               ["Current CTC", currentCtc, setCurrentCtc, canEditCtc, "e.g. 22.00", "What they earn today"],
               ["Expected CTC", expectedCtc, setExpectedCtc, canEditExpected, "e.g. 25.00", "What they are asking"],
@@ -2002,7 +1998,6 @@ export function OverviewTab({
                 "Offered CTC", offeredCtc, setOfferedCtc, canEditOffered, "e.g. 24.00",
                 canEditOffered ? "What HR offers — the salary at Joined" : (hrOffer.edit_block || "HR's offered figure"),
               ] as const] : []),
-              ["CTC Approval", approvalAmount, setApprovalAmount, canEditApproval, "e.g. 26.00", "Sales Head's approved figure"],
             ] as [string, string, (v: string) => void, boolean, string, string][]).map(([label, value, set, editable, ph, hint]) => (
               <label key={label} className={`block rounded-card border px-3 py-2.5 ${label.startsWith("Offered") ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950" : "border-subtle bg-surface-2"}`}>
                 <span className="text-[11px] font-bold uppercase tracking-wide text-muted">{label}</span>
@@ -2070,8 +2065,8 @@ export function OverviewTab({
         </div>
       </OverviewSection>
 
-      {/* Onboarding & employee record — the Workflow grant */}
-      {canViewWorkflow && (
+      {/* Onboarding & employee record — after the Sales Head approval, HR / Admin / CEO only */}
+      {showOnboardingRecord && (
         <OverviewSection icon={BadgeCheck} tone="from-violet-500 to-fuchsia-600" title="Onboarding & employee record"
           subtitle="HR confirms these at Pre-Onboarding; they become the Employees record at Joined">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

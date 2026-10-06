@@ -61,6 +61,8 @@ export interface GSTBreakup {
   total_gst: number;
   sub_total: number;
   grand_total: number;
+  /** Set when the grand total is rounded to the rupee (0120); null/absent = not rounded. */
+  round_off?: number | null;
 }
 
 export interface InvoiceLine {

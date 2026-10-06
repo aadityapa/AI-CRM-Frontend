@@ -568,6 +568,8 @@ export function EditBranchWizard({
     billing_frequency: "",
     billing_cycle_start_day: "",
     billing_cycle_end_day: "",
+    /** Invoice due in N days (0120). Blank = follow the PO's payment terms. */
+    invoice_due_days: "",
     is_max_billable_hours_per_day: false,
     max_billable_hours_per_day: "",
     is_max_billable_hours_per_month: false,
@@ -671,6 +673,7 @@ export function EditBranchWizard({
           billing_frequency: freqRaw,
           billing_cycle_start_day: s(p.billing_cycle_start_day),
           billing_cycle_end_day: s(p.billing_cycle_end_day),
+          invoice_due_days: s(p.invoice_due_days),
           is_max_billable_hours_per_day: !!p.is_max_billable_hours_per_day,
           max_billable_hours_per_day: s(p.max_billable_hours_per_day),
           is_max_billable_hours_per_month: !!p.is_max_billable_hours_per_month,
@@ -790,11 +793,13 @@ export function EditBranchWizard({
       });
     }
     if (key === "billingProps") {
-      clear("start", "end");
+      clear("start", "end", "due");
       const sd = numOrNull(pol.billing_cycle_start_day);
       const ed = numOrNull(pol.billing_cycle_end_day);
+      const due = numOrNull(pol.invoice_due_days);
       if (sd != null && (!Number.isInteger(sd) || sd < 1 || sd > 31)) errs.start = "Day must be 1–31";
       if (ed != null && (!Number.isInteger(ed) || ed < 1 || ed > 31)) errs.end = "Day must be 1–31";
+      if (due != null && (!Number.isInteger(due) || due < 0 || due > 365)) errs.due = "Whole days, 0–365";
     }
 
     setErrors(errs);
@@ -803,7 +808,7 @@ export function EditBranchWizard({
       if (key === "leaveHolidayBilling") {
         return k === "full" || k === "half" || k === "whpd" || k.startsWith("leave_");
       }
-      if (key === "billingProps") return k === "start" || k === "end";
+      if (key === "billingProps") return k === "start" || k === "end" || k === "due";
       return false;
     });
     if (blocking.length) {
@@ -860,6 +865,7 @@ export function EditBranchWizard({
       billing_frequency: pol.billing_frequency || null,
       billing_cycle_start_day: numOrNull(pol.billing_cycle_start_day),
       billing_cycle_end_day: numOrNull(pol.billing_cycle_end_day),
+      invoice_due_days: numOrNull(pol.invoice_due_days),
       is_max_billable_hours_per_day: pol.is_max_billable_hours_per_day,
       max_billable_hours_per_day: pol.is_max_billable_hours_per_day ? numOrNull(pol.max_billable_hours_per_day) : null,
       is_max_billable_hours_per_month: pol.is_max_billable_hours_per_month,
@@ -1332,6 +1338,14 @@ export function EditBranchWizard({
               <Field label="Billing Cycle End Day" error={errors.end}>
                 <input type="number" min={1} max={31} step={1} className={inputCls} placeholder="1–31"
                   value={pol.billing_cycle_end_day} onChange={(e) => setP("billing_cycle_end_day", e.target.value)} />
+              </Field>
+              <Field label="Invoice Due (days)" error={errors.due}>
+                <input type="number" min={0} max={365} step={1} className={inputCls} placeholder="e.g. 30 — blank = PO terms"
+                  value={pol.invoice_due_days} onChange={(e) => setP("invoice_due_days", e.target.value)} />
+                <p className="mt-1 text-[11px] text-muted">
+                  Due date = invoice date + these days, on every Proforma and Tax invoice for this branch.
+                  0 = due on receipt; blank = use the PO&rsquo;s payment terms (else 30).
+                </p>
               </Field>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

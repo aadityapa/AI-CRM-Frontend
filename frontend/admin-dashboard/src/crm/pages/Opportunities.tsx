@@ -202,8 +202,6 @@ const LIST_TABS = [
   { key: "ProjectEmployees", label: "Project Employee" },
 ];
 
-const PENDING_APPROVAL_STATUS = "Pending_Sales_Head_Approval";
-
 /** The sidebar's own role list for a hub page — the two pipeline-side tabs
  *  follow it, so a login that has no Project Employees entry (RMG, 1 Oct 2026)
  *  gets no dead tab here either. */
@@ -325,15 +323,19 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
         created_from: colFilters.created_at?.from || undefined,
         created_to: colFilters.created_at?.to || undefined,
       };
+      // Pending Approval = the deal awaits the Sales Head OR its position awaits
+      // the Sales Head / RMG (server `awaiting_approval_clause`); the Active tab
+      // excludes exactly those, so each deal lives in ONE tab (6 Oct 2026).
       const query =
         tab === "Pending"
-          ? { approval_status: PENDING_APPROVAL_STATUS, ...base }
+          ? { awaiting_approval: true, ...base }
           : tab === "Rejected"
             ? { approval_status: "Rejected", ...base }
             // "" (All stages) → send the tab's stages as CSV so the tab still
             // owns exactly its own deals; the backend `in_`s them in one query.
             : { pipeline_stage: stage || (TAB_STAGES[tab] || []).join(","),
-                approval_status: "Approved", ...base };
+                approval_status: "Approved",
+                ...(tab === "Active" ? { awaiting_approval: false } : {}), ...base };
       const res = await crmGet<Opportunity[]>(`/api/opportunities${qs(query)}`);
       setRows(res.data || []);
       setMeta(res.meta);

@@ -1647,6 +1647,49 @@ page already had it inside its Details tab. tsc green.
 filled sections get a small `SectionAction` (Edit skills · Edit JD · + Add another customer JD). A reader without the
 right still sees the plain "No … yet" text; the hint reads "Ask RMG / GM, Sales or TA". tsc green, eslint 0, `vite build` green.
 
+**6 Oct 2026 — Pending Approval tab includes positions awaiting RMG (server half in B-V2 `CLAUDE.md`):**
+`OpportunitiesListPage` (`Opportunities.tsx`) now sends `awaiting_approval=true` on **Pending Approval** (instead of
+`approval_status=Pending_Sales_Head_Approval`, which could never match a deal whose POSITION waits for RMG) and
+`awaiting_approval=false` on **Active**, so a deal waiting for the Sales Head or RMG lives in Pending Approval only. The
+unused `PENDING_APPROVAL_STATUS` constant was removed. tsc green.
+
+**6 Oct 2026 (night) — profile: "CTC Approval" removed, onboarding record for HR / Admin / CEO at Pre-Onboarding
+(server half in B-V2 `CLAUDE.md`):** `Profiles.tsx` — the header's **CTC Approval (Lac)** tile (grid now 4) and the
+Commercials "CTC Approval" input are gone, with their `approvalAmount` state, draft key and `ctc_approval_amount` in the
+save body (Commercials is 2 boxes, 3 with HR's Offered CTC). `OverviewTab`: `showOnboardingRecord` = workflow view grant
+AND (HR or Admin / CEO) AND stage Preboarding / Joined; `canEditOnboarding` (= `canEditOffers`) only at Preboarding. The
+"Onboarding & employee record" section renders only then. tsc green.
+
+**6 Oct 2026 (night, later) — the two missing screens of the 5 Oct server work (no server change):** (1) **Candidate
+Profiles ▸ Archive chip** (`profiles/ProfilesListPage.tsx`, right end of the stage strip, slate, `Archive` icon, count
+from `meta.phase_counts.archive`): sets `bucket=archive` (`useProfileFilters` bucket now `active | rejected | archive`, URL
+`f_bucket=archive`); lists candidates parked because their deal is on Customer / Sales hold or archived by hand (server
+`archive_clause`). The stage chips already exclude them, so a held deal's candidates leave every stage chip and come back
+by themselves on Reactivate. Status filter offers every status in Archive. (2) **Customer ▸ Branches ▸ branch wizard ▸
+Billing step: "Invoice Due (days)"** (`BranchWizardModal.tsx`, beside Billing Cycle End Day; `pol.invoice_due_days`,
+read from `GET …/branches/{id}/policy`, sent on the `PUT`, 0–365 validated, blank = PO terms). tsc green.
+
+**6 Oct 2026 (night, last) — Round Off in the UI (server half 0120 in B-V2 `CLAUDE.md`; no server change):**
+`invoice/ProformaActions.RoundOffToggle` (checkbox + example) is the ONE control, used in three places: the GM's **Raise
+Proforma** dialog (`Timesheets.PoSelectModal`, under the invoice format; posts `round_off`), Finance's **Correct proforma**
+(`ProformaEditModal`, `PUT {round_off}`, pre-ticked from `inv.round_off != null`) and **Generate original invoice**
+(`ConvertProformaModal` takes `roundOff`, posts `round_off` — the last chance; a Tax invoice cannot change it). The
+"Round Off" row prints before GRAND TOTAL on the invoice page (`GSTSummary.TotalsPanel`) and Finance's GST card
+(`InvoiceGstSection`) whenever `gst.round_off` is not null (`GSTBreakup.round_off`). tsc green.
+
+**6 Oct 2026 — customer approval + e-invoice IRN screens (server half + migration 0121 in B-V2 `CLAUDE.md`, 5 Oct;
+no server change):** new **`crm/components/invoice/CustomerApprovalCard.tsx`**, mounted on the TAX invoice page
+(`Finance.tsx` invoice detail, above the change requests): two steps — "Customer approved" (who · when · note) and, ONLY
+when the payload carries `einvoice` (Finance / Admin / CEO), "E-invoice IRN" (IRN · Ack No. · Ack date · recorded by).
+Buttons follow the server's flags, never roles: **Customer approved — no changes** (`can_confirm` → `DecisionDialog`,
+note optional, `POST …/customer-approval`), **Withdraw approval** (`can_withdraw`, `DELETE`), **Add IRN & Ack No.** /
+**Correct IRN** (`einvoice.can_edit` → `IrnModal`, `PUT …/einvoice`; PURE `irnProblem` / `cleanIrn` / `cleanAck` mirror
+the server's checks — 64 hex chars, 10–20 digits, ack date not in the future — with a live "N / 64" counter). The Invoices
+list gains **Awaiting customer** / **Customer approved** tabs (`invoiceTabParams` → `kind=Tax&customer_approved=false|true`)
+and a **Customer / IRN** column (`ApprovalChip`: Awaiting customer · Approved · IRN pending · Approved · IRN added; the IRN
+part only for roles the server sends `irn_recorded` to). `WorkDesk.TAB_LOOK` adds `fin_customer_approved` (Finance) and
+`inv_confirm` (Sales Manager / Sales Head) — plain link tabs to the invoice. tsc green.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```

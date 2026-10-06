@@ -109,6 +109,10 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; accent: string }> = {
   fin_timesheets: { icon: FileSpreadsheet, accent: "from-sky-500 to-cyan-600" },
   fin_proformas: { icon: FileClock, accent: "from-orange-500 to-amber-600" },
   fin_invoices: { icon: BadgeIndianRupee, accent: "from-emerald-500 to-teal-600" },
+  // Customer approval + IRN (6 Oct 2026): Finance's "add the IRN" queue, the
+  // Sales Manager / Sales Head's "confirm with customer" queue — both link to the invoice.
+  fin_customer_approved: { icon: BadgeCheck, accent: "from-indigo-500 to-blue-600" },
+  inv_confirm: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_submit: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_response: { icon: Hourglass, accent: "from-cyan-500 to-sky-600" },
   sales_decide: { icon: Handshake, accent: "from-violet-500 to-fuchsia-600" },

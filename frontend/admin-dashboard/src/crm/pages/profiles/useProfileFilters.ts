@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export type ProfileFilters = {
-  bucket: "active" | "rejected";
+  /** "archive" (6 Oct 2026) = archived by hand, or parked because the deal is on hold. */
+  bucket: "active" | "rejected" | "archive";
   /** The stage strip (29 Sep 2026): a `services/candidate_status.STAGES` key, sent as `phase`. */
   phase: string;
   /** Derived candidate-status keys, CSV (sent as `status_key`). */
@@ -66,7 +67,7 @@ function read(): ProfileFilters {
   const bucket = p.get(PARAM.bucket);
   const page = Number(p.get(PARAM.page));
   return {
-    bucket: bucket === "rejected" ? "rejected" : "active",
+    bucket: bucket === "rejected" || bucket === "archive" ? bucket : "active",
     phase: p.get(PARAM.phase) || "",
     status: p.get(PARAM.status) || "",
     opportunityId: p.get(PARAM.opportunityId) || "",

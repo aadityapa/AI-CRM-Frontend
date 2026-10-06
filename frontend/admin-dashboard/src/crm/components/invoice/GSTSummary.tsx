@@ -56,6 +56,12 @@ export function TotalsPanel({ gst }: { gst: GSTBreakup }) {
           <span>Total GST</span>
           <span className={styles.value}>{formatINR(gst.total_gst)}</span>
         </div>
+        {gst.round_off != null && (
+          <div className={styles.totalLine}>
+            <span>Round Off</span>
+            <span className={styles.value}>{formatINR(gst.round_off)}</span>
+          </div>
+        )}
       </div>
       <div className={styles.grandBar}>
         <span className={styles.grandLabel}>Grand Total</span>

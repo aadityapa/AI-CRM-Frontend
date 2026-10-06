@@ -21,7 +21,7 @@
  * actions and the create modal.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Plus, Users } from "lucide-react";
+import { Archive, Download, Plus, Users } from "lucide-react";
 
 import { crmGet, qs } from "../../api";
 import { authFetch } from "../../../api/client";
@@ -102,7 +102,7 @@ export function ProfilesListPage({
      offering only what can appear under the current In pipeline / Closed view. */
   const statusCatalogue = useCandidateStatusCatalogue();
   const statusOptions = useMemo(
-    () => candidateStatusOptions(statusCatalogue, filters.bucket),
+    () => candidateStatusOptions(statusCatalogue, filters.bucket === "archive" ? "all" : filters.bucket),
     [statusCatalogue, filters.bucket],
   );
   const statusLabelOf = useCallback(
@@ -402,7 +402,9 @@ export function ProfilesListPage({
     ? "No candidates match these filters. Try widening the status or opportunity, or clear the filters."
     : filters.bucket === "active"
       ? "No candidates in the pipeline yet. Add one, or wait for applications to arrive."
-      : "No closed applications.";
+      : filters.bucket === "archive"
+        ? "Nothing in Archive. Candidates land here when their opportunity is put on hold, or when RMG / Sales archive them."
+        : "No closed applications.";
 
   const openProfile = (r: ProfileColumnRow) => crmNavigate(`profiles/${r.id}`);
 
@@ -439,7 +441,7 @@ export function ProfilesListPage({
         </div>
         <div className="flex gap-1.5 overflow-x-auto px-3 py-2.5" role="tablist" aria-label="Stages">
           {CANDIDATE_STAGE_BUCKETS.map((b) => {
-            const selectedKey = filters.phase || (filters.bucket === "rejected" ? "closed" : "all");
+            const selectedKey = filters.bucket === "archive" ? "" : filters.phase || (filters.bucket === "rejected" ? "closed" : "all");
             const on = selectedKey === b.key;
             const count = phaseCounts
               ? b.key === "all" ? (phaseCounts.all ?? 0) - (phaseCounts.closed ?? 0) : phaseCounts[b.key] ?? 0
@@ -460,6 +462,22 @@ export function ProfilesListPage({
               </button>
             );
           })}
+          {/* Archive (6 Oct 2026): candidates parked because their opportunity is on
+              Customer / Sales hold, or archived by hand. They come back on their own
+              when the deal is reactivated. */}
+          <button type="button" role="tab" aria-selected={filters.bucket === "archive"}
+            title="Candidates whose opportunity is on hold, or archived by RMG / Sales"
+            onClick={() => update({ phase: "", bucket: "archive", status: "" })}
+            className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-shadow duration-micro ${
+              filters.bucket === "archive" ? "bg-slate-700 text-white ring-slate-700 shadow-raised"
+                : "bg-slate-100 text-slate-700 ring-subtle hover:shadow-raised dark:bg-slate-800 dark:text-slate-200"}`}>
+            <Archive size={13} aria-hidden /> Archive
+            {phaseCounts && (
+              <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${filters.bucket === "archive" ? "bg-white/25" : "bg-surface-1/80"}`}>
+                {phaseCounts.archive ?? 0}
+              </span>
+            )}
+          </button>
         </div>
       </section>
 

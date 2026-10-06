@@ -31,6 +31,7 @@ import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
 import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
 } from "../components/invoice/ProformaActions";
+import { CustomerApprovalCard } from "../components/invoice/CustomerApprovalCard";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 /* ---------------------------------------------------------------- helpers */
 
@@ -330,6 +331,7 @@ function InvoiceGstSection({ gst }: { gst: any }) {
             {row("SGST @ 9%", Number(gst.sgst || 0), Number(gst.sgst || 0) === 0)}
             {row("IGST @ 18%", Number(gst.igst || 0), Number(gst.igst || 0) === 0)}
             {row("Total GST Tax", Number(gst.total_gst || 0))}
+            {gst.round_off != null && row("Round Off", Number(gst.round_off))}
           </div>
           <div className="flex items-center justify-between gap-3 bg-[color:var(--accent,#c2410c)] px-4 py-3 text-sm font-bold text-white">
             <span>GRAND TOTAL</span>
@@ -1979,12 +1981,39 @@ function RenewPoModal({
 
 /** "Proforma" is Finance's review queue (kind filter); the rest are TAX invoices by payment status. */
 const PROFORMA_TAB = "Proforma";
+/** Tax invoices by customer approval (6 Oct 2026; server `customer_approved=`): the
+ *  Sales Manager's "send & confirm" queue and Finance's "add the IRN" queue. */
+const AWAITING_CUSTOMER_TAB = "Awaiting_Customer";
+const CUSTOMER_APPROVED_TAB = "Customer_Approved";
 const INVOICE_TABS = [
   { key: PROFORMA_TAB, label: "Proforma" },
+  { key: AWAITING_CUSTOMER_TAB, label: "Awaiting customer" },
+  { key: CUSTOMER_APPROVED_TAB, label: "Customer approved" },
   { key: "Unpaid", label: "Unpaid" },
   { key: "Partially_Paid", label: "Partially Paid" },
   { key: "Paid", label: "Paid" },
 ];
+
+function invoiceTabParams(tab: string): Record<string, string | boolean> {
+  if (tab === PROFORMA_TAB) return { kind: "Proforma" };
+  if (tab === AWAITING_CUSTOMER_TAB) return { kind: "Tax", customer_approved: false };
+  if (tab === CUSTOMER_APPROVED_TAB) return { kind: "Tax", customer_approved: true };
+  return { payment_status: tab, kind: "Tax" };
+}
+
+/** Customer approval + (Finance / Admin / CEO only) IRN state of a list row. */
+function ApprovalChip({ r }: { r: any }) {
+  if (r.kind === "Proforma") return <span className="text-xs text-muted">—</span>;
+  if (!r.customer_approved_at) {
+    return <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">Awaiting customer</span>;
+  }
+  if (r.irn_recorded === false) {
+    return <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+      title={`Customer approved ${fmtDate(r.customer_approved_at)}`}>Approved · IRN pending</span>;
+  }
+  return <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+    title={`Customer approved ${fmtDate(r.customer_approved_at)}`}>{r.irn_recorded ? "Approved · IRN added" : "Customer approved"}</span>;
+}
 
 /** `embedded` — rendered as a tab of the Projects hub: the hub already carries
  *  the page header, so only a compact action row is shown. */
@@ -2032,7 +2061,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     setLoading(true);
     const t = window.setTimeout(() => {
       const params = {
-        ...(tab === PROFORMA_TAB ? { kind: "Proforma" } : { payment_status: tab, kind: "Tax" }),
+        ...invoiceTabParams(tab),
         search,
         customer_id: customerFilter || undefined,
         project_id: projectFilter || undefined,
@@ -2062,6 +2091,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
       render: (r) => r.kind === "Proforma"
         ? <ProformaKindBadge returned={!!r.returned_at} />
         : <StatusBadge status={r.payment_status} /> },
+    { key: "customer_approval", label: "Customer / IRN", render: (r) => <ApprovalChip r={r} /> },
   ];
 
   return (
@@ -2983,7 +3013,7 @@ export function InvoiceDetailPage() {
 
       {isProforma && <ProformaBanner inv={inv} />}
       {proformaModal === "convert" && (
-        <ConvertProformaModal invoiceId={inv.id} invoiceDate={inv.invoice_date}
+        <ConvertProformaModal invoiceId={inv.id} invoiceDate={inv.invoice_date} roundOff={inv.round_off != null}
           onClose={() => setProformaModal(null)} onDone={load} notify={showToast} />
       )}
       {proformaModal === "return" && (
@@ -3038,6 +3068,12 @@ export function InvoiceDetailPage() {
           </div>
         )}
       </Card>
+
+      {!isProforma && (
+        <CustomerApprovalCard invoiceId={inv.id} invoiceNumber={inv.invoice_number}
+          approval={inv.customer_approval} einvoice={inv.einvoice}
+          onChanged={load} notify={(m, k) => showToast(m, k)} />
+      )}
 
       {!isProforma && (
         <InvoiceRevisionsCard invoiceId={inv.id} meId={me.id} refreshKey={revKey}
