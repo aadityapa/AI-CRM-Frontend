@@ -12,6 +12,7 @@ import {
   FileJson,
   Loader2,
   PauseCircle,
+  RefreshCw,
   Share2,
   Sparkles,
   ThumbsDown,
@@ -25,6 +26,7 @@ import {
   deleteInterviewRecord,
   excludeQuestionFromScore,
   includeQuestionInScore,
+  rescoreInterview,
   getCandidateInterviewDetail,
   getCandidateInterviewHistory,
   getCandidateStrengthsWeaknesses,
@@ -47,13 +49,11 @@ import {
 const SkillBarChart = lazy(() =>
   import("../components/candidate-report/ReportCharts").then((m) => ({ default: m.SkillBarChart })),
 );
-const PerformanceRadar = lazy(() =>
-  import("../components/candidate-report/ReportCharts").then((m) => ({ default: m.PerformanceRadar })),
-);
 import { StrengthsWeaknessesPanel } from "../components/candidate-report/StrengthsWeaknessesPanel";
 import { ProfessionalAssessmentSections } from "../components/candidate-report/ProfessionalAssessmentSections";
 import type { StrengthsWeaknessesAnalysis } from "../types/strengthsWeaknesses";
 import { DeleteInterviewRecordModal } from "../components/DeleteInterviewRecordModal";
+import { RecordingViewer } from "../components/interview-recording/RecordingViewer";
 import { CrmMetaLine } from "../components/CrmMetaLine";
 import { focusRing } from "../crm/components/ui";
 import { navButtonMotion } from "../lib/motionPresets";
@@ -126,6 +126,7 @@ export function CandidateReportPage({
   const [hrMark, setHrMark] = useState<"shortlist" | "reject" | "on_hold" | null>(null);
   const [hrSaving, setHrSaving] = useState<"shortlist" | "reject" | "on_hold" | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [rescoreBusy, setRescoreBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -396,6 +397,38 @@ export function CandidateReportPage({
     setSwAnalysis(null);
     invalidateApiCache();
   }, [candidateId, selectedInterviewId, history?.candidate?.id]);
+
+  const runRescore = useCallback(async () => {
+    const id = String(selectedInterviewId || "").trim();
+    const cid = history?.candidate?.id || candidateId;
+    if (!id || !cid || rescoreBusy) return;
+    try {
+      setRescoreBusy(true);
+      let st = await rescoreInterview(cid, id);
+      for (let i = 0; i < 90 && st.status === "running"; i += 1) {
+        await new Promise((r) => window.setTimeout(r, 4000));
+        st = await rescoreInterview(cid, id, true);
+      }
+      if (st.status === "done") {
+        await refreshInterviewData();
+        const was = st.previous?.overall_score;
+        const now = st.current?.overall_score;
+        showToast(
+          was != null && now != null
+            ? `Re-scored: ${Math.round(Number(was))}% \u2192 ${Math.round(Number(now))}%`
+            : "Interview re-scored",
+        );
+      } else if (st.status === "failed") {
+        showToast(st.error || "Re-scoring failed.");
+      } else {
+        showToast("Re-scoring is still running \u2014 reload the page in a minute.");
+      }
+    } catch (e: unknown) {
+      showToast(String((e as Error)?.message || e || "Re-scoring failed."));
+    } finally {
+      setRescoreBusy(false);
+    }
+  }, [candidateId, selectedInterviewId, history?.candidate?.id, rescoreBusy, refreshInterviewData, showToast]);
 
   const confirmExcludeFromScore = useCallback(async () => {
     const id = String(selectedInterviewId || "").trim();
@@ -875,6 +908,28 @@ export function CandidateReportPage({
                 <XCircle className="w-4 h-4 ml-0.5 opacity-90" aria-hidden="true" />
               ) : null}
             </motion.button>
+            {(report as any)?.rescored_at && (report as any)?.previous_score?.overall_score != null ? (
+              <span className="inline-flex items-center rounded-full bg-info-soft px-2.5 py-1 text-xs font-semibold text-info">
+                Re-scored · was {Math.round(Number((report as any).previous_score.overall_score))}%
+              </span>
+            ) : null}
+            <button
+              type="button"
+              disabled={rescoreBusy}
+              onClick={() => void runRescore()}
+              title={
+                (report as any)?.rescored_at
+                  ? `Re-scored ${String((report as any).rescored_at).slice(0, 16).replace("T", " ")}` +
+                    ((report as any)?.previous_score?.overall_score != null
+                      ? ` (was ${Math.round(Number((report as any).previous_score.overall_score))}%)`
+                      : "")
+                  : "Score this interview again with the current scoring rules"
+              }
+              className="inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3 py-2 text-sm font-semibold text-secondary hover:bg-surface-2 disabled:opacity-50"
+            >
+              {rescoreBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {rescoreBusy ? "Re-scoring\u2026" : "Re-score"}
+            </button>
             <button
               type="button"
               disabled={pdfBusy}
@@ -1126,18 +1181,21 @@ export function CandidateReportPage({
               <SkillBarChart data={activeSummary?.skill_breakdown || []} />
             </Suspense>
           </div>
+          {/* Session recording (7 Oct 2026) sits where the performance radar
+              used to be (the five scores are already the cards above — the
+              radar repeated them; user ask). Camera | screen side by side,
+              ±15 / ±30 s seek, fullscreen and download. Keyed by the invite
+              token so switching sessions in the timeline below swaps it. */}
           <div className="rounded-card border border-subtle bg-surface-1 p-5 shadow-raised">
-            <h2 className="text-xs font-black uppercase tracking-widest text-muted mb-2">Performance radar</h2>
-            <Suspense fallback={<SkeletonBlock className="h-52 w-full" />}>
-              <PerformanceRadar
-                communication={comm}
-                technical={tech}
-                confidence={conf}
-                problemSolving={prob}
-                overall={overall}
-                includeCommunication={assessesCommunication}
-              />
-            </Suspense>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-xs font-black uppercase tracking-widest text-muted">Interview recording</h2>
+              <span className="text-[11px] font-semibold text-muted">Candidate on the left · their screen on the right</span>
+            </div>
+            {record?.invite_token ? (
+              <RecordingViewer key={record.invite_token} token={record.invite_token} />
+            ) : (
+              <p className="text-xs text-muted">This interview has no invite token, so nothing was recorded.</p>
+            )}
           </div>
         </motion.section>
 

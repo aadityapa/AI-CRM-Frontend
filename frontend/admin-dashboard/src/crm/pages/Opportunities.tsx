@@ -20,6 +20,7 @@ import { fmtDateShort } from "../../lib/datetime";
 import { DataTable } from "../components/DataTable";
 import { PositionsPanel } from "../components/PositionsPanel";
 import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
+import { RmgApproveRowButtons } from "../components/RmgApprovalsStrip";
 import { AssignTasButton, InlinePriority, PositionTeamPanel, PriorityPill, TaChip, type TaAssignment } from "../components/PositionTeamPanel";
 import { JdSkillsCardForRequirement } from "../components/JdSkillsCard";
 import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
@@ -257,6 +258,9 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const screens = useCanApprove("profile.rmg_screening");
   const prioRole = useHasRole("RMG", "Sales_Head");   // both hooks always run — never `a || useX()`
   const canSetPriority = screens || prioRole;
+  /* RMG approval from the row (7 Oct 2026, user ask) — whoever the approve gate admits
+     (RMG, a GM through the approval, Admin); shown only on a position awaiting RMG. */
+  const canEngApprove = useCanApprove("requirement.engineering_approve");
   const canProjects = useCanAct("projects", "view", useHasRole(...navRoles("projects")));
   const canProjectEmployees = useCanAct("project-employees", "view", useHasRole(...navRoles("project-employees")));
   const listTabs = LIST_TABS.filter((t) =>
@@ -546,8 +550,12 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           // and RMG — the roles the backend allows — never saw it on the
           // list and had to open every opportunity to apply.
           rowActionsLabel="Actions"
-          rowActions={(canWrite || canApply || canSetPriority) ? (r) => (
+          rowActions={(canWrite || canApply || canSetPriority || canEngApprove) ? (r) => (
             <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {canEngApprove && r.requirement_id != null && r.requirement_status === "Pending_Engineering_Review" && (
+                <RmgApproveRowButtons requirementId={r.requirement_id} title={r.title} oppId={r.opp_id}
+                  onChanged={() => void load()} showToast={showToast} />
+              )}
               {canSetPriority && r.requirement_id != null && (
                 <AssignTasButton requirementId={r.requirement_id} label={r.opp_id || r.title} assigned={r.assigned_tas}
                   toast={showToast}
@@ -1831,6 +1839,7 @@ export function OpportunityDetailPage() {
   // An approval button (25 Sep 2026): `me.approvals` — the template's / role's
   // Approvals, else the Sales Head role — the same answer as the server gate.
   const canApprove = useCanApprove("opportunity.approve");
+  const canEngApprove = useCanApprove("requirement.engineering_approve");
   const canApplyHere = useHasRole("TA", "Sales", "RMG");
   const [applyHere, setApplyHere] = useState(false);
   // Skill Evaluation Details are owned by RMG (and Admin/CEO) — Sales & Sales Head
@@ -2213,6 +2222,18 @@ export function OpportunityDetailPage() {
           toast={showToast}
           onChanged={reloadOpp}
         />
+      ) : null}
+
+      {/* RMG approval on the opportunity page (7 Oct 2026, user ask): the position
+          waits for RMG — approve / reject it here, as on the Screening Desk. */}
+      {opp.requirement_id && opp.requirement_status === "Pending_Engineering_Review" && canEngApprove ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/30" role="status">
+          <div className="text-sm text-amber-900 dark:text-amber-200">
+            <span className="font-bold">Waiting for your RMG approval.</span> TA cannot source this position until the JD &amp; skills are approved.
+          </div>
+          <RmgApproveRowButtons requirementId={opp.requirement_id} title={opp.title} oppId={opp.opp_id}
+            compact={false} onChanged={reloadOpp} showToast={showToast} />
+        </div>
       ) : null}
 
       {/* Priority + the TAs assigned to source it (1 Oct 2026, user ask) —

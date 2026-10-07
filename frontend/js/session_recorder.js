@@ -31,9 +31,21 @@
  * 45-minute interview: 320x240 at 6 fps, VP8 at ~52 kbps plus mono Opus at
  * ~12 kbps. That is a proctoring record, not a portrait — enough to see who
  * is there and whether they are alone.
+ *
+ * The screen stream (7 Oct 2026)
+ * ------------------------------
+ * A SECOND recorder captures the screen the candidate shared at the Device
+ * Check (`screen_share.js`) — no audio, 960x540 at 2 fps — and uploads it as
+ * its own chunk sequence (`stream=screen`). The reviewer plays it beside the
+ * camera to see which question was on screen. It is independent: no screen
+ * share (a phone, a cancelled prompt, sharing stopped mid-way) never touches
+ * the camera recording, and a stopped share is logged as an integrity event.
  */
 
 import { apiFetch } from "./core.js";
+import { getScreenStream, onScreenShareEnded, releaseScreenShare, isScreenShareSupported } from "./screen_share.js";
+import { reportSecurityViolation } from "./interview_security.js";
+import { ensureMixRunning, mixedRecorderTrack } from "./recording_mix.js";
 
 /** Ordered by preference; the first the browser supports wins. */
 const MIME_CANDIDATES = [
@@ -51,6 +63,15 @@ const DEFAULTS = {
   video_bps: 52000,
   audio_bps: 12000,
   max_chunk_bytes: 4 * 1024 * 1024,
+  // ⚠️ The SERVER must say the screen stream is on. A backend older than
+  // 7 Oct 2026 ignores the chunk route's `stream` field, so screen chunks
+  // would be stored over the CAMERA's parts (same sequence numbers) and
+  // corrupt the one recording there is. No key in the config = no screen.
+  screen_enabled: false,
+  screen_width: 960,
+  screen_height: 540,
+  screen_fps: 2,
+  screen_bps: 100000,
 };
 
 let _config = null;
@@ -63,6 +84,15 @@ let _active = false;
 let _startedAt = 0;
 let _uploadChain = Promise.resolve();
 let _failedChunks = 0;
+/** The screen recorder — its own MediaRecorder, sequence and upload chain. */
+let _screenRecorder = null;
+let _screenStream = null;
+let _screenSeq = 0;
+let _screenChain = Promise.resolve();
+let _screenActive = false;
+let _unsubscribeShareEnded = null;
+/** The mic → recording-bus connection (7 Oct 2026), released with the stream. */
+let _mixHandle = null;
 
 function _log(event, detail) {
   try {
@@ -114,20 +144,23 @@ export async function loadRecordingConfig() {
  * server in order and a slow network cannot open dozens of parallel requests
  * on a machine that is already busy running the interview.
  */
+async function _postChunk(blob, seq, stream) {
+  if (!blob || !blob.size) return;
+  if (_config && blob.size > _config.max_chunk_bytes) {
+    _warn("chunk_oversized_dropped", { seq, stream, bytes: blob.size });
+    return;
+  }
+  const form = new FormData();
+  form.append("seq", String(seq));
+  form.append("stream", stream);
+  form.append("chunk", blob, `${String(seq).padStart(6, "0")}.webm`);
+  const res = await apiFetch("/interview/recording/chunk", { method: "POST", body: form }, { timeoutMs: 30000 });
+  if (!res.ok) throw new Error(`chunk upload ${res.status}`);
+}
+
 function _queueUpload(blob, seq) {
   _uploadChain = _uploadChain
-    .then(async () => {
-      if (!blob || !blob.size) return;
-      if (_config && blob.size > _config.max_chunk_bytes) {
-        _warn("chunk_oversized_dropped", { seq, bytes: blob.size });
-        return;
-      }
-      const form = new FormData();
-      form.append("seq", String(seq));
-      form.append("chunk", blob, `${String(seq).padStart(6, "0")}.webm`);
-      const res = await apiFetch("/interview/recording/chunk", { method: "POST", body: form }, { timeoutMs: 30000 });
-      if (!res.ok) throw new Error(`chunk upload ${res.status}`);
-    })
+    .then(() => _postChunk(blob, seq, "cam"))
     .catch((err) => {
       // One lost slice is a small gap in the recording, nothing more. Never
       // let it reject the chain, or every later chunk is skipped too.
@@ -135,6 +168,16 @@ function _queueUpload(blob, seq) {
       _warn("chunk_upload_failed", { seq, error: String((err && err.message) || err) });
     });
   return _uploadChain;
+}
+
+/** The screen stream has its own chain so a slow camera upload never delays it (and vice versa). */
+function _queueScreenUpload(blob, seq) {
+  _screenChain = _screenChain
+    .then(() => _postChunk(blob, seq, "screen"))
+    .catch((err) => {
+      _warn("screen_chunk_upload_failed", { seq, error: String((err && err.message) || err) });
+    });
+  return _screenChain;
 }
 
 /** How long to wait for the interview's own camera stream before giving up. */
@@ -199,8 +242,29 @@ async function _cloneTracks(videoSource, audioSource, cfg) {
   const audio = audioSource && audioSource.getAudioTracks
     ? audioSource.getAudioTracks().find((t) => t.readyState === "live")
     : null;
-  if (audio) tracks.push(audio.clone());
+  if (audio) tracks.push(_recordingAudio(audio.clone()));
   return new MediaStream(tracks);
+}
+
+/**
+ * The recording's audio = the microphone clone MIXED with the AI's question
+ * voice (7 Oct 2026, `recording_mix.js`). Falls back to the bare clone when
+ * the audio bus cannot run — the candidate is still recorded, as before.
+ */
+function _recordingAudio(micClone) {
+  try {
+    const mixed = mixedRecorderTrack(micClone);
+    if (mixed && mixed.track) {
+      _mixHandle = mixed;
+      _mixHandle.micClone = micClone;
+      _log("audio_mixed_with_question_voice");
+      return mixed.track;
+    }
+  } catch (_) {
+    /* fall through */
+  }
+  _warn("audio_mix_unavailable", { note: "recording the microphone only" });
+  return micClone;
 }
 
 /**
@@ -228,6 +292,10 @@ export async function startSessionRecording(videoSource = null, audioSource = nu
     _warn("mediarecorder_unsupported");
     return false;
   }
+
+  // Wake the audio bus now, while the fullscreen-gate click is still a recent
+  // gesture; a bus that will not run means a microphone-only recording.
+  try { await ensureMixRunning(); } catch (_) { /* reported by _recordingAudio */ }
 
   try {
     const source = videoSource ? await _awaitStream(videoSource) : null;
@@ -308,7 +376,140 @@ export async function startSessionRecording(videoSource = null, audioSource = nu
   _active = true;
   _startedAt = Date.now();
   _log("started", { mimeType, width: cfg.video_width, fps: cfg.frame_rate });
+  _startScreenRecorder(cfg, mimeType);
   return true;
+}
+
+/**
+ * Record the shared screen beside the camera. Best-effort end to end: no
+ * share, no support, a recorder the browser refuses — the camera recording
+ * carries on exactly as before.
+ */
+/**
+ * Tell the Integrity timeline why a recording has no screen half (7 Oct 2026
+ * — "why can't I see the laptop screen?" had no answer on file). Informational.
+ */
+function _screenMissing(reason, detail) {
+  _log("screen_not_recorded", { reason, ...(detail || {}) });
+  try {
+    reportSecurityViolation("screen_share_missing", `Screen not recorded: ${reason}`);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function _startScreenRecorder(cfg, mimeType) {
+  if (_screenActive) return;
+  if (cfg.screen_enabled !== true) {
+    _screenMissing("screen recording is off on the server (or the server predates it)");
+    return;
+  }
+  if (!isScreenShareSupported()) {
+    _screenMissing("this browser cannot share a screen (a phone, or an older browser)");
+    return;
+  }
+  const source = getScreenStream();
+  if (!source) {
+    _screenMissing("the screen was not being shared when the interview started (sharing stopped after the device check, or the page was reloaded)");
+    return;
+  }
+  const video = source.getVideoTracks().find((t) => t.readyState === "live");
+  if (!video) {
+    _screenMissing("the shared screen track had already ended");
+    return;
+  }
+  let clone;
+  try {
+    clone = video.clone();
+  } catch (_) {
+    return;
+  }
+  // Downscale the clone, never the share itself (the same rule as the camera).
+  clone.applyConstraints({
+    width: { ideal: cfg.screen_width },
+    height: { ideal: cfg.screen_height },
+    frameRate: { ideal: cfg.screen_fps, max: cfg.screen_fps },
+  }).catch(() => { /* a size optimisation only; the bitrate cap still bounds the file */ });
+  _screenStream = new MediaStream([clone]);
+  // The screen has no audio track — ask for a video-only type when the
+  // preferred one names opus, otherwise some browsers refuse the recorder.
+  const screenMime = /opus/i.test(mimeType) && MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+    ? "video/webm;codecs=vp8"
+    : mimeType;
+  try {
+    _screenRecorder = new MediaRecorder(_screenStream, { mimeType: screenMime, videoBitsPerSecond: cfg.screen_bps });
+  } catch (err) {
+    _warn("screen_recorder_construct_failed", { error: String((err && err.message) || err) });
+    _releaseScreen();
+    return;
+  }
+  _screenSeq = 0;
+  _screenRecorder.ondataavailable = (event) => {
+    if (!event || !event.data || !event.data.size) return;
+    _queueScreenUpload(event.data, _screenSeq++);
+  };
+  _screenRecorder.onerror = (event) => {
+    _warn("screen_recorder_error", { error: String((event && event.error && event.error.name) || "unknown") });
+  };
+  try {
+    _screenRecorder.start(Math.max(5, Number(cfg.chunk_seconds) || 15) * 1000);
+  } catch (err) {
+    _warn("screen_recorder_start_failed", { error: String((err && err.message) || err) });
+    _releaseScreen();
+    return;
+  }
+  _screenActive = true;
+  _unsubscribeShareEnded = onScreenShareEnded(() => {
+    // The candidate pressed the browser's "Stop sharing" (or the window went
+    // away). Flush what we have, keep the camera going, tell the Integrity tab.
+    _log("screen_share_ended_by_candidate", { chunks: _screenSeq });
+    void _stopScreenRecorder();
+    try {
+      reportSecurityViolation("screen_share_stopped", "Candidate stopped sharing the screen during the interview");
+    } catch (_) {
+      /* ignore */
+    }
+  });
+  _log("screen_started", { mimeType: screenMime, width: cfg.screen_width, fps: cfg.screen_fps });
+}
+
+function _releaseScreen() {
+  try {
+    if (_screenStream) _screenStream.getTracks().forEach((t) => { try { t.stop(); } catch (_) { /* ignore */ } });
+  } catch (_) {
+    /* ignore */
+  }
+  _screenStream = null;
+  _screenRecorder = null;
+  if (_unsubscribeShareEnded) {
+    try { _unsubscribeShareEnded(); } catch (_) { /* ignore */ }
+    _unsubscribeShareEnded = null;
+  }
+}
+
+async function _stopScreenRecorder() {
+  if (!_screenActive) return;
+  _screenActive = false;
+  await new Promise((resolve) => {
+    if (!_screenRecorder || _screenRecorder.state === "inactive") {
+      resolve();
+      return;
+    }
+    const done = () => resolve();
+    try {
+      _screenRecorder.onstop = done;
+      _screenRecorder.stop();
+      setTimeout(done, 4000);
+    } catch (_) {
+      resolve();
+    }
+  });
+  _releaseScreen();
+  try {
+    await _screenChain;
+  } catch (_) {
+    /* never rejects */
+  }
 }
 
 function _releaseStream() {
@@ -324,6 +525,12 @@ function _releaseStream() {
     }
   } catch (_) {
     /* ignore */
+  }
+  // The bus track above is the bus's own; the mic clone feeding it is ours.
+  if (_mixHandle) {
+    try { _mixHandle.release(); } catch (_) { /* ignore */ }
+    try { _mixHandle.micClone && _mixHandle.micClone.stop(); } catch (_) { /* ignore */ }
+    _mixHandle = null;
   }
   _stream = null;
   _ownsStream = false;
@@ -342,6 +549,8 @@ export async function stopSessionRecording({ finalize = true } = {}) {
   }
   _active = false;
   const durationMs = Date.now() - _startedAt;
+  // Both recorders flush in parallel; the screen one is best-effort.
+  const screenDone = _stopScreenRecorder().catch(() => { /* ignore */ });
 
   await new Promise((resolve) => {
     if (!_recorder || _recorder.state === "inactive") {
@@ -366,9 +575,12 @@ export async function stopSessionRecording({ finalize = true } = {}) {
 
   try {
     await _uploadChain;
+    await screenDone;
   } catch (_) {
-    /* the chain never rejects, but be explicit */
+    /* the chains never reject, but be explicit */
   }
+  // The interview is over: the browser's share indicator must go with it.
+  releaseScreenShare();
 
   if (!finalize) {
     return { recorded: true, chunks: _seq, failed: _failedChunks, durationMs };

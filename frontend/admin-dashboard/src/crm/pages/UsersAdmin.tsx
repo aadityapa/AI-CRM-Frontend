@@ -3,14 +3,21 @@
  * own profile details from My Profile after first login. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
-import { KeyRound, Lock, Plus, Send, Shield, ShieldCheck, SlidersHorizontal, Trash2, UserCheck, UserCog, UserX, Crown, Briefcase, Users, Wallet } from "lucide-react";
-import { crmGet, crmPost, crmPut, crmDelete, qs } from "../api";
+import { Lock, Plus, Send, Shield, ShieldCheck, UserCog, Crown, Briefcase, Users, Wallet } from "lucide-react";
+import { crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { crmNavigate } from "../routerHooks";
 import { AccessTemplatesPage } from "./AccessTemplates";
 import { RolesPanel } from "./RolesAdmin";
 import { ResetPasswordModal } from "../components/ResetPasswordModal";
+import { AccessAuditLog } from "../components/access/AccessAuditLog";
+import { DeactivateUserModal, DeleteUserModal } from "../components/access/UserLifecycle";
+import { UserManageModal } from "../components/access/UserManageModal";
+import { ActionPermissionsPanel, EmailFlowsPanel, type ActionPerm, type EmailFlow } from "../components/access/PermissionsPanels";
+import { StagePills } from "../components/PageHeader";
+import { CONTROL } from "../components/controlTower";
+import { initials } from "../components/dialogKit";
+import { fmtDateTime12 } from "../../lib/datetime";
 import {
   allManageableTabKeys,
   manageableTabsForRoles,
@@ -150,7 +157,21 @@ type UserRow = {
   custom_roles?: string[];
   tab_access?: string[] | null;
   access_template_id?: number | null;
+  /** Last successful sign-in (ISO) — 7 Oct 2026. */
+  last_login?: string | null;
+  /** An Admin reset is waiting for the user's own password. */
+  must_change_password?: boolean;
+  /** Linked to an employee record (the portal-access switch applies). */
+  has_employee?: boolean;
 };
+
+type UserCounts = { total: number; active: number; inactive: number; no_role: number; password_pending: number };
+type UserStatusFilter = "" | "active" | "inactive" | "no_role" | "password_pending";
+type HubTab = "users" | "roles" | "templates" | "audit";
+const HUB_TABS: { key: HubTab; label: string }[] = [
+  { key: "users", label: "Users" }, { key: "roles", label: "Roles" },
+  { key: "templates", label: "Access Templates" }, { key: "audit", label: "Audit log" },
+];
 
 type AccessTemplateOpt = { id: number; name: string; is_active: boolean };
 
@@ -493,298 +514,8 @@ function InviteUserModal({ onClose, onSaved, notify }: {
   );
 }
 
-/* -------------------------------------------------------- email flows */
-
-type EmailFlow = {
-  event: string;
-  label: string;
-  description: string;
-  default_roles: string[];
-  roles: string[];
-  extra_emails: string[];
-  enabled: boolean;
-  subject_template?: string | null;
-  body_template?: string | null;
-  customized: boolean;
-};
-
-/** Which roles receive which application email — the reason nobody edits code
- * when an approver changes. Each flow saves independently; Reset returns it
- * to the code default. */
-function EmailFlowsPanel({ allRoles, flows, reload, notify }: {
-  allRoles: string[];
-  flows: EmailFlow[];
-  reload: () => void;
-  notify: (m: string, k?: "ok" | "err") => void;
-}) {
-  const [drafts, setDrafts] = useState<Record<string, EmailFlow>>({});
-  const [busyEvent, setBusyEvent] = useState<string | null>(null);
-  useEffect(() => {
-    setDrafts(Object.fromEntries(flows.map((f) => [f.event, { ...f }])));
-  }, [flows]);
-
-  const setFlow = (event: string, patch: Partial<EmailFlow>) =>
-    setDrafts((d) => ({ ...d, [event]: { ...d[event], ...patch } }));
-
-  const save = async (event: string) => {
-    const f = drafts[event];
-    if (!f) return;
-    if (f.enabled && !f.roles.length && !f.extra_emails.length) {
-      notify("An enabled flow needs at least one role or extra email — or disable it", "err");
-      return;
-    }
-    setBusyEvent(event);
-    try {
-      const res = await crmPut(`/api/email-flows/${event}`, {
-        roles: f.roles, extra_emails: f.extra_emails, enabled: f.enabled,
-        subject_template: f.subject_template || null,
-        body_template: f.body_template || null,
-      });
-      notify(res.message || "Flow saved");
-      reload();
-    } catch (e: any) {
-      notify(e?.message || "Failed to save flow", "err");
-    } finally {
-      setBusyEvent(null);
-    }
-  };
-
-  const reset = async (event: string) => {
-    setBusyEvent(event);
-    try {
-      await crmDelete(`/api/email-flows/${event}`);
-      notify("Flow reset to default");
-      reload();
-    } catch (e: any) {
-      notify(e?.message || "Failed to reset flow", "err");
-    } finally {
-      setBusyEvent(null);
-    }
-  };
-
-  return (
-    <div className="mt-6 rounded-card border border-subtle bg-surface-1">
-      <div className="border-b border-subtle px-4 py-3">
-        <div className="text-sm font-bold text-primary">Email flows</div>
-        <p className="mt-0.5 text-xs text-muted">
-          Who receives which application email. Change roles here when people join or leave —
-          no code changes. An unchecked flow's default is shown until you customise it.
-        </p>
-      </div>
-      <div className="divide-y divide-[color:var(--border-subtle)]">
-        {Object.values(drafts).map((f) => (
-          <div key={f.event} className="px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <span className="text-sm font-semibold text-primary">{f.label}</span>
-                {f.customized && (
-                  <span className="ml-2 rounded-control bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    Customised
-                  </span>
-                )}
-                <div className="text-xs text-muted">{f.description}</div>
-              </div>
-              <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-secondary">
-                <input type="checkbox" checked={f.enabled}
-                  onChange={(e) => setFlow(f.event, { enabled: e.target.checked })} />
-                Enabled
-              </label>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              {allRoles.map((r) => (
-                <label key={r} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-secondary">
-                  <input
-                    type="checkbox"
-                    checked={f.roles.includes(r)}
-                    disabled={!f.enabled}
-                    onChange={(e) =>
-                      setFlow(f.event, {
-                        roles: e.target.checked ? [...f.roles, r] : f.roles.filter((x) => x !== r),
-                      })}
-                  />
-                  {r}
-                </label>
-              ))}
-            </div>
-            {/* Wording templates (0071): the email's TEXT becomes admin data.
-                Empty = the application's standard wording. Placeholders are
-                replaced when the mail is queued. */}
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-semibold text-muted">
-                  Custom subject (blank = standard) — placeholders: {"{subject} {recipient} {company}"}
-                </span>
-                <input
-                  className={`${inputCls} text-xs`}
-                  value={f.subject_template || ""}
-                  disabled={!f.enabled}
-                  placeholder="e.g. [Karnex] {subject}"
-                  onChange={(e) => setFlow(f.event, { subject_template: e.target.value })}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[11px] font-semibold text-muted">
-                  Custom body (blank = standard) — {"{body}"} inserts the standard text
-                </span>
-                <textarea
-                  className={`${inputCls} min-h-[2.25rem] text-xs`}
-                  rows={2}
-                  value={f.body_template || ""}
-                  disabled={!f.enabled}
-                  placeholder={"Dear {recipient},\n\n{body}\n\nRegards, {company}"}
-                  onChange={(e) => setFlow(f.event, { body_template: e.target.value })}
-                />
-              </label>
-            </div>
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <label className="block min-w-[16rem] flex-1">
-                <span className="mb-1 block text-[11px] font-semibold text-muted">
-                  Extra email addresses (comma separated — auditors, group mailboxes)
-                </span>
-                <input
-                  className={`${inputCls} text-xs`}
-                  value={f.extra_emails.join(", ")}
-                  disabled={!f.enabled}
-                  onChange={(e) =>
-                    setFlow(f.event, {
-                      extra_emails: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                    })}
-                />
-              </label>
-              <button type="button" className={`${btnPrimary} !px-3 !py-1.5 text-xs`}
-                disabled={busyEvent === f.event} onClick={() => save(f.event)}>
-                {busyEvent === f.event ? "Saving…" : "Save"}
-              </button>
-              {f.customized && (
-                <button type="button" className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
-                  disabled={busyEvent === f.event} onClick={() => reset(f.event)}>
-                  Reset to default
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------- action permissions */
-
-type ActionPerm = {
-  action: string;
-  label: string;
-  description: string;
-  default_roles: string[];
-  roles: string[];
-  customized: boolean;
-};
-
-/** WHO MAY DO each gated action (approve timesheets, manage POs…), the
- * companion of Email Flows' who-hears-about-it. Admin/CEO always pass, so an
- * empty selection means "admins only" — lock-out is impossible. */
-function ActionPermissionsPanel({ allRoles, actions, reload, notify }: {
-  allRoles: string[];
-  actions: ActionPerm[];
-  reload: () => void;
-  notify: (m: string, k?: "ok" | "err") => void;
-}) {
-  const [drafts, setDrafts] = useState<Record<string, ActionPerm>>({});
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  useEffect(() => {
-    setDrafts(Object.fromEntries(actions.map((a) => [a.action, { ...a }])));
-  }, [actions]);
-
-  const setPerm = (action: string, roles: string[]) =>
-    setDrafts((d) => ({ ...d, [action]: { ...d[action], roles } }));
-
-  const save = async (action: string) => {
-    const a = drafts[action];
-    if (!a) return;
-    setBusyAction(action);
-    try {
-      const res = await crmPut(`/api/action-permissions/${action}`, { roles: a.roles });
-      notify(res.message || "Permission saved");
-      reload();
-    } catch (e: any) {
-      notify(e?.message || "Failed to save permission", "err");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const reset = async (action: string) => {
-    setBusyAction(action);
-    try {
-      await crmDelete(`/api/action-permissions/${action}`);
-      notify("Permission reset to default");
-      reload();
-    } catch (e: any) {
-      notify(e?.message || "Failed to reset permission", "err");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  return (
-    <div className="mt-6 rounded-card border border-subtle bg-surface-1">
-      <div className="border-b border-subtle px-4 py-3">
-        <div className="text-sm font-bold text-primary">Action permissions</div>
-        <p className="mt-0.5 text-xs text-muted">
-          Who may perform each action. Admin/CEO always can — ticking nobody means admins only.
-          Changes apply within a minute, without a restart. <b>Approval</b> actions for anyone on an
-          Access Template or a custom role are decided by that template's / role's <b>Approvals</b>{" "}
-          section instead — this list covers users with neither.
-        </p>
-      </div>
-      <div className="divide-y divide-[color:var(--border-subtle)]">
-        {Object.values(drafts).map((a) => (
-          <div key={a.action} className="px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <span className="text-sm font-semibold text-primary">{a.label}</span>
-                {a.customized && (
-                  <span className="ml-2 rounded-control bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    Customised
-                  </span>
-                )}
-                <div className="text-xs text-muted">{a.description}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button type="button" className={`${btnPrimary} !px-3 !py-1.5 text-xs`}
-                  disabled={busyAction === a.action} onClick={() => save(a.action)}>
-                  {busyAction === a.action ? "Saving…" : "Save"}
-                </button>
-                {a.customized && (
-                  <button type="button" className={`${btnSecondary} !px-3 !py-1.5 text-xs`}
-                    disabled={busyAction === a.action} onClick={() => reset(a.action)}>
-                    Reset
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              {allRoles.map((r) => (
-                <label key={r} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-secondary">
-                  <input
-                    type="checkbox"
-                    checked={a.roles.includes(r)}
-                    onChange={(e) =>
-                      setPerm(a.action, e.target.checked
-                        ? [...a.roles, r]
-                        : a.roles.filter((x) => x !== r))}
-                  />
-                  {r}
-                  {a.default_roles.includes(r) && <span className="text-[10px] text-muted">(default)</span>}
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+/* The Action permissions + Email flows panels live in
+   components/access/PermissionsPanels.tsx (redesigned 7 Oct 2026). */
 
 /* -------------------------------------------------------- create user */
 
@@ -1289,9 +1020,9 @@ function TabAccessModal({
 export function UsersAdminPage() {
   const isAdmin = useHasRole();
   const me = useMe();
-  // Access Control hub (target IA): ONE sidebar entry with Users and Access
-  // Templates as tabs inside it, instead of two sibling pages.
-  const [hubTab, setHubTab] = usePageTab<"users" | "roles" | "templates">("tab", "users", ["users", "roles", "templates"]);
+  // Access Control hub (target IA): ONE sidebar entry with Users, Roles, Access
+  // Templates and (7 Oct 2026) the Audit log as tabs inside it.
+  const [hubTab, setHubTab] = usePageTab<HubTab>("tab", "users", HUB_TABS.map((t) => t.key));
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
   const [toast, notify] = useToast();
   const [rows, setRows] = useState<UserRow[]>([]);
@@ -1300,13 +1031,17 @@ export function UsersAdminPage() {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>("");
+  const [roleFilter, setRoleFilter] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [rolesFor, setRolesFor] = useState<UserRow | null>(null);
   const [tabAccessFor, setTabAccessFor] = useState<UserRow | null>(null);
-  const [toggleActiveFor, setToggleActiveFor] = useState<UserRow | null>(null);
+  const [activateFor, setActivateFor] = useState<UserRow | null>(null);
+  const [deactivateFor, setDeactivateFor] = useState<UserRow | null>(null);
   const [deleteFor, setDeleteFor] = useState<UserRow | null>(null);
+  const [manageId, setManageId] = useState<number | null>(null);
+  const [auditKey, setAuditKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [portalBusyId, setPortalBusyId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<AccessTemplateOpt[]>([]);
   const [customRoles, setCustomRoles] = useState<{ id: number; name: string; is_active: boolean }[]>([]);
   const [templateBusyId, setTemplateBusyId] = useState<number | null>(null);
@@ -1317,6 +1052,7 @@ export function UsersAdminPage() {
   const [pausedIds, setPausedIds] = useState<Set<number>>(new Set());
   const [pauseBusyId, setPauseBusyId] = useState<number | null>(null);
   const dSearch = useDebounced(search);
+  const counts = (meta as (Meta & { counts?: UserCounts }) | undefined)?.counts;
 
   const loadFlows = useCallback(async () => {
     try {
@@ -1365,7 +1101,9 @@ export function UsersAdminPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await crmGet<UserRow[]>(`/api/users${qs({ page, limit: 20, search: dSearch })}`);
+      const res = await crmGet<UserRow[]>(`/api/users${qs({
+        page, limit: 20, search: dSearch, status: statusFilter || undefined, role: roleFilter || undefined,
+      })}`);
       setRows(res.data || []);
       setMeta(res.meta);
     } catch (e: any) {
@@ -1373,42 +1111,32 @@ export function UsersAdminPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, dSearch]);
+  }, [page, dSearch, statusFilter, roleFilter]);
   useEffect(() => {
     if (isAdmin) load();
   }, [isAdmin, load]);
-  useEffect(() => { setPage(1); }, [dSearch]);
+  useEffect(() => { setPage(1); }, [dSearch, statusFilter, roleFilter]);
+
+  /** Something changed — reload the list and the audit log. */
+  const changed = useCallback((message?: string) => {
+    if (message) notify(message);
+    void load();
+    setAuditKey((k) => k + 1);
+  }, [load, notify]);
 
   if (!isAdmin) {
     return <ErrorBox error="Access denied: the Users page is available to Admin and CEO only." />;
   }
 
-  const toggleActive = async () => {
-    if (!toggleActiveFor) return;
+  const activate = async () => {
+    if (!activateFor) return;
     setBusy(true);
     try {
-      const action = toggleActiveFor.is_active ? "deactivate" : "activate";
-      const res = await crmPost(`/api/users/${toggleActiveFor.id}/${action}`);
-      notify(res.message || `User ${action}d`);
-      setToggleActiveFor(null);
-      load();
+      const res = await crmPost(`/api/users/${activateFor.id}/activate`);
+      setActivateFor(null);
+      changed(res.message || "User activated");
     } catch (e: any) {
-      notify(e?.message || "Failed to update user", "err");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteUser = async () => {
-    if (!deleteFor) return;
-    setBusy(true);
-    try {
-      const res = await crmDelete(`/api/users/${deleteFor.id}`);
-      notify(res.message || "User deleted");
-      setDeleteFor(null);
-      load();
-    } catch (e: any) {
-      notify(e?.message || "Failed to delete user", "err");
+      notify(e?.message || "Failed to activate user", "err");
     } finally {
       setBusy(false);
     }
@@ -1437,6 +1165,7 @@ export function UsersAdminPage() {
             }
           : r)),
       );
+      setAuditKey((k) => k + 1);
     } catch (e: any) {
       notify(e?.message || "Failed to update access", "err");
     } finally {
@@ -1445,27 +1174,46 @@ export function UsersAdminPage() {
   };
 
   const togglePortal = async (user: UserRow) => {
-    setPortalBusyId(user.id);
     try {
       const res = await crmPost(`/api/users/${user.id}/portal-access`);
-      notify(res.message || "Portal access updated");
+      changed(res.message || "Portal access updated");
     } catch (e: any) {
       // e.g. 404 "No employee is linked to this user"
       notify(e?.message || "Failed to toggle portal access", "err");
-    } finally {
-      setPortalBusyId(null);
     }
   };
 
-  const actionBtn =
-    "inline-flex items-center gap-1 rounded-control border border-strong px-2 py-1 text-xs font-semibold text-secondary hover:bg-surface-2 disabled:opacity-50";
+  /** Where this user's tabs come from — the Manage dialog's one-liner. */
+  const accessLabelFor = (r: UserRow): string => {
+    const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
+    if (roleMatch) return `custom role ${roleMatch.name}`;
+    const t = templates.find((x) => x.id === r.access_template_id);
+    if (t) return `template ${t.name}`;
+    return "their role defaults";
+  };
+  const managed = manageId != null ? rows.find((r) => r.id === manageId) || null : null;
 
   const columns: Column<UserRow>[] = [
-    { key: "username", label: "Username", render: (r) => <span className="font-semibold text-primary">{r.username}</span> },
-    { key: "full_name", label: "Full Name" },
-    { key: "email", label: "Email" },
     {
-      key: "roles", label: "CRM Roles",
+      key: "username", label: "User",
+      render: (r) => (
+        <span className="flex min-w-0 items-center gap-3">
+          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold text-[#fff] ${
+            r.is_active ? "bg-gradient-to-br from-indigo-500 to-blue-600" : "bg-slate-400 dark:bg-slate-600"}`} aria-hidden>
+            {initials(r.full_name || r.username)}
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5">
+              <span className="truncate font-semibold text-primary">{r.full_name || r.username}</span>
+              {r.id === me.id && <span className="rounded-full bg-surface-2 px-1.5 py-px text-[10px] font-bold text-muted">You</span>}
+            </span>
+            <span className="block truncate text-xs text-muted">{r.email || r.username}</span>
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: "roles", label: "Roles",
       // No role at all = the CRM refuses them ("No CRM role is assigned"),
       // whatever template they carry. Say so on the row, where it can be fixed.
       render: (r) => (r.roles.length || (r.custom_roles || []).length)
@@ -1479,22 +1227,27 @@ export function UsersAdminPage() {
     },
     {
       key: "access_template_id",
-      label: "Access",
+      label: "Tabs from",
       render: (r) => {
         // The one thing that decides this user's tabs: a custom role, an
         // Access Template, or the built-in role defaults.
         const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
         const value = roleMatch ? `role:${roleMatch.id}` : r.access_template_id ? `template:${r.access_template_id}` : "";
+        const isAdminRow = r.roles.includes("Admin") || r.roles.includes("CEO");
+        if (isAdminRow && !value) {
+          return <span className="text-xs font-semibold text-muted" title="Admin and CEO open every tab">Full access</span>;
+        }
         return (
           <select
-            className={`${inputCls} min-w-[10rem] py-1 text-xs`}
+            className={`${inputCls} !w-auto min-w-[10rem] py-1 text-xs`}
             value={value}
             disabled={templateBusyId === r.id}
             onChange={(e) => setAccessSource(r, e.target.value)}
             onClick={(e) => e.stopPropagation()}
+            aria-label={`Where ${r.full_name || r.username}'s tabs come from`}
             title="Picking one clears the others"
           >
-            <option value="">— Role default —</option>
+            <option value="">Role defaults</option>
             {customRoles.length > 0 && (
               <optgroup label="Custom roles">
                 {customRoles.map((c) => <option key={`r${c.id}`} value={`role:${c.id}`}>{c.name}</option>)}
@@ -1509,19 +1262,38 @@ export function UsersAdminPage() {
         );
       },
     },
-    { key: "is_active", label: "Status", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
+    {
+      key: "is_active", label: "Status",
+      render: (r) => (
+        <span className="flex flex-col items-start gap-1">
+          <StatusBadge status={r.is_active ? "Active" : "Inactive"} label={r.is_active ? "Active" : "Deactivated"} />
+          {r.must_change_password && (
+            <span className="rounded-full bg-amber-100 px-2 py-px text-[10px] font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+              title="An Admin reset the password — they must set their own at next sign-in">
+              Password reset pending
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "last_login", label: "Last sign-in",
+      render: (r) => r.last_login
+        ? <span className="whitespace-nowrap text-xs text-secondary">{fmtDateTime12(r.last_login)}</span>
+        : <span className="text-xs text-muted">Never</span>,
+    },
     {
       key: "_email",
-      label: "Email",
+      label: "Notifications",
       render: (r) => {
         const paused = pausedIds.has(r.id);
         return (
           <button
             type="button"
-            className={`inline-flex items-center rounded-control px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
               paused
-                ? "bg-warning-soft text-warning ring-warning/30"
-                : "bg-success-soft text-success ring-success/30"
+                ? "bg-warning-soft text-warning"
+                : "bg-success-soft text-success"
             } disabled:opacity-50`}
             title={paused ? "Application email is paused for this user — click to resume"
               : "Application email is on — click to pause (e.g. when they leave)"}
@@ -1533,106 +1305,71 @@ export function UsersAdminPage() {
         );
       },
     },
-    {
-      key: "_actions",
-      label: "Actions",
-      className: "text-right",
-      render: (r) => (
-        <span className="inline-flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button className={actionBtn} title="Replace CRM roles" onClick={() => setRolesFor(r)}>
-            <ShieldCheck size={13} /> Edit Roles
-          </button>
-          <button className={actionBtn} title="Choose which tabs this user can see" onClick={() => setTabAccessFor(r)}>
-            <SlidersHorizontal size={13} /> Edit Tab Access
-          </button>
-          <button className={actionBtn} title="Set or generate a new password for this user" disabled={r.id === me.id} onClick={() => setResetFor(r)}>
-            <KeyRound size={13} /> Reset Password
-          </button>
-          <button
-            className={actionBtn}
-            title={r.is_active ? "Deactivate user" : "Activate user"}
-            disabled={r.id === me.id}
-            onClick={() => setToggleActiveFor(r)}
-          >
-            {r.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
-            {r.is_active ? "Deactivate" : "Activate"}
-          </button>
-          <button
-            className={actionBtn}
-            title="Toggle employee portal access"
-            disabled={portalBusyId === r.id}
-            onClick={() => togglePortal(r)}
-          >
-            <KeyRound size={13} /> {portalBusyId === r.id ? "Toggling…" : "Portal access"}
-          </button>
-          <button
-            className={`${actionBtn} !border-red-300 !text-red-600 hover:!bg-red-50 dark:!border-red-700/60 dark:!text-red-400 dark:hover:!bg-red-950/40`}
-            title="Delete user permanently"
-            disabled={r.id === me.id}
-            onClick={() => setDeleteFor(r)}
-          >
-            <Trash2 size={13} /> Delete
-          </button>
-        </span>
-      ),
-    },
   ];
 
-  if (hubTab === "templates" || hubTab === "roles") {
+  const statusTabs: { key: string; label: string }[] = [
+    { key: "", label: `All${counts ? ` · ${counts.total}` : ""}` },
+    { key: "active", label: `Active${counts ? ` · ${counts.active}` : ""}` },
+    { key: "inactive", label: `Deactivated${counts ? ` · ${counts.inactive}` : ""}` },
+    ...(counts?.no_role ? [{ key: "no_role", label: `No role · ${counts.no_role}` }] : []),
+    ...(counts?.password_pending ? [{ key: "password_pending", label: `Password pending · ${counts.password_pending}` }] : []),
+  ];
+  const roleOptions = [
+    ...CRM_ROLES.map((r) => ({ value: r, label: r.replace(/_/g, " ") })),
+    ...customRoles.map((c) => ({ value: c.name, label: `${c.name} (custom)` })),
+  ];
+
+  const header = (
+    <div className="mb-4">
+      <PageHeader
+        icon={ShieldCheck}
+        accent="slate"
+        eyebrow="Admin · CEO"
+        title="Access Control"
+        subtitle={hubTab === "roles"
+          ? "Roles are the job titles people sign in as. Create a custom role, choose the tabs and approvals it carries, then add its members."
+          : hubTab === "templates"
+            ? "An Access Template is a reusable set of tabs and fields. A person gets their tabs from ONE place: their role defaults, a template, or a custom role."
+            : hubTab === "audit"
+              ? "Every change to who may do what — roles, access, passwords, deactivations — with who made it and why."
+              : "Who can sign in and what they can open. Manage a person to change roles, reset a password or end access — every change is recorded."}
+        stats={counts ? [
+          { label: "users", value: counts.total },
+          { label: "active", value: counts.active },
+          ...(counts.inactive ? [{ label: "deactivated", value: counts.inactive }] : []),
+          ...(counts.password_pending ? [{ label: "password pending", value: counts.password_pending }] : []),
+        ] : undefined}
+        actions={hubTab === "users" ? (
+          <>
+            <button className={HERO_BTN} onClick={() => setShowInvite(true)}>
+              <Send size={15} /> Invite User
+            </button>
+            <button className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> Create User
+            </button>
+          </>
+        ) : undefined}
+      >
+        <Tabs tabs={HUB_TABS} active={hubTab} onChange={(k) => setHubTab(k as HubTab)} />
+      </PageHeader>
+    </div>
+  );
+
+  if (hubTab !== "users") {
     return (
       <div>
         {toast}
-        <div className="mb-4">
-          <PageHeader
-            icon={ShieldCheck}
-            accent="slate"
-            eyebrow="Admin · CEO"
-            title="Access Control"
-            subtitle={hubTab === "roles"
-              ? "Roles are the job titles people sign in as. Create a custom role, choose the tabs it may open, then add its members — or reset a member's password from here."
-              : "Users get an Access Template (from the Users tab, or automatically from their role); the template controls which tabs and fields they can see and edit."}
-          >
-            <Tabs
-              tabs={[{ key: "users", label: "Users" }, { key: "roles", label: "Roles" }, { key: "templates", label: "Access Templates" }]}
-              active={hubTab}
-              onChange={(k) => setHubTab(k as "users" | "roles" | "templates")}
-            />
-          </PageHeader>
-        </div>
-        {hubTab === "roles" ? <RolesPanel notify={notify} /> : <AccessTemplatesPage />}
+        {header}
+        {hubTab === "roles" ? <RolesPanel notify={notify} />
+          : hubTab === "audit" ? <AccessAuditLog refreshKey={auditKey} />
+            : <AccessTemplatesPage />}
       </div>
     );
   }
   return (
     <div>
       {toast}
-      <div className="mb-4">
-        <PageHeader
-          icon={ShieldCheck}
-          accent="slate"
-          eyebrow="Admin · CEO"
-          title="Access Control"
-          subtitle="Admin/CEO control who can access the application. Create an account with email and password,
-            assign roles and an Access Template, then the user signs in and updates their own profile."
-          stats={meta ? [{ label: meta.total === 1 ? "user" : "users", value: meta.total }] : undefined}
-          actions={
-            <>
-              <button className={HERO_BTN} onClick={() => setShowInvite(true)}>
-                <Send size={15} /> Invite User
-              </button>
-              <button className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
-                <Plus size={15} /> Create User
-              </button>
-            </>
-          }
-        >
-          <Tabs
-            tabs={[{ key: "users", label: "Users" }, { key: "roles", label: "Roles" }, { key: "templates", label: "Access Templates" }]}
-            active={hubTab}
-            onChange={(k) => setHubTab(k as "users" | "roles" | "templates")}
-          />
-        </PageHeader>
-      </div>
+      {header}
       {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
       <DataTable
         columns={columns}
@@ -1642,8 +1379,34 @@ export function UsersAdminPage() {
         loading={loading}
         search={search}
         onSearch={setSearch}
+        searchPlaceholder="Search people…"
+        filters={
+          <div className="flex flex-wrap items-center gap-2">
+            <StagePills label="User status" tabs={statusTabs} active={statusFilter}
+              onChange={(k) => setStatusFilter(k as UserStatusFilter)} />
+            <select className={`${CONTROL} min-w-[11rem]`} aria-label="Filter by role" value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}>
+              <option value="">All roles</option>
+              {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        }
         onPage={setPage}
-        emptyMessage="No users found"
+        onRowClick={(r) => setManageId(r.id)}
+        rowActionsLabel="Actions"
+        rowActions={(r) => (
+          <span className="inline-flex items-center gap-1.5">
+            <button type="button" onClick={() => setRolesFor(r)} title="Edit roles"
+              className="rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-primary" aria-label={`Edit roles of ${r.full_name || r.username}`}>
+              <ShieldCheck size={15} />
+            </button>
+            <button type="button" onClick={() => setManageId(r.id)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 px-3 py-1.5 text-xs font-semibold text-[#fff] shadow hover:brightness-110">
+              <UserCog size={14} aria-hidden /> Manage
+            </button>
+          </span>
+        )}
+        emptyMessage={statusFilter || roleFilter || search ? "No users match these filters" : "No users found"}
       />
       {perms.length > 0 && (
         <ActionPermissionsPanel allRoles={allRoles} actions={perms} reload={loadFlows} notify={notify} />
@@ -1651,41 +1414,49 @@ export function UsersAdminPage() {
       {flows.length > 0 && (
         <EmailFlowsPanel allRoles={allRoles} flows={flows} reload={loadFlows} notify={notify} />
       )}
-      {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} onSaved={load} notify={notify} />}
-      {showInvite && <InviteUserModal onClose={() => setShowInvite(false)} onSaved={load} notify={notify} />}
-      {rolesFor && <EditRolesModal user={rolesFor} onClose={() => setRolesFor(null)} onSaved={load} notify={notify} />}
-      {tabAccessFor && <TabAccessModal user={tabAccessFor} onClose={() => setTabAccessFor(null)} onSaved={load} notify={notify} />}
-      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => setResetFor(null)} notify={notify} />}
-      {toggleActiveFor && (
-        <ConfirmModal
-          title={toggleActiveFor.is_active ? "Deactivate user" : "Activate user"}
-          message={
-            toggleActiveFor.is_active ? (
-              <>Deactivate <b>{toggleActiveFor.username}</b>? They will no longer be able to log in.</>
-            ) : (
-              <>Activate <b>{toggleActiveFor.username}</b>? They will be able to log in again.</>
-            )
-          }
-          confirmLabel={toggleActiveFor.is_active ? "Deactivate" : "Activate"}
-          danger={toggleActiveFor.is_active}
-          busy={busy}
-          onConfirm={toggleActive}
-          onClose={() => setToggleActiveFor(null)}
+      {managed && (
+        <UserManageModal
+          user={managed}
+          accessLabel={accessLabelFor(managed)}
+          isSelf={managed.id === me.id}
+          emailPaused={pausedIds.has(managed.id)}
+          refreshKey={auditKey}
+          onClose={() => setManageId(null)}
+          actions={{
+            editRoles: () => setRolesFor(managed),
+            tabExceptions: () => setTabAccessFor(managed),
+            resetPassword: () => setResetFor(managed),
+            togglePortal: () => void togglePortal(managed),
+            toggleEmail: () => void toggleEmailPause(managed),
+            deactivate: () => setDeactivateFor(managed),
+            activate: () => setActivateFor(managed),
+            remove: () => setDeleteFor(managed),
+          }}
         />
       )}
-      {deleteFor && (
+      {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} onSaved={() => changed()} notify={notify} />}
+      {showInvite && <InviteUserModal onClose={() => setShowInvite(false)} onSaved={() => changed()} notify={notify} />}
+      {rolesFor && <EditRolesModal user={rolesFor} onClose={() => setRolesFor(null)} onSaved={() => changed()} notify={notify} />}
+      {tabAccessFor && <TabAccessModal user={tabAccessFor} onClose={() => setTabAccessFor(null)} onSaved={() => changed()} notify={notify} />}
+      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => { setResetFor(null); changed(); }} notify={notify} />}
+      {activateFor && (
         <ConfirmModal
-          title="Delete user"
-          message={
-            <>Permanently delete <b>{deleteFor.username}</b> ({deleteFor.full_name || deleteFor.email})?
-            They will lose login access immediately. History they created is kept and reassigned to you when needed.</>
-          }
-          confirmLabel="Delete"
-          danger
+          title="Activate user"
+          message={<>Activate <b>{activateFor.full_name || activateFor.username}</b>? They will be able to sign in again with their current roles.</>}
+          confirmLabel="Activate"
           busy={busy}
-          onConfirm={deleteUser}
-          onClose={() => setDeleteFor(null)}
+          onConfirm={activate}
+          onClose={() => setActivateFor(null)}
         />
+      )}
+      {deactivateFor && (
+        <DeactivateUserModal user={deactivateFor} onClose={() => setDeactivateFor(null)}
+          onDone={(m) => { setDeactivateFor(null); changed(m); }} />
+      )}
+      {deleteFor && (
+        <DeleteUserModal user={deleteFor} onClose={() => setDeleteFor(null)}
+          onDone={(m) => { setDeleteFor(null); setManageId(null); changed(m); }}
+          onDeactivateInstead={() => { const u = deleteFor; setDeleteFor(null); setDeactivateFor(u); }} />
       )}
     </div>
   );

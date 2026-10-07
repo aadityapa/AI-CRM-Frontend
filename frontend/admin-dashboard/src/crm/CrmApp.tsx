@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { APP_NAME } from "../lib/brand";
 import { crmGet, crmPost, CrmApiError } from "./api";
-import { CrmLink, CrmRouter, crmNavigate, isPushNavigation, readCrmPath } from "./routerHooks";
+import { CrmLink, CrmRouter, crmNavigate, crmUrl, isPushNavigation, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
 import { CRM_NAV, type CrmNavItem } from "./nav";
 import { ErrorBox, Spinner } from "./components/ui";
@@ -183,6 +183,14 @@ function playChime(soft = false) {
 
 type Popup = { key: string; title: string; message?: string; link?: string; summary?: boolean };
 
+/** Rows the bell keeps / shows. */
+const BELL_LIMIT = 15;
+/** How often a VISIBLE tab asks `/api/notifications/summary` (7 Oct 2026 —
+ *  was a 30 s list poll from every tab, hidden ones included). */
+const BELL_POLL_MS = 60_000;
+/** A focus / visibility kick is ignored this soon after the last poll. */
+const BELL_FOCUS_GAP_MS = 15_000;
+
 /** In-app Back / Forward (29 Sep 2026): the same as the browser's buttons —
  *  every page, tab and filter chip is in the address, so each step returns to
  *  exactly what was on screen. Alt + ← / → work too (the browser's own keys).
@@ -213,7 +221,7 @@ function HistoryButtons() {
   );
 }
 
-function NotificationsBell() {
+export function NotificationsBell() {
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<any[]>([]);
@@ -221,7 +229,10 @@ function NotificationsBell() {
   /* On-screen alerts: the badge alone is easy to miss on a second monitor. */
   const [popups, setPopups] = useState<Popup[]>([]);
   const [muted, setMuted] = useState(() => !soundEnabled());
-  const seenRef = useRef<Set<number>>(new Set());
+  /* Newest notification id already shown (7 Oct 2026). The 30-second poll asks
+     the server only for rows newer than this (`since_id`) — usually none — instead
+     of re-reading the whole list; it also replaces an ever-growing Set of seen ids. */
+  const newestIdRef = useRef<number | null>(null);
   const firstLoadRef = useRef(true);
 
   const dismissPopup = useCallback((key: string) => {
@@ -235,21 +246,27 @@ function NotificationsBell() {
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null);
 
-  const load = async () => {
+  /** `full` re-reads the 15 newest (first load, opening the panel, after marking
+   *  read); a poll asks only for what arrived after the newest id already shown. */
+  const load = async (full = true) => {
     try {
-      const res = await crmGet<any[]>("/api/notifications?limit=15");
+      const since = newestIdRef.current;
+      const incremental = !full && since != null;
+      const res = await crmGet<any[]>(
+        `/api/notifications?limit=${BELL_LIMIT}${incremental ? `&since_id=${since}` : ""}`,
+      );
       const rows = (res.data || []).filter(
         (n: any) => n && n.id != null && String(n.title || "").trim() !== "",
       );
-      setItems(rows);
+      setItems((prev) => incremental ? [...rows, ...prev].slice(0, BELL_LIMIT) : rows);
       const unreadCount = (res.meta as any)?.unread_count ?? 0;
       setUnread(unreadCount);
 
-      // What arrived since the last poll? Ids are remembered so a notification
-      // announces itself exactly once, even though the list is re-fetched
-      // every minute.
-      const fresh = rows.filter((n: any) => !n.is_read && !seenRef.current.has(n.id));
-      rows.forEach((n: any) => seenRef.current.add(n.id));
+      // What arrived since the last poll? Anything newer than the newest id
+      // already shown — so a notification announces itself exactly once.
+      const fresh = rows.filter((n: any) => !n.is_read && (since == null || n.id > since));
+      const top = rows.reduce((m: number, n: any) => Math.max(m, Number(n.id) || 0), since ?? 0);
+      if (top > 0) newestIdRef.current = top;
 
       if (firstLoadRef.current) {
         // Just logged in (or reloaded): one summary card, one soft chime —
@@ -281,20 +298,58 @@ function NotificationsBell() {
       /* CRM may be unconfigured */
     }
   };
+  /** The poll (7 Oct 2026): one `/summary` read — `{unread_count, latest_id}`,
+   *  two index lookups, no row bodies. The list is fetched only when
+   *  `latest_id` moved past the newest row already shown; a badge change on
+   *  its own (read in another tab) just updates the count. */
+  const poll = async () => {
+    if (firstLoadRef.current) { await load(true); return; }
+    try {
+      const res = await crmGet<{ unread_count?: number; latest_id?: number | null }>("/api/notifications/summary");
+      const latest = Number(res.data?.latest_id ?? 0) || 0;
+      if (latest > (newestIdRef.current ?? 0)) {
+        await load(false);
+      } else {
+        setUnread(Number(res.data?.unread_count ?? 0) || 0);
+      }
+    } catch {
+      /* CRM may be unconfigured */
+    }
+  };
   useEffect(() => {
-    load();
-    // 30s (was 60s) now that arrivals announce themselves on screen — and an
-    // immediate poll when the user comes back to the tab, so switching back
-    // from email shows what landed while they were away.
-    const t = window.setInterval(load, 30_000);
-    const onFocus = () => load();
-    window.addEventListener("focus", onFocus);
+    void load();
+    // Only a tab the user can see polls: a hidden tab has nobody to show a
+    // card to, and the panel re-reads the list when it opens. Coming back to
+    // the tab polls at once (throttled, like useRefetchOnFocus) so what landed
+    // while they were in email shows without waiting for the next tick.
+    let last = Date.now();
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      last = Date.now();
+      void poll();
+    };
+    const kick = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - last < BELL_FOCUS_GAP_MS) return;
+      tick();
+    };
+    const t = window.setInterval(tick, BELL_POLL_MS);
+    window.addEventListener("focus", kick);
+    document.addEventListener("visibilitychange", kick);
     return () => {
       window.clearInterval(t);
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", kick);
+      document.removeEventListener("visibilitychange", kick);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Opening the panel re-reads the list, so read state changed elsewhere (another
+  // tab, a bell link opened on a phone) is current when the user looks.
+  useEffect(() => {
+    if (open) void load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const placePanel = useCallback(() => {
     const el = rootRef.current;
@@ -663,6 +718,20 @@ function CrmNavLinkItem({
   );
 }
 
+/** Replace the Dashboard with My Interviews for a panel-only login — once,
+ *  on the empty path; Back / Forward and explicit links are untouched. */
+function PanelLanding() {
+  useEffect(() => {
+    if (readCrmPath() === "") {
+      // replaceState, not a push: Back must not return to a Dashboard that
+      // only sends them here again.
+      window.history.replaceState({}, "", crmUrl("my-interviews"));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  }, []);
+  return null;
+}
+
 export default function CrmApp() {
   const reduce = useReducedMotion();
   const [me, setMe] = useState<Me | null>(null);
@@ -879,8 +948,16 @@ export default function CrmApp() {
     return crmTabVisibleFromMe(me, n.path, roleOk, mandatory);
   });
 
+  // A login whose ONLY page is My Interviews (the Interviewer custom role:
+  // no built-in role, one granted tab) opens on it — the Dashboard would be
+  // a single tile pointing there (7 Oct 2026).
+  const panelOnly = !me.roles.some((r) => BUILT_IN_ROLES.includes(r))
+    && visible.filter((n) => n.path !== "").every((n) => n.path === "my-interviews")
+    && visible.some((n) => n.path === "my-interviews");
+
   return (
     <MeCtx.Provider value={me}>
+      {panelOnly && <PanelLanding />}
       {/* Desktop (md+): fixed app-shell — the shell itself never scrolls; only
           <main> does. Sidebar + platform bar + CRM header stay pinned without
           relying on position:sticky (which ancestor overflow rules defeat). */}

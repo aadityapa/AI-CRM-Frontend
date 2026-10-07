@@ -67,6 +67,8 @@ export type InterviewRecord = {
   session_difficulty?: string;
   timing_mode?: "count" | "time" | string;
   time_limit_sec?: number;
+  /** The invite the interview ran on — keys the session recording (7 Oct 2026). */
+  invite_token?: string;
   skills?: string[];
   questions?: string[];
   answers?: string[];

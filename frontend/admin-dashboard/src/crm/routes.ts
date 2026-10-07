@@ -54,6 +54,7 @@ const CrmReportsPage = lazy(() => import("./pages/CrmReports").then((m) => ({ de
 const TemplateRequestsPage = lazy(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
 const ProfilePage = lazy(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
 const ScreeningDeskPage = lazy(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
+const MyInterviewsPage = lazy(() => import("./pages/MyInterviews").then((m) => ({ default: m.MyInterviewsPage })));
 const MyTasksPage = lazy(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
 
 export const CRM_ROUTES: CrmRoute[] = [
@@ -69,6 +70,9 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "profiles", element: ProfilesListPage },
   { pattern: "profiles/:id", element: ProfileDetailPage },
   { pattern: "screening-desk", element: ScreeningDeskPage },
+  // The panel member's own technical rounds (7 Oct 2026) — the Interviewer
+  // role's one page; RMG / TA who take rounds reach it from the sidebar too.
+  { pattern: "my-interviews", element: MyInterviewsPage },
   { pattern: "my-tasks", element: MyTasksPage },
   { pattern: "calendar", element: CalendarPage },
   { pattern: "emails", element: EmailCenterPage },

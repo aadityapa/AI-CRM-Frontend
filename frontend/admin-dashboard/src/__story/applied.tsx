@@ -28,6 +28,10 @@ const live = [
     profile_pipeline_status: "L1_Feedback", cust_l1_scheduled: true, cust_l1_when: day(3), cust_l1_interviewer: "Ravi Menon (Harman)", cust_l1_result: "Hire", rounds_booked: 3, rounds_done: 3, waiting_days: 1, waiting_since: day(1) }),
   row(4, "Meera Iyer", { profile_status: st("ai_l1_scheduled", "technical_interview", "Technical Interview", "ai_l1", "Technical L1 Interview (AI)", "Scheduled"),
     ai_l1_requested: true, ai_interview_status: "Scheduled", ai_interview_scheduled_at: day(-1), waiting_days: 0, waiting_since: day(0) }),
+  row(6, "Rahul Verma", { profile_status: st("ai_l1_not_attempted", "technical_interview", "Technical Interview", "ai_l1", "Technical L1 Interview (AI)", "Not Attempted"),
+    ai_l1_requested: true, ai_interview_status: "Failed", ai_interview_result: "Failed", ai_effective_result: "Failed",
+    ai_overall_score_percent: 0, ai_not_attempted: true, ai_interview_scheduled_at: day(2), ai_report_link: "/admin/?view=candidateReport&cid=x&iid=y",
+    waiting_days: 2, waiting_since: day(2) }),
   row(5, "Priya Nair", { profile_status: { key: "technical_screening", label: "Technical Screening", tone: "warn", group: "screening", hint: "", stage: { key: "technical_screening", label: "Technical Screening" }, round: { key: null, label: "CV Screening", state: "With RMG / GM" } },
     rmg_screening_status: "Pending", rounds_booked: 0, waiting_days: 12, waiting_since: day(12) }),
 ];
@@ -37,8 +41,8 @@ const archive = [
   row(7, "Om Patil", { profile_status: st("customer_l1_failed", "customer_interviewing", "Customer Interviewing", "customer_l1", "Customer L1 Interview", "Failed", "bad"),
     profile_pipeline_status: "Customer_Rejected", cust_l1_when: day(8), cust_l1_interviewer: "Ravi Menon (Harman)", cust_l1_result: "No Hire", rounds_done: 1, waiting_days: 8, waiting_since: day(8) }),
 ];
-const counts = { live: { manual_l1_scheduled: 1, manual_l1_pending: 1, customer_l1_passed: 1, ai_l1_scheduled: 1, technical_screening: 1 },
-  archive: { rmg_rejected: 1, customer_l1_failed: 1 }, live_total: 5, archive_total: 2 };
+const counts = { live: { manual_l1_scheduled: 1, manual_l1_pending: 1, customer_l1_passed: 1, ai_l1_scheduled: 1, ai_l1_not_attempted: 1, technical_screening: 1 },
+  archive: { rmg_rejected: 1, customer_l1_failed: 1 }, live_total: 6, archive_total: 2 };
 const rounds = [
   { id: 1, kind: "L1_Interview", scheduled_at: day(-2), interviewer: "Suresh Kumar", status: "Scheduled", result: null, feedback: null, duration_minutes: 60, mode: "Online", meeting_link: "https://meet.google.com/abc" },
 ];
@@ -60,7 +64,8 @@ const rounds = [
 };
 const q = new URLSearchParams(location.search);
 window.history.replaceState(null, "", `?view=crm&p=requirements/82&tab=resumes${q.get("sub") ? `&sub=${q.get("sub")}` : ""}${q.get("status") ? `&status=${q.get("status")}` : ""}`);
-const me: any = { id: 1, username: "gm", full_name: "Laddagiri", roles: ["GM"], access: { full: true },
-  approvals: ["profile.rmg_screening"] };
+const me: any = q.get("ta")
+  ? { id: 1, username: "ta", full_name: "Neelam Singh", roles: ["TA"], access: { full: true }, approvals: [] }
+  : { id: 1, username: "gm", full_name: "Laddagiri", roles: ["GM"], access: { full: true }, approvals: ["profile.rmg_screening"] };
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider><CrmMeProvider value={me}><div className="p-4"><ResumesTab req={req} toast={() => {}} onRequirementChanged={() => {}} /></div></CrmMeProvider></ThemeProvider>);

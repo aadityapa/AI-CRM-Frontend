@@ -96,6 +96,9 @@ export function ScheduleManualRoundModal({
 }) {
   const needWho = interviewerRequired ?? round === "L1";
   const [who, setWho] = useState(defaultInterviewer);
+  // The employee behind the name (7 Oct 2026): links the round to their login
+  // so it lands on their My Interviews page. Null = typed / derived name only.
+  const [whoId, setWhoId] = useState<number | null>(null);
   const [when, setWhen] = useState("");
   const [link, setLink] = useState("");
   const [note, setNote] = useState("");
@@ -129,7 +132,7 @@ export function ScheduleManualRoundModal({
     try {
       const res = await crmPost(`/api/candidate-profiles/${profileId}/l2-face-to-face`, {
         round, scheduled_at: when.trim(), meeting_link: link.trim(),
-        interviewer: who.trim() || null, note: note.trim() || null,
+        interviewer: who.trim() || null, employee_id: who.trim() ? whoId : null, note: note.trim() || null,
       });
       onDone(res.message || `${label} scheduled — the candidate and TA are told`);
     } catch (err: any) {
@@ -173,6 +176,7 @@ export function ScheduleManualRoundModal({
             : "Leave blank and it goes to the RMG who asked for this round.")}>
           <InterviewerSelect value={who} err={errs.who}
             onChange={(v) => { setWho(v); setErrs((p) => ({ ...p, who: undefined })); }}
+            onPick={(opt) => setWhoId(opt?.id ?? null)}
             placeholder="Search the employee taking this interview…" />
           {errs.who && <p className="mt-1 text-xs font-semibold text-danger" role="alert">{errs.who}</p>}
         </DialogSection>

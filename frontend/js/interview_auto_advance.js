@@ -1056,7 +1056,11 @@ export function beginAutoAdvanceTurn(opts = {}) {
       onSpeechEndAudio: (audio) => {
         if (!_useVadWhisperPipeline()) return;
         if (!sileroProbabilityAcceptable(0.75)) return;
+        const segmentTurn = _turnSeq;
         void enqueueWhisperSegment(audio).then(() => {
+          // The turn moved on while this segment was at the transcriber:
+          // its words are the OLD answer's and must not touch the new turn.
+          if (segmentTurn !== _turnSeq) return;
           const text = getWhisperSegmentTranscript();
           if (text) {
             _interimTranscript = text;

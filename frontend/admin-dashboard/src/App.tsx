@@ -5,6 +5,7 @@ import { BarChart3, Briefcase, Database, LayoutTemplate, Sigma, Users, Terminal,
 import { PlatformTopBar } from "./components/platform-nav/PlatformTopBar";
 import { SupportWidget } from "./components/support/SupportWidget";
 import { SessionKeeper } from "./components/SessionKeeper";
+import { ForcePasswordChange } from "./components/ForcePasswordChange";
 import { useSpotlight } from "./crm/components/motion3d";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
 import { navButtonMotion, pageSurfaceMotion, routeSurfaceKey } from "./lib/motionPresets";
@@ -56,6 +57,13 @@ const NAV_DEFS: Record<Exclude<View, "templateForm" | "candidateReport" | "candi
 
 /** Ordered platform nav (CRM + Question Bank appended separately, per role). */
 const PLATFORM_NAV_ORDER: View[] = ["dashboard", "templates", "candidates", "ats", "promptLogs", "integrityLogs"];
+
+/** `/api/me` says this login may take the RMG screening decision (built-in RMG,
+ *  Admin/CEO, or a template / custom role holding the approval — e.g. GM). */
+function isScreener(body: any): boolean {
+  const approvals = body?.data?.approvals ?? body?.approvals;
+  return Array.isArray(approvals) && approvals.includes("profile.rmg_screening");
+}
 
 function readInitialView(): {
   view: View | null;
@@ -170,6 +178,12 @@ export default function App() {
   const [rolesLoaded, setRolesLoaded] = useState(false);
   // Per-user tab-access override (null = no override → full role-based access).
   const [tabAccess, setTabAccess] = useState<string[] | null>(null);
+  // An Admin/CEO reset is waiting for the user's own password (7 Oct 2026): the
+  // server refuses every CRM call but the change, so render ONLY that screen.
+  const [mustChange, setMustChange] = useState<{ name: string } | null>(null);
+  // Holds the RMG screening approval (a GM custom role has no built-in role):
+  // the Screening Desk's "Open report" lands on the AI report page.
+  const [screener, setScreener] = useState(false);
 
   // Fetch super-admin flag (question bank) and CRM roles (RBAC) once on mount.
   useEffect(() => {
@@ -200,6 +214,10 @@ export default function App() {
           if (!cancelled) setRoles(Array.isArray(r) ? r : []);
           const ta = (body?.data?.tab_access ?? body?.tab_access ?? null) as string[] | null;
           if (!cancelled) setTabAccess(Array.isArray(ta) ? ta : null);
+          if (!cancelled) setScreener(isScreener(body));
+          if (!cancelled && body?.data?.must_change_password) {
+            setMustChange({ name: String(body?.data?.full_name || body?.data?.username || "") });
+          }
         } else {
           // CRM unconfigured / no profile → legacy mode (no gating).
           if (!cancelled) setRoles([]);
@@ -236,6 +254,7 @@ export default function App() {
           JSON.stringify(prev) === JSON.stringify(r) ? prev : (Array.isArray(r) ? r : []));
         setTabAccess((prev) =>
           JSON.stringify(prev) === JSON.stringify(ta) ? prev : (Array.isArray(ta) ? ta : null));
+        setScreener(isScreener(body));
       } catch {
         /* ignore */
       }
@@ -284,6 +303,9 @@ export default function App() {
     // "templateForm") bounces the user to the landing page the moment they click
     // Create Template. Role authority still checks the view ITSELF, so e.g.
     // hrSetup keeps its own TA/HR role rule while riding Dashboard's tab grant.
+    // A screener (GM) reviews AI L1 results from the Screening Desk; the report
+    // detail page is part of that job even without the Reports tab.
+    if ((v === "candidateReport" || v === "candidateInterviews") && screener) return true;
     const parentTab: View =
       v === "candidateReport" || v === "candidateInterviews" ? "candidates"
       : v === "upcomingInterviews" || v === "hrSetup" ? "dashboard"
@@ -399,6 +421,8 @@ export default function App() {
       </div>
     );
   }
+
+  if (mustChange) return <ForcePasswordChange name={mustChange.name} />;
 
   const showViewInBody = isViewAllowed(view) ? view : (rbacActive ? defaultLanding(effRoles) : "dashboard");
 

@@ -10,14 +10,23 @@
  * Data: GET /interview/integrity-logs (all rows + summary),
  *       GET /interview/integrity-logs/{token} (timeline + recording), …/export (CSV),
  *       GET /interview/recording/{token}/live?after=N + …/part/{seq} (live stream).
+ *
+ * 7 Oct 2026 — redesigned: the gradient page header, and the open row is two
+ * columns — facts + event breakdown + timeline on the left, the recording in a
+ * bounded card on the right (it used to stretch across the whole page) under
+ * "Open candidate report", which goes straight to the report page (questions,
+ * answers, scores AND the recording). The server sends `report_link` only once
+ * the session finished.
  */
-import { useState, useEffect, useMemo, memo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Shield, AlertTriangle, CheckCircle2, XCircle, Clock, Monitor, ChevronDown, ChevronUp,
-  Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, ExternalLink, RefreshCw,
-  Video, Radio,
+  Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, RefreshCw,
+  Video, FileText, UserRound,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
+import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../components/interview-recording/RecordingViewer";
+import { PageHeader, HERO_BTN } from "../crm/components/PageHeader";
 
 /* ---------- types (mirror services/interview_integrity.py) ---------- */
 
@@ -58,6 +67,9 @@ interface IntegrityRow {
   ai_score?: number | null;
   ai_result?: string | null;
   level?: string;
+  /** 7 Oct 2026 — `/admin/?view=candidateReport&cid=…&iid=…`, only once the session finished. */
+  report_link?: string | null;
+  interview_record_id?: string | null;
 }
 
 interface Summary {
@@ -70,9 +82,6 @@ interface TimelineEvent {
   ip: string; user_agent: string; is_strike: boolean;
 }
 
-/** Statuses in which the candidate's browser may still be uploading. Mirrors
- *  `interview_recording.LIVE_SESSION_STATUSES`. */
-const LIVE_SESSION_STATUSES = new Set(["active", "verified", "pending", "scheduled"]);
 const isLiveRecording = (row: IntegrityRow) => row.recording_status === "recording" && LIVE_SESSION_STATUSES.has(row.session_status);
 
 /* ---------- presentation helpers ---------- */
@@ -168,6 +177,38 @@ function crmProfileHref(profileId?: number | null): string {
   return u.toString();
 }
 
+/** The report page link: the dashboard lives at /admin/, so the server's
+ *  root-relative link opens in place; `null` while the interview runs. */
+function reportHref(row: IntegrityRow): string {
+  return row.report_link || "";
+}
+
+const REPORT_BTN = "inline-flex items-center gap-1.5 rounded-control bg-gradient-to-r from-brand-600 to-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-raised transition-opacity hover:opacity-90";
+const SOFT_BTN = "inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3 py-1.5 text-xs font-semibold text-secondary transition-colors hover:bg-surface-2 hover:text-primary";
+
+/** Where the reviewer goes next: the report page (questions + recording)
+ *  first, the CRM profile's AI Interview tab second. */
+function RowActions({ row }: { row: IntegrityRow }) {
+  const report = reportHref(row);
+  const profile = crmProfileHref(row.profile_id);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {report ? (
+        <a href={report} className={REPORT_BTN} title="Questions, answers, scores and the recording">
+          <FileText className="h-3.5 w-3.5" /> Open candidate report
+        </a>
+      ) : (
+        <span className="text-[11px] text-muted">The report opens here once the interview finishes.</span>
+      )}
+      {profile && (
+        <a href={profile} className={SOFT_BTN}>
+          <UserRound className="h-3.5 w-3.5" /> Candidate profile · AI Interview tab
+        </a>
+      )}
+    </div>
+  );
+}
+
 /* ---------- detail (timeline + recording) ---------- */
 
 const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
@@ -210,378 +251,75 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
   if (row.ai_score != null) facts.push({ label: "AI L1 score", value: `${Math.round(row.ai_score)}% · ${row.ai_result || ""}` });
   if (reason) facts.push({ label: "Termination reason", value: <span className="text-danger">{reason}</span> });
 
+  const sectionTitle = "text-[11px] font-bold uppercase tracking-wider text-muted";
+  const live = isLiveRecording(row);
+
   return (
-    <div className="space-y-4 rounded-card border border-subtle bg-surface-2 p-4">
-      {row.shared_with && row.shared_with.length > 0 && (
-        <div className="flex items-start gap-2 rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
-          <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span><b>Same device or IP as other candidates:</b> {row.shared_with.join(", ")}. One machine taking several people's interviews is a proxy-candidate signal.</span>
-        </div>
-      )}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 xl:grid-cols-4">
-        {facts.map((f) => (
-          <div key={f.label}>
-            <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted">{f.label}</span>
-            <span className="font-semibold text-secondary">{f.value}</span>
+    <div className="grid gap-4 rounded-card border border-subtle bg-surface-2 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
+      {/* ---- left: what happened ---- */}
+      <div className="min-w-0 space-y-4">
+        {row.shared_with && row.shared_with.length > 0 && (
+          <div className="flex items-start gap-2 rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+            <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span><b>Same device or IP as other candidates:</b> {row.shared_with.join(", ")}. One machine taking several people's interviews is a proxy-candidate signal.</span>
           </div>
-        ))}
-      </div>
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Event breakdown</div>
-        <FamilyChips row={row} />
-      </div>
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Session recording</div>
-        <RecordingPanel recording={recording} sessionStatus={row.session_status} token={row.invite_token} onLiveEnded={reload} />
-      </div>
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Timeline</div>
-        {events === null ? (
-          <div className="text-xs text-muted">Loading timeline…</div>
-        ) : error ? (
-          <div className="text-xs text-danger">{error}</div>
-        ) : events.length === 0 ? (
-          <div className="text-xs text-muted">No integrity events were recorded for this interview.</div>
-        ) : (
-          <ol className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
-            {events.map((v, i) => (
-              <li key={i} className={`flex items-center gap-3 rounded-control border px-3 py-2 text-xs ${v.type === "termination" ? "border-danger/30 bg-danger-soft" : "border-subtle bg-surface-1"}`}>
-                <span className={`w-6 shrink-0 text-right font-bold tabular-nums ${v.is_strike ? "text-danger" : "text-muted"}`}>{i + 1}</span>
-                <span className="w-32 shrink-0 font-semibold text-secondary">{v.label}</span>
-                <span className="min-w-0 flex-1 truncate text-muted" title={v.details}>{v.details}</span>
-                {v.question && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">Q{v.question}</span>}
-                <span className="shrink-0 whitespace-nowrap text-muted">{fmtTime(v.timestamp)}</span>
-              </li>
-            ))}
-          </ol>
         )}
+        <div>
+          <div className={`mb-2 ${sectionTitle}`}>Session</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {facts.map((f) => (
+              <div key={f.label} className="rounded-control border border-subtle bg-surface-1 px-3 py-2">
+                <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">{f.label}</span>
+                <span className="block truncate text-sm font-semibold text-secondary">{f.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className={`mb-2 ${sectionTitle}`}>Event breakdown</div>
+          <FamilyChips row={row} />
+        </div>
+        <div>
+          <div className={`mb-2 flex items-center justify-between ${sectionTitle}`}>
+            <span>Timeline</span>
+            {events && events.length > 0 && <span className="font-semibold normal-case tracking-normal">{events.length} events · strikes in red</span>}
+          </div>
+          {events === null ? (
+            <div className="text-xs text-muted">Loading timeline…</div>
+          ) : error ? (
+            <div className="text-xs text-danger">{error}</div>
+          ) : events.length === 0 ? (
+            <div className="rounded-control border border-dashed border-subtle px-3 py-4 text-center text-xs text-muted">No integrity events were recorded for this interview.</div>
+          ) : (
+            <ol className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+              {events.map((v, i) => (
+                <li key={i} className={`flex items-center gap-3 rounded-control border px-3 py-2 text-xs ${v.type === "termination" ? "border-danger/30 bg-danger-soft" : "border-subtle bg-surface-1"}`}>
+                  <span className={`w-6 shrink-0 text-right font-bold tabular-nums ${v.is_strike ? "text-danger" : "text-muted"}`}>{i + 1}</span>
+                  <span className="w-32 shrink-0 truncate font-semibold text-secondary" title={v.label}>{v.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted" title={v.details}>{v.details}</span>
+                  {v.question && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">Q{v.question}</span>}
+                  <span className="shrink-0 whitespace-nowrap text-muted">{fmtTime(v.timestamp)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+
+      {/* ---- right: where to go + the recording, bounded ---- */}
+      <div className="min-w-0 space-y-3 xl:border-l xl:border-subtle xl:pl-4">
+        <RowActions row={row} />
+        <div className="rounded-card border border-subtle bg-surface-1 p-3">
+          <div className={`mb-2 flex items-center justify-between ${sectionTitle}`}>
+            <span className="inline-flex items-center gap-1.5"><Video className="h-3.5 w-3.5" /> {live ? "Live interview" : "Session recording"}</span>
+            <span className="font-semibold normal-case tracking-normal">Candidate · screen</span>
+          </div>
+          <RecordingPanel recording={recording} sessionStatus={row.session_status} token={row.invite_token} onLiveEnded={reload} />
+        </div>
       </div>
     </div>
   );
 });
-
-/* ---------- session recording (22 Sep 2026) ---------- */
-
-interface Recording {
-  available: boolean;
-  url?: string;
-  download_url?: string;
-  size_bytes?: number;
-  mime?: string;
-  /** "s3" in production, "local" in development. Decides how we fetch it. */
-  backend?: string;
-  /** Why there is nothing to play, when available is false. */
-  reason?: string;
-  parts?: number;
-  /** 23 Sep 2026 — the session is still running: stream the parts instead. */
-  live?: boolean;
-}
-
-const RECORDING_ABSENCE: Record<string, string> = {
-  not_recorded:
-    "No recording was captured. Interviews taken before 22 Sep 2026, and any run with recording turned off, have none.",
-  not_finalized: "The recording is still being assembled. Reopen this row in a moment.",
-  storage_error: "The recording store could not be reached. Check the S3 configuration in Settings.",
-  no_token: "This interview has no invite token, so nothing was recorded.",
-};
-
-interface LiveManifest {
-  live: boolean;
-  reason?: string;
-  finalized?: boolean;
-  parts: { seq: number; bytes: number }[];
-  next_after: number;
-  chunk_seconds?: number;
-  session_status?: string;
-}
-
-const LIVE_MIME = 'video/webm; codecs="vp8,opus"';
-const LIVE_RETRY_MS = 8000;
-
-/**
- * Watches an interview WHILE it runs.
- *
- * The candidate's browser uploads a ~15 s WebM slice at a time; this polls the
- * manifest for slices it has not seen and appends each one to a MediaSource
- * buffer, so the reviewer runs about one slice behind real time. The first
- * slice carries the WebM header and every later one is a run of clusters with
- * absolute timecodes, so appending them in sequence IS the stream — a lost
- * slice shows as a jump, not a failure. Browsers without MediaSource (or a
- * buffer that rejects a slice) fall back to re-building one Blob from every
- * slice so far, keeping the playhead where it was.
- *
- * Parts are fetched through the app (`/part/{seq}`), never straight from S3:
- * a cross-origin `fetch()` would need bucket CORS for every dashboard origin.
- */
-function LiveRecordingPlayer({ token, onEnded }: { token: string; onEnded: () => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [phase, setPhase] = useState<"connecting" | "waiting" | "streaming" | "ended" | "error">("connecting");
-  const [err, setErr] = useState("");
-  const [parts, setParts] = useState(0);
-  const [behind, setBehind] = useState(0);
-  const [atLive, setAtLive] = useState(true);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !token) return;
-    let alive = true;
-    let after = -1;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let mediaSource: MediaSource | null = null;
-    let sourceBuffer: SourceBuffer | null = null;
-    let objectUrl = "";
-    let useBlob = false;
-    let seekedToLive = false;
-    const queue: ArrayBuffer[] = [];
-    const all: ArrayBuffer[] = [];
-
-    const bufferedEnd = () => {
-      try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; } catch { return 0; }
-    };
-    const jumpToLive = () => {
-      const end = bufferedEnd();
-      if (end > 1) video.currentTime = Math.max(0, end - 0.5);
-      void video.play().catch(() => { /* autoplay may need a click; controls are visible */ });
-    };
-    const refreshBlob = () => {
-      if (!alive || !all.length) return;
-      const pos = video.currentTime;
-      const wasPlaying = !video.paused;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = URL.createObjectURL(new Blob(all, { type: "video/webm" }));
-      video.src = objectUrl;
-      const first = !seekedToLive;
-      seekedToLive = true;
-      // Nothing is seekable until the new source has metadata.
-      video.addEventListener("loadedmetadata", () => {
-        if (!alive) return;
-        if (first) { jumpToLive(); return; }
-        // Re-building the Blob resets the element; put the reviewer back where
-        // they were rather than yanking them to the live edge every refresh.
-        video.currentTime = pos;
-        if (wasPlaying) void video.play().catch(() => { /* ignore */ });
-      }, { once: true });
-    };
-    const fallbackToBlob = () => {
-      if (useBlob) return;
-      useBlob = true;
-      sourceBuffer = null;
-      try { if (mediaSource && mediaSource.readyState === "open") mediaSource.endOfStream(); } catch { /* ignore */ }
-      mediaSource = null;
-      refreshBlob();
-    };
-    const pump = () => {
-      if (useBlob || !sourceBuffer || sourceBuffer.updating || !queue.length) return;
-      try { sourceBuffer.appendBuffer(queue.shift()!); } catch { fallbackToBlob(); }
-    };
-
-    const mseOk = typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(LIVE_MIME);
-    if (mseOk) {
-      mediaSource = new MediaSource();
-      objectUrl = URL.createObjectURL(mediaSource);
-      video.src = objectUrl;
-      mediaSource.addEventListener("sourceopen", () => {
-        if (!alive || !mediaSource) return;
-        try {
-          sourceBuffer = mediaSource.addSourceBuffer(LIVE_MIME);
-          sourceBuffer.addEventListener("updateend", () => {
-            if (!seekedToLive && bufferedEnd() > 0) { seekedToLive = true; jumpToLive(); }
-            pump();
-          });
-          sourceBuffer.addEventListener("error", fallbackToBlob);
-          pump();
-        } catch { fallbackToBlob(); }
-      });
-    } else {
-      useBlob = true;
-    }
-
-    const onTime = () => {
-      const gap = Math.max(0, bufferedEnd() - video.currentTime);
-      setBehind(Math.round(gap));
-      setAtLive(gap < 20);
-    };
-    video.addEventListener("timeupdate", onTime);
-
-    const poll = async () => {
-      if (!alive) return;
-      try {
-        const res = await authFetch(`/interview/recording/${encodeURIComponent(token)}/live?after=${after}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const m = (await res.json()) as LiveManifest;
-        if (!m.live) {
-          setErr(RECORDING_ABSENCE[m.reason || ""] || "The live stream is not available.");
-          setPhase("error");
-          return;
-        }
-        for (const p of m.parts || []) {
-          if (!alive) return;
-          const pr = await authFetch(`/interview/recording/${encodeURIComponent(token)}/part/${p.seq}`);
-          if (!pr.ok) continue; // a lost slice is a gap, not a failure
-          const buf = await pr.arrayBuffer();
-          all.push(buf); queue.push(buf);
-          after = p.seq;
-        }
-        if (!alive) return;
-        if (m.parts?.length) {
-          setParts(after + 1);
-          setPhase("streaming");
-          if (useBlob) refreshBlob(); else pump();
-        } else if (after < 0) {
-          setPhase("waiting");
-        }
-        const sessionLive = LIVE_SESSION_STATUSES.has(String(m.session_status || "")) && !m.finalized;
-        if (!sessionLive) {
-          setPhase("ended");
-          // Give the server a moment to join the parts, then hand over to the
-          // ordinary player via the detail re-fetch.
-          timer = setTimeout(() => alive && onEnded(), 3000);
-          return;
-        }
-        timer = setTimeout(poll, Math.max(4000, ((m.chunk_seconds || 15) * 1000) / 2));
-      } catch {
-        if (alive) timer = setTimeout(poll, LIVE_RETRY_MS);
-      }
-    };
-    void poll();
-
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-      video.removeEventListener("timeupdate", onTime);
-      try { video.pause(); } catch { /* ignore */ }
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [token, onEnded]);
-
-  const jump = () => {
-    const v = videoRef.current;
-    if (!v || !v.buffered.length) return;
-    v.currentTime = Math.max(0, v.buffered.end(v.buffered.length - 1) - 0.5);
-    void v.play().catch(() => { /* ignore */ });
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="relative w-full max-w-xl">
-        {/* A proctoring capture has no caption track to offer — the interview's
-            transcript lives on the candidate report. */}
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video ref={videoRef} controls autoPlay playsInline className="w-full rounded-control bg-black" aria-label="Live view of this interview" />
-        <span className="absolute left-2 top-2 inline-flex items-center gap-1.5 rounded-full bg-danger px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-raised">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white" aria-hidden /> Live
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
-        {phase === "connecting" && <span>Connecting to the live stream…</span>}
-        {phase === "waiting" && <span>Interview is starting — waiting for the first slice from the candidate's camera.</span>}
-        {phase === "streaming" && (
-          <span>
-            Streaming · {parts} slice{parts === 1 ? "" : "s"} received · about {behind}s behind the candidate.
-          </span>
-        )}
-        {phase === "ended" && <span>The interview has ended — loading the full recording…</span>}
-        {phase === "error" && <span className="text-danger">{err}</span>}
-        {phase === "streaming" && !atLive && (
-          <button type="button" onClick={jump} className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300">
-            <Radio className="h-3 w-3" /> Jump to live
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function fmtBytes(n?: number): string {
-  const bytes = Number(n) || 0;
-  if (!bytes) return "";
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/**
- * Plays the whole-session recording.
- *
- * Two fetch paths on purpose. In production `media_storage` hands back a
- * PRESIGNED S3 URL, which carries its own credentials and must go straight
- * into <video src> — putting our bearer token on it would break the
- * signature. The local driver serves through `/interview/media/...` behind the
- * dashboard's own auth, which <video> cannot send, so that one is fetched to a
- * blob first. `backend` tells us which we have.
- */
-function RecordingPanel({ recording, sessionStatus, token, onLiveEnded }: {
-  recording: Recording | null; sessionStatus: string; token: string; onLiveEnded: () => void;
-}) {
-  const [blobUrl, setBlobUrl] = useState("");
-  const [err, setErr] = useState("");
-  const isLocal = recording?.backend === "local";
-  const remoteUrl = recording?.url || "";
-
-  useEffect(() => {
-    setErr("");
-    if (!recording?.available || !isLocal || !remoteUrl) { setBlobUrl(""); return; }
-    let alive = true; let obj = "";
-    authFetch(remoteUrl)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        obj = URL.createObjectURL(await r.blob());
-        if (alive) setBlobUrl(obj);
-      })
-      .catch((e) => alive && setErr(e?.message || "Could not load the recording"));
-    return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
-  }, [recording?.available, isLocal, remoteUrl]);
-
-  if (!recording) return <div className="text-xs text-muted">Checking for a recording…</div>;
-  if (recording.live && !recording.available) {
-    // The session is still running: stream the slices as they land.
-    return <LiveRecordingPlayer token={token} onEnded={onLiveEnded} />;
-  }
-  if (!recording.available) {
-    const reason = RECORDING_ABSENCE[recording.reason || ""] || "No recording is available for this interview.";
-    return (
-      <div className="flex items-start gap-2 rounded-control border border-subtle bg-surface-1 px-3 py-2 text-xs text-muted">
-        <Video className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <span>{reason}</span>
-      </div>
-    );
-  }
-  const src = isLocal ? blobUrl : remoteUrl;
-  return (
-    <div className="space-y-2">
-      {err ? (
-        <div className="text-xs text-danger">{err}</div>
-      ) : !src ? (
-        <div className="text-xs text-muted">Loading recording…</div>
-      ) : (
-        // eslint-disable-next-line jsx-a11y/media-has-caption -- proctoring capture; the transcript is on the report
-        <video
-          src={src}
-          controls
-          preload="metadata"
-          className="w-full max-w-xl rounded-control bg-black"
-          aria-label="Full session recording of this interview"
-        />
-      )}
-      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
-        <span>
-          Camera and microphone for the whole interview
-          {sessionStatus === "terminated" ? ", up to the moment it was terminated" : ""}.
-        </span>
-        {recording.size_bytes ? <span className="tabular-nums">{fmtBytes(recording.size_bytes)}</span> : null}
-        {recording.download_url && (
-          <a
-            className="inline-flex items-center gap-1 font-semibold text-brand-600 hover:underline dark:text-brand-300"
-            href={recording.download_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Download className="h-3 w-3" /> Download
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
 
 /* ---------- page ---------- */
 
@@ -671,26 +409,24 @@ export function IntegrityLogsPage() {
   ] : [];
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="fx-glow flex h-10 w-10 items-center justify-center rounded-card bg-gradient-to-br from-brand-600 to-violet-600">
-            <Shield className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-display text-xl font-bold tracking-tight text-primary">Interview Integrity</h2>
-            <p className="text-sm text-muted">Every AI interview, scored — tab switches, focus loss, camera, clipboard and dev-tools attempts. Watch a live interview or replay its recording from the row.</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => setTick((t) => t + 1)} className="inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3 py-1.5 text-xs font-semibold text-secondary hover:bg-surface-2 hover:text-primary" title="Reload">
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </button>
-          <button type="button" onClick={exportCsv} disabled={exporting || rows.length === 0} className="inline-flex items-center gap-1.5 rounded-control border border-subtle bg-surface-1 px-3 py-1.5 text-xs font-semibold text-secondary hover:bg-surface-2 hover:text-primary disabled:opacity-50">
-            <Download className="h-3.5 w-3.5" /> {exporting ? "Exporting…" : "Export CSV"}
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-screen-2xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+      <PageHeader
+        icon={Shield}
+        accent="violet"
+        eyebrow="Interview Platform"
+        title="Interview Integrity"
+        subtitle="Every AI interview, scored — tab switches, focus loss, camera, clipboard and dev-tools attempts. Open a row to watch it live or replay the recording; the report button takes you to the questions, answers and scores."
+        actions={(
+          <>
+            <button type="button" onClick={() => setTick((t) => t + 1)} className={HERO_BTN} title="Reload">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </button>
+            <button type="button" onClick={exportCsv} disabled={exporting || rows.length === 0} className={HERO_BTN}>
+              <Download className="h-4 w-4" /> {exporting ? "Exporting…" : "Export CSV"}
+            </button>
+          </>
+        )}
+      />
 
       {error && <div className="rounded-card border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">{error}</div>}
 
@@ -750,11 +486,12 @@ export function IntegrityLogsPage() {
           {filtered.map((row) => {
             const key = row.invite_token || `${row.candidate_email}-${row.scheduled_at}`;
             const open = expanded === key;
-            const href = crmProfileHref(row.profile_id);
+            const report = reportHref(row);
             return (
               <div key={key} className={`overflow-hidden rounded-card border bg-surface-1 shadow-raised ${row.needs_review ? "border-warning/40" : "border-subtle"}`}>
+                <div className="flex items-stretch">
                 <button type="button" onClick={() => setExpanded(open ? null : key)} aria-expanded={open}
-                  className="row-hover flex w-full items-center gap-4 px-4 py-3 text-left transition-colors duration-micro ease-smooth">
+                  className="row-hover flex min-w-0 flex-1 items-center gap-4 px-4 py-3 text-left transition-colors duration-micro ease-smooth">
                   <ScoreRing score={row.integrity_score} status={row.session_status} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -785,13 +522,16 @@ export function IntegrityLogsPage() {
                   <div className="hidden w-32 shrink-0 text-right text-xs text-muted md:block">{fmtWhen(row.scheduled_at)}</div>
                   {open ? <ChevronUp className="h-4 w-4 shrink-0 text-muted" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted" />}
                 </button>
+                {report && (
+                  <div className="flex shrink-0 items-center border-l border-subtle px-3">
+                    <a href={report} className={REPORT_BTN} title="Open the candidate report — questions, answers, scores and the recording">
+                      <FileText className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Report</span>
+                    </a>
+                  </div>
+                )}
+                </div>
                 {open && (
-                  <div className="space-y-3 px-4 pb-4">
-                    {href && (
-                      <a href={href} className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
-                        <ExternalLink className="h-3 w-3" /> Open candidate profile · AI Interview tab
-                      </a>
-                    )}
+                  <div className="px-4 pb-4">
                     <RowDetail row={row} />
                   </div>
                 )}

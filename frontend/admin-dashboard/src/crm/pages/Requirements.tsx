@@ -12,14 +12,16 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, Pencil, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, Trash2, UserPlus, Users, UsersRound, Wallet, X,
+  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, PauseCircle, Pencil, PlayCircle, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, StepForward, Trash2, UserPlus, Users, UsersRound, Wallet, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, crmUpload, qs } from "../api";
 import { SearchableSelect } from "../components/SearchableSelect";
 import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
-import { RmgVerdictHero, ScreeningDecisionModal } from "../components/ScreeningDecisionModal";
+import { RmgVerdictHero, ScreeningDecisionModal, type ShortlistRoute } from "../components/ScreeningDecisionModal";
+import { DirectToSalesButton, FastTrackButton, type InternalEmployee } from "../components/FastTrackToSales";
+import { ResultsReviewBanner, type NewResult } from "../components/ResultsReviewBanner";
 import { DialogActions } from "../components/dialogKit";
 // ONE "Edit JD & skills" dialog (30 Sep 2026): the requirement page used to keep a
 // stale private copy without the JD-file drop zone — the Screening Desk had it.
@@ -27,8 +29,9 @@ import { JdSkillsCard } from "../components/JdSkillsCard";
 import {
   SalesHeadDecisionModal, SubmitForApprovalModal, type SalesHeadDecision,
 } from "../components/OfferApprovalGate";
-import { ChooseAiL1Modal, GoManualModal } from "../components/InterviewRouteChoice";
-import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal";
+import { AiL1DecisionModal, ChooseAiL1Modal, GoManualModal, type AiL1Decision } from "../components/InterviewRouteChoice";
+import { ScheduleAiInterviewModal, type RescheduleSeed } from "../components/ScheduleAiInterviewModal";
+import { useAiTemplateGate } from "../components/AiTemplateGate";
 import { useCanOpenAiReport } from "../components/AiInterviewOverview";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
@@ -600,6 +603,8 @@ type ResumeRow = {
   ai_hr_decision_label?: string | null;
   ai_effective_result?: string | null;
   ai_is_overridden?: boolean;
+  /** The AI L1 ran but no scored question was answered (7 Oct 2026) — "never happened", not "failed". */
+  ai_not_attempted?: boolean;
   ai_report_link?: string | null;
   ai_interview_record_id?: string | null;
   profile_id?: number | null;
@@ -627,6 +632,13 @@ type ResumeRow = {
   closed_note?: ClosedNote | null;
   /** The bulk upload's opening email and the candidate's answer (1 Oct 2026). */
   opening_mail?: OpeningMail | null;
+  /** Screening Desk parity (7 Oct 2026): the server's reasons a direct / internal
+   *  submission is unavailable, the employee this candidate IS, and finished
+   *  interviews no screener has marked reviewed. */
+  direct_to_sales_block?: string | null;
+  internal_employee?: InternalEmployee | null;
+  fast_track_block?: string | null;
+  new_results?: NewResult[];
   /** Availability (1 Oct 2026): the application's notice period, else the
    *  candidate record's; resignation + last working day from the record. */
   notice_period?: string | null;
@@ -695,6 +707,30 @@ function confirmDetailsFor(r: ResumeRow) {
     { label: "Current location", value: d.current_location },
     { label: "Preferred location", value: d.preferred_location },
   ];
+}
+
+/** Can a fresh AI L1 link go out over this row's latest AI L1 (7 Oct 2026)?
+ *  Only once it has FINISHED without a pass — not attempted, failed, or a
+ *  recruiter's hold; never while it is still to run (reschedule the pending
+ *  one instead) and never over a pass. PURE — mirrors the server's refusal. */
+export function reschedulableAi(r: Pick<ResumeRow,
+  "ai_interview_status" | "ai_overall_score_percent" | "ai_effective_result" | "ai_interview_result">): boolean {
+  const finished = r.ai_overall_score_percent != null
+    || (!!r.ai_interview_status && !["Scheduled", "Pending", "In_Progress", "Not_Scheduled"].includes(r.ai_interview_status));
+  if (!finished) return false;
+  const effective = r.ai_effective_result || r.ai_interview_result || "";
+  return !["Passed", "Selected"].includes(effective);
+}
+
+/** The previous outcome the reschedule dialog prints. PURE. */
+export function rescheduleSeed(r: Pick<ResumeRow,
+  "ai_not_attempted" | "ai_effective_result" | "ai_interview_result" | "ai_overall_score_percent">): RescheduleSeed {
+  if (r.ai_not_attempted && !["On Hold", "Pending Review"].includes(r.ai_effective_result || "")) {
+    return { previous: "Not attempted", notAttempted: true };
+  }
+  const effective = r.ai_effective_result || r.ai_interview_result || "Finished";
+  const score = r.ai_overall_score_percent;
+  return { previous: score != null ? `${effective} (${Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%)` : effective };
 }
 
 type JobPosting = {
@@ -2291,6 +2327,11 @@ function FeedbackButton({ label, result, when, busy, onClick }: {
 
 /** Applied Candidates — exported (29 Sep 2026) so the opportunity page can give
  *  RMG / GM the same list (stage · status · rounds · their buttons) in place. */
+/** Rejected at any stage or status: a closed candidacy, or RMG / GM rejected it at screening. */
+function isRejectedRow(r: { profile_pipeline_status?: string | null; rmg_screening_status?: string | null }): boolean {
+  return isClosedCandidacy(r.profile_pipeline_status) || r.rmg_screening_status === "Rejected";
+}
+
 export function ResumesTab({
   req, toast, onRequirementChanged,
 }: {
@@ -2301,6 +2342,8 @@ export function ResumesTab({
   const taRole = useHasRole("TA");
   const taCanEdit = useCanAct("requirements", "edit", taRole);
   const isTA = taRole && taCanEdit;
+  /* AI L1 template check before Schedule AI L1 / Slot invite (6 Oct 2026). */
+  const tplGate = useAiTemplateGate();
   // The AI report opens for every role holding the report page (TA · HR · RMG · Admin).
   const canOpenAiReport = useCanOpenAiReport();
   /* Role IDENTITY, not tab access (fix 28 Aug 2026): with template authority,
@@ -2499,6 +2542,9 @@ export function ResumesTab({
   /* Profile-only rows schedule through the PROFILE modal — there is no
      resume record for the resume-based confirm path to act on. */
   const [profileScheduleRow, setProfileScheduleRow] = useState<ResumeRow | null>(null);
+  /* A fresh AI L1 link over one that was not attempted / not cleared (7 Oct 2026):
+     the same dialog, in reschedule mode — a required note, the old verdict kept. */
+  const [rescheduleRow, setRescheduleRow] = useState<{ row: ResumeRow; seed: RescheduleSeed } | null>(null);
   const [editRow, setEditRow] = useState<ResumeRow | null>(null);
   const [deleteRow, setDeleteRow] = useState<ResumeRow | null>(null);
   const [inviteOpenId, setInviteOpenId] = useState<number | null>(null);
@@ -2651,6 +2697,7 @@ export function ResumesTab({
       const res = await crmGet<any>(`/api/resumes/${r.id}/slot-invite-preview`);
       setInvitePreview({ row: r, ...res.data });
     } catch (e: any) {
+      if (tplGate.showFromError(e?.message || "", req.id, r.candidate_name)) return;
       toast(e?.message || "Could not build the invite preview", "err");
     } finally {
       setInviteBusyId(null);
@@ -2686,6 +2733,7 @@ export function ResumesTab({
       setInvitePreview(null);
       load();
     } catch (e: any) {
+      if (tplGate.showFromError(e?.message || "", req.id, r.candidate_name)) { setInvitePreview(null); return; }
       toast(e?.message || "Failed to send slot invite", "err");
     } finally {
       setInviteBusyId(null);
@@ -2708,7 +2756,7 @@ export function ResumesTab({
   const [rmgBusyId, setRmgBusyId] = useState<number | null>(null);
   /* RMG screening decisions right on this tab (25 Aug 2026) — same endpoint
    * as the Applicants tab, so RMG screens wherever they happen to be. */
-  const [screenRow, setScreenRow] = useState<{ row: ResumeRow; profileId: number; kind: "shortlist" | "reject" } | null>(null);
+  const [screenRow, setScreenRow] = useState<{ row: ResumeRow; profileId: number; kind: "shortlist" | "reject"; route?: ShortlistRoute } | null>(null);
 
   /* Decision modal (was window.prompt — can't show field errors, and some
    * browsers let users suppress prompts, silently killing the buttons). */
@@ -2782,6 +2830,8 @@ export function ResumesTab({
      ask TA for a human L1 in one click, so the candidate never lands in RMG
      Review with nobody sure whose move it is. RMG-only, by design. */
   const [manualRow, setManualRow] = useState<ResumeRow | null>(null);   // → GoManualModal
+  /* After a finished AI L1 — proceed / hold / release (7 Oct 2026). */
+  const [aiAfterRow, setAiAfterRow] = useState<{ row: ResumeRow; profileId: number; decision: AiL1Decision } | null>(null);
 
   /* L2 feedback (28 Aug 2026, user request): RMG records the round's outcome
      right from the row. Saves onto the L2 InterviewEvent — the same record
@@ -2871,6 +2921,7 @@ export function ResumesTab({
       setInviteOpenId(r.id);
       await load();
     } catch (e: any) {
+      if (tplGate.showFromError(e?.message || "", req.id, r.candidate_name)) { setScheduleRow(null); return; }
       toast(e?.message || "Scheduling failed", "err");
     } finally {
       setBusyId(null);
@@ -3205,14 +3256,25 @@ export function ResumesTab({
         return (
           <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
             <span className="inline-flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={status} />
-              {score != null && Number.isFinite(Number(score)) && (
-                <span
-                  className="inline-flex items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-xs font-bold tabular-nums text-primary"
-                  title="AI L1 overall score"
-                >
-                  {Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%
+              {/* "Never happened" is not "Failed" (7 Oct 2026): a not-attempted
+                  AI L1 shows as such, with no score — there is nothing to score. */}
+              {r.ai_not_attempted && !r.ai_is_overridden ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                  title="The candidate did not answer any question — the link was opened late, the session dropped, or it was never started. Reschedule once they confirm they will attempt it.">
+                  <AlertTriangle size={11} /> Not attempted
                 </span>
+              ) : (
+                <>
+                  <StatusBadge status={status} />
+                  {score != null && Number.isFinite(Number(score)) && (
+                    <span
+                      className="inline-flex items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-xs font-bold tabular-nums text-primary"
+                      title="AI L1 overall score"
+                    >
+                      {Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%
+                    </span>
+                  )}
+                </>
               )}
             </span>
             {/* The CHOSEN SLOT time — the TA could not see which slot the
@@ -3228,7 +3290,7 @@ export function ResumesTab({
                 className="text-[11px] text-muted"
                 title={`A recruiter marked this ${r.ai_hr_decision_label}. The AI recorded ${r.ai_interview_result}.`}
               >
-                AI: {r.ai_interview_result}
+                AI: {r.ai_not_attempted ? "Not attempted" : r.ai_interview_result}
               </span>
             )}
             {showReport && (
@@ -3256,7 +3318,8 @@ export function ResumesTab({
         const booked = r.rounds_booked ?? 0;
         const done = r.rounds_done ?? 0;
         const chips: { label: string; result: string | null | undefined; scheduled: boolean; requested: boolean }[] = [
-          { label: "AI L1", result: r.ai_overall_score_percent != null ? (r.ai_effective_result || r.ai_interview_result || "Done") : null,
+          { label: "AI L1", result: r.ai_overall_score_percent != null
+            ? (r.ai_not_attempted && !r.ai_is_overridden ? "Not attempted" : (r.ai_effective_result || r.ai_interview_result || "Done")) : null,
             scheduled: !!r.ai_interview_status && r.ai_interview_status !== "Not_Scheduled", requested: !!r.ai_l1_requested },
           { label: "L1", result: r.l1_manual_result, scheduled: !!r.l1_manual_scheduled, requested: !!r.l1_manual_requested },
           { label: "L2", result: r.l2_result, scheduled: !!r.l2_scheduled, requested: !!r.l2_requested },
@@ -3333,7 +3396,9 @@ export function ResumesTab({
               {/* Manual Archive (30 Sep 2026, user rule): nobody is moved to
                   Archive on their own — RMG / GM press it once the candidate
                   is rejected / withdrawn, and Restore brings them back. */}
-              {isRmg && profileId != null && (r.archivable || r.archived) && (
+              {/* RMG / GM archive any stage; a TA only a rejected / withdrawn candidate (6 Oct 2026). */}
+              {profileId != null && (r.archivable || r.archived)
+                && (isRmg || (isTA && isRejectedRow(r))) && (
                 <button className={r.archived ? FLOW_BTN.view : FLOW_BTN.neutral}
                   disabled={busy || archivingId === profileId}
                   onClick={() => void setArchived(profileId, !r.archived)}
@@ -3373,6 +3438,17 @@ export function ResumesTab({
               <SendOpeningMailButton profileId={profileId} resend={r.opening_mail?.state === "sent"}
                 disabled={busy}
                 onDone={(m, ok) => { toast(m, ok ? undefined : "err"); if (ok) void load(); }} />
+            )}
+            {/* A candidate RMG / GM rejected at screening stays at the TA stage, so it
+                never reaches the closed branch above — Archive it from here (6 Oct 2026). */}
+            {profileId != null && (r.archivable || r.archived) && (isRmg || isTA)
+              && r.rmg_screening_status === "Rejected" && (
+              <button className={r.archived ? FLOW_BTN.view : FLOW_BTN.neutral}
+                disabled={busy || archivingId === profileId}
+                onClick={() => void setArchived(profileId, !r.archived)}
+                title={r.archived ? "Bring the candidate back to Applied Candidates" : "Move this rejected candidate to the Archive tab"}>
+                {r.archived ? <><RotateCcw size={13} /> Restore</> : <><Archive size={13} /> Archive</>}
+              </button>
             )}
             {isRmg && rmgDone && (
               <>
@@ -3474,21 +3550,22 @@ export function ResumesTab({
             {/* RMG screening decision, right here where RMG reviews resumes. */}
             {canScreen && r.rmg_screening_status === "Pending" && profileId != null && (
               <>
-                {/* The CV, right where the decision is made (15 Sep 2026, user
-                    request): opens the inline preview — no trip to the profile. */}
-                {r.resume_file_url ? (
-                  <span className={`${FLOW_BTN.view} !py-1`} title="Preview the candidate's resume / CV here">
-                    <FileLink url={r.resume_file_url} label="View resume" />
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted" title="No resume or CV file on this candidate">No CV on file</span>
-                )}
+                {/* The CV opens from the "Resume" link under the candidate name — the
+                    second "View resume" button here was removed (6 Oct 2026, user request). */}
+                {/* Shortlist + route in ONE click, as on the Screening Desk (7 Oct 2026). */}
                 <button
-                  className={smallSuccess}
-                  onClick={() => { setScreenRow({ row: r, profileId, kind: "shortlist" }); }}
-                  title="The candidate fits — then choose the AI or manual L1"
+                  className={FLOW_BTN.ai}
+                  onClick={() => { setScreenRow({ row: r, profileId, kind: "shortlist", route: "ai" }); }}
+                  title="The candidate fits — shortlist for the AI L1 (TA schedules it)"
                 >
-                  <Check size={13} /> Shortlist
+                  <Bot size={13} /> Shortlist for AI round
+                </button>
+                <button
+                  className={FLOW_BTN.manual}
+                  onClick={() => { setScreenRow({ row: r, profileId, kind: "shortlist", route: "manual" }); }}
+                  title="The candidate fits — shortlist for a manual Technical L1 (TA books it)"
+                >
+                  <UsersRound size={13} /> Shortlist for manual L1
                 </button>
                 <button
                   className={smallDanger}
@@ -3498,6 +3575,25 @@ export function ResumesTab({
                   <X size={13} /> Reject
                 </button>
               </>
+            )}
+            {/* Screening Desk parity (7 Oct 2026, user ask): RMG / GM send a strong
+                match straight to Sales (or fast-track an internal employee) and
+                mark finished interviews reviewed — without opening the desk. */}
+            {canScreen && profileId != null && !r.archived && r.direct_to_sales_block == null && (
+              r.internal_employee ? (
+                <FastTrackButton profileId={profileId} candidateName={r.candidate_name}
+                  employee={r.internal_employee} block={r.fast_track_block ?? null}
+                  className={FLOW_BTN.success}
+                  onDone={(m) => { toast(m); load(); }} onError={(m) => toast(m, "err")} />
+              ) : r.profile_pipeline_status !== "RMG_Review" ? (
+                <DirectToSalesButton profileId={profileId} candidateName={r.candidate_name}
+                  context={req.title} block={r.direct_to_sales_block} className={FLOW_BTN.success}
+                  onDone={(m) => { toast(m); load(); }} />
+              ) : null
+            )}
+            {canScreen && profileId != null && (r.new_results || []).length > 0 && (
+              <ResultsReviewBanner compact profileId={profileId} results={r.new_results}
+                onReviewed={(m) => { toast(m); load(); }} onError={(m) => toast(m, "err")} />
             )}
             {/* A resume with no candidacy yet (e.g. a held duplicate) can
                 still be rejected as a file; everything else goes through TA's
@@ -3535,7 +3631,7 @@ export function ResumesTab({
               && r.ai_overall_score_percent == null && (
               <button
                 className={FLOW_BTN.aiOutline}
-                onClick={() => void openSlotInvite(r)}
+                onClick={() => void tplGate.gate({ requirementId: req.id }, () => void openSlotInvite(r), r.candidate_name)}
                 disabled={busy || inviteBusyId === r.id || (!r.email && !r.phone)}
                 title={
                   !r.email && !r.phone
@@ -3552,8 +3648,10 @@ export function ResumesTab({
             {isTA && r.ai_l1_requested && aiL1Open && !manualRoute && preReview && (
               <button className={FLOW_BTN.ai} disabled={busy}
                 onClick={() => {
+                  // Profile-only rows check inside ScheduleAiInterviewModal.
                   if (r.is_profile_only) setProfileScheduleRow(r);
-                  else { setScheduleWhen(""); setScheduleRow(r); }
+                  else void tplGate.gate({ requirementId: req.id },
+                    () => { setScheduleWhen(""); setScheduleRow(r); }, r.candidate_name);
                 }}
                 title="RMG / GM chose the AI L1 — agree a time with the candidate and schedule it">
                 <Bot size={13} /> {busy ? "Scheduling…" : "Schedule AI L1"}
@@ -3582,6 +3680,75 @@ export function ResumesTab({
             )}
             {isRmg && !isTA && r.ai_l1_requested && aiL1Open && preReview
               && doneChip("AI L1 chosen — TA scheduling", "TA is agreeing a time with the candidate")}
+            {/* Reschedule AI L1 (7 Oct 2026, user flow): the first link was not
+                attempted (or not cleared), the candidate confirmed they are ready,
+                TA sends a fresh link — TA ONLY (user decision): RMG / GM decide
+                (proceed · manual L1 · hold · reject), TA owns the scheduling.
+                Never over a pass; never once the candidate moved on to a manual
+                L1 or past the review. */}
+            {isTA && profileId != null && preReview && !aiL1Open && !manualRoute && !r.archived
+              && reschedulableAi(r) && (
+              <button className={FLOW_BTN.aiOutline} disabled={busy}
+                onClick={() => setRescheduleRow({ row: r, seed: rescheduleSeed(r) })}
+                title={r.ai_not_attempted
+                  ? "The candidate did not attempt the AI L1 — once they confirm they are ready, send a fresh link"
+                  : "Send a fresh AI L1 link — the previous result stays on record"}>
+                <RotateCcw size={13} /> Reschedule AI L1
+              </button>
+            )}
+            {/* The AI L1 exists (7 Oct 2026, user report — "RMG / GM get no buttons"):
+                while it is still to run, RMG / GM may switch to a manual L1 or
+                send the candidate on; once it has FINISHED without a pass (Failed,
+                or a recruiter's On Hold) the AI verdict is advice — proceed to the
+                review anyway (L2 / Submit to Sales), park, or reject. A PASS is
+                auto-forwarded to RMG Review by the server, so it never lands here. */}
+            {isRmg && profileId != null && preReview && !aiL1Open && !manualRoute && !r.archived && (() => {
+              const effective = r.ai_effective_result || r.ai_interview_result || null;
+              const finished = r.ai_overall_score_percent != null
+                || (!!r.ai_interview_status && !["Scheduled", "Pending", "In_Progress", "Not_Scheduled"].includes(r.ai_interview_status));
+              const onHold = effective === "On Hold";
+              const open = (d: AiL1Decision) => setAiAfterRow({ row: r, profileId, decision: d });
+              return (
+                <>
+                  {!finished && doneChip(
+                    r.ai_interview_scheduled_at ? `AI L1 ${fmtDateTime12(r.ai_interview_scheduled_at)}` : "AI L1 scheduled",
+                    "The AI interview has not finished yet — switch to a manual L1 or send the candidate on if you do not want to wait")}
+                  {finished && !onHold && (
+                    <button className={FLOW_BTN.success} onClick={() => open("proceed")} disabled={busy}
+                      title={`The AI recorded ${effective || "no verdict"} — your call outranks it: move the candidate to RMG Review for the L2 / Submit to Sales`}>
+                      <StepForward size={13} /> Proceed to review
+                    </button>
+                  )}
+                  {finished && onHold && (
+                    <>
+                      <button className={FLOW_BTN.success} onClick={() => open("proceed")} disabled={busy}
+                        title="Lift the hold and move the candidate to RMG Review for the L2 / Submit to Sales">
+                        <StepForward size={13} /> Proceed to review
+                      </button>
+                      <button className={FLOW_BTN.view} onClick={() => open("release")} disabled={busy}
+                        title="Release the hold — the AI verdict stands again">
+                        <PlayCircle size={13} /> Release hold
+                      </button>
+                    </>
+                  )}
+                  <button className={FLOW_BTN.manual} onClick={() => setManualRow(r)} disabled={busy}
+                    title="Judge the candidate in a human L1 instead — TA books it">
+                    <UsersRound size={13} /> Manual L1 instead
+                  </button>
+                  {finished && !onHold && (
+                    <button className={FLOW_BTN.warn} onClick={() => open("hold")} disabled={busy}
+                      title="Park the candidate — decide later from this row">
+                      <PauseCircle size={13} /> Put on hold
+                    </button>
+                  )}
+                  <button className={FLOW_BTN.danger} disabled={busy}
+                    onClick={() => setScreenRow({ row: r, profileId, kind: "reject" })}
+                    title="Reject the candidate at RMG screening — the reason is logged and TA is told">
+                    <X size={13} /> Reject
+                  </button>
+                </>
+              );
+            })()}
             {/* TA schedules the rounds RMG asked for. The manual L1 comes
                 first; the L2 button is the one that already existed. */}
             {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null
@@ -3970,7 +4137,7 @@ export function ResumesTab({
             }
             emptyMessage={showDismissed ? "No dismissed CVs on this requirement"
               : stagePill !== "all" ? `No candidates at “${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === stagePill)?.label || stagePill}”`
-              : bucket === "archive" ? "Nothing archived — RMG / GM move a rejected candidate here with the Archive button"
+              : bucket === "archive" ? "Nothing archived — TA, RMG or GM move a rejected candidate here with the Archive button"
               : appliedBy || dq ? "No applied candidates match the current filters" : "No applied candidates yet"}
           />
         </div>
@@ -4219,6 +4386,17 @@ export function ResumesTab({
           onDone={(msg) => { setDecisionRow(null); toast(msg); load(); }}
         />
       )}
+      {aiAfterRow && (
+        <AiL1DecisionModal
+          profileId={aiAfterRow.profileId}
+          context={req.title}
+          candidateName={aiAfterRow.row.candidate_name}
+          decision={aiAfterRow.decision}
+          aiResult={aiAfterRow.row.ai_effective_result || aiAfterRow.row.ai_interview_result || null}
+          onClose={() => setAiAfterRow(null)}
+          onDone={(msg) => { setAiAfterRow(null); toast(msg); load(); }}
+        />
+      )}
       {manualRow?.profile_id && (
         <GoManualModal
           profileId={manualRow.profile_id}
@@ -4329,6 +4507,7 @@ export function ResumesTab({
           position={req.title}
           taName={screenRow.row.applied_by}
           decision={screenRow.kind === "shortlist" ? "Shortlisted" : "Rejected"}
+          route={screenRow.kind === "shortlist" ? screenRow.route : undefined}
           onClose={() => setScreenRow(null)}
           onDone={(msg) => { setScreenRow(null); toast(msg); load(); }}
         />
@@ -4443,12 +4622,23 @@ export function ResumesTab({
           onClose={() => setRejectRow(null)}
         />
       )}
+      {tplGate.modal}
       {profileScheduleRow?.profile_id != null && (
         <ScheduleAiInterviewModal
           profileId={profileScheduleRow.profile_id}
           candidate={{ full_name: profileScheduleRow.candidate_name, email: profileScheduleRow.email }}
           onClose={() => setProfileScheduleRow(null)}
           onDone={() => { setProfileScheduleRow(null); load(); }}
+          showToast={(m, k) => toast(m, k)}
+        />
+      )}
+      {rescheduleRow?.row.profile_id != null && (
+        <ScheduleAiInterviewModal
+          profileId={rescheduleRow.row.profile_id}
+          candidate={{ full_name: rescheduleRow.row.candidate_name, email: rescheduleRow.row.email }}
+          reschedule={rescheduleRow.seed}
+          onClose={() => setRescheduleRow(null)}
+          onDone={() => { setRescheduleRow(null); load(); }}
           showToast={(m, k) => toast(m, k)}
         />
       )}

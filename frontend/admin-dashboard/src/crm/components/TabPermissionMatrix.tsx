@@ -15,21 +15,41 @@
 import { useMemo, useState } from "react";
 import { inputCls } from "./ui";
 
-export type RegistryTab = { key: string; label: string; fields?: { key: string; label: string }[] };
+export type RegistryTab = {
+  key: string; label: string; fields?: { key: string; label: string }[];
+  /** "Interview Platform" | "CRM" (server, 7 Oct 2026). */
+  group?: string;
+  /** Interview Platform tabs: the roles that open it by default. */
+  default_roles?: string[];
+};
 export type GrantMap = Record<string, string>;
 
 export const TAB_MODULES: Record<string, string> = {
   dashboard: "General", calendar: "General", reports: "General",
   customers: "Sales", opportunities: "Sales", "rate-cards": "Sales", "branch-policy": "Sales",
   requirements: "Recruitment", candidates: "Recruitment", profiles: "Recruitment",
-  "template-requests": "Recruitment",
+  "template-requests": "Recruitment", "screening-desk": "Recruitment", "my-interviews": "Recruitment",
+  emails: "General", "activity-log": "General",
   projects: "Projects & Finance", "project-employees": "Projects & Finance",
   timesheets: "Projects & Finance", pos: "Projects & Finance", invoices: "Projects & Finance",
   tds: "Projects & Finance", "finance-reports": "Projects & Finance",
   employees: "HR", holidays: "HR", "my-leave": "HR", "leave-applications": "HR", payroll: "HR",
   users: "Administration", settings: "Administration",
 };
-export const MODULE_ORDER = ["General", "Sales", "Recruitment", "Projects & Finance", "HR", "Administration", "Other"];
+export const IV_MODULE = "Interview Platform";
+export const MODULE_ORDER = [IV_MODULE, "General", "Sales", "Recruitment", "Projects & Finance", "HR", "Administration", "Other"];
+
+/** The editor module a registry tab belongs to. Interview Platform tabs
+ *  (`iv:*`, 7 Oct 2026) come first: one template grants the whole login. */
+export function moduleOf(tab: Pick<RegistryTab, "key" | "group">): string {
+  if (tab.group === IV_MODULE || tab.key.startsWith("iv:")) return IV_MODULE;
+  return TAB_MODULES[tab.key] || "Other";
+}
+
+/** Shown under the Interview Platform module header. */
+export const IV_MODULE_HINT =
+  "Once any of these is ticked, the template alone decides the Interview Platform tabs (roles no longer add any). "
+  + "View opens the page; Edit also allows the page's changes (template authoring, scheduling, deleting reports).";
 
 const MODES = [
   { value: "", label: "None", title: "No access" },
@@ -104,7 +124,7 @@ export function TabPermissionMatrix({
       <div className="space-y-3">
         {MODULE_ORDER.map((mod) => {
           const modTabs = tabs
-            .filter((t) => (TAB_MODULES[t.key] || "Other") === mod)
+            .filter((t) => moduleOf(t) === mod)
             .filter((t) => !q || t.label.toLowerCase().includes(q) || t.key.includes(q));
           if (!modTabs.length) return null;
           const inMod = modTabs.filter((t) => value[t.key]).length;
@@ -122,6 +142,7 @@ export function TabPermissionMatrix({
                   <button type="button" className="text-[11px] font-semibold text-muted hover:underline" onClick={() => bulk(keys, "")}>Clear</button>
                 </span>
               </div>
+              {mod === IV_MODULE && <p className="border-b border-subtle px-3 py-1.5 text-[11px] text-muted">{IV_MODULE_HINT}</p>}
               <div className="divide-y divide-subtle">
                 {modTabs.map((tab) => (
                   <div key={tab.key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">

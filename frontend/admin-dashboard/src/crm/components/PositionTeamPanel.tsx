@@ -191,7 +191,12 @@ function AssignTasModal({ requirementId, label, options, current, onClose, onDon
  *  caller decides whether to render it (the list already knows the role). */
 /** The list-row button: a chip the size of the TA chips beside it (1 Oct 2026, user ask) —
  *  the same on every role's list. A caller that wants the full button passes `className`. */
-const ASSIGN_CHIP = `inline-flex items-center gap-1 rounded-full border border-dashed border-strong px-2 py-0.5 text-[11px] font-semibold text-secondary hover:border-brand-500 hover:text-brand-600 disabled:opacity-60 ${focusRing}`;
+const CHIP_BASE = `inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold shadow-sm transition hover:shadow hover:brightness-110 disabled:opacity-60 ${focusRing}`;
+/** No team yet: a filled gradient chip — it is a call to action (7 Oct 2026, user ask: "make it colorful"). */
+const ASSIGN_CHIP = `${CHIP_BASE} bg-gradient-to-r from-purple-500 to-indigo-600 text-[#fff]`;
+/** A team exists: a filled teal → sky gradient (user ask 7 Oct 2026: "make the Change button colourful") —
+ *  a different hue from Assign so the two states still read apart at a glance. */
+const CHANGE_CHIP = `${CHIP_BASE} bg-gradient-to-r from-teal-500 to-sky-600 text-[#fff]`;
 
 export function AssignTasButton({ requirementId, label, assigned, onChanged, toast, className }: {
   requirementId: number;
@@ -222,7 +227,7 @@ export function AssignTasButton({ requirementId, label, assigned, onChanged, toa
   return (
     <>
       <button type="button" disabled={busy} onClick={(e) => void start(e)}
-        className={className || ASSIGN_CHIP}
+        className={className || (count ? CHANGE_CHIP : ASSIGN_CHIP)}
         title={count ? "Change the TAs sourcing this position" : "Assign one or more TAs to source this position"}>
         <UserPlus size={11} aria-hidden /> {count ? "Change" : "Assign TAs"}
       </button>

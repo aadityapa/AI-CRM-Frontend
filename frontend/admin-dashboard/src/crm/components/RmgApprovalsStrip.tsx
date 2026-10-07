@@ -11,10 +11,10 @@
 import { useState } from "react";
 import { ChevronRight, ClipboardList, ExternalLink } from "lucide-react";
 
-import { crmPost } from "../api";
+import { crmGet, crmPost } from "../api";
 import { fmtDateShort } from "../../lib/datetime";
 import { CrmLink } from "../routerHooks";
-import { JdSkillsModal } from "./JdSkillsModal";
+import { JdSkillsModal, type JdSkillsReq } from "./JdSkillsModal";
 import { STATE_CHIP } from "./controlTower";
 import { Field, Modal, btnDanger, btnPrimary, btnSecondary, inputCls } from "./ui";
 
@@ -97,8 +97,67 @@ export function RmgApprovalsStrip({ items, onChanged, showToast }: {
   );
 }
 
+/**
+ * Approve / Reject a position from ANY list row (7 Oct 2026, user ask: "RMG / GM can
+ * approve 98 / 99 right from the Opportunities list, no need to go to the Screening
+ * Desk"). Same two dialogs and endpoints as the strip above; the position is read
+ * (`GET /api/requirements/{id}`) only when Approve is clicked. The caller shows it
+ * only to `useCanApprove("requirement.engineering_approve")` on a row whose
+ * requirement awaits RMG review — the server refuses anyone else anyway.
+ */
+export function RmgApproveRowButtons({ requirementId, title, oppId, onChanged, showToast, compact = true }: {
+  requirementId: number;
+  title: string;
+  oppId?: string | null;
+  onChanged: () => void;
+  showToast: ToastFn;
+  compact?: boolean;
+}) {
+  const [approving, setApproving] = useState<(JdSkillsReq & { hasJdFile: boolean }) | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const openApprove = async () => {
+    setLoading(true);
+    try {
+      const res = await crmGet<any>(`/api/requirements/${requirementId}`);
+      const r = res.data || {};
+      setApproving({
+        id: requirementId, title: r.title || title, req_number: r.req_number,
+        opportunity_opp_id: r.opportunity_opp_id || oppId, status: r.status || "Pending_Engineering_Review",
+        description: r.description, rmg_jd_text: r.rmg_jd_text, skills: r.skills || [],
+        hasJdFile: Array.isArray(r.rmg_jd_attachments) && r.rmg_jd_attachments.length > 0,
+      });
+    } catch (e: any) {
+      showToast(e?.message || "Could not open the position", "err");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const size = compact ? "!px-2 !py-1 text-[11px]" : "!py-1 text-xs";
+  return (
+    <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className={`${btnPrimary} ${size}`} onClick={() => void openApprove()} disabled={loading}
+        title="Review the JD & skills and approve the position for sourcing">
+        {loading ? "Opening…" : "RMG approve"}
+      </button>
+      <button type="button" className={`${btnDanger} ${size}`} onClick={() => setRejecting(true)}
+        title="Send the position back to Sales with a reason">Reject</button>
+      {approving && (
+        <JdSkillsModal mode="approve" hasJdFile={approving.hasJdFile} req={approving}
+          onClose={() => setApproving(null)} onSaved={() => { setApproving(null); onChanged(); }} toast={showToast} />
+      )}
+      {rejecting && (
+        <RejectPositionModal item={{ requirement_id: requirementId, title, opp_id: oppId || "" }}
+          onClose={() => setRejecting(false)}
+          onDone={(m) => { setRejecting(false); showToast(m); onChanged(); }} showToast={showToast} />
+      )}
+    </span>
+  );
+}
+
 function RejectPositionModal({ item, onClose, onDone, showToast }: {
-  item: ApprovalItem; onClose: () => void; onDone: (msg: string) => void; showToast: ToastFn;
+  item: Pick<ApprovalItem, "requirement_id" | "title" | "opp_id">;
+  onClose: () => void; onDone: (msg: string) => void; showToast: ToastFn;
 }) {
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");

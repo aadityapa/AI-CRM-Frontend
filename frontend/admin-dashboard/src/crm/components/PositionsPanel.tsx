@@ -140,7 +140,7 @@ function PositionChangeModal({
                     onClick={() => setValue(String(Math.max(meta.min_positions || 1, (Number(value) || 1) - 1)))}>
               <Minus size={14} />
             </button>
-            <input className={`${inputCls} w-24 text-center`} type="number" min={Math.max(1, meta.min_positions)}
+            <input className={`${inputCls} !w-24 text-center`} type="number" min={Math.max(1, meta.min_positions)}
                    max={meta.max_positions} value={value} onChange={(e) => setValue(e.target.value)} />
             <button type="button" className={`${btnSecondary} !px-2.5`} aria-label="Increase"
                     onClick={() => setValue(String(Math.min(meta.max_positions, (Number(value) || 0) + 1)))}>

@@ -42,12 +42,17 @@ function loadInterviewers(): Promise<InterviewerOption[]> {
 export function InterviewerSelect({
   value,
   onChange,
+  onPick,
   placeholder = "Search employee by name…",
   disabled,
   err,
 }: {
   value: string;
   onChange: (name: string) => void;
+  /** The EMPLOYEE behind the chosen name (7 Oct 2026) — the round is linked to
+   *  it so the interview reaches that person's My Interviews page. `null`
+   *  when the name matches nobody on the list (typed before the picker). */
+  onPick?: (option: InterviewerOption | null) => void;
   placeholder?: string;
   disabled?: boolean;
   err?: string;
@@ -80,7 +85,7 @@ export function InterviewerSelect({
     <SearchableSelect
       value={value}
       options={options}
-      onChange={onChange}
+      onChange={(name) => { onChange(name); onPick?.(people.find((p) => p.name === name) || null); }}
       placeholder={placeholder}
       disabled={disabled}
       err={err}

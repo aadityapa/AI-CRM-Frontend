@@ -1,6 +1,7 @@
 /** CRM API client — wraps the app's authFetch and unwraps the CRM envelope
  * {success, data, message, errors, meta}. Throws Error(message) on failure. */
-import { authFetch } from "../api/client";
+import { authFetch, invalidateApiCache } from "../api/client";
+import { clearAuthSession, getAuthToken } from "../lib/authSession";
 
 export type Meta = { page: number; limit: number; total: number; pages: number };
 
@@ -89,6 +90,12 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<{ dat
   }
   if (!res.ok || (body && typeof body === "object" && body.success === false)) {
     const msg = formatApiError(body, res.status);
+    // An Admin reset this user's password while they were signed in (7 Oct 2026):
+    // reload so the shell shows the "Set your own password" screen.
+    if (res.status === 403 && typeof msg === "string" && msg.startsWith("PASSWORD_CHANGE_REQUIRED")
+        && typeof window !== "undefined") {
+      window.location.reload();
+    }
     // Object detail rides along in errors[0] so callers can read structured
     // payloads (e.g. duplicate_profile on the applicant 409).
     const errs = body?.errors
@@ -145,7 +152,7 @@ export function crmUpload<T = any>(
     Object.entries(fields).forEach(([k, v]) => form.append(k, v));
     const xhr = new XMLHttpRequest();
     xhr.open("POST", path);
-    const token = localStorage.getItem("authToken") || "";
+    const token = getAuthToken();
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -158,6 +165,12 @@ export function crmUpload<T = any>(
         body = JSON.parse(xhr.responseText);
       } catch {
         body = xhr.responseText;
+      }
+      if (xhr.status === 401 && token) {
+        // Same as authFetch: a dead session signs out instead of a dead button.
+        clearAuthSession();
+        invalidateApiCache();
+        window.setTimeout(() => window.location.reload(), 0);
       }
       if (xhr.status >= 200 && xhr.status < 300 && body?.success !== false) {
         resolve({ data: body?.data as T, message: body?.message || "" });

@@ -1031,7 +1031,7 @@ export function ProjectEmployeeDetailPage() {
         <div className="flex flex-col gap-0.5">
           {canWrite && !pe.is_exit ? (
             <input
-              className={`${inputCls} w-20`}
+              className={`${inputCls} !w-20`}
               type="number"
               step="0.5"
               defaultValue={r.leave_balance ?? 0}

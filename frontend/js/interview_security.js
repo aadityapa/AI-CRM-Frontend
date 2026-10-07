@@ -59,6 +59,10 @@ const INTEGRITY_VIOLATION_TYPES = new Set([
   "clipboard",
   "context_menu",
   "devtools",
+  // 7 Oct 2026 — the candidate stopped sharing the screen the recording captures.
+  "screen_share_stopped",
+  // 7 Oct 2026 — why a recording has no screen half (not shared / unsupported / server off).
+  "screen_share_missing",
 ]);
 
 const VIOLATION_LABELS = {
@@ -77,11 +81,13 @@ const VIOLATION_LABELS = {
   clipboard: "Copy / paste",
   context_menu: "Right-click menu",
   devtools: "Developer tools",
+  screen_share_stopped: "Screen sharing stopped",
+  screen_share_missing: "Screen not recorded",
 };
 
 /* Events that only inform the Integrity tab — they never raise the on-screen
  * warning count. (The server decides termination from its own strike set.) */
-const SILENT_VIOLATION_TYPES = new Set(["no_face", "context_menu", "key_escape", "key_f11"]);
+const SILENT_VIOLATION_TYPES = new Set(["no_face", "context_menu", "key_escape", "key_f11", "screen_share_stopped", "screen_share_missing"]);
 
 const WARNING_COPY = {
   default: [

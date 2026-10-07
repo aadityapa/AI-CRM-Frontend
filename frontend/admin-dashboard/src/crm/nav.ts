@@ -42,6 +42,10 @@ export const CRM_NAV: CrmNavItem[] = [
   // across opportunities. Visibility is the APPROVAL (`profile.rmg_screening`,
   // see CrmApp), not this role list — a GM custom role has no built-in role.
   { path: "screening-desk", label: "Screening Desk", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
+  // My Interviews (7 Oct 2026): the rounds this login takes as the panel. RMG
+  // by role; everyone else (the Interviewer custom role, a TA who interviews)
+  // through the `my-interviews` tab grant.
+  { path: "my-interviews", label: "My Interviews", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
   // Interview calendar. Deliberately NOT Sales/Sales_Head: booking and running
   // interviews is not their workflow, which is also why the upcoming-interviews
   // widget was removed from their dashboard.

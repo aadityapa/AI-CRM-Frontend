@@ -7,6 +7,14 @@ import { transcribeAudioBlob } from "./speech_transcribe.js";
 let _pending = Promise.resolve();
 let _transcript = "";
 let _inFlight = 0;
+/**
+ * The turn a segment belongs to. `resetWhisperSegments()` bumps it, so a
+ * segment still at /candidate/transcribe when the next question loads is
+ * DISCARDED when it comes back instead of being merged into the new turn —
+ * that is how the end of "introduce yourself" used to show up under
+ * Question 1 (7 Oct 2026).
+ */
+let _generation = 0;
 
 function _merge(existing, incoming) {
   const a = String(existing || "").trim().replace(/\s+/g, " ");
@@ -69,11 +77,16 @@ export function enqueueWhisperSegment(float32Audio, { sampleRate = 16000 } = {})
   const blob = float32ToWavBlob(float32Audio, sampleRate);
   if (blob.size < 1200) return _pending;
   const durationMs = (float32Audio.length / sampleRate) * 1000;
+  const generation = _generation;
   _inFlight += 1;
   _pending = _pending
     .then(async () => {
       try {
         const text = await _transcribeBlob(blob, durationMs);
+        if (generation !== _generation) {
+          console.info("[INTERVIEW] whisper_segment_discarded", { reason: "turn_over", len: String(text || "").length });
+          return;
+        }
         if (text) {
           _transcript = _merge(_transcript, text);
           console.info("[INTERVIEW] whisper_segment", { len: text.length, preview: text.slice(0, 80) });
@@ -81,11 +94,11 @@ export function enqueueWhisperSegment(float32Audio, { sampleRate = 16000 } = {})
       } catch (err) {
         console.warn("[candidate-stt] whisper_segment_failed", err?.message || err);
       } finally {
-        _inFlight = Math.max(0, _inFlight - 1);
+        if (generation === _generation) _inFlight = Math.max(0, _inFlight - 1);
       }
     })
     .catch(() => {
-      _inFlight = Math.max(0, _inFlight - 1);
+      if (generation === _generation) _inFlight = Math.max(0, _inFlight - 1);
     });
   return _pending;
 }
@@ -95,6 +108,7 @@ export function getWhisperSegmentTranscript() {
 }
 
 export function resetWhisperSegments() {
+  _generation += 1;
   _transcript = "";
   _pending = Promise.resolve();
   _inFlight = 0;

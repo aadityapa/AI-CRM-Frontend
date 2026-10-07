@@ -1150,6 +1150,11 @@ async function startMicRecordingAuto() {
     recordedChunks = [];
     _recordingStartedAt = 0;
     const rec = new MediaRecorder(recorderStream, { mimeType: "audio/webm" });
+    // The turn this recorder was opened for. Its `onstop` fires asynchronously,
+    // and when the next question has already loaded by then (the transition
+    // stops the recorder without waiting), transcribing its audio would write
+    // the PREVIOUS answer into the new turn — the warm-up tail under Question 1.
+    const recorderTurnSeq = _questionLoadSeq;
     rec.onstart = () => {
       _recordingStartedAt = Date.now();
       _cancelActiveSpeech();
@@ -1197,7 +1202,12 @@ async function startMicRecordingAuto() {
       const done = _micStopDoneResolver;
       _micStopDoneResolver = null;
       // Skip / empty submit / End Interview — never call transcription API.
-      if (_terminatingInterview || _bypassTranscription) {
+      // A recorder whose turn is already over must not transcribe either
+      // (its answer was flushed before /answer; anything left belongs to
+      // the old question, never to the one on screen now).
+      const turnOver = recorderTurnSeq !== _questionLoadSeq;
+      if (turnOver) console.info("[candidate-stt] stale_recorder_stop_ignored", { turn: recorderTurnSeq });
+      if (_terminatingInterview || _bypassTranscription || turnOver) {
         _bypassTranscription = false;
         if (typeof done === "function") {
           try {
@@ -1206,8 +1216,10 @@ async function startMicRecordingAuto() {
             /* ignore */
           }
         }
-        activeRecorder = null;
-        recordedChunks = [];
+        if (activeRecorder === rec || !turnOver) {
+          activeRecorder = null;
+          recordedChunks = [];
+        }
         return;
       }
       try {

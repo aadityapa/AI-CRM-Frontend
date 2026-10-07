@@ -52,7 +52,7 @@ export const INTERVIEW_VIEW_ROLES: Record<InterviewView, CrmRole[]> = {
   candidateReport: ["TA", "HR", "RMG"], // detail page under Reports
   candidateInterviews: ["TA", "HR", "RMG"], // detail page under Reports/Dashboard
   ats: ["TA", "HR", "RMG"],
-  integrityLogs: ["TA", "HR"], // RMG explicitly excluded
+  integrityLogs: ["TA", "HR", "RMG"], // RMG reviews the AI L1 outcome (7 Oct 2026)
   hrSetup: ["TA", "HR"], // Interview scheduler (reached via the Interview Schedule button)
   promptLogs: [], // AI Costs — Admin only
   questionBank: [], // Admin/super-admin only
@@ -112,7 +112,7 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "iv:candidates", label: "Reports", group: "Interview Platform", roles: ["TA", "HR", "RMG"] },
   { key: "iv:ats", label: "ATS", group: "Interview Platform", roles: ["TA", "HR", "RMG"] },
   { key: "iv:promptLogs", label: "AI Costs", group: "Interview Platform", roles: [] },
-  { key: "iv:integrityLogs", label: "Integrity", group: "Interview Platform", roles: ["TA", "HR"] },
+  { key: "iv:integrityLogs", label: "Integrity", group: "Interview Platform", roles: ["TA", "HR", "RMG"] },
   // CRM — synced to TODAY's IA (Aug 2026): hub placements are spelled out in
   // the label so an admin granting access knows where the page actually
   // lives, and role lists match who can genuinely use each page now.
@@ -123,6 +123,9 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "crm:candidates", label: "Candidates", group: "CRM", roles: ["TA", "Sales", "Sales_Head"] },
   { key: "crm:template-requests", label: "Template Requests", group: "CRM", roles: ["TA", "RMG"] },
   { key: "crm:profiles", label: "Candidate Profiles", group: "CRM", roles: ["Sales", "Sales_Head", "RMG", "TA"] },
+  // My Interviews (7 Oct 2026) — the panel member's own rounds; the Interviewer
+  // custom role's one grant. RMG by role.
+  { key: "crm:my-interviews", label: "My Interviews (panel feedback)", group: "CRM", roles: ["RMG"] },
   // Interview calendar — TA and RMG only (plus Admin/CEO via isSuperAdmin).
   // Sales roles are excluded on purpose; see nav.ts.
   { key: "crm:calendar", label: "Interview Calendar", group: "CRM", roles: ["RMG", "TA"] },

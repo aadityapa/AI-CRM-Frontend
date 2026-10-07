@@ -1,7 +1,10 @@
 /** CRM Settings (Admin-only): master-data tables (departments, designations,
  * skills, locations, document types, leave policy types) + app settings. */
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Power, Settings } from "lucide-react";
+import {
+  Activity, Briefcase, Building2, Cog, Database, FileText, GraduationCap, LifeBuoy, ListChecks, MapPin, MessageSquareText,
+  Network, Pencil, Plus, Power, Receipt, Settings, Sliders, Sparkles, Type, type LucideIcon,
+} from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
@@ -9,7 +12,7 @@ import { useHasRole } from "../CrmApp";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import {
-  ErrorBox, Modal, Spinner, StatusBadge, Tabs,
+  ErrorBox, Modal, Spinner, StatusBadge,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
@@ -1345,12 +1348,88 @@ function AppSettingsTab({ notify }: { notify: Notify }) {
 
 /* --------------------------------------------------------------- page */
 
+type SettingsEntry = { key: string; label: string; blurb: string; icon: LucideIcon };
+type SettingsGroup = { key: string; label: string; accent: string; entries: SettingsEntry[] };
+
+/** The settings navigator (7 Oct 2026): 16 flat tabs became five groups. Keys
+ *  are unchanged, so every `settings?tab=` deep link keeps resolving. */
+export const SETTINGS_GROUPS: SettingsGroup[] = [
+  { key: "masters", label: "Masters", accent: "from-sky-500 to-blue-600", entries: [
+    { key: "departments", label: "Departments", blurb: "The HR departments employees and designations belong to.", icon: Network },
+    { key: "designations", label: "Designations", blurb: "Job titles, each under a department.", icon: Briefcase },
+    { key: "skills", label: "Skills", blurb: "The skill master positions, candidates and the ATS score against.", icon: Sparkles },
+    { key: "locations", label: "Locations", blurb: "Cities positions are based in and candidates prefer.", icon: MapPin },
+    { key: "document-types", label: "Document Types", blurb: "What a customer or employee document can be filed as.", icon: FileText },
+    { key: "leave-policy-types", label: "Leave Policy Types", blurb: "The leave types a policy can carry.", icon: GraduationCap },
+    { key: "customer-policies", label: "Customer Policies", blurb: "Every customer's billing, leave and comp-off rules in one matrix.", icon: ListChecks },
+  ] },
+  { key: "company", label: "Company", accent: "from-indigo-500 to-violet-700", entries: [
+    { key: "organisation", label: "Organisation", blurb: "Company name, addresses, GSTIN / PAN, signatories.", icon: Building2 },
+    { key: "invoice", label: "Invoice", blurb: "Everything the Tax Invoice prints — seller block, bank accounts, SAC, footer.", icon: Receipt },
+  ] },
+  { key: "operations", label: "Operations", accent: "from-amber-500 to-orange-600", entries: [
+    { key: "operations", label: "Scheduled jobs", blurb: "Leave credit, reminders, month-close mails, retention — on / off and their last run.", icon: Cog },
+    { key: "app-settings", label: "App Settings", blurb: "Every key the application reads a default from.", icon: Sliders },
+    { key: "backup", label: "Backup", blurb: "Download a full data backup — Excel, CSV, JSON and files.", icon: Database },
+  ] },
+  { key: "communication", label: "Communication", accent: "from-teal-500 to-emerald-600", entries: [
+    { key: "email-drafts", label: "Email Drafts", blurb: "The wording of every mail candidates receive, plus your own drafts.", icon: MessageSquareText },
+    { key: "ui-text", label: "UI Text", blurb: "Status tooltips and empty-state copy, rewritten without a deploy.", icon: Type },
+  ] },
+  { key: "audit", label: "Audit & support", accent: "from-slate-500 to-slate-700", entries: [
+    { key: "activity-log", label: "Activity Log", blurb: "Who changed what, across the CRM.", icon: Activity },
+    { key: "support-tickets", label: "Support Tickets", blurb: "Questions raised through the Help & Support bot.", icon: LifeBuoy },
+  ] },
+];
+const SETTINGS_ENTRIES = SETTINGS_GROUPS.flatMap((g) => g.entries.map((e) => ({ ...e, group: g })));
+
+function SettingsNav({ active, onChange, query, onQuery }: {
+  active: string; onChange: (k: string) => void; query: string; onQuery: (q: string) => void;
+}) {
+  const q = query.trim().toLowerCase();
+  return (
+    <nav className="space-y-3" aria-label="Settings sections">
+      <input className={`${inputCls} text-sm`} placeholder="Find a setting…" value={query} onChange={(e) => onQuery(e.target.value)} aria-label="Find a setting" />
+      {SETTINGS_GROUPS.map((g) => {
+        const entries = g.entries.filter((e) => !q || e.label.toLowerCase().includes(q) || e.blurb.toLowerCase().includes(q));
+        if (!entries.length) return null;
+        return (
+          <div key={g.key} className="overflow-hidden rounded-card border border-subtle bg-surface-1">
+            <div className="flex items-center gap-2 px-3 py-2">
+              <span className={`h-2.5 w-2.5 rounded-full bg-gradient-to-br ${g.accent}`} aria-hidden />
+              <span className="text-[11px] font-bold uppercase tracking-wide text-secondary">{g.label}</span>
+            </div>
+            <ul className="divide-y divide-subtle border-t border-subtle">
+              {entries.map((e) => {
+                const on = e.key === active;
+                const Icon = e.icon;
+                return (
+                  <li key={e.key}>
+                    <button type="button" onClick={() => onChange(e.key)} aria-current={on ? "page" : undefined}
+                      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors duration-micro ${
+                        on ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300" : "text-secondary hover:bg-surface-2"}`}>
+                      <Icon size={15} className={on ? "text-brand-600 dark:text-brand-300" : "text-muted"} aria-hidden />
+                      <span className="truncate">{e.label}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
 export function CrmSettingsPage() {
   const isAdmin = useHasRole();
   const [toast, notify] = useToast();
   // Deep link: settings?tab=<key> (e.g. the Support Tickets back-link and bell notifications).
   const [tab, setTab] = usePageTab<string>("tab", "departments");
   const [deptOptions, setDeptOptions] = useState<Option[]>([]);
+  const [navQuery, setNavQuery] = useState("");
+  const current = SETTINGS_ENTRIES.find((e) => e.key === tab);
 
   useEffect(() => {
     if (!isAdmin || tab !== "designations") return;
@@ -1373,32 +1452,41 @@ export function CrmSettingsPage() {
         accent="slate"
         eyebrow="Admin"
         title="Settings"
-        subtitle="Masters, organisation and invoice details, scheduled jobs, email wording, backup and support — everything the application reads its defaults from."
-      >
-      <Tabs
-        tabs={[
-          { key: "departments", label: "Departments" },
-          { key: "designations", label: "Designations" },
-          { key: "skills", label: "Skills" },
-          { key: "locations", label: "Locations" },
-          { key: "document-types", label: "Document Types" },
-          { key: "leave-policy-types", label: "Leave Policy Types" },
-          { key: "customer-policies", label: "Customer Policies" },
-          { key: "organisation", label: "Organisation" },
-          { key: "invoice", label: "Invoice" },
-          { key: "operations", label: "Operations" },
-          { key: "app-settings", label: "App Settings" },
-          { key: "email-drafts", label: "Email Drafts" },
-          { key: "ui-text", label: "UI Text" },
-          { key: "activity-log", label: "Activity Log" },
-          { key: "backup", label: "Backup" },
-          { key: "support-tickets", label: "Support Tickets" },
+        subtitle="Masters, company and invoice details, scheduled jobs, email wording, backup and support — everything the application reads its defaults from."
+        stats={[
+          { label: "Sections", value: SETTINGS_GROUPS.length },
+          { label: "Settings pages", value: SETTINGS_ENTRIES.length },
         ]}
-        active={tab}
-        onChange={setTab}
-      />
+      >
+        {/* Phone: a select; the rail takes over from md. */}
+        <label className="block md:hidden">
+          <span className="sr-only">Settings section</span>
+          <select className={inputCls} value={tab} onChange={(e) => setTab(e.target.value)}>
+            {SETTINGS_GROUPS.map((g) => (
+              <optgroup key={g.key} label={g.label}>
+                {g.entries.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </label>
       </PageHeader>
-      <div className="mt-4">
+      <div className="mt-4 grid gap-4 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <div className="hidden self-start md:block">
+          <SettingsNav active={tab} onChange={setTab} query={navQuery} onQuery={setNavQuery} />
+        </div>
+        <div className="min-w-0">
+        {current && (
+          <div className="mb-3 flex items-center gap-3">
+            <span className={`inline-flex h-10 w-10 flex-none items-center justify-center rounded-card bg-gradient-to-br ${current.group.accent} text-white shadow-raised`}>
+              <current.icon size={18} aria-hidden />
+            </span>
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{current.group.label}</div>
+              <h2 className="text-base font-bold text-primary">{current.label}</h2>
+              <p className="text-xs text-secondary">{current.blurb}</p>
+            </div>
+          </div>
+        )}
         {tab === "departments" && (
           <MasterTab
             endpoint="departments"
@@ -1503,6 +1591,7 @@ export function CrmSettingsPage() {
         {tab === "activity-log" && <ActivityLogPage />}
         {tab === "backup" && <BackupTab notify={notify} />}
         {tab === "support-tickets" && <SupportTicketsPage embedded />}
+        </div>
       </div>
     </div>
   );

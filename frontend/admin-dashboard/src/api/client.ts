@@ -32,6 +32,14 @@ export function invalidateApiCache(prefix?: string): void {
   }
 }
 
+/** Every cached GET a write can make stale. PUT / PATCH used to clear only
+ *  /hr/dashboard, so an edited template kept its 45 s /job/configs copy. */
+function invalidateAfterMutation(): void {
+  for (const prefix of ["/hr/dashboard", "/job/configs", "/hr/schedules", "/interview/integrity-logs"]) {
+    invalidateApiCache(prefix);
+  }
+}
+
 /** Authenticated fetch; clears storage and reloads on 401 when a token was sent. */
 export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = getAuthToken();
@@ -104,10 +112,7 @@ export async function apiDelete<T>(path: string): Promise<T> {
     throw new Error(typeof data === "string" ? data : data?.error || `Request failed (${res.status})`);
   }
   if (data && typeof data === "object" && data.error) throw new Error(String(data.error));
-  invalidateApiCache("/hr/dashboard");
-  invalidateApiCache("/job/configs");
-  invalidateApiCache("/hr/schedules");
-  invalidateApiCache("/interview/integrity-logs");
+  invalidateAfterMutation();
   return data as T;
 }
 
@@ -128,7 +133,7 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(typeof data === "string" ? data : data?.error || `Request failed (${res.status})`);
   }
   if (data && typeof data === "object" && data.error) throw new Error(String(data.error));
-  invalidateApiCache("/hr/dashboard");
+  invalidateAfterMutation();
   return data as T;
 }
 
@@ -149,6 +154,6 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(typeof data === "string" ? data : data?.error || `Request failed (${res.status})`);
   }
   if (data && typeof data === "object" && data.error) throw new Error(String(data.error));
-  invalidateApiCache("/hr/dashboard");
+  invalidateAfterMutation();
   return data as T;
 }

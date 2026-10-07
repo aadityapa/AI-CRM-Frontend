@@ -13,7 +13,7 @@
  * on a desk row — B-V2 `screening_desk.interview_route`); this renders that.
  */
 import { useState } from "react";
-import { BellRing, Bot, CalendarCheck2, Sparkles, UsersRound } from "lucide-react";
+import { BellRing, Bot, CalendarCheck2, PauseCircle, PlayCircle, Sparkles, StepForward, UsersRound } from "lucide-react";
 
 import { crmPost } from "../api";
 import { DecisionDialog, type DecisionSpec } from "./dialogKit";
@@ -93,6 +93,69 @@ export function ChooseAiL1Modal({ profileId, candidateName, context, onClose, on
       onConfirm={async (note) => {
         const res = await crmPost(`/api/candidate-profiles/${profileId}/request-ai-l1`, { note: note || undefined });
         onDone(res.message || "AI L1 chosen — TA notified to schedule it");
+      }}
+    />
+  );
+}
+
+/* ---------- After the AI L1: the screener's call (7 Oct 2026, user ask) ----------
+   A FAILED AI L1 (or one a recruiter put ON HOLD from the report page) used to
+   leave the row with no button — the ladder only opened on a pass. The AI
+   verdict is advice: RMG / GM can proceed to the review anyway (L2 / Submit
+   to Sales), park the candidate, or release a hold.
+   POST …/ai-l1-decision {decision: proceed|hold|release, note}. */
+export type AiL1Decision = "proceed" | "hold" | "release";
+
+const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionSpec> = {
+  proceed: (ai) => ({
+    tone: "emerald", icon: StepForward, eyebrow: "After the AI L1", title: "Proceed despite the AI result",
+    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Your decision outranks it: the interview is marked
+      <b> Selected</b> (the AI's score stays on record) and the candidate moves to <b>RMG Review</b>, where you
+      request the <b>L2</b> or <b>submit to Sales</b>.</>,
+    flow: { steps: ["AI L1", "RMG Review", "L2 / Sales"], current: 1 },
+    reason: { label: "Why overrule the AI", required: ai !== "Passed" && ai !== "Selected", min: 5,
+      placeholder: "e.g. Answers were correct — poor audio dragged the score down",
+      picks: ["Answers were correct — transcription errors", "Strong CV and experience — AI was too strict",
+        "Reviewed the recording — good enough for the L2"] },
+    happens: [
+      { icon: Sparkles, text: "The AI report keeps its score; your override is logged beside it." },
+      { icon: BellRing, text: "The candidate lands in RMG Review — the L2 / Submit to Sales buttons open on this row." },
+    ],
+    confirmLabel: "Proceed to RMG review", busyLabel: "Moving…",
+  }),
+  hold: (ai) => ({
+    tone: "amber", icon: PauseCircle, eyebrow: "After the AI L1", title: "Put the candidate on hold",
+    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Nothing moves: the row reads <b>On Hold</b> until you
+      proceed, choose a manual L1, send them to Sales or reject.</>,
+    flow: { steps: ["AI L1", "On hold", "Your decision"], current: 1 },
+    reason: { label: "Note (optional)", placeholder: "e.g. Waiting for the customer's view on the budget",
+      picks: ["Waiting for the customer", "Compare with other applicants first", "Candidate unsure about the role"] },
+    happens: [{ icon: BellRing, text: "The hold is logged on the profile; release it from this row any time." }],
+    confirmLabel: "Put on hold", busyLabel: "Saving…",
+  }),
+  release: (ai) => ({
+    tone: "sky", icon: PlayCircle, eyebrow: "After the AI L1", title: "Release the hold",
+    intro: <>The AI verdict <b>{ai || "—"}</b> stands again. Then proceed, choose a manual L1, send to Sales or
+      reject from the row.</>,
+    flow: { steps: ["On hold", "AI verdict stands", "Your decision"], current: 1 },
+    reason: { label: "Note (optional)", placeholder: "e.g. Customer confirmed the budget" },
+    happens: [{ icon: BellRing, text: "The release is logged on the profile." }],
+    confirmLabel: "Release hold", busyLabel: "Saving…",
+  }),
+};
+
+export function AiL1DecisionModal({ profileId, candidateName, context, decision, aiResult, onClose, onDone }:
+  RouteDialogProps & { decision: AiL1Decision; aiResult: string | null }) {
+  return (
+    <DecisionDialog
+      spec={AI_AFTER_SPEC[decision](aiResult)}
+      person={candidateName ? { name: candidateName, meta: context || undefined } : null}
+      onClose={onClose}
+      onConfirm={async (note) => {
+        const res = await crmPost(`/api/candidate-profiles/${profileId}/ai-l1-decision`, {
+          decision, note: note || undefined,
+        });
+        onDone(res.message || "Saved");
       }}
     />
   );

@@ -19,8 +19,14 @@
  *
  * `speakQuestion()` resolves when the audio has FINISHED (not when it starts),
  * because the microphone must open only after the AI stops talking.
+ *
+ * 7 Oct 2026 — every server clip is also MIRRORED into the session recording
+ * (`recording_mix.js`) so the reviewer hears the question as well as the
+ * answer. The candidate's own playback path is untouched; the mirror is a
+ * second decode of the same bytes, started in step with the element.
  */
 import { apiFetch } from "./core.js";
+import { mirrorClipToRecording } from "./recording_mix.js";
 
 const STREAM_START_TIMEOUT_MS = 6000;
 const BLOB_FETCH_TIMEOUT_MS = 15000;
@@ -107,12 +113,15 @@ async function _fetchServerAudio(spoken) {
 async function _playServerAudio(res, onStart) {
   const canStream = !!res.body && typeof MediaSource !== "undefined"
     && MediaSource.isTypeSupported("audio/mpeg");
+  // Two readers of one body: the streaming element consumes `res`, the
+  // recording mirror (and the blob fallback) read the clone.
   const blobCopy = canStream ? res.clone() : res;
+  const mirrorCopy = canStream ? blobCopy.clone() : null;
 
   if (canStream) {
     try {
       const audio = await _streamingAudioElement(res);
-      await _playElement(audio, onStart);
+      await _playElement(audio, onStart, () => mirrorCopy.blob());
       return "server-stream";
     } catch (err) {
       console.warn("[VOICE] streaming playback failed, retrying as a whole clip:", err?.message || err);
@@ -122,32 +131,50 @@ async function _playServerAudio(res, onStart) {
   const blob = await _withTimeout(blobCopy.blob(), BLOB_FETCH_TIMEOUT_MS, "TTS download timeout");
   if (!blob.size) throw new Error("Empty TTS audio");
   const audio = new Audio(URL.createObjectURL(blob));
-  await _playElement(audio, onStart);
+  await _playElement(audio, onStart, () => Promise.resolve(blob));
   return "server-blob";
 }
 
-/** Resolve when the element finishes; reject when it never starts. */
-function _playElement(audio, onStart) {
+/**
+ * Resolve when the element finishes; reject when it never starts.
+ * `clipBytes()` hands the same audio to the recording mirror once playback
+ * has actually begun (so the two start together); the mirror is stopped
+ * whenever the element is.
+ */
+function _playElement(audio, onStart, clipBytes) {
   return new Promise((resolve, reject) => {
     let started = false;
+    let mirror = null;
+    const stopMirror = () => { try { mirror && mirror.stop(); } catch (_) { /* ignore */ } mirror = null; };
     const stop = () => {
       try { audio.pause(); } catch (_) { /* ignore */ }
+      stopMirror();
       _release(audio);
       resolve();
     };
     _active = { kind: "audio", stop };
     const finish = () => {
       if (_active && _active.stop === stop) _active = null;
+      stopMirror();
       _release(audio);
       resolve();
     };
     audio.preload = "auto";
     audio.onplaying = () => {
-      if (!started) { started = true; onStart(); }
+      if (!started) {
+        started = true;
+        onStart();
+        if (typeof clipBytes === "function") {
+          try {
+            mirror = mirrorClipToRecording(clipBytes(), () => audio.currentTime || 0);
+          } catch (_) { mirror = null; }
+        }
+      }
     };
     audio.onended = finish;
     audio.onerror = () => {
       if (_active && _active.stop === stop) _active = null;
+      stopMirror();
       _release(audio);
       const code = audio.error?.code;
       if (started) resolve(); // partial playback still counts as spoken
@@ -155,6 +182,7 @@ function _playElement(audio, onStart) {
     };
     audio.play().catch((err) => {
       if (_active && _active.stop === stop) _active = null;
+      stopMirror();
       _release(audio);
       // NotAllowedError = autoplay policy: the fullscreen gate normally grants
       // the gesture; if it did not, the browser voice below needs one too, so

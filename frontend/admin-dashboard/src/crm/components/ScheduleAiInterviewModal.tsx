@@ -57,6 +57,22 @@ export type ScheduleExistingLink = {
   candidate_email?: string | null;
 };
 
+/**
+ * A fresh link after an AI L1 that already RAN without a pass (7 Oct 2026):
+ * what the previous one ended as, printed in the dialog, and a required note
+ * (`reschedule_note`) — why a new link is going out, typically "candidate
+ * confirmed on the phone they will sit it on Thursday". The server refuses a
+ * reschedule without it, and keeps the old verdict on record.
+ */
+export type RescheduleSeed = {
+  /** "Not attempted" · "Failed (42%)" · "On Hold" — the previous outcome. */
+  previous: string;
+  /** True when the candidate never answered a question (the common case). */
+  notAttempted?: boolean;
+};
+
+export const MIN_RESCHEDULE_NOTE = 5;
+
 export type AiScheduleResult = {
   session_ref: string | null;
   invite_url: string | null;
@@ -87,6 +103,7 @@ export function ScheduleAiInterviewModal({
   existing,
   /** Prefill the date/time — the calendar passes the slot that was clicked. */
   initialWhen,
+  reschedule,
   onClose,
   onDone,
   showToast,
@@ -95,11 +112,14 @@ export function ScheduleAiInterviewModal({
   candidate: ScheduleCandidateSeed;
   existing?: ScheduleExistingLink;
   initialWhen?: string;
+  /** Create mode only: a NEW link over a finished AI L1 (see RescheduleSeed). */
+  reschedule?: RescheduleSeed;
   onClose: () => void;
   onDone: (res: AiScheduleResult | null) => void;
   showToast: (msg: string, kind?: "ok" | "err") => void;
 }) {
   const isEdit = !!existing;
+  const isReschedule = !isEdit && !!reschedule;
   const defaultWhen = useMemo(() => {
     // Default to NOW (on the minute) so "schedule → the candidate takes it now"
     // works immediately. Picking a future time still schedules a wait; leaving
@@ -119,6 +139,7 @@ export function ScheduleAiInterviewModal({
     existing?.candidate_email || realEmail(candidate?.email) || "",
   );
   const [notes, setNotes] = useState("");
+  const [why, setWhy] = useState("");
   const [sendEmail, setSendEmail] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -129,6 +150,9 @@ export function ScheduleAiInterviewModal({
     if (!cleanEmail) return setError("Candidate email is required — the invite is sent there");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError("Enter a valid email address");
     if (!when) return setError("Pick the interview date and time");
+    if (isReschedule && why.trim().length < MIN_RESCHEDULE_NOTE) {
+      return setError("Say why a fresh link is going out — e.g. when the candidate confirmed they will attempt it");
+    }
 
     setError("");
     setBusy(true);
@@ -161,12 +185,13 @@ export function ScheduleAiInterviewModal({
             candidate_email: cleanEmail,
             notes: notes.trim() || undefined,
             send_email: sendEmail,
+            reschedule_note: isReschedule ? why.trim() : undefined,
           },
         );
         showToast(
           sendEmail && !res.data?.email_sent
             ? `Interview scheduled, but the email did not send (${res.data?.email_error || "unknown error"})`
-            : res.message || "AI interview scheduled",
+            : res.message || (isReschedule ? "New AI L1 link sent" : "AI interview scheduled"),
           sendEmail && !res.data?.email_sent ? "err" : "ok",
         );
         onDone(res.data);
@@ -178,20 +203,45 @@ export function ScheduleAiInterviewModal({
     }
   };
 
+  const title = isEdit ? "Edit AI interview" : isReschedule ? "Reschedule AI L1" : "Schedule AI interview";
   return (
-    <Modal title={isEdit ? "Edit AI interview" : "Schedule AI interview"} onClose={onClose} medium>
+    <Modal title={title} onClose={onClose} medium>
       <WizFormShell
-        title={isEdit ? "Edit AI interview" : "Schedule AI interview"}
+        title={title}
         subtitle={
           isEdit
             ? "Change the date, time or candidate details. The existing invite link and access key stay valid."
-            : "The candidate receives an invite email with the interview link and a secure access key."
+            : isReschedule
+              ? "A NEW invite link and access key go to the candidate. The previous interview stays on record; every screen follows this one from now on."
+              : "The candidate receives an invite email with the interview link and a secure access key."
         }
         icon={<Bot size={18} />}
       >
         {error && <ErrorBox error={error} />}
+        {isReschedule && (
+          <div className="mb-4 rounded-card border border-warning bg-warning-soft px-3 py-2 text-sm text-primary">
+            <span className="font-semibold">Previous AI L1: {reschedule!.previous}.</span>{" "}
+            {reschedule!.notAttempted
+              ? "The candidate did not answer any question — the link was opened late, the session dropped, or it was never started. Send a fresh link only once they have confirmed they will attempt it."
+              : "Send a fresh link only once the candidate has confirmed they will attempt it again; RMG / GM are told so nobody acts on the old result."}
+          </div>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
+          {isReschedule && (
+            <WizardField label="Why a fresh link — the candidate's confirmation" required className="sm:col-span-2">
+              <textarea
+                rows={2}
+                className={inputCls}
+                value={why}
+                onChange={(e) => setWhy(e.target.value)}
+                placeholder="e.g. Called on 7 Oct — power cut during the first attempt; confirmed they will sit it Thursday 11 AM"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Logged on the candidate's history beside the previous outcome, and sent to RMG / GM.
+              </p>
+            </WizardField>
+          )}
           <WizardField label="Interview date & time" required className="sm:col-span-2">
             <input
               type="datetime-local"
@@ -257,7 +307,7 @@ export function ScheduleAiInterviewModal({
             Cancel
           </button>
           <button type="button" className={btnPrimary} onClick={submit} disabled={busy}>
-            {busy ? "Working…" : isEdit ? "Save changes" : "Schedule interview"}
+            {busy ? "Working…" : isEdit ? "Save changes" : isReschedule ? "Send new link" : "Schedule interview"}
           </button>
         </div>
       </WizFormShell>

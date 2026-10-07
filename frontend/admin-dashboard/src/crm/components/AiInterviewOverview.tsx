@@ -21,15 +21,19 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, ExternalLink, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { crmGet } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useCanApprove } from "../useAccess";
 import { ScoreIndicator } from "./ScoreIndicator";
 
 /** Roles that hold the Interview Platform's Reports tab — mirrors
  *  `lib/rbac.ts` `iv:candidates` (Admin/CEO implicit via `useHasRole`). */
 const REPORT_PAGE_ROLES = ["TA", "HR", "RMG"] as const;
 
-/** Whether this login can open the full AI report page (Admin/CEO implicit). */
+/** Whether this login can open the full AI report page (Admin/CEO implicit).
+ *  A screener (GM — custom role) can too: App.isViewAllowed admits them. */
 export function useCanOpenAiReport(): boolean {
-  return useHasRole(...REPORT_PAGE_ROLES);
+  const byRole = useHasRole(...REPORT_PAGE_ROLES);
+  const screener = useCanApprove("profile.rmg_screening");
+  return byRole || screener;
 }
 
 /** The "Full AI report" button, or the hint for a role that cannot open it. */
@@ -122,10 +126,15 @@ export function AiInterviewOverview({
   profileId,
   linkId,
   reportLink,
+  summaryUrl,
 }: {
   profileId: number;
   linkId: number;
   reportLink?: string | null;
+  /** A different summary endpoint — the panel member's My Interviews page
+   *  (7 Oct 2026) reads the verdict through its own scoped route, since an
+   *  Interviewer login has no Candidate Profiles tab. */
+  summaryUrl?: string;
 }) {
   const [data, setData] = useState<AiInterviewSummary | null>(null);
   const [error, setError] = useState<string>("");
@@ -135,12 +144,12 @@ export function AiInterviewOverview({
     let alive = true;
     setLoading(true);
     setError("");
-    crmGet<AiInterviewSummary>(`/api/candidate-profiles/${profileId}/ai-interviews/${linkId}/summary`)
+    crmGet<AiInterviewSummary>(summaryUrl || `/api/candidate-profiles/${profileId}/ai-interviews/${linkId}/summary`)
       .then((res) => { if (alive) setData(res.data); })
       .catch((err) => { if (alive) setError(err?.message || "Could not load the AI overview."); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [profileId, linkId]);
+  }, [profileId, linkId, summaryUrl]);
 
   if (loading) {
     return <div className="mt-3 h-24 animate-pulse rounded-control bg-surface-2" aria-busy="true" />;

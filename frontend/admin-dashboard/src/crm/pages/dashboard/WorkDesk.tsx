@@ -99,6 +99,9 @@ type Desk = { tabs: DeskTab[]; as_of: string };
 /** Icon + accent per tab — the server names the tabs, the page dresses them. */
 const TAB_LOOK: Record<string, { icon: LucideIcon; accent: string }> = {
   feedback: { icon: ClipboardCheck, accent: "from-amber-500 to-orange-600" },
+  // The panel member's own rounds (7 Oct 2026) — open My Interviews.
+  panel_feedback: { icon: ClipboardCheck, accent: "from-violet-500 to-purple-700" },
+  panel_upcoming: { icon: CalendarClock, accent: "from-sky-500 to-indigo-600" },
   ta_pending: { icon: ListTodo, accent: "from-violet-500 to-fuchsia-600" },
   schedule_customer: { icon: Building2, accent: "from-sky-500 to-blue-600" },
   schedule_internal: { icon: UsersRound, accent: "from-indigo-500 to-violet-600" },

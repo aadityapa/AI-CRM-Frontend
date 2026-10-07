@@ -1,17 +1,5 @@
-import {
-  Bar,
-  BarChart,
-  Cell,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { accent, brand, chartPalette, neutral, violet } from "../../design-system/tokens/tokens";
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { brand, chartPalette, neutral, violet } from "../../design-system/tokens/tokens";
 
 /* Colors come from the typed token mirrors (design-system/tokens/tokens.ts) —
  * recharts resolves fills once at render, so static mirrors keep this
@@ -53,67 +41,6 @@ export function SkillBarChart({ data }: { data: { skill: string; score: number }
             ))}
           </Bar>
         </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-type RadarRow = { subject: string; A: number; full: string };
-
-export function PerformanceRadar({
-  communication,
-  technical,
-  confidence,
-  problemSolving,
-  overall,
-  /**
-   * False when the template assessed technical substance only. The Comm and
-   * Conf axes are then dropped rather than plotted at zero — a zero on a radar
-   * reads as a failing score, not as "we did not measure this".
-   */
-  includeCommunication = true,
-}: {
-  communication: number;
-  technical: number;
-  confidence: number;
-  problemSolving: number;
-  overall: number;
-  includeCommunication?: boolean;
-}) {
-  const data: RadarRow[] = [
-    ...(includeCommunication
-      ? [{ subject: "Comm", A: communication, full: "Communication" }]
-      : []),
-    { subject: "Tech", A: technical, full: "Technical" },
-    ...(includeCommunication
-      ? [{ subject: "Conf", A: confidence, full: "Confidence" }]
-      : []),
-    { subject: "Solve", A: problemSolving, full: "Problem solving" },
-    { subject: "Overall", A: overall, full: "Overall" },
-  ];
-  return (
-    <div className="h-64 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <RadarChart cx="50%" cy="50%" outerRadius="72%" data={data}>
-          <defs>
-            <linearGradient id="kx-radar-fill" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor={brand[500]} stopOpacity={0.45} />
-              <stop offset="60%" stopColor={violet[500]} stopOpacity={0.3} />
-              <stop offset="100%" stopColor={accent[500]} stopOpacity={0.2} />
-            </linearGradient>
-            <linearGradient id="kx-radar-stroke" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor={brand[500]} />
-              <stop offset="100%" stopColor={violet[500]} />
-            </linearGradient>
-          </defs>
-          <PolarGrid stroke={neutral[300]} />
-          <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: neutral[500] }} />
-          <Tooltip
-            formatter={(v: number, _n, item) => [`${Math.round(v)}%`, (item?.payload as RadarRow)?.full || ""]}
-            contentStyle={{ borderRadius: 10 }}
-          />
-          <Radar name="Score" dataKey="A" stroke="url(#kx-radar-stroke)" strokeWidth={2} fill="url(#kx-radar-fill)" />
-        </RadarChart>
       </ResponsiveContainer>
     </div>
   );

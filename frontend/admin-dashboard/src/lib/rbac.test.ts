@@ -29,8 +29,8 @@ describe("RBAC — Interview Platform nav visibility", () => {
     expect(allowedInterviewNav(["TA"])).toEqual(["dashboard", "candidates", "ats", "integrityLogs"]));
   it("HR matches TA", () =>
     expect(allowedInterviewNav(["HR"])).toEqual(["dashboard", "candidates", "ats", "integrityLogs"]));
-  it("RMG sees Templates/Dashboard/Reports/ATS (no Integrity)", () =>
-    expect(allowedInterviewNav(["RMG"])).toEqual(["dashboard", "templates", "candidates", "ats"]));
+  it("RMG sees Templates/Dashboard/Reports/ATS/Integrity", () =>
+    expect(allowedInterviewNav(["RMG"])).toEqual(["dashboard", "templates", "candidates", "ats", "integrityLogs"]));
   it("Sales sees no Interview Platform nav", () => expect(allowedInterviewNav(["Sales"])).toEqual([]));
   it("Sales_Head sees none", () => expect(allowedInterviewNav(["Sales_Head"])).toEqual([]));
   it("Finance sees none", () => expect(allowedInterviewNav(["Finance"])).toEqual([]));
@@ -43,10 +43,10 @@ describe("RBAC — platform access (CRM-only roles excluded)", () => {
     expect(hasInterviewAccess([r])).toBe(false));
 });
 
-describe("RBAC — Integrity is Admin/TA/HR only (RMG excluded)", () => {
-  it.each(["Admin", "TA", "HR"])("%s can access Integrity", (r) =>
+describe("RBAC — Integrity is Admin/TA/HR/RMG", () => {
+  it.each(["Admin", "TA", "HR", "RMG"])("%s can access Integrity", (r) =>
     expect(canAccessInterviewView([r], "integrityLogs")).toBe(true));
-  it.each(["RMG", "Sales", "Finance"])("%s cannot access Integrity", (r) =>
+  it.each(["Sales", "Finance"])("%s cannot access Integrity", (r) =>
     expect(canAccessInterviewView([r], "integrityLogs")).toBe(false));
 });
 

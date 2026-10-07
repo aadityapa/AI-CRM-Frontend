@@ -27,8 +27,10 @@ export type BillingInputs = {
   holidaysBillable?: unknown;
   weekoffBillable?: unknown;
   leaveBillable?: unknown;
-  /** Contractual cap from branch Billing Properties (Max Billable Hours / Month).
-   *  Annual billing hours never exceed cap × 12. Blank/0 = no cap. */
+  /** Branch Billing Properties ▸ Max Billable Hours / Month. Accepted for the
+   *  callers' sake but NOT applied to the annual hours — the server
+   *  (services/opportunity_ctc.py) has no cap, and the slab must match what is
+   *  stored. The monthly cap is enforced on timesheets instead. */
   maxBillableHoursMonth?: unknown;
   /** Paid leaves/year the CUSTOMER covers (the "APTIV rule", 0078): added
    *  back to billing days even though leave itself is not billable —

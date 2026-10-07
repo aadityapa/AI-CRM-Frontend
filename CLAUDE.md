@@ -1690,6 +1690,280 @@ and a **Customer / IRN** column (`ApprovalChip`: Awaiting customer · Approved �
 part only for roles the server sends `irn_recorded` to). `WorkDesk.TAB_LOOK` adds `fin_customer_approved` (Finance) and
 `inv_confirm` (Sales Manager / Sales Head) — plain link tabs to the invoice. tsc green.
 
+**7 Oct 2026 — `dist/` untracked + the bell polls only what is new (server half + migration 0122 in B-V2 `CLAUDE.md`):**
+(1) ⚠️ `frontend/admin-dashboard/dist/index.html` and the two `dist/assets/karnex-logo*.svg` were still tracked although
+`dist/` is gitignored (§9-21) — a pull could restore an OLD `index.html` naming bundles that no longer exist (blank
+dashboard). `git rm --cached` on all three: the build is the only source of `dist/` now (the logos come from
+`public/assets/`). On a server, the pull that carries this commit deletes `dist/index.html`; the backend rebuilds at start
+(npm on PATH) or run `npm ci && npm run build` in `frontend/admin-dashboard`. The backend also refuses a stale index now.
+(2) **`CrmApp.NotificationsBell`**: the 30 s poll and the window-focus poll call `load(false)` →
+`/api/notifications?limit=15&since_id=<newest id shown>` and prepend what is new (`BELL_LIMIT`); a full re-read happens on
+first load, on opening the panel (new effect on `open`) and after mark read / read all. `newestIdRef` replaces the
+ever-growing `seenRef` Set (§9-8 closed): "fresh" = id above the newest shown. tsc green.
+
+**7 Oct 2026 (later) — RMG approval from the Opportunities list + page, Applied Candidates = Screening Desk, desk filters
+(server half in B-V2 `CLAUDE.md`):** (1) `RmgApprovalsStrip.RmgApproveRowButtons` (RMG approve → `JdSkillsModal
+mode="approve"` after reading the position; Reject → reason ≥ 10) on every Opportunities-list row whose
+`requirement_status === "Pending_Engineering_Review"` (gate `useCanApprove("requirement.engineering_approve")`, Actions
+column) AND as an amber banner on the opportunity page above the team panel. Unapproved deals no longer reach RMG / GM
+(server). (2) **Applied Candidates** (`Requirements.tsx` `ResumesTab`), for `canScreen`: "Shortlist" became **Shortlist for
+AI round** / **Shortlist for manual L1** (`ScreeningDecisionModal route`), plus **Direct to Sales** (external, not in
+review) or **Send to Sales (skip L1 & L2)** for an internal employee (`FastTrackToSales`), and a compact **New result ·
+Mark reviewed** chip. `crm/components/ResultsReviewBanner.tsx` (+ `NewResult`) is now the ONE banner — the desk's private
+copy is gone. (3) **Screening Desk**: Opportunity moved into the main filter row; Customer / Opportunity / Position / TA
+selects use `DeskOptions` — `<optgroup>`s "With candidates on the desk (N)" / "No candidates on the desk yet" over the
+server's full `on_desk` lists, so every deal TA works on is selectable. tsc green.
+
+**7 Oct 2026 (night) — Access Control redesign + forced password screen + the skills editor (server half + migration
+0123 in B-V2 `CLAUDE.md`; `SkillListEditor.test.ts` 3):** (1) **Users tab** (`UsersAdmin.tsx`): the seven-button row is
+gone — columns User (initials avatar · name · email · "You") · Roles · **Tabs from** (the same one-source select; Admin/CEO
+read "Full access") · Status (+ amber "Password reset pending") · **Last sign-in** · Notifications · Actions (Edit roles
+icon + **Manage**). A row click opens Manage too. Filters in the table bar: status `StagePills` with the server's
+`meta.counts` (All · Active · Deactivated, plus No role / Password pending when non-zero) and a role select (built-in +
+custom). Hero stats from the same counts. Hub tabs gain **Audit log** (`HubTab`, `HUB_TABS`). (2) New
+`crm/components/access/`: **`UserManageModal`** (Overview — Who · Access · Security & notifications · Account (danger)
+cards; History — the audit log for that person), **`UserLifecycle`** (`DeactivateUserModal`: open work to hand over +
+required reason ≥ 5 with picks; `DeleteUserModal`: an account with history is refused with what it did and "Deactivate
+instead", a clean one needs the username typed), **`AccessAuditLog`** (day-grouped timeline, group chips, search, Load
+more; `refreshKey` reloads after any action). Every action on the page calls `changed()` → list + audit reload.
+(3) **`components/ForcePasswordChange.tsx`** — `App.tsx` renders ONLY this when `/api/me.must_change_password` (temporary
+password · new · confirm, live checks — `passwordChecks`, `PASSWORD_MIN_LENGTH`=8 mirrors the server — sign out instead);
+`crm/api.ts` reloads the page on a 403 `PASSWORD_CHANGE_REQUIRED` so a reset mid-session lands on the screen.
+(4) **Skills in "Approve position / Edit JD & skills"** — reported: "RTOS (Embedded)" twice and the save refused. Every row
+was its own picker offering every skill. **`crm/components/SkillListEditor.tsx`** replaces the rows: ONE search box (added
+skills drop out of the list; Enter adds / creates once; pasting "C++, RTOS, CAPL" adds all — `splitSkillNames`),
+**Found in the JD** chips (`skillsInJd`, whole-word match, Add all), rows with a stable `key` (removing one never shifts
+another), star = mandatory, level select, All mandatory / All optional. `mergeSkillRows` merges a stored duplicate on
+open and on save (same rule as the server). Harness `src/__story/access.tsx` (`?w=users|manage|deactivate|delete|deleteok|
+audit|force|skills`). Verified: tsc green, eslint 0 errors, vitest 19, `vite build` green, all views rendered light / dark.
+
+**7 Oct 2026 (late) — coloured "Assign TAs", "Open report" opens the AI report, project sweep (`sanitizeHtml.test.ts`
+5; server half in B-V2 `CLAUDE.md`):** (1) `PositionTeamPanel.AssignTasButton`: no team yet = a purple → indigo
+gradient chip (`ASSIGN_CHIP`, white text), a team exists = a teal → sky gradient "Change" chip (`CHANGE_CHIP`;
+was a soft indigo tint until the user asked for it to be colourful too, 7 Oct 2026). (2)
+`ResultsReviewBanner`: an AI result with the server's `report_link` opens THAT interview's report page in a new tab
+(Reports ▸ candidate report, `iid` = this interview); a round result reads "Open feedback" → profile ▸ Interviews.
+`App.tsx` `isScreener(/api/me)` (holds `profile.rmg_screening`) admits a GM to `candidateReport` /
+`candidateInterviews`; `AiInterviewOverview.useCanOpenAiReport` includes screeners. (3) Sweep: **fixed** F8
+(`crmUpload` reads `getAuthToken()` and signs out on 401 like `authFetch`), F9 (`apiPut` / `apiPatch` clear the same
+caches as `apiDelete` — `invalidateAfterMutation`), F10 (`cid` / `iid` / `ret` in `CRM_FILTER_KEYS`), F11
+(`sanitizeHtml` now tested), F16 (the two `${inputCls} w-N` → `!w-N`), the stale `ctcSlab` cap comment. **Still open,
+for the AI-interview phase:** F1 (`showScreenRef("result")` maps nothing), F3 (direct `submitInterview` calls skip
+face-monitor / security teardown), F5 (two device-id keys pre-login; unguarded `randomUUID` in `invite_device.js`), F6
+(`core.js::handleJson` parses before `res.ok`), F7 (unescaped `job_title` in `app.js` innerHTML). **Still open, need
+a decision:** F12 (old `crm/taxInvoice/` generator, hard-coded 18 % GST, still routed at `invoices/tax-generator`), F17
+(~146 alpha modifiers on `var()` tokens in 54 files that compile to nothing — mechanical but visual). tsc green, eslint 0
+errors, vitest (sanitizeHtml · RmgTaskBoard · OpportunitiesWorkspace · rbac) green, `vite build` green.
+
+**6 Oct 2026 — "Re-score" on the candidate report (server half in B-V2 `CLAUDE.md`):** `pages/CandidateReportPage.tsx`
+gains a Re-score button beside PDF / JSON (`api/index.rescoreInterview` — POST, then GET every 4 s up to 6 min, then
+`refreshInterviewData`) and a "Re-scored · was N%" chip from `report.rescored_at` / `previous_score`. tsc green.
+
+**6 Oct 2026 — "AI interview template not ready" pop-up (server half in B-V2 `CLAUDE.md`):**
+`crm/components/AiTemplateGate.tsx` — `fetchAiTemplateStatus({profileId|requirementId})`, `isTemplateNotReadyError`,
+`TemplateNotReadyModal` (amber dialog-kit pop-up: flow Template requested → RMG links the template → Schedule AI L1;
+`missing` + TA (`useCanAct("template-requests","create", TA)`) → **Request template from RMG** in place (a 409 just shows the
+existing request); `requested` → the TR number, status and date; RMG → Open Template Requests; otherwise Check again) and
+`useAiTemplateGate()` (`gate(target, proceed, name)` · `showFromError(msg, reqId, name)` · `modal`). Mounted in
+`ScheduleAiInterviewModal` (create mode checks on open and shows the pop-up INSTEAD of the form; a refusal on submit
+switches to it) — so profile, Calendar, interview ladder and My Tasks are covered — and in Requirements `ResumesTab` for the
+resume-row Schedule AI L1 and the Slot invite (checked before opening, and their send errors open the pop-up). A failed
+status read never blocks; the server refuses with the same reason. tsc green, eslint clean.
+
+**6 Oct 2026 — Archive / Restore for TA on closed rows (server half in B-V2 `CLAUDE.md`):** `ResumesTab`'s
+Archive button shows for RMG / GM as before and for a TA when `isClosedCandidacy(row)` (rejected at any stage or
+self-withdrawn); Restore on the Archive tab follows the same rule. Later: `isRejectedRow` also counts `rmg_screening_status === "Rejected"` — those rows stay in the LIVE branch of the Actions cell (stage Technical Screening), so the live branch now renders Archive / Restore for TA and RMG / GM too.
+
+**6 Oct 2026 — one resume link per Applied Candidates row (UI only):** the Actions column's "View resume" button (shown to RMG / GM on a Pending-screening row) is removed; the "Resume" link under the candidate name is the one way to open the CV.
+
+**7 Oct 2026 (night) — the template editor grants Interview Platform tabs and every button (server half + migration
+0124 in B-V2 `CLAUDE.md`):** `TabPermissionMatrix.tsx` reads the registry's new `group` / `default_roles` — an
+**INTERVIEW PLATFORM** module (`IV_MODULE`, first in `MODULE_ORDER`, `moduleOf(tab)`) lists Dashboard · Templates ·
+Reports · ATS Scoring · Integrity with `IV_MODULE_HINT` ("once one is ticked the template decides the whole platform;
+none ticked = the role defaults"); the CRM modules are unchanged. `ApprovalGrants.tsx` is now **"Approvals & buttons"**:
+`ApprovalDef` carries `kind` / `tab`, manage buttons render as their own BUTTONS group, `impliedButtons(tabAccess, defs)`.
+`AccessTemplates.tsx`: a NEW template's Role tag seeds the iv tabs from `default_roles` (`defaultIvTabsFor`) and the
+action list from the role's approvals + the buttons its Edit grants imply (`seedActions`); an existing template with a
+NULL list is shown the same seed. `RolesAdmin.tsx` shares both components, so custom roles (GM, Sales Manager) get the
+same matrix. ⚠️ Manage buttons on the pages still follow `useCanAct(tab,"edit")` — unticking a button while keeping the
+tab's Edit shows it and the server refuses the click. Verified: tsc green, eslint 0 errors, vitest rbac 38 + RmgTaskBoard 4,
+`vite build` green, editor rendered with mock registry (no console errors).
+
+**7 Oct 2026 — RMG / GM buttons on a row whose AI L1 is scheduled, failed or on hold (server half in B-V2
+`CLAUDE.md`):** screenshot report — three Technical Interview rows (AI L1 Scheduled · Failed · On Hold) offered RMG / GM
+only "View profile". `Requirements.tsx` `ResumesTab`, live branch, for `isRmg && preReview && !aiL1Open && !manualRoute`:
+AI still running → chip "AI L1 <time>" + **Manual L1 instead** (`GoManualModal`) + **Reject**; finished without a pass →
+**Proceed to review** (emerald) · **Manual L1 instead** · **Put on hold** (amber) · **Reject**; On Hold → **Proceed to
+review** · **Release hold** · **Manual L1 instead** · **Reject**. `InterviewRouteChoice.AiL1DecisionModal({decision:
+proceed|hold|release, aiResult})` → `POST …/ai-l1-decision` (a failed AI needs a reason to be overruled; the dialog says
+the AI score stays on record). Direct to Sales shows when `direct_to_sales_block == null` (undefined too — the server
+refuses with its reason if it must). A passed AI is auto-forwarded to RMG Review by the server, so it never reaches this
+block. tsc green, eslint 0 errors.
+
+**7 Oct 2026 (late night) — the recording is camera | screen, with ±15 / ±30 s, on the report page and live
+(`app.js?v=37`; server half in B-V2 `CLAUDE.md`):** three screenshot asks. (1) **Candidate runtime** — new
+`js/screen_share.js` (`isScreenShareSupported`, `requestScreenShare` — `getDisplayMedia` with `preferCurrentTab`, MUST
+run in a click, never rejects, `{ok, reason, surface}` — `getScreenStream`, `onScreenShareEnded`, `releaseScreenShare`).
+`device_test.js` gains a fifth tile, **Screen share** (`index.html` `data-test="screen"`, button `screen-share`):
+`SCREEN_REQUIRED = true` — mandatory wherever the browser can share, "not available" (and passing) where it cannot (every
+phone); `_syncScreenTile` re-reads the share module so the browser's own "Stop sharing" during the check drops the tile
+back to Required; Back / `clearPersistedDeviceTestState` release the share; the persisted state carries `screen` /
+`screen_supported`. `session_recorder.js` runs a SECOND MediaRecorder on a CLONE of the shared track (video-only
+`vp8` type, `screen_width/height/fps/bps` from `/interview/recording-config`), posts its chunks with `stream=screen` on its
+own upload chain, stops it beside the camera and `releaseScreenShare()`s after the interview; a share stopped mid-interview
+flushes, keeps the camera going and logs `screen_share_stopped` (new informational type in `interview_security.js`).
+Verified in headless Chromium: both streams upload (`stream=cam` / `stream=screen`), no page errors. (2) **One viewer** —
+`components/interview-recording/RecordingViewer.tsx` replaces the `RecordingPanel` / `LiveRecordingPlayer` that lived in
+`IntegrityLogs.tsx` (it now imports `RecordingPanel`, `LIVE_SESSION_STATUSES`, `Recording` from there): `Stage` (camera
+left · screen right, the screen half only when the payload has one), `Transport` (our controls, no native ones — play /
+pause · **−30 −15 +15 +30 s** · scrub bar · speed · fullscreen of the PAIR; `controlsList="nodownload"`, no context menu,
+**no download link**), `useFollow` (the screen element follows the camera element on play / pause / seek / rate and is
+pulled back past `SYNC_DRIFT_S`=0.35 s), ⚠️ `fixDuration` — MediaRecorder WebM has no duration, so `video.duration` is
+Infinity and the scrub bar would be dead; seeking to `1e101` once makes the browser report the real length, then we seek
+back to 0 (verified: 20.0 s read, +15 s moved both halves). `LiveDualPlayer` + `StreamFeed` (the old MSE / Blob-rebuild
+logic, one feed per stream; the screen element mounts when the manifest first carries screen parts) polls
+`…/live?after=&screen_after=` and fetches `…/part/{seq}?stream=`. `RecordingViewer({token})` is the self-fetching wrapper —
+**mounted on `CandidateReportPage.tsx`** as an "Interview recording" section between the charts and the timeline (keyed
+by `record.invite_token`, now typed on `InterviewRecord`), so a reviewer never has to open the Integrity tab for it.
+(3) `lib/rbac.ts`: `INTERVIEW_VIEW_ROLES.integrityLogs` + `MANAGEABLE_TABS iv:integrityLogs` gain **RMG** (`rbac.test.ts`
+re-pinned). Harness `src/__story/rec.tsx` (+ `rec.html`, `?mode=replay|camonly|live|none`, two `ffmpeg -live 1` WebMs)
+rendered with no console errors. Verified: tsc green, eslint 0 errors, vitest rbac 38 + RmgTaskBoard 4, `vite build` green.
+
+**7 Oct 2026 (later still) — the recording takes the radar's place, with Download (server half in B-V2
+`CLAUDE.md`):** screenshot ask — "I don't need the Performance Radar; put the recording there; fullscreen and
+download". `CandidateReportPage.tsx`: the **Performance radar card is gone** (its five numbers are the score cards
+right above it) and the `RecordingViewer` card now sits in its slot — the right column of the charts grid beside
+Skill scores — instead of a full-width section of its own; a record with no invite token prints "nothing was
+recorded" there. `PerformanceRadar` (+ its recharts radar imports) is DELETED from `ReportCharts.tsx` — nothing
+else used it. **`RecordingViewer.tsx`**: the transport gains **Download** links on a finished recording —
+`DownloadButtons` (Camera, and Screen when there is one) through `Transport`'s `extra` slot; `RecordingPanel`
+builds the `DownloadLink`s: the local driver's file is already a blob here, so the link IS the blob with a
+`download=` name (`interview-<token12>.webm` / `-screen.webm`), while S3 uses the payload's `download_url`
+(presigned with `Content-Disposition: attachment` — the `download` attribute is ignored cross-origin, the header
+does the saving). The live player has no download (no file yet). The "No download" rule from the morning is
+REVERSED by the user. Also fixed: `useFollow.align` copied a non-finite master time onto the screen element
+during `fixDuration`'s past-the-end seek (a console error on every load) — it now skips a non-finite time.
+Harness `rec.tsx` reused: Camera download verified to save `interview-tok-harness.webm` in headless Chromium, no
+console errors. Verified: tsc green, eslint 0 errors, `vite build` green; backend `test_session_recording` 27 pass.
+
+**7 Oct 2026 (night) — the question voice is in the recording; why a recording has no screen half is on record
+(`app.js?v=38`; server half in B-V2 `CLAUDE.md`):** a reviewer heard only the candidate — the recorder's audio was
+the microphone clone alone, while `question_voice.js` played the AI's question through the speakers. New
+**`js/recording_mix.js`**: ONE `AudioContext` + `MediaStreamAudioDestinationNode` (the bus). `mixedRecorderTrack(micClone)`
+feeds the mic clone into the bus and hands the bus track to the recorder (`session_recorder._recordingAudio`; falls back
+to the bare clone — logged `audio_mix_unavailable` — when the bus cannot run); `mirrorClipToRecording(blobPromise,
+elapsed)` decodes the SAME TTS bytes a second time and plays them into the bus only, started at the element's
+`currentTime` once it is actually playing; `ensureMixRunning()` is called at recorder start, inside the fullscreen-gate
+gesture. ⚠️ **The candidate's playback path is untouched on purpose** — no `createMediaElementSource`: that re-routes
+the element for good, and an AudioContext the browser suspends later would mute the question mid-interview. A dead bus
+costs the recording its voice, never the candidate their question. `question_voice._playElement(audio, onStart,
+clipBytes)` starts the mirror on the first `playing` and stops it with the element (cancel / error / end); the streaming
+path clones the response twice (element · mirror · blob fallback). The browser `speechSynthesis` fallback is not
+capturable. Live viewers get it too — the chunks ARE the live stream. Verified in headless Chromium: a recorded file
+carries both the fake mic tone and the mirrored 1 kHz clip. **Screen:** `session_recorder.DEFAULTS.screen_enabled` is
+now **false** and the screen recorder starts only when the SERVER's config says `true` — an older backend ignores the
+chunk route's `stream` field and would store screen chunks OVER the camera's parts (same sequence numbers). Every
+reason a recording ends up camera-only is now an informational integrity event **`screen_share_missing`** (`_screenMissing`:
+server off / predates it · browser cannot share · not being shared when the interview started — sharing stopped after
+the Device Check, or the page reloaded · track ended), so the Integrity timeline answers "why no laptop screen?".
+
+**7 Oct 2026 (later) — the bell polls a summary, from a visible tab only (server half in B-V2 `CLAUDE.md`):**
+part of the "cut app ↔ database traffic" brief (production pulled ~8.7 GB/day from RDS). `CrmApp.NotificationsBell`:
+the 30 s list poll from EVERY tab (hidden ones included, plus every window focus) is now `poll()` → ONE
+`GET /api/notifications/summary` (`{unread_count, latest_id}`, two index lookups, no row bodies) every
+`BELL_POLL_MS`=60 s **only while `document.visibilityState === "visible"`**, once on `visibilitychange` → visible and on
+`focus`, both throttled to `BELL_FOCUS_GAP_MS`=15 s after the last poll (the `useRefetchOnFocus` rule). The 15-row list
+(`load(false)`, `since_id`) is fetched only when `latest_id` moved past the newest row already shown; a badge change on
+its own (read in another tab) just updates the count; opening the panel still re-reads the list. Pop-up / chime
+behaviour is untouched — it lives in `load()`: one summary card on first load, each new id announced once, at most 3
+cards. `newestIdRef` (7 Oct, morning) already replaced the unbounded `seenRef` Set (§9-8 closed). `NotificationsBell` is
+exported for `crm/NotificationsBell.test.tsx` (3: summary once a minute · list only when `latest_id` moved · nothing from a
+hidden tab, one throttled poll when shown). tsc green, eslint 0 errors, vitest green on the touched files.
+
+**7 Oct 2026 (night, later) — Interview Integrity redesigned; "Open candidate report" on every finished row
+(server half in B-V2 `CLAUDE.md`):** screenshot ask — the open row showed the recording very big, and there was no
+way to the report page. `pages/IntegrityLogs.tsx`: the page header is the shared `PageHeader` (violet, Refresh +
+Export CSV as `HERO_BTN`); each row gets a gradient **Report** button beside the chevron (a sibling of the toggle
+button, never nested) when the server sends `report_link` — `/admin/?view=candidateReport&cid=…&iid=…`, the page with
+the questions, answers, scores AND the recording; the open row is two columns on xl
+(`grid-cols-[minmax(0,1fr)_minmax(0,32rem)]`): left = Session fact tiles · Event breakdown · Timeline (strike numbers
+in red, `max-h-80`), right = **Open candidate report** + **Candidate profile · AI Interview tab** buttons over the
+recording in a bounded card ("Live interview" while live). The old "Open candidate profile" link above the detail is
+gone. `IntegrityRow` gains `report_link` / `interview_record_id`. Harness `src/__story/integ.tsx` (+ `integ.html` in
+the build copy, `/tmp/fb/vite.story.config.ts`). Verified: tsc green, eslint 0 errors, `vite build` green, rendered
+1440 light / dark and 400 px with no console errors; backend `test_interview_integrity` + `test_session_recording` 35 pass.
+
+**7 Oct 2026 (night) — Reports ▸ Recruiter Productivity rebuilt (server half in B-V2 `CLAUDE.md`):** screenshot
+ask — the figures must stand up in a meeting with a TA. New **`crm/pages/reports/RecruiterProductivity.tsx`**, hosted
+by `CrmReports.tsx` (`productivity` joined `HOSTED_TABS`; the old `ProductivityRow` / `PRODUCTIVITY_COLUMNS` /
+`prodFrom` / `prodTo` are gone): a window card — presets **This month** (default) · Last month · This quarter (Indian FY)
+· Last 90 days · All time (PURE `presetRange(key, today)`), From / To (`CONTROL`, editing one clears the preset), a
+"TA team only" checkbox (hides `is_ta: false` rows — an admin's import, say) and Export CSV (the same URL + `format=csv`,
+named by the window); the server's window line ("1 Oct – 7 Oct 2026 · 5 working days", "· from the first recorded
+activity" when no From); six `Tile` totals over the SHOWN rows; a grouped-header table — Recruiter (sticky; name ·
+username · "not in the TA role" chip) | **Sourcing** Added · Applied · Emails · Screening | **Pipeline** Shortlisted ·
+Interviews · To Sales · To customer | **Outcome** Selected · Joined · Closed | **Pace** Active days · Per day — columns
+and their tooltips come from `meta.columns` (zeros muted, a Total row, Active days never summed); and a collapsed
+"How each column is counted" definitions panel from the same hints, so the meeting argues about work, not maths.
+**Candidate Profiles report** gains Customer · TA · Applied columns. Harness `src/__story/prod.tsx` (+ `prod.html` in
+the build copy). Verified: tsc green, eslint 0 errors, `vite build` green, rendered 1440 light / dark with no console
+errors; backend 61 pass on the touched suites.
+
+**7 Oct 2026 (night) — "Not attempted" on the row + Reschedule AI L1 (server half + migration 0126 in B-V2
+`CLAUDE.md`):** user flow — a candidate who could not attempt the first AI L1 read "Failed" and TA had no button; once
+the candidate confirms they are ready, TA sends another link. `Requirements.tsx` `ResumesTab`: `ResumeRow.
+ai_not_attempted`; the Interview column prints an amber **Not attempted** chip INSTEAD of the Failed badge + score
+(nothing was scored), the Rounds chip reads "AI L1: Not attempted" (`roundResultTone` → warning), and the Status cell
+shows the server's "AI L1 – Not Attempted". **Reschedule AI L1** (`FLOW_BTN.aiOutline`, RotateCcw) for **TA only**
+(user decision — RMG / GM keep their decide buttons; TA owns the scheduling) on a pre-review row whose latest AI L1
+FINISHED without a pass — PURE `reschedulableAi(row)` (never while it is still to
+run, never over Passed / Selected) + `rescheduleSeed(row)` ("Not attempted" · "Failed (42%)" · "On Hold (…)") — opens
+`ScheduleAiInterviewModal` with the new **`reschedule`** prop (`RescheduleSeed`): title "Reschedule AI L1", an amber
+notice with the previous outcome, a REQUIRED "Why a fresh link — the candidate's confirmation" box (≥
+`MIN_RESCHEDULE_NOTE`=5, sent as `reschedule_note`; the server refuses without it), button "Send new link". The POST is
+the usual `…/ai-interviews` — a NEW link, the old one kept. Harness `applied.html?ta=1` (row "Rahul Verma"; `?ta=1`
+now renders a TA login). Verified: tsc green, eslint 0 errors, `vite build` green, row + dialog + validation rendered
+with no console errors; backend 273 pass on the touched suites.
+
+**7 Oct 2026 (night, access) — My Interviews for the panel logins; Roles / Access Templates department-wise; Action
+permissions + Email flows redesigned; Settings navigator; Reports tiles (server half + migrations 0128 / 0129 in B-V2
+`CLAUDE.md`):** (1) **`crm/pages/MyInterviews.tsx`** (route `my-interviews`, nav "My Interviews" roles Admin · RMG, tab key
+`crm:my-interviews`, `TAB_MODULES` Recruitment): `PageHeader` with the three counts, `StagePills` Feedback due · Upcoming ·
+Done · All (URL `scope`, in `CRM_FILTER_KEYS`), a card list on the left and a detail pane — identity band + nine fact
+tiles, the position's skills (★ mandatory · level), the AI verdict card (`AiInterviewOverview` with the new **`summaryUrl`**
+prop → `/api/my-interviews/{id}/ai-summary`), the CV inline (`FilePreviewPane`) or in a new tab, the panel member's other
+rounds; **Record / Edit feedback** opens the SAME `FeedbackModal` (new **`submit`** prop — posts `PUT /api/my-interviews/{id}/
+feedback`). `?focus=<round id>` (the bell link) selects that round, switching to All when it sits in another scope; an
+unlinked login (`meta.linked === false`) gets an amber "ask HR / Admin to add you to Employees with this login's email"
+notice. **`CrmApp.PanelLanding`**: a login with NO built-in role whose only non-Dashboard tab is My Interviews is sent
+there with `replaceState` (Back never returns to a Dashboard that only sends them back). `WorkDesk.TAB_LOOK` adds
+`panel_feedback` / `panel_upcoming`. (2) **The round forms send the employee**: `InterviewerSelect` gains `onPick(option)`;
+`ScheduleManualRoundModal` posts `employee_id` beside the name; `InterviewLadder.EditRoundModal` matches the datalist
+name to `options.employees` and posts `employee_id` — the round then reaches that person's My Interviews page.
+(3) **`RolesAdmin.tsx`** redesigned: one section per department (`registry.departments`, `DEPARTMENT_LOOK` icon + gradient
++ blurb, exported; PURE `groupRolesByDepartment`), role CARDS (custom: people · tabs · buttons counts, tab summary,
+Members · Edit · Delete; built-in: people + "Assigned from Users ▸ Edit roles"), "Role here" per department, a search box;
+`RoleEditorModal` on the dialog kit (hero, three `DialogSection`s: Name & department (select) · Tabs · Buttons & approvals,
+`dirty`). (4) **`AccessTemplates.tsx`**: the list is department sections of template cards (users · tabs · buttons,
+Edit / Assign; `role_department` + `assigned_count` from the server; it reuses `groupRolesByDepartment`), the editor keeps
+every handler but reads as three numbered sections with the compact department-grouped list beside it; "Department"
+became "HR department (optional)" (it is the HR master, not the access department). (5) **`crm/components/access/
+PermissionsPanels.tsx`** replaces the two panels inside `UsersAdmin.tsx` (~290 lines removed): `ActionPermissionsPanel` —
+collapsible shell, search, "Customised only", rows grouped by the server's `group`, a `RoleChip` per role (the default
+carries a dot; Approval / Button tag), amber while unsaved, Save per row or "Save N changes", Reset; `EmailFlowsPanel` —
+closed by default, All · Customised · Switched off, flows grouped by subject (PURE `groupFlows`: candidate mails · custom
+drafts · deals · candidates & interviews · billing · people · system), one line per flow (switch · name · badges · role
+chips · "+N mailboxes" · Save / Reset) that opens to subject · body · extra addresses beside "What goes out today" and the
+last mail sent. (6) **`CrmSettings.tsx`**: `SETTINGS_GROUPS` (Masters · Company · Operations · Communication · Audit &
+support, icon + blurb per page; keys unchanged so `settings?tab=` links keep working) rendered as a left rail with a
+search box (`SettingsNav`) and a section header over the content; a `<select>` on phones. (7) **`CrmReports.tsx`**:
+Opportunities / Candidate Profiles get a summary tile strip from `meta.summary` (deals · RFI value · positions open · by
+type; candidacies · in pipeline · joined · avg hike), Customer + From / To filters (sent to the server and the CSV), the
+Opportunities columns Deal stage (+ approval badge) · Position · Open / total · Raised by (NAME), the Profiles columns a
+Stage badge + email + `opp_id`; dates print en-IN (`fmtDateShort`). Harness `src/__story/panel.tsx` (+ `panel.html`,
+`?w=mi|roles|templates|perms|settings|reports`, `&focus=501`). Verified: tsc green, eslint 0 errors on the touched files,
+vitest rbac 38 + OpportunitiesWorkspace + WorkDesk 21, `vite build` green, every view rendered with no console errors.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -2117,8 +2391,8 @@ engine-level ones (the hours cap and the appraisal-cycle rounding) were re-confi
    `CustomerFormModal.tsx:324/327/330/418`; `BranchWizardModal.tsx:594/619/694`;
    `EditProjectWizard.tsx:356/371`. The form then submits with a missing FK and the user sees a 422 for
    a field they were never offered.
-8. **`CrmApp.tsx:164/:192` — `seenRef` is an unbounded `Set<number>`**, grown by every polled
-   notification id for the life of the tab.
+8. ✅ **CLOSED 7 Oct 2026.** *Was:* `seenRef` was an unbounded `Set<number>` grown by every polled
+   notification id; it is now a single `newestIdRef`, and the poll reads `/api/notifications/summary`.
 9. **`router.tsx:34-48` — `crmUrl` only deletes `project_id`/`employee_id`.** Platform params
    (`cid`, `iid`, `ret`) survive every CRM navigation, so a copied URL can carry a stale candidate id
    back into `readInitialView` on reload.

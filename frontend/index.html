@@ -8405,6 +8405,23 @@
             </div>
           </div>
 
+          <!-- 7 Oct 2026 — the screen is recorded beside the camera, so the
+               reviewer sees which question was up while the candidate answered.
+               Mandatory wherever the browser can share; device_test.js marks it
+               "not available" (and lets the candidate through) where it cannot. -->
+          <div class="device-test-tile" data-test="screen" data-status="required">
+            <div class="device-test-tile-head">
+              <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Screen share</span>
+              <span class="device-test-tile-badge">Required</span>
+            </div>
+            <div class="device-test-tile-body">
+              <p class="device-test-tile-hint">Required. Click <strong>Share screen</strong> and choose this tab — your screen is recorded with the interview so the reviewer sees each question as you answer it.</p>
+            </div>
+            <div class="device-test-tile-actions">
+              <button class="cand-btn cand-media-primary" type="button" data-action="screen-share">Share screen</button>
+            </div>
+          </div>
+
           <div class="device-test-tile" data-test="network" data-status="pending">
             <div class="device-test-tile-head">
               <span class="device-test-tile-name"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Internet Connection</span>
@@ -9079,7 +9096,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=35"></script>
+  <script type="module" src="js/app.js?v=38"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

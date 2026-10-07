@@ -6,7 +6,7 @@ import type {
   InterviewStatus,
   Session,
 } from "../types";
-import { apiDelete, apiGet, apiPatch, apiPut } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPut, authFetch, invalidateApiCache } from "./client";
 import { ensureSessionsFromCandidates } from "../utils/scoreUtils";
 
 export type InterviewSchedule = {
@@ -203,3 +203,23 @@ export async function setHrCandidateDecision(
   });
 }
 
+export type RescoreState = {
+  status: "idle" | "running" | "done" | "failed";
+  message?: string;
+  error?: string;
+  previous?: { overall_score?: number | null };
+  current?: { overall_score?: number | null };
+};
+
+/** Re-score a finished interview with the current scoring rules (runs in the background). */
+export async function rescoreInterview(candidateId: string, interviewId: string, poll = false): Promise<RescoreState> {
+  const path = `/hr/candidates/${encodeURIComponent(candidateId)}/interviews/${encodeURIComponent(interviewId)}/rescore`;
+  const res = await authFetch(path, { method: poll ? "GET" : "POST" });
+  let data: any = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok || (data && data.error && !data.status)) {
+    throw new Error(String(data?.error || data?.detail || `Request failed (${res.status})`));
+  }
+  if (data?.status === "done") invalidateApiCache();
+  return data as RescoreState;
+}

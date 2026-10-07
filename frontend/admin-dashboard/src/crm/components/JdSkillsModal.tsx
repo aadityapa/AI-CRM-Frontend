@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot, CheckCircle2, ClipboardCheck, FileText, ListChecks, Plus, ScanLine, Sparkles, Star, Trash2,
+  Bot, CheckCircle2, ClipboardCheck, FileText, ScanLine, Sparkles,
   UploadCloud, Users, X, type LucideIcon,
 } from "lucide-react";
 
@@ -25,7 +25,7 @@ import { crmDelete, crmGet, crmPatch, crmPost, crmUpload } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { DialogActions, DialogFailure, DialogHero, DialogSection, WhatHappens, useCtrlEnter, type DialogTone } from "./dialogKit";
 import { FileLink } from "./FileUpload";
-import { SearchableSelect } from "./SearchableSelect";
+import { SkillListEditor, mergeSkillRows, newSkillKey, type SkillMaster, type SkillRow } from "./SkillListEditor";
 import { Modal, focusRing, inputCls } from "./ui";
 import { TaPicker, fetchTaAssignments, type TaOption } from "./PositionTeamPanel";
 
@@ -37,7 +37,6 @@ const JD_FILE_MAX_MB = 15;
 const JD_THIN_CHARS = 120;
 
 type ToastFn = (msg: string, kind?: "ok" | "err") => void;
-type SkillRow = { skill_id: string; is_mandatory: boolean; min_rating: string };
 
 /** The slice of a requirement the dialog reads — the desk's position header carries it. */
 export type JdSkillsReq = {
@@ -51,10 +50,18 @@ export type JdSkillsReq = {
   skills?: { skill_id: number; is_mandatory: boolean; min_rating: number | null }[] | null;
 };
 
-const LEVELS = [
-  { v: "1", label: "1 · Aware" }, { v: "2", label: "2 · Basic" }, { v: "3", label: "3 · Working" },
-  { v: "4", label: "4 · Strong" }, { v: "5", label: "5 · Expert" },
-];
+/** The requirement's skills as editor rows — a skill stored twice is merged once. */
+function initialRows(req: JdSkillsReq): SkillRow[] {
+  return mergeSkillRows((req.skills || []).map((s) => ({
+    key: newSkillKey(),
+    skill_id: String(s.skill_id),
+    is_mandatory: s.is_mandatory,
+    min_rating: s.min_rating != null ? String(s.min_rating) : "",
+  })));
+}
+/** What a save compares and sends — the rows without their UI keys. */
+const rowsSignature = (rows: SkillRow[]) =>
+  JSON.stringify(rows.map((r) => [r.skill_id, r.is_mandatory, r.min_rating]));
 
 /** PURE — the readiness the right-hand card and the footer both print. */
 export function jdReadiness(jdText: string, hasFile: boolean, skills: { skill_id: string; is_mandatory: boolean }[]) {
@@ -103,14 +110,9 @@ export function JdSkillsModal({
   const [comment, setComment] = useState("");
   const [description, setDescription] = useState(req.description || "");
   const [rmgJdText, setRmgJdText] = useState(req.rmg_jd_text || "");
-  const [skillOpts, setSkillOpts] = useState<any[]>([]);
-  const [skillRows, setSkillRows] = useState<SkillRow[]>(
-    (req.skills || []).map((s) => ({
-      skill_id: String(s.skill_id),
-      is_mandatory: s.is_mandatory,
-      min_rating: s.min_rating != null ? String(s.min_rating) : "",
-    })),
-  );
+  const [skillOpts, setSkillOpts] = useState<SkillMaster[]>([]);
+  const [skillRows, setSkillRows] = useState<SkillRow[]>(() => initialRows(req));
+  const initialSignature = useMemo(() => rowsSignature(initialRows(req)), [req]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   /* Approve mode (1 Oct 2026, user ask): the sourcing team is picked in the
@@ -181,43 +183,24 @@ export function JdSkillsModal({
     return () => { cancelled = true; };
   }, []);
 
-  const skillSelectOptions = useMemo(
-    () => skillOpts.map((s) => ({
-      value: String(s.id),
-      label: `${s.name}${s.category ? ` (${s.category})` : ""}`,
-    })),
-    [skillOpts],
-  );
-  const skillName = (id: string) => skillOpts.find((o) => String(o.id) === id)?.name as string | undefined;
-  const updateSkillRow = (i: number, patch: Partial<SkillRow>) =>
-    setSkillRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addSkillRow = () => setSkillRows((rs) => [...rs, { skill_id: "", is_mandatory: false, min_rating: "" }]);
-
-  const createSkillForRow = async (rowIndex: number, typed: string) => {
-    const name = typed.trim();
-    if (!name) return;
-    const dup = skillOpts.find((o) => String(o.name).toLowerCase() === name.toLowerCase());
-    if (dup) { updateSkillRow(rowIndex, { skill_id: String(dup.id) }); return; }
+  /** Creates a skill in the master (Enter on a new name in the editor). */
+  const createSkill = async (name: string): Promise<SkillMaster | null> => {
     try {
-      const res = await crmPost<any>("/api/skills", { name });
+      const res = await crmPost<SkillMaster>("/api/skills", { name });
       const created = res.data;
-      if (created?.id != null) {
-        setSkillOpts((opts) => (opts.some((o) => o.id === created.id) ? opts : [...opts, created]));
-        updateSkillRow(rowIndex, { skill_id: String(created.id) });
-        toast(`Skill "${created.name}" added`);
-      }
+      if (created?.id == null) return null;
+      setSkillOpts((opts) => (opts.some((o) => String(o.id) === String(created.id)) ? opts : [...opts, created]));
+      return created;
     } catch (e: any) {
-      toast(e?.message || "Failed to create skill", "err");
+      toast(e?.message || `Could not create the skill "${name}"`, "err");
+      return null;
     }
   };
 
   const dirty =
     description !== (req.description || "") ||
     rmgJdText !== (req.rmg_jd_text || "") ||
-    JSON.stringify(skillRows) !== JSON.stringify((req.skills || []).map((s) => ({
-      skill_id: String(s.skill_id), is_mandatory: s.is_mandatory,
-      min_rating: s.min_rating != null ? String(s.min_rating) : "",
-    })));
+    rowsSignature(skillRows) !== initialSignature;
 
   const ready = jdReadiness(rmgJdText, jdFileOnRecord, skillRows);
 
@@ -225,13 +208,11 @@ export function JdSkillsModal({
     if (busy) return;
     setErr("");
     if (skillRows.some((r) => !r.skill_id)) { setErr("Pick a skill on every row or remove the empty row."); return; }
-    const ids = skillRows.map((r) => r.skill_id);
-    if (new Set(ids).size !== ids.length) { setErr("A skill is listed twice."); return; }
     if (approve && !rmgJdText.trim() && !jdFileOnRecord) { setErr("Add the JD before approving — TA sources and the ATS scores against it."); return; }
     if (approve && skillRows.length === 0) { setErr("Add at least one skill before approving."); return; }
     setBusy(true);
     try {
-      const skills = skillRows.map((r) => ({
+      const skills = mergeSkillRows(skillRows).map((r) => ({
         skill_id: Number(r.skill_id),
         is_mandatory: r.is_mandatory,
         min_rating: r.min_rating ? Number(r.min_rating) : null,
@@ -347,71 +328,9 @@ export function JdSkillsModal({
 
           <DialogSection n={2} title="Skills TA sources against" tone={tone} done={ready.picked > 0}
             hint="Mandatory skills drive the ATS score. Set the level the customer expects."
-            action={
-              <button type="button" onClick={addSkillRow}
-                className={`inline-flex h-8 items-center gap-1 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-3 text-xs font-semibold text-white shadow hover:brightness-110 ${focusRing}`}>
-                <Plus size={14} /> Add skill
-              </button>
-            }>
-            {skillRows.length === 0 ? (
-              <button type="button" onClick={addSkillRow}
-                className={`flex w-full items-center gap-3 rounded-xl border-2 border-dashed border-subtle bg-surface-2 px-4 py-3 text-left text-sm text-secondary hover:border-strong ${focusRing}`}>
-                <ListChecks size={18} className="text-indigo-600" aria-hidden />
-                No skills yet — add the first one. Mark the must-haves as mandatory.
-              </button>
-            ) : (
-              <ul className="space-y-2">
-                {skillRows.map((r, i) => (
-                  <li key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-1 p-2 pl-3">
-                    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[11px] font-bold ${
-                      r.is_mandatory ? "bg-gradient-to-br from-amber-400 to-orange-500 text-white" : "bg-surface-2 text-muted"}`} aria-hidden>
-                      {r.is_mandatory ? <Star size={13} /> : i + 1}
-                    </span>
-                    <div className="w-56 min-w-[12rem] flex-1">
-                      <SearchableSelect
-                        value={r.skill_id}
-                        options={skillSelectOptions}
-                        allowAdd
-                        searchable
-                        addLabel="Add new skill"
-                        placeholder="Search or add a skill…"
-                        onChange={(v) => updateSkillRow(i, { skill_id: v })}
-                        onOptionsChange={(next) => {
-                          const known = new Set(skillSelectOptions.map((o) => o.label.toLowerCase()));
-                          for (const o of next) {
-                            if (!known.has(o.label.toLowerCase())) void createSkillForRow(i, o.label);
-                          }
-                        }}
-                      />
-                    </div>
-                    <button type="button" aria-pressed={r.is_mandatory}
-                      onClick={() => updateSkillRow(i, { is_mandatory: !r.is_mandatory })}
-                      className={`inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold transition-colors duration-micro ${focusRing} ${
-                        r.is_mandatory
-                          ? "border-transparent bg-gradient-to-r from-amber-400 to-orange-500 text-white"
-                          : "border-subtle bg-surface-2 text-secondary hover:border-strong"}`}>
-                      <Star size={12} aria-hidden /> {r.is_mandatory ? "Mandatory" : "Optional"}
-                    </button>
-                    <select aria-label={`Required level for ${skillName(r.skill_id) || "this skill"}`}
-                      className={`${inputCls} !h-8 !w-36 !py-0 text-xs`}
-                      value={r.min_rating}
-                      onChange={(e) => updateSkillRow(i, { min_rating: e.target.value })}
-                    >
-                      <option value="">Level — any</option>
-                      {LEVELS.map((l) => <option key={l.v} value={l.v}>{l.label}</option>)}
-                    </select>
-                    <button
-                      type="button"
-                      className={`rounded-lg p-1.5 text-muted hover:bg-danger-soft hover:text-danger ${focusRing}`}
-                      onClick={() => setSkillRows((rs) => rs.filter((_, idx) => idx !== i))}
-                      aria-label={`Remove ${skillName(r.skill_id) || "skill"}`}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+>
+            <SkillListEditor rows={skillRows} onChange={setSkillRows} master={skillOpts}
+              onCreate={createSkill} jdText={rmgJdText} disabled={busy} />
           </DialogSection>
 
           <DialogSection n={3} title="Requirement description" tone={tone} optional done={description.trim().length > 0}

@@ -25,10 +25,19 @@
  *     friendly fallback (return to welcome screen) instead of a stack trace.
  */
 
+import {
+  isScreenShareSupported,
+  requestScreenShare,
+  releaseScreenShare,
+  onScreenShareEnded,
+  getScreenStream,
+} from "./screen_share.js";
+
 const TILE_NAMES = {
   mic: "Microphone",
   speaker: "Speaker",
   webcam: "Webcam",
+  screen: "Screen share",
   network: "Internet",
 };
 
@@ -66,6 +75,16 @@ const WEBCAM_PASS_STATES = CAMERA_REQUIRED ? new Set(["ok"]) : new Set(["ok", "s
 export function isCameraRequired() {
   return CAMERA_REQUIRED;
 }
+
+/**
+ * 7 Oct 2026 — the SCREEN is recorded beside the camera, so the reviewer can
+ * see which question was up while the candidate answered. Mandatory wherever
+ * the browser can share a screen; a browser that cannot (every phone) passes
+ * the tile as "not available" and the camera alone is recorded. Set to false
+ * to make the share optional everywhere.
+ */
+const SCREEN_REQUIRED = true;
+const SCREEN_PASS_STATES = SCREEN_REQUIRED ? new Set(["ok", "skipped"]) : new Set(["ok", "skipped", "pending", "required", "error"]);
 
 /**
  * sessionStorage flag used by candidate.js to suppress the duplicate
@@ -125,6 +144,8 @@ function _persistDeviceTestState(tileState) {
       cameraSkipped: tileState.webcam === "skipped",
       cameraRequired: CAMERA_REQUIRED,
       network: tileState.network === "ok",
+      screen: tileState.screen === "ok",
+      screen_supported: isScreenShareSupported(),
       microphone_verified: tileState.mic === "ok",
       speaker_verified: tileState.speaker === "ok",
       internet_verified: tileState.network === "ok",
@@ -155,6 +176,7 @@ export function readPersistedDeviceTestState() {
 export function clearPersistedDeviceTestState() {
   try { sessionStorage.removeItem(DEVICE_TEST_STATE_KEY); } catch (_) { /* ignore */ }
   releaseVerifiedMicStream();
+  releaseScreenShare();
 }
 
 let _gateRunning = false;
@@ -204,7 +226,8 @@ function _allTilesPass(state) {
     state.mic === "ok" &&
     state.speaker === "ok" &&
     state.network === "ok" &&
-    WEBCAM_PASS_STATES.has(state.webcam)
+    WEBCAM_PASS_STATES.has(state.webcam) &&
+    SCREEN_PASS_STATES.has(state.screen)
   );
 }
 
@@ -708,6 +731,73 @@ function _skipWebcam(tileState) {
   _markWebcamUnavailable(tileState, "Skipped by candidate. The interview will continue without video.");
 }
 
+/* ---------------- screen share (7 Oct 2026) ---------------- */
+
+function _screenHint(text) {
+  const hint = _qs(".device-test-tile-hint", _tile("screen"));
+  if (hint) hint.textContent = String(text || "");
+}
+
+const SURFACE_WORDS = { browser: "this tab", monitor: "your entire screen", window: "a window" };
+
+/** Mark the tile from what the share module holds (also used when it ends). */
+function _syncScreenTile(tileState) {
+  if (!_tile("screen")) {
+    tileState.screen = "skipped";
+    return;
+  }
+  if (!isScreenShareSupported()) {
+    tileState.screen = "skipped";
+    _setTileStatus("screen", "skipped");
+    _screenHint("Screen sharing is not available in this browser — the camera alone is recorded.");
+    const btn = _qs('[data-action="screen-share"]', _tile("screen"));
+    if (btn) btn.disabled = true;
+    _refreshContinueButton(tileState);
+    return;
+  }
+  if (getScreenStream()) {
+    tileState.screen = "ok";
+    _setTileStatus("screen", "ok");
+  } else if (tileState.screen === "ok") {
+    tileState.screen = "required";
+    _setTileStatus("screen", "required");
+    _screenHint("Sharing stopped. Click Share screen again — the screen is recorded with the interview.");
+  }
+  _refreshContinueButton(tileState);
+}
+
+async function _runScreenShare(tileState) {
+  if (!isScreenShareSupported()) {
+    _syncScreenTile(tileState);
+    return;
+  }
+  _setTileStatus("screen", "testing");
+  _setStatusMsg("");
+  const result = await requestScreenShare();
+  if (result.ok) {
+    tileState.screen = "ok";
+    _setTileStatus("screen", "ok");
+    const word = SURFACE_WORDS[String(result.surface || "")] || "your screen";
+    _screenHint(`Sharing ${word}. Keep it shared until the interview ends — stopping it is logged.`);
+    _setStatusMsg("Screen sharing confirmed.");
+    _deviceDebug("screen_share_ok", { surface: result.surface || "" });
+  } else if (result.reason === "denied") {
+    tileState.screen = "error";
+    _setTileStatus("screen", "error");
+    _setStatusMsg(
+      SCREEN_REQUIRED
+        ? "Screen sharing was cancelled. This interview records your screen along with the " +
+          "camera — click Share screen and choose this tab (or your entire screen)."
+        : "Screen sharing was cancelled. You can continue without it."
+    );
+  } else {
+    tileState.screen = "error";
+    _setTileStatus("screen", "error");
+    _setStatusMsg(`Screen sharing failed: ${result.reason || "unknown error"}. Click Share screen to try again.`);
+  }
+  _refreshContinueButton(tileState);
+}
+
 async function _runNetworkTest(tileState) {
   _setTileStatus("network", "testing");
   _setStatusMsg("");
@@ -750,6 +840,17 @@ function _resetGate(tileState) {
     tileState[k] = "pending";
     _setTileStatus(k, "pending");
   });
+  tileState.screen = "required";
+  _setTileStatus("screen", "required");
+  _screenHint(
+    SCREEN_REQUIRED
+      ? "Required. Click Share screen and choose this tab — your screen is recorded with the interview so the reviewer sees each question as you answer it."
+      : "Click Share screen and choose this tab so the reviewer sees each question as you answer it."
+  );
+  const screenBtn = _qs('[data-action="screen-share"]', _tile("screen"));
+  if (screenBtn) screenBtn.disabled = false;
+  releaseScreenShare();
+  _syncScreenTile(tileState);
   _setMeter("mic", 0);
   _setMeter("speaker", 0);
   _resetMicSteps();
@@ -804,8 +905,11 @@ export function runDeviceTestGate() {
       resolve(true); // Fail-safe: if markup missing, do not block the interview.
       return;
     }
-    const tileState = { mic: "pending", speaker: "pending", webcam: "pending", network: "pending" };
+    const tileState = { mic: "pending", speaker: "pending", webcam: "pending", screen: "pending", network: "pending" };
     _resetGate(tileState);
+    // The browser's own "Stop sharing" control can end the share while the
+    // candidate is still on this screen — the tile must not keep saying Ready.
+    const unsubscribeShareEnded = onScreenShareEnded(() => _syncScreenTile(tileState));
 
     document.querySelectorAll(".startup-screen.active, .auth-screen.active")
       .forEach((s) => s.classList.remove("active"));
@@ -830,6 +934,7 @@ export function runDeviceTestGate() {
       ["[data-action=\"webcam-test\"]", () => _runWebcamTest(tileState)],
       ["[data-action=\"webcam-confirm\"]", () => _confirmWebcam(tileState)],
       ["[data-action=\"webcam-skip\"]", () => _skipWebcam(tileState)],
+      ["[data-action=\"screen-share\"]", () => _runScreenShare(tileState)],
       ["[data-action=\"network-test\"]", () => _runNetworkTest(tileState)],
     ];
     const bound = [];
@@ -842,6 +947,7 @@ export function runDeviceTestGate() {
     });
 
     const cleanup = () => {
+      unsubscribeShareEnded();
       bound.forEach(([el, fn]) => el.removeEventListener("click", fn));
       _stopMediaTracks(_webcamStream);
       _webcamStream = null;
@@ -869,6 +975,7 @@ export function runDeviceTestGate() {
       // Candidate hit Back — invalidate any prior approval so the next pass
       // re-validates instead of silently inheriting stale state.
       clearPersistedDeviceTestState();
+      releaseScreenShare();
       cleanup();
       screen.classList.remove("active");
       resolve(false);

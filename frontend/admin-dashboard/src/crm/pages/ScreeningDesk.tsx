@@ -52,6 +52,7 @@ import { HandedOverPanel } from "../components/HandedOverPanel";
 import { RmgApprovalsStrip, type ApprovalItem } from "../components/RmgApprovalsStrip";
 import { RmgTaskBoard, TASK_ACCENT, offDeskItems, type TaskBoardData } from "../components/RmgTaskBoard";
 import { SkillEvalGrid } from "../components/SkillEvalGrid";
+import { ResultsReviewBanner, type NewResult } from "../components/ResultsReviewBanner";
 import { fmtDateTime12 } from "../../lib/datetime";
 import { ScoreIndicator } from "../components/ScoreIndicator";
 import {
@@ -143,11 +144,6 @@ export type DeskRow = {
   new_results?: NewResult[];
 };
 
-type NewResult = {
-  key: string; kind: "ai" | "round"; label: string; result: string; score: number | null;
-  when: string | null; by: string | null; passed: boolean;
-};
-
 type Position = {
   requirement_id: number; req_number: string; position_title: string; positions: number;
   opportunity_id: number; opp_id: string; opportunity_title: string;
@@ -162,10 +158,10 @@ type DeskMeta = {
   counts: Record<Screening, number>;
   positions: Position[];
   options: {
-    customers: { id: number; name: string }[];
-    ta_owners: { id: number; name: string }[];
-    opportunities: { id: number; label: string; customer_id: number | null }[];
-    positions?: { id: number; label: string; customer_id: number | null; opportunity_id: number }[];
+    customers: { id: number; name: string; on_desk?: number }[];
+    ta_owners: { id: number; name: string; on_desk?: number }[];
+    opportunities: { id: number; label: string; customer_id: number | null; on_desk?: number }[];
+    positions?: { id: number; label: string; customer_id: number | null; opportunity_id: number; on_desk?: number }[];
   };
   ats_thresholds: { high: number; medium: number };
   max_score_batch: number;
@@ -550,7 +546,7 @@ function Desk() {
     .filter((o) => (!filters.customer_id || String(o.customer_id) === filters.customer_id)
       && (!filters.opportunity_id || String(o.opportunity_id) === filters.opportunity_id));
   /* The "More filters" panel shows the count of what it holds. */
-  const moreKeys: (keyof Filters)[] = ["opportunity_id", "ta_owner_id", "next_owner", "route", "exp_fit", "ats_band",
+  const moreKeys: (keyof Filters)[] = ["ta_owner_id", "next_owner", "route", "exp_fit", "ats_band",
     "internal", "location", "applied_from", "applied_to", "new_results", "budget", "priority", "waiting_min",
     "exp_min", "exp_max", "notice", "ai_result", "l1_result"];
   const moreActive = moreKeys.filter((k) => filters[k]).length;
@@ -654,14 +650,18 @@ function Desk() {
                 </button>
               )}
             </label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:flex-none">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-none">
               <select className={`${CONTROL} w-full lg:w-44`} aria-label="Customer" value={filters.customer_id} onChange={(e) => setFilter("customer_id", e.target.value)}>
                 <option value="">All customers</option>
-                {meta?.options.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <DeskOptions items={(meta?.options.customers || []).map((c) => ({ id: c.id, label: c.name, on_desk: c.on_desk }))} />
+              </select>
+              <select className={`${CONTROL} w-full lg:w-56`} aria-label="Opportunity" value={filters.opportunity_id} onChange={(e) => setFilter("opportunity_id", e.target.value)}>
+                <option value="">All opportunities</option>
+                <DeskOptions items={oppOptions} />
               </select>
               <select className={`${CONTROL} w-full lg:w-56`} aria-label="Position" value={filters.requirement_id} onChange={(e) => setFilter("requirement_id", e.target.value)}>
                 <option value="">All positions</option>
-                {positionOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                <DeskOptions items={positionOptions} />
               </select>
               <select className={`${CONTROL} w-full lg:w-52`} aria-label="Sort" value={filters.sort} onChange={(e) => setFilter("sort", e.target.value)}>
                 <option value="newest">Newest applied first</option>
@@ -680,16 +680,10 @@ function Desk() {
 
           {showFilters && (
             <div className="mt-2 grid grid-cols-1 gap-2 rounded-card border border-subtle bg-surface-2 p-3 sm:grid-cols-2 lg:grid-cols-4">
-              <FilterField label="Opportunity">
-                <select className={`${CONTROL} w-full`} value={filters.opportunity_id} onChange={(e) => setFilter("opportunity_id", e.target.value)}>
-                  <option value="">All opportunities</option>
-                  {oppOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </FilterField>
-              <FilterField label="Applied by (TA)">
+              <FilterField label="Applied by / assigned TA">
                 <select className={`${CONTROL} w-full`} value={filters.ta_owner_id} onChange={(e) => setFilter("ta_owner_id", e.target.value)}>
                   <option value="">All TAs</option>
-                  {meta?.options.ta_owners.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  <DeskOptions items={(meta?.options.ta_owners || []).map((t) => ({ id: t.id, label: t.name, on_desk: t.on_desk }))} />
                 </select>
               </FilterField>
               <FilterField label="Whose move">
@@ -1129,52 +1123,21 @@ function NextStepBanner({ step, override }: { step: NextStep | null | undefined;
   );
 }
 
-/** "Interview done — review it" (28 Sep 2026): every finished interview on
- *  this candidate that no screener has marked reviewed. The row stays
- *  highlighted (and in the "Results to review" task) until Mark reviewed. */
-function ResultsReviewBanner({ row, onReviewed, onError }: {
-  row: DeskRow; onReviewed: (msg: string) => void; onError: (msg: string) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const results = row.new_results || [];
-  if (!results.length) return null;
-  const markReviewed = async () => {
-    setBusy(true);
-    try {
-      const res = await crmPost<{ marked: number }>("/api/screening-desk/results-reviewed", { profile_id: row.profile_id });
-      onReviewed(res.message || "Marked reviewed");
-    } catch (e: any) {
-      onError(e?.message || "Could not mark it reviewed");
-    } finally {
-      setBusy(false);
-    }
-  };
+/** Filter options grouped by whether they hold candidates on the desk right now
+ *  (7 Oct 2026, user ask: "show every opportunity and customer TA works on") —
+ *  the server lists every live one; empty ones stay selectable, never hidden. */
+function DeskOptions({ items }: { items: { id: number; label: string; on_desk?: number }[] }) {
+  const busy = items.filter((o) => (o.on_desk ?? 1) > 0);
+  const quiet = items.filter((o) => (o.on_desk ?? 1) === 0);
+  const opt = (o: { id: number; label: string; on_desk?: number }) => (
+    <option key={o.id} value={o.id}>{o.label}{o.on_desk ? ` (${o.on_desk})` : ""}</option>
+  );
+  if (!quiet.length) return <>{busy.map(opt)}</>;
   return (
-    <div className="mt-3 rounded-control border border-success bg-success-soft px-3 py-2.5" role="status">
-      <div className="flex flex-wrap items-center gap-2">
-        <Sparkles size={15} className="text-success" aria-hidden />
-        <b className="text-sm text-success">Interview done — review the result</b>
-        <button type="button" className={`${btnPrimary} ml-auto !py-1 text-xs`} disabled={busy} onClick={() => void markReviewed()}>
-          <Check size={13} /> {busy ? "Saving…" : "Mark reviewed"}
-        </button>
-      </div>
-      <ul className="mt-2 space-y-1.5">
-        {results.map((r) => (
-          <li key={r.key} className="flex flex-wrap items-center gap-2 text-xs text-secondary">
-            <span className="font-bold text-primary">{r.label}</span>
-            <span className={`rounded-full px-2 py-0.5 font-bold ${r.passed ? STATE_CHIP.ok : STATE_CHIP.bad}`}>
-              {r.result}{r.score != null ? ` · ${Math.round(r.score)}%` : ""}
-            </span>
-            {r.when && <span className="text-muted">{fmtDateTime12(r.when)}</span>}
-            {r.by && <span className="text-muted">· {r.by}</span>}
-            <CrmLink to={`profiles/${row.profile_id}?tab=${r.kind === "ai" ? "ai" : "interviews"}`}
-              className="ml-auto font-semibold text-brand-600 hover:underline">
-              Open report <ExternalLink size={11} className="inline" aria-hidden />
-            </CrmLink>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {busy.length > 0 && <optgroup label="With candidates on the desk">{busy.map(opt)}</optgroup>}
+      <optgroup label="No candidates on the desk yet">{quiet.map(opt)}</optgroup>
+    </>
   );
 }
 
@@ -1242,7 +1205,7 @@ function DetailPane({ row, positionSkills, position, onPositionChanged, roundRes
           </CrmLink>
         </div>
 
-        <ResultsReviewBanner row={row} onReviewed={(msg) => onChanged(msg)} onError={onError} />
+        <ResultsReviewBanner profileId={row.profile_id} results={row.new_results} onReviewed={(msg) => onChanged(msg)} onError={onError} />
 
         <NextStepBanner step={row.next_step} override={shortlistedMsg ? { key: "route", label: "Choose the interview route — AI L1 or manual L1", owner: "you", tone: "warn" } : undefined} />
 

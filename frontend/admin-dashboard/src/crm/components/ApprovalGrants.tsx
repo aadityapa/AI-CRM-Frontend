@@ -16,7 +16,19 @@ import { CheckSquare } from "lucide-react";
 
 export type ApprovalDef = {
   key: string; label: string; description: string; group: string; default_roles: string[];
+  /** "approval" (a decision on someone else's work) | "manage" (an ordinary button) — 7 Oct 2026. */
+  kind?: string;
+  /** Manage buttons: the CRM tab the button lives on. */
+  tab?: string;
 };
+
+/** The manage buttons a tab grant at Edit or better used to imply — what a
+ *  new template's list starts with (mirror of `action_permissions.implied_buttons`). */
+export function impliedButtons(tabAccess: Record<string, string>, defs: ApprovalDef[]): string[] {
+  return defs
+    .filter((a) => a.kind === "manage" && a.tab && ["edit", "create"].includes(tabAccess[a.tab] || ""))
+    .map((a) => a.key);
+}
 
 export function ApprovalGrants({
   approvals, value, onChange,
@@ -44,8 +56,9 @@ export function ApprovalGrants({
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
-        Approval buttons are granted here only — a tab's Edit mode never includes them. Admin and
-        CEO can always approve.
+        Every button is granted here — approvals (a decision on someone else's work) and the ordinary
+        action buttons. A tab's Edit mode opens the page; the buttons on it are these ticks. Admin and
+        CEO always have every button.
       </p>
       {groups.map((group) => {
         const items = approvals.filter((a) => a.group === group);
@@ -88,7 +101,7 @@ export function ApprovalGrantsHeading({ count, total }: { count: number; total: 
   return (
     <div className="mb-2 flex items-center gap-2">
       <CheckSquare size={14} className="text-brand-600 dark:text-brand-300" aria-hidden />
-      <h2 className="text-sm font-semibold text-primary">Approvals</h2>
+      <h2 className="text-sm font-semibold text-primary">Approvals &amp; buttons</h2>
       <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-secondary">
         {count}/{total} granted
       </span>

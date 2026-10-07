@@ -508,13 +508,17 @@ const feedbackTone = (kind: string): DialogTone =>
 const FEEDBACK_PICKS = ["Strong fundamentals", "Hands-on with the stack we need", "Communicates clearly",
   "Gaps in the basics", "Needs probing on design", "Good fit for the customer's domain"];
 
-export function FeedbackModal({ profileId, round, results, candidateName, onClose, onDone, showToast }: {
+export function FeedbackModal({ profileId, round, results, candidateName, onClose, onDone, showToast, submit: submitOverride }: {
   profileId: number;
   round: Pick<Round, "id" | "kind" | "result" | "feedback"> & Partial<Pick<Round, "scheduled_at" | "raw_when" | "interviewer" | "duration_minutes">>;
   results: string[];
   /** Printed in the dialog's header when the caller knows it. */
   candidateName?: string | null;
   onClose: () => void; onDone: (msg: string) => void; showToast: ToastFn;
+  /** Where the verdict is posted when NOT the profile's round endpoint — the
+   *  panel member's My Interviews page (7 Oct 2026) records through its own
+   *  scoped route. Resolves to the server message. */
+  submit?: (body: { result: string; feedback: string }) => Promise<string>;
 }) {
   const [result, setResult] = useState(round.result || "");
   const [text, setText] = useState(round.feedback || "");
@@ -534,6 +538,10 @@ export function FeedbackModal({ profileId, round, results, candidateName, onClos
     if (text.trim().length < 5) { setErr("Write the feedback — at least a line (5 characters)"); return; }
     setBusy(true);
     try {
+      if (submitOverride) {
+        onDone((await submitOverride({ result, feedback: text.trim() })) || `${label} feedback recorded`);
+        return;
+      }
       const res = await crmPut(`/api/candidate-profiles/${profileId}/interview-rounds/${round.id}`, {
         status: "Completed", result, feedback: text.trim(), user_role: roundUserRole(round.kind),
       });
@@ -603,7 +611,11 @@ function EditRoundModal({ profileId, round, kinds, employees, onClose, onDone, s
     if (!when) { setErr("Pick the date and time"); return; }
     setBusy(true);
     try {
-      const body = { kind, scheduled_at: when, meeting_link: link.trim() || null, interviewer: who.trim() || null, status: "Scheduled", user_role: "RMG" };
+      // The employee behind the typed name (7 Oct 2026) — the round is linked
+      // to their login so it reaches their My Interviews page.
+      const picked = employees.find((e) => e.full_name.trim().toLowerCase() === who.trim().toLowerCase());
+      const body = { kind, scheduled_at: when, meeting_link: link.trim() || null, interviewer: who.trim() || null,
+        employee_id: picked ? picked.id : null, status: "Scheduled", user_role: "RMG" };
       const res = round
         ? await crmPut(`/api/candidate-profiles/${profileId}/interview-rounds/${round.id}`, body)
         : await crmPost(`/api/candidate-profiles/${profileId}/interview-rounds`, body);
