@@ -58,6 +58,7 @@ import { switchAuthMode, switchAuthPane } from "./auth/sharedAuth.js";
 import { initAuthMotion, initAuthEnterSubmit } from "./auth/authMotion.js";
 import { initBrandLogoFallback } from "./brandLogo.js";
 import { formatHrDateTimeDisplay, initHrSetupUi } from "./hrSetupUi.js";
+import { applyAiEngineLabels } from "./ai_engine.js";
 import { setRecordingBadge } from "./recording_badge.js";
 import { initHrAccessDetailsUi } from "./hrAccessDetails.js";
 import { initAutoAdvanceBannerUi } from "./interview_auto_advance.js";
@@ -435,6 +436,7 @@ function revealAppAfterAuth(user) {
       return;
     }
     if (layout) layout.classList.remove("hidden");
+    void applyAiEngineLabels();
     loadHrRecords();
     loadInterviewSchedules();
     loadJobConfigs();
@@ -488,6 +490,23 @@ async function restoreSessionIfPossible() {
   } catch (_) {
     clearAuthSession();
     return false;
+  }
+}
+
+/**
+ * "AI Interviewer · GPT-6 Astra" (9 Oct 2026). The login response carries
+ * `ai_model` (and `voice_model` for a live-voice template) only while the admin
+ * shows the model to candidates; otherwise the chip keeps "AI Interviewer".
+ */
+function _applyCandidateModelChips(data) {
+  const chip = document.getElementById("candidateAiChip");
+  const label = String(data?.ai_model?.label || "").trim();
+  if (chip && label) chip.textContent = `AI Interviewer · ${label}`;
+  const voiceChip = document.getElementById("candidateVoiceChip");
+  const voice = String(data?.voice_model?.label || "").trim();
+  if (voiceChip) {
+    voiceChip.textContent = voice ? `Live voice · ${voice}` : "";
+    voiceChip.hidden = !voice;
   }
 }
 
@@ -927,6 +946,7 @@ async function proceedWithInviteLogin() {
       if (!fullscreenOk) {
         throw new Error("Fullscreen is required to start the interview. Click Enter Fullscreen to continue.");
       }
+      _applyCandidateModelChips(data);
       const resume = data.resume && typeof data.resume === "object" ? data.resume : null;
       if (resume && resume.current > 0) {
         // Reopened link mid-interview: say so, so the jump to question N

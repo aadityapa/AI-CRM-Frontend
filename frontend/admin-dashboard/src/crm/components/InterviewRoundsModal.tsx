@@ -46,6 +46,8 @@ type AiLink = {
   id: number; result: string | null; effective_result: string | null;
   overall_score_percent: number | null; scheduled_at_local: string | null;
   completed_at?: string | null; report_link: string | null; created_at?: string | null;
+  /** 8 Oct 2026: set aside (wrong template) — kept on record, never counts. */
+  voided?: boolean; voided_reason?: string | null;
 };
 
 type Options = { results: string[]; hr_results: string[]; writable_rounds: string[] };
@@ -276,8 +278,12 @@ function AiCard({ index, link, profileId, open, onToggle }: {
         {link.overall_score_percent != null && (
           <span className={`${CHIP} bg-surface-2 text-primary tnum`}>{Math.round(link.overall_score_percent)}%</span>
         )}
-        <span className={`${CHIP} ${roundResultTone(verdict)}`}>{verdict || (link.completed_at ? "Completed" : "Invited")}</span>
+        <span className={`${CHIP} ${roundResultTone(verdict)} ${link.voided ? "line-through opacity-70" : ""}`}>{verdict || (link.completed_at ? "Completed" : "Invited")}</span>
+        {link.voided && <span className={`${CHIP} bg-surface-2 text-secondary`}>Voided — does not count</span>}
       </CardHead>
+      {link.voided && link.voided_reason && (
+        <p className="mt-1.5 text-xs text-muted">{link.voided_reason}</p>
+      )}
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-secondary">
         {link.scheduled_at_local && (
           <span className="inline-flex items-center gap-1"><CalendarClock size={12} aria-hidden /> {link.scheduled_at_local} IST</span>

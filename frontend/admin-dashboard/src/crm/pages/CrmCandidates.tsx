@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   Briefcase, Building2, CalendarDays, Check, ChevronRight, Clock, FileBadge, FileText, GraduationCap, IndianRupee, Linkedin,
   ListChecks, Mail, MapPin, MessageCircle, MessageSquarePlus, MoreHorizontal, Pencil, Phone, Plus, Sparkles, Trash2,
-  UserRound, Users, Wallet, Wand2,
+  Target, UserRound, Users, Wallet, Wand2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
@@ -35,6 +35,7 @@ import {
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
+import { MatchingPositionsTab, ResumeLibraryTab } from "../components/ResumeLibrary";
 import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import {
   SectionHeaderBanner, WizardField, WizardFooter, WizardGroup, WizardShell, WizardStepCard,
@@ -1439,6 +1440,8 @@ export function CandidateDetailPage() {
      RMG, template-aware, and NO CV requirement — applying needs no CV (the
      modal says so), yet this page hid the button until one was uploaded. */
   const canApplyHere = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
+  // Multi-apply and the AI review are TA's (user decision, 9 Oct 2026); the server's ta_gate says the same.
+  const isTa = useHasRole("TA");
 
   const [data, setData] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState("");
@@ -1528,6 +1531,8 @@ export function CandidateDetailPage() {
     // "Linked Opportunities" (2 Sep 2026, user request): each row IS an
     // opportunity this candidate was put forward for. Key unchanged.
     { key: "profiles", label: "Linked Opportunities", icon: Briefcase, count: data.profiles.length },
+    { key: "resumes", label: "Resumes", icon: FileText },
+    { key: "matching", label: "Matching positions", icon: Target },
     { key: "outreach", label: "Outreach", icon: MessageCircle },
     { key: "emails", label: "Emails", icon: Mail },
   ];
@@ -1867,6 +1872,13 @@ export function CandidateDetailPage() {
         </SectionCard>
       )}
 
+      {tab === "resumes" && (
+        <ResumeLibraryTab candidateId={data.id} canWrite={canWrite} notify={showToast} onChanged={load} />
+      )}
+      {tab === "matching" && (
+        <MatchingPositionsTab candidateId={data.id} isTa={isTa} notify={showToast} onApplied={load}
+          candidateName={candName(data)} />
+      )}
       {tab === "outreach" && (
         <SectionCard icon={MessageCircle} accent="from-teal-500 to-emerald-600" title="Outreach"
           subtitle="Calls, emails and messages logged by the team">

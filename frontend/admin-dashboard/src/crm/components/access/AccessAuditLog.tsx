@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  History, KeyRound, Search, ShieldCheck, UserCog, Users, type LucideIcon,
+  Cpu, History, KeyRound, Search, ShieldCheck, UserCog, Users, type LucideIcon,
 } from "lucide-react";
 
 import { crmGet, qs } from "../../api";
@@ -19,7 +19,7 @@ export type AccessLogRow = {
   id: number;
   action: string;
   label: string;
-  group: "access" | "account" | "security" | "roles" | "other";
+  group: "access" | "account" | "security" | "roles" | "settings" | "other";
   target_user_id: number | null;
   target_name: string | null;
   actor_name: string | null;
@@ -36,6 +36,7 @@ const GROUPS: { key: string; label: string }[] = [
   { key: "account", label: "Accounts" },
   { key: "security", label: "Passwords" },
   { key: "roles", label: "Role & template edits" },
+  { key: "settings", label: "AI engine" },
 ];
 
 const GROUP_LOOK: Record<AccessLogRow["group"], { icon: LucideIcon; tile: string }> = {
@@ -43,6 +44,7 @@ const GROUP_LOOK: Record<AccessLogRow["group"], { icon: LucideIcon; tile: string
   account: { icon: UserCog, tile: "from-emerald-500 to-teal-600" },
   security: { icon: KeyRound, tile: "from-amber-500 to-orange-600" },
   roles: { icon: Users, tile: "from-purple-500 to-fuchsia-600" },
+  settings: { icon: Cpu, tile: "from-sky-500 to-indigo-600" },
   other: { icon: History, tile: "from-slate-500 to-slate-700" },
 };
 

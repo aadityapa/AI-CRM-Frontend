@@ -134,6 +134,7 @@ export function TemplateRequestsPage() {
   const [error, setError] = useState("");
   const [toast, showToast] = useToast();
   const [fulfillRow, setFulfillRow] = useState<TR | null>(null);
+  const [changeRow, setChangeRow] = useState<TR | null>(null);
   const [prepareRow, setPrepareRow] = useState<TR | null>(null);
   const [cancelRow, setCancelRow] = useState<TR | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -249,6 +250,12 @@ export function TemplateRequestsPage() {
               </button>
             </>
           )}
+          {isRMG && (r.status === "Template_Ready" || r.status === "Prepared") && (
+            <button className={btnSecondary} onClick={() => setChangeRow(r)} disabled={busyId === r.id}
+              title="Linked the wrong template? Replace it — a reason is kept on the request">
+              <RefreshCw size={13} /> Change template
+            </button>
+          )}
           {isTA && r.status === "Template_Ready" && (
             <button className={btnPrimary} onClick={() => setPrepareRow(r)} disabled={busyId === r.id}>
               <Send size={13} /> Prepare L1
@@ -309,6 +316,9 @@ export function TemplateRequestsPage() {
       {fulfillRow && (
         <FulfillModal row={fulfillRow} onClose={() => setFulfillRow(null)} onDone={() => { setFulfillRow(null); load(); }} toast={showToast} />
       )}
+      {changeRow && (
+        <FulfillModal change row={changeRow} onClose={() => setChangeRow(null)} onDone={() => { setChangeRow(null); load(); }} toast={showToast} />
+      )}
       {prepareRow && (
         <PrepareModal row={prepareRow} onClose={() => setPrepareRow(null)} onDone={() => { setPrepareRow(null); load(); }} toast={showToast} />
       )}
@@ -328,11 +338,17 @@ export function TemplateRequestsPage() {
   );
 }
 
-function FulfillModal({ row, onClose, onDone, toast }: {
+/** Minimum reason when RMG replaces a linked template (server: 10). */
+const MIN_CHANGE_REASON = 10;
+
+function FulfillModal({ row, onClose, onDone, toast, change }: {
   row: TR; onClose: () => void; onDone: () => void; toast: (m: string, k?: "ok" | "err") => void;
+  /** 8 Oct 2026: replace the template of a request that already has one. */
+  change?: boolean;
 }) {
   const [jobs, setJobs] = useState<JobTpl[]>([]);
   const [jobId, setJobId] = useState("");
+  const [reason, setReason] = useState("");
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -352,17 +368,30 @@ function FulfillModal({ row, onClose, onDone, toast }: {
   useEffect(() => { loadJobs(); }, [loadJobs]);
 
   const selected = jobs.find((j) => j.jobId === jobId);
+  // A template already stamped to ANOTHER opportunity is copied for this one
+  // by the server (8 Oct 2026) — say so before linking.
+  const otherOwner = selected?.opportunityId
+    && selected.opportunityId.trim().toLowerCase() !== String(row.opportunity_opp_id || "").trim().toLowerCase()
+    ? selected.opportunityId : "";
 
   const submit = async () => {
     if (!jobId) { setErr("Select a template"); return; }
+    if (change && reason.trim().length < MIN_CHANGE_REASON) {
+      setErr(`Say why the template is being changed (at least ${MIN_CHANGE_REASON} characters)`);
+      return;
+    }
     setBusy(true);
     setErr("");
     try {
-      await crmPost(`/api/template-requests/${row.id}/fulfill`, {
-        template_job_id: jobId,
-        template_name: selected?.jobTitle || null,
-      });
-      toast(`Template linked to ${row.tr_number} / ${row.opportunity_opp_id || "opportunity"}`);
+      const res = change
+        ? await crmPost(`/api/template-requests/${row.id}/relink`, {
+          template_job_id: jobId, template_name: selected?.jobTitle || null, reason: reason.trim(),
+        })
+        : await crmPost(`/api/template-requests/${row.id}/fulfill`, {
+          template_job_id: jobId,
+          template_name: selected?.jobTitle || null,
+        });
+      toast(res.message || `Template linked to ${row.tr_number} / ${row.opportunity_opp_id || "opportunity"}`);
       onDone();
     } catch (e: any) {
       setErr(e?.message || "Fulfil failed");
@@ -379,8 +408,10 @@ function FulfillModal({ row, onClose, onDone, toast }: {
       bodyClassName="!px-0 !py-0 sm:!px-0 sm:!py-0"
     >
       <WizFormShell
-        title={`Fulfil ${row.tr_number} — ${row.role_title}`}
-        subtitle="Link an existing interview template so AI L1 uses it for this opportunity."
+        title={`${change ? "Change template" : "Fulfil"} ${row.tr_number} — ${row.role_title}`}
+        subtitle={change
+          ? `Currently linked: ${row.template_name || row.template_job_id || "—"}. Pick the right template for this role.`
+          : "Link an existing interview template so AI L1 uses it for this opportunity."}
         icon={<FileText size={20} aria-hidden />}
       >
         <p className="mb-4 text-sm text-secondary">
@@ -424,11 +455,36 @@ function FulfillModal({ row, onClose, onDone, toast }: {
               <strong>{row.opportunity_opp_id || "—"}</strong>
             </InfoChip>
           )}
+          {otherOwner && (
+            <div className="rounded-control border border-warning bg-warning-soft px-3 py-2 text-xs text-warning">
+              This template belongs to <strong>{otherOwner}</strong>. A copy will be made for{" "}
+              <strong>{row.opportunity_opp_id || "this opportunity"}</strong>, so the other deal keeps its own.
+              Check it asks the questions for <strong>{row.role_title}</strong> — a candidate interviewed on
+              another role's template is not assessed for this one.
+            </div>
+          )}
+          {change && (
+            <WizardField label="Why change it" required>
+              <textarea
+                className={inputCls}
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. The AGM ADAS template was linked by mistake — this role needs the Bluetooth Developer template"
+              />
+            </WizardField>
+          )}
+          {change && (
+            <p className="text-xs text-muted">
+              New AI L1 links use the new template. Candidates already interviewed on the old one keep that result
+              until TA sends them a fresh link with <em>Reschedule AI L1 ▸ the previous one does not count</em>.
+            </p>
+          )}
         </div>
         <div className={wizFooterRow}>
           <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
           <button className={`${btnPrimary} ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy || !jobId}>
-            {busy ? "Linking…" : "Link template"}
+            {busy ? "Linking…" : change ? "Change template" : "Link template"}
           </button>
         </div>
       </WizFormShell>

@@ -33,6 +33,7 @@ import { isSuperAdmin } from "../lib/rbac";
 import { ErrorBox, SkeletonText, btnSecondary, useToast } from "../crm/components/ui";
 import { toDateKey } from "../crm/lib/calendarDates";
 import { fmtDateTime12 } from "../lib/datetime";
+import { AiModelChip } from "../components/AiModelChip";
 
 /* ---------- money & number formatting ---------- */
 
@@ -344,7 +345,7 @@ export function InterviewCostsTab() {
           </Panel>
 
           {/* ---------- breakdowns ---------- */}
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
             <Panel title="Where the money goes" hint="per interview kind, this window">
               <div className="p-5">
                 <StepBars steps={kindSteps} format={(v) => usd(v)} />
@@ -365,6 +366,30 @@ export function InterviewCostsTab() {
             </Panel>
             <GroupPanel title="By customer" hint="top customers by spend" rows={report.by_customer} />
             <GroupPanel title="By template & TA" hint="top interview templates · top TAs" rows={report.by_template} extra={report.by_ta} />
+            <Panel title="By model" hint="which OpenAI model ran the calls">
+              <div className="p-5">
+                {(report.by_model || []).length === 0 ? (
+                  <p className="text-sm text-muted">No interview calls in this window.</p>
+                ) : (
+                  <ul className="space-y-2 text-sm">
+                    {(report.by_model || []).map((m) => (
+                      <li key={m.model} className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <AiModelChip id={m.model} label={m.label} />
+                          <div className="mt-0.5 text-xs text-muted">
+                            {num(m.calls)} calls · {num(m.interviews)} interviews
+                          </div>
+                        </div>
+                        <div className="text-right tabular-nums">
+                          <div className="font-semibold text-primary">{inr(m.cost_inr)}</div>
+                          <div className="text-xs text-muted">{usd(m.cost_usd)}</div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Panel>
           </div>
 
           {/* ---------- interviews ---------- */}
@@ -426,6 +451,9 @@ export function InterviewCostsTab() {
               and answers (question text at ~15 characters a second, answers at ~150 words a minute) and marked
               "estimated". Their evaluation calls were matched to the session by time.</>
             )}
+            {" "}GPT-6 Astra calls logged before its price rows shipped (8–9 Oct 2026) were re-priced once from their
+            stored tokens; cached tokens are not stored per call, so those calls are priced at the full input rate —
+            a slight over-statement.
           </p>
         </>
       )}
@@ -482,6 +510,11 @@ function Row({ r }: { r: InterviewCostRow }) {
       <td className="px-4 py-2">
         <div className="text-primary">{r.template_name || "—"}</div>
         <div className="text-xs text-muted">{r.ta_owner_name || r.scheduled_by || "—"}</div>
+        {(r.models || []).length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(r.models || []).map((m) => <AiModelChip key={m} label={m} />)}
+          </div>
+        )}
       </td>
       <td className="px-4 py-2 whitespace-nowrap">
         <div className="text-primary">{fmtDateTime12(r.started_at || r.first_at)}</div>

@@ -8721,7 +8721,7 @@
                 <span class="kx-gradient-btn-arrow" aria-hidden="true">→</span>
               </button>
               <div class="kx-scheduler-meta">
-                <span id="kxAiProviderLabel">AI provider: OpenAI GPT-4o optimized</span>
+                <span id="kxAiProviderLabel">AI interviewer: OpenAI</span>
                 <span>Data-driven hiring precision. <strong class="kx-lusion">✨ Lusion-Core</strong></span>
               </div>
               <div id="kxAccessDetailsCard" class="kx-access-details-card" style="display:none;" aria-live="polite">
@@ -8831,7 +8831,7 @@
             <input id="numQ" type="number" min="1" max="100" value="5">
             <select id="timingMode"><option value="count" selected>Question Count (fixed)</option><option value="time">Time Limit (minutes)</option></select>
             <input id="timeLimitMin" type="number" min="1" max="360" value="20">
-            <select id="model"><option value="gpt-4o-mini" selected>gpt-4o-mini</option></select>
+            <select id="model"></select>
             <input id="customModel" placeholder="e.g. llama3.2:latest">
             <input id="safeMode" type="hidden" value="false">
             <select id="showSpokenText"><option value="false" selected>OFF</option><option value="true">ON</option></select>
@@ -8946,7 +8946,8 @@
           <section class="qc-left">
             <div class="qc-ai-stage" id="candidateAiHost">
               <div class="qc-chip-row">
-                <span class="cand-chip">AI Interviewer</span>
+                <span id="candidateAiChip" class="cand-chip">AI Interviewer</span>
+                <span id="candidateVoiceChip" class="cand-chip soft" hidden></span>
                 <span id="modeTag" class="cand-chip soft">Technical Interview</span>
               </div>
               <div class="qc-core"></div>
@@ -9096,7 +9097,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=38"></script>
+  <script type="module" src="js/app.js?v=40"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

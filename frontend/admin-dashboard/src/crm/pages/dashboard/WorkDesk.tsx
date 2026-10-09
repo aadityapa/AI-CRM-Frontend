@@ -32,7 +32,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Armchair, Cake, Plane, UserCog,
-  BadgeCheck, BadgeIndianRupee, Building2, CalendarClock, CalendarHeart, CalendarPlus, CheckCircle2,
+  BadgeCheck, BadgeIndianRupee, Check, Building2, CalendarClock, CalendarHeart, CalendarPlus, CheckCircle2,
   ChevronRight, ClipboardCheck, ClipboardList, DoorOpen, ExternalLink, FileClock, FileSpreadsheet, Handshake,
   Hourglass, ListChecks, ListTodo, MessagesSquare, PartyPopper, RefreshCw, ScanSearch, Send, Trophy, UserCheck,
   Receipt, UserSearch, UsersRound, Video, WalletCards, type LucideIcon,
@@ -81,6 +81,10 @@ type DeskItem = {
   month?: string | null;
   project?: string | null;
   employee?: string | null;
+  /** Billing items: the invoice amount (group totals). */
+  amount?: number | null;
+  /** Ticked "done" by this login (8 Oct 2026, B-V2 `work_desk.apply_marks`). */
+  done?: boolean;
 } & Partial<Omit<SalesDeskItem, keyof DeskBase>>;
 /** The keys every item has — the Sales fields are layered on top. */
 type DeskBase = Pick<SalesDeskItem, "key" | "title" | "profile_id" | "path" | "action" | "chip">;
@@ -93,6 +97,8 @@ type DeskTab = {
    *  "Your move" · "Done" — and whether it is information rather than work. */
   stage?: string;
   info?: boolean;
+  /** How many of the items this login ticked as done. */
+  done_count?: number;
 };
 type Desk = { tabs: DeskTab[]; as_of: string };
 
@@ -322,7 +328,23 @@ export function MyTasksPage() {
     }
   };
   const [toastNode, showToast] = useToast();
-  const tabs = useMemo(() => data?.tabs ?? [], [data]);
+  /* Ticks (8 Oct 2026): applied at once, then confirmed by the server's next read. */
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const tabs = useMemo(() => (data?.tabs ?? []).map((t) => (Object.keys(ticks).length
+    ? { ...t, items: t.items.map((it) => (it.key in ticks ? { ...it, done: ticks[it.key] } : it)) }
+    : t)), [data, ticks]);
+  const tick = async (keys: string[], done: boolean) => {
+    if (!keys.length) return;
+    setTicks((m) => ({ ...m, ...Object.fromEntries(keys.map((k) => [k, done])) }));
+    try {
+      const res = await crmPost("/api/dashboard/desk/marks", { keys, done });
+      showToast(res.message || (done ? "Ticked as done" : "Back on your list"));
+    } catch (e: any) {
+      setTicks((m) => { const n = { ...m }; keys.forEach((k) => { delete n[k]; }); return n; });
+      showToast(e?.message || "Could not save the tick", "err");
+    }
+  };
   /* The linked tab if it exists, else the first one with work in it. */
   const active = tabs.find((t) => t.key === picked) ?? tabs.find((t) => t.count > 0) ?? tabs[0];
   const filter = (active && filters[active.key]) || EMPTY_FILTER;
@@ -416,20 +438,52 @@ export function MyTasksPage() {
             </p>
           ) : (
             <div>
-              {groupBySection(shownItems, filter.groupBy).map((g) => (
+              {groupBySection(shownItems, filter.groupBy).map((g) => {
+                const gid = `${active.key}|${filter.groupBy}|${g.section || "_"}`;
+                const closed = collapsed.has(gid);
+                const total = g.items.reduce((t, it) => t + (Number(it.amount) || 0), 0);
+                const openKeys = g.items.filter((it) => !it.done).map((it) => it.key);
+                const allDone = g.items.length > 0 && openKeys.length === 0;
+                return (
                 <div key={g.section || "_"}>
                   {g.section && (
-                    <div className="flex items-center justify-between gap-2 border-y border-subtle bg-surface-2 px-5 py-1.5 first:border-t-0">
-                      <span className="text-xs font-bold uppercase tracking-wide text-secondary">{g.section}</span>
-                      <span className="rounded-full bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-muted tnum">{g.items.length}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-y border-subtle bg-gradient-to-r from-surface-2 to-surface-1 px-5 py-2 first:border-t-0">
+                      {/* Click a customer / employee to open or fold its items (8 Oct 2026). */}
+                      <button type="button" aria-expanded={!closed}
+                        onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(gid)) n.delete(gid); else n.add(gid); return n; })}
+                        className="inline-flex min-w-0 items-center gap-2 text-left">
+                        <ChevronRight size={15} className={`shrink-0 text-muted transition-transform ${closed ? "" : "rotate-90"}`} aria-hidden />
+                        <span className="truncate text-xs font-bold uppercase tracking-wide text-secondary">{g.section}</span>
+                        <span className="rounded-full bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-muted tnum">{g.items.length}</span>
+                        {total > 0 && <span className="text-[11px] font-semibold text-primary tnum">₹{Math.round(total).toLocaleString("en-IN")}</span>}
+                      </button>
+                      {/* Tick & close (8 Oct 2026): everything for this customer / employee is handled. */}
+                      <button type="button" onClick={() => void tick(allDone ? g.items.map((it) => it.key) : openKeys, !allDone)}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${allDone
+                          ? "border-subtle bg-surface-1 text-secondary hover:text-primary"
+                          : "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"}`}
+                        title={allDone ? "Put these back on your list" : `Tick all ${openKeys.length} as done — they leave your list`}>
+                        <CheckCircle2 size={12} aria-hidden /> {allDone ? "Untick all" : `Done — tick all ${openKeys.length}`}
+                      </button>
                     </div>
                   )}
-            <ul className="divide-y divide-subtle">
+            {!closed && <ul className="divide-y divide-subtle">
               {g.items.map((it) => (
-                <li key={it.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-5 py-2.5">
+                <li key={it.key} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-5 py-2.5 ${it.done ? "bg-emerald-50/50 dark:bg-emerald-950/20" : ""}`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <button type="button" onClick={() => void tick([it.key], !it.done)} aria-pressed={!!it.done}
+                      title={it.done ? "Ticked as done — click to put it back" : "Tick as done — it leaves your list"}
+                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${it.done
+                        ? "border-emerald-600 bg-emerald-600 text-white" : "border-subtle bg-surface-1 text-transparent hover:border-emerald-400 hover:text-emerald-400"}`}>
+                      <Check size={13} aria-hidden />
+                      <span className="sr-only">{it.done ? "Untick" : "Tick as done"}</span>
+                    </button>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-primary">
-                      <span className="truncate">{it.title}</span>
+                      {/* The title opens the record (8 Oct 2026, user ask: "click the invoice number, open the invoice"). */}
+                      {it.path
+                        ? <CrmLink to={it.path} className={`truncate hover:text-brand-700 hover:underline dark:hover:text-brand-300 ${it.done ? "line-through opacity-70" : ""}`}>{it.title}</CrmLink>
+                        : <span className={`truncate ${it.done ? "line-through opacity-70" : ""}`}>{it.title}</span>}
                       {it.chip && (
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[TONE[it.tone]]}`}>{it.chip}</span>
                       )}
@@ -446,6 +500,7 @@ export function MyTasksPage() {
                     {active.key === "sales_budget" && it.hr_note && (
                       <div className="mt-1 text-xs italic text-secondary">HR: {it.hr_note}</div>
                     )}
+                  </div>
                   </div>
                   {active.key === "hr_discussion" && it.profile_id != null && it.action === "Request HR round" ? (
                     <span className="flex flex-wrap items-center gap-2">
@@ -495,9 +550,10 @@ export function MyTasksPage() {
                   ) : null}
                 </li>
               ))}
-            </ul>
+            </ul>}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {active.count > active.items.length && (

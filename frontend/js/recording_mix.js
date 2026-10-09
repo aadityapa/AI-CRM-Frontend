@@ -138,3 +138,24 @@ export function mirrorClipToRecording(blobPromise, elapsedSeconds) {
   })();
   return handle;
 }
+
+/**
+ * Live voice (9 Oct 2026): mirror a whole MediaStream — the realtime
+ * interviewer's voice arriving over WebRTC — onto the recording bus. The
+ * candidate still hears it through its own <audio> element (Chrome needs that
+ * element for remote WebRTC audio to flow into Web Audio at all). Returns a
+ * handle whose `release()` disconnects it; never throws.
+ */
+export function mirrorStreamToRecording(stream) {
+  const handle = { release() {} };
+  const ctx = _context();
+  if (!ctx || !_bus || !stream || !stream.getAudioTracks || !stream.getAudioTracks().length) return handle;
+  try {
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(_bus);
+    handle.release = () => { try { source.disconnect(); } catch (_) { /* ignore */ } };
+  } catch (err) {
+    try { console.warn("[recording-mix] live voice not mirrored:", err?.message || err); } catch (_) { /* ignore */ }
+  }
+  return handle;
+}

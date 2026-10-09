@@ -24,10 +24,13 @@
  * be useless. `fixDuration` seeks past the end once; the browser then reports
  * the real length (`durationchange`) and we seek back to 0.
  *
- * Two fetch paths, on purpose (unchanged from 22 Sep 2026): a PRESIGNED S3
- * `url` goes straight into `<video src>` (adding our bearer breaks the
- * signature); the local driver's `/interview/media/…` is behind dashboard
- * auth that `<video>` cannot send, so it is fetched to a blob first.
+ * ⚠️ Playback source (8 Oct 2026): every `url` is a SIGNED, SAME-ORIGIN
+ * streaming URL (`/interview/recording/<token>/file/<stream>?exp&sig`, HTTP
+ * Range) — `recording.streamed`. A presigned S3 URL was refused by the page's
+ * CSP (`media-src 'self' blob:`) and the player sat black at 0:00 while the
+ * downloaded file played. Only an older server (no `streamed`) still gets the
+ * local driver's blob fetch. When the server has built ONE file with both
+ * halves (`combined`), that is what plays and downloads.
  *
  * Live (23 Sep 2026): while the session runs, the parts the candidate's
  * browser has uploaded ARE the stream — one manifest poll serves both
@@ -68,6 +71,14 @@ export interface Recording {
   /** 7 Oct 2026 — the screen stream, when the browser shared one. */
   screen?: ScreenRecording;
   session_status?: string;
+  /** 8 Oct 2026 — false when the server found no WebM header on the file
+   *  (the first slice was lost); such a file cannot be decoded anywhere. */
+  valid?: boolean;
+  /** 8 Oct 2026 — every `url` streams through the app (same origin, signed,
+   *  Range): plays and seeks in place, nothing to fetch first. */
+  streamed?: boolean;
+  /** 8 Oct 2026 — ONE file with camera (left) and screen (right). */
+  combined?: ScreenRecording & { building?: boolean; reason?: string };
 }
 
 /** Statuses in which the candidate's browser may still be uploading. Mirrors
@@ -284,20 +295,24 @@ const PANE_TAG = "pointer-events-none absolute left-2 top-2 inline-flex items-ce
 const noMenu = (e: React.SyntheticEvent) => e.preventDefault();
 
 /** Camera | screen, side by side; the screen half only when there is one. */
-function Stage({ cam, screen, hasScreen, live, children }: {
+function Stage({ cam, screen, hasScreen, live, combinedView, children }: {
   cam: React.RefObject<HTMLVideoElement>;
   screen: React.RefObject<HTMLVideoElement>;
   hasScreen: boolean;
   live?: boolean;
+  /** The one-file recording: camera and screen are already side by side. */
+  combinedView?: boolean;
   children?: React.ReactNode;
 }) {
   return (
     <div data-recording-stage className="flex flex-col gap-1 rounded-control bg-black p-1 sm:flex-row">
-      <div className={`${PANE} ${hasScreen ? "aspect-video sm:w-1/2" : "aspect-video w-full"}`}>
+      <div className={`${PANE} ${hasScreen ? "aspect-video sm:w-1/2" : combinedView ? "aspect-[28/9] w-full" : "aspect-video w-full"}`}>
         {/* A proctoring capture has no caption track — the transcript is on the report. */}
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video ref={cam} playsInline preload="metadata" controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={noMenu} className="h-full w-full object-contain" aria-label="Candidate camera" />
-        <span className={PANE_TAG}><Camera className="h-3 w-3" /> Candidate</span>
+        <video ref={cam} playsInline preload="metadata" controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={noMenu} className="h-full w-full object-contain" aria-label={combinedView ? "Interview recording — camera and screen" : "Candidate camera"} />
+        <span className={PANE_TAG}>
+          {combinedView ? <><Camera className="h-3 w-3" /> Candidate · <Monitor className="h-3 w-3" /> Screen</> : <><Camera className="h-3 w-3" /> Candidate</>}
+        </span>
         {live && (
           <span className="absolute right-2 top-2 inline-flex items-center gap-1.5 rounded-full bg-danger px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white shadow-raised">
             <span className="h-2 w-2 animate-pulse rounded-full bg-white" aria-hidden /> Live
@@ -331,10 +346,27 @@ function DownloadButtons({ links }: { links: DownloadLink[] }) {
   );
 }
 
-function DualPlayer({ camSrc, screenSrc, downloads }: { camSrc: string; screenSrc: string; downloads: DownloadLink[] }) {
+/** The browser's own words for a MediaError code, plus what to do about it. */
+export function describeMediaError(code: number | undefined, message?: string | null): string {
+  const base = code === 1 ? "playback was aborted"
+    : code === 2 ? "the download was interrupted"
+      : code === 3 ? "the file is damaged — the browser could not decode it"
+        : code === 4 ? "the browser does not support this file"
+          : "the browser could not play it";
+  return `The recording could not be played: ${base}${message ? ` (${message})` : ""}.`;
+}
+
+/** How long we wait for the camera file's metadata before calling it stuck. */
+const METADATA_TIMEOUT_MS = 12000;
+
+function DualPlayer({ camSrc, screenSrc, downloads, combinedView }: {
+  camSrc: string; screenSrc: string; downloads: DownloadLink[]; combinedView?: boolean;
+}) {
   const camRef = useRef<HTMLVideoElement>(null);
   const screenRef = useRef<HTMLVideoElement>(null);
   const [duration, setDuration] = useState(0);
+  const [problem, setProblem] = useState("");
+  const [nativeFallback, setNativeFallback] = useState(false);
   const hasScreen = !!screenSrc;
   useFollow(camRef, screenRef, hasScreen);
 
@@ -342,6 +374,22 @@ function DualPlayer({ camSrc, screenSrc, downloads }: { camSrc: string; screenSr
     const cam = camRef.current;
     if (!cam) return;
     let alive = true;
+    setProblem("");
+    setNativeFallback(false);
+    // A file the browser cannot decode used to sit there as a black frame at
+    // 0:00 (8 Oct 2026). Say what happened, and offer the browser's own
+    // player — it reads some files our transport cannot seek.
+    const onError = () => {
+      if (!alive) return;
+      const err = cam.error;
+      setProblem(describeMediaError(err?.code, err?.message));
+    };
+    cam.addEventListener("error", onError);
+    const watchdog = window.setTimeout(() => {
+      if (alive && cam.readyState < 1 && !cam.error) {
+        setProblem("The recording has not loaded after 12 seconds — the file may be damaged or the connection slow.");
+      }
+    }, METADATA_TIMEOUT_MS);
     cam.src = camSrc;
     void fixDuration(cam).then((d) => { if (alive) setDuration(d); });
     const sc = screenRef.current;
@@ -349,12 +397,32 @@ function DualPlayer({ camSrc, screenSrc, downloads }: { camSrc: string; screenSr
       sc.src = screenSrc;
       void fixDuration(sc);
     }
-    return () => { alive = false; };
+    return () => { alive = false; cam.removeEventListener("error", onError); window.clearTimeout(watchdog); };
   }, [camSrc, screenSrc]);
+
+  if (nativeFallback) {
+    return (
+      <div className="space-y-2">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video src={camSrc} controls playsInline className="aspect-video w-full rounded-control bg-black object-contain" aria-label="Candidate camera (browser player)" />
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+          <span>Browser player.</span>
+          <button type="button" className={BTN} onClick={() => setNativeFallback(false)}>Back to the viewer</button>
+          <DownloadButtons links={downloads} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
-      <Stage cam={camRef} screen={screenRef} hasScreen={hasScreen} />
+      <Stage cam={camRef} screen={screenRef} hasScreen={hasScreen} combinedView={combinedView} />
+      {problem && (
+        <div className="flex flex-wrap items-center gap-2 rounded-control border border-warning bg-warning-soft px-3 py-2 text-xs text-warning">
+          <span className="min-w-0 flex-1">{problem}</span>
+          <button type="button" className={BTN} onClick={() => setNativeFallback(true)}>Try the browser player</button>
+        </div>
+      )}
       <Transport video={camRef} duration={duration} extra={<DownloadButtons links={downloads} />} />
     </div>
   );
@@ -602,9 +670,15 @@ export function RecordingPanel({ recording, sessionStatus, token, onLiveEnded }:
   const [camUrl, setCamUrl] = useState("");
   const [screenUrl, setScreenUrl] = useState("");
   const [err, setErr] = useState("");
-  const isLocal = recording?.backend === "local";
+  const [separate, setSeparate] = useState(false);
+  // 8 Oct 2026: the server streams every file through the app (same origin,
+  // signed URL, Range) — `streamed`. Only an older server still needs the
+  // local driver's blob fetch.
+  const isLocal = recording?.backend === "local" && !recording?.streamed;
   const remoteCam = recording?.url || "";
   const remoteScreen = recording?.screen?.available ? recording.screen.url || "" : "";
+  const combined = recording?.combined;
+  const building = !!combined?.building && !combined?.available;
 
   useEffect(() => {
     setErr("");
@@ -645,19 +719,34 @@ export function RecordingPanel({ recording, sessionStatus, token, onLiveEnded }:
   // disposition, so the browser saves instead of opening it (the `download`
   // attribute is ignored cross-origin; the header is what does the work).
   const stem = `interview-${token.slice(0, 12).replace(/[^A-Za-z0-9]+$/, "")}`;
-  const downloads: DownloadLink[] = [];
   const camDl = isLocal ? camUrl : recording.download_url || "";
-  if (camDl) downloads.push({ label: "Camera", href: camDl, filename: `${stem}.webm` });
   const screenDl = isLocal ? screenUrl : recording.screen?.download_url || "";
-  if (hasScreen && screenDl) downloads.push({ label: "Screen", href: screenDl, filename: `${stem}-screen.webm` });
+  const separateLinks: DownloadLink[] = [];
+  if (camDl) separateLinks.push({ label: hasScreen ? "Camera only" : "Recording", href: camDl, filename: `${stem}-camera.webm` });
+  if (hasScreen && screenDl) separateLinks.push({ label: "Screen only", href: screenDl, filename: `${stem}-screen.webm` });
+  // ONE file with both halves (8 Oct 2026): when it exists it is what plays
+  // and what downloads; the separate files stay one click away.
+  const oneFile = !!(combined?.available && combined.url) && !separate;
+  const downloads: DownloadLink[] = oneFile
+    ? [{ label: "Recording", href: combined?.download_url || combined?.url || "", filename: `${stem}-full.webm` }]
+    : separateLinks;
   return (
     <div className="space-y-2">
+      {recording.valid === false && (
+        <div className="rounded-control border border-danger bg-danger-soft px-3 py-2 text-xs text-danger">
+          This file has no WebM header — the first slice of the recording was lost before it was joined, so no player
+          can open it. The server now keeps an already-joined file and appends late slices instead of rebuilding from
+          them; this one was made before that fix.
+        </div>
+      )}
       {err ? (
         <div className="text-xs text-danger">{err}</div>
       ) : !camUrl ? (
         <div className="text-xs text-muted">Loading recording…</div>
+      ) : oneFile ? (
+        <DualPlayer key="one" camSrc={combined?.url || ""} screenSrc="" downloads={downloads} combinedView />
       ) : (
-        <DualPlayer camSrc={camUrl} screenSrc={screenUrl} downloads={downloads} />
+        <DualPlayer key="two" camSrc={camUrl} screenSrc={screenUrl} downloads={downloads} />
       )}
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted">
         <span>
@@ -665,8 +754,23 @@ export function RecordingPanel({ recording, sessionStatus, token, onLiveEnded }:
           {sessionStatus === "terminated" ? ", up to the moment it was terminated" : ""}.
         </span>
         {recording.size_bytes ? (
-          <span className="tabular-nums">{fmtBytes((recording.size_bytes || 0) + (recording.screen?.size_bytes || 0))}</span>
+          <span className="tabular-nums">
+            {fmtBytes(oneFile ? combined?.size_bytes : (recording.size_bytes || 0) + (recording.screen?.size_bytes || 0))}
+          </span>
         ) : null}
+        {/* Not polled on purpose: a re-read re-signs the URLs and would restart a playing video. */}
+        {building && (
+          <button type="button" onClick={onLiveEnded}
+            className="font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-300">
+            Preparing one file with both halves — check again
+          </button>
+        )}
+        {hasScreen && combined?.available && (
+          <button type="button" className="font-semibold text-brand-600 underline-offset-2 hover:underline dark:text-brand-300"
+            onClick={() => setSeparate((v) => !v)}>
+            {separate ? "Back to one file" : "Separate camera / screen files"}
+          </button>
+        )}
       </div>
     </div>
   );

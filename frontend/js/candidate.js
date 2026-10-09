@@ -38,6 +38,25 @@ import {
 import { createQuestionProvider, InterviewEngine } from "./interview_engine.js";
 import { stopSessionRecording } from "./session_recorder.js";
 import { startWarmupCountdown, stopWarmupCountdown } from "./warmup_timer.js";
+import {
+  applyConversationPayload,
+  conversationSettings,
+  detectTurnIntent,
+  requestClarify,
+  runClosingQa,
+  setClarifyTools,
+  setClarifyToolsBusy,
+  showFollowupChip,
+  showLeadIn,
+} from "./conversation.js";
+import {
+  configureLiveVoice,
+  liveVoiceActive,
+  liveVoiceManualAdvance,
+  liveVoicePresent,
+  liveVoiceWanted,
+  stopLiveVoice,
+} from "./live_voice.js";
 
 /**
  * Candidate live interview voice + submission flow (2026):
@@ -1395,6 +1414,10 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   _stopMicInputInternal();
   _resetQuestionTurnState("next_question_loaded");
   _applyRuntimeFromNextPayload(data);
+  // Two-way conversation (9 Oct 2026) — every call below is a no-op unless the
+  // template turned the feature on.
+  applyConversationPayload(data);
+  setClarifyTools(false);
 
   const questionEl = document.getElementById("candidateQuestion");
   const progressEl = document.getElementById("progressPill");
@@ -1421,6 +1444,15 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
       await loadQuestion({ fastTransition: true });
       return;
     }
+    showLeadIn("");
+    showFollowupChip(false);
+    // E: "any questions about the role?" before the interview is submitted.
+    // A live voice call runs its own closing inside the call.
+    if (conversationSettings()?.closing_qa && !liveVoiceActive()) {
+      _setInterviewPhase("question_shown");
+      await runClosingQa({ speak: _speakQuestionAudioOnly, getAudioStream: _pickAudioStream });
+      if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    }
     if (statusEl) statusEl.innerText = "Finalizing your interview…";
     _setInterviewPhase("evaluating");
     await submitInterview({});
@@ -1443,10 +1475,37 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   } else if (data.total && progressEl) {
     progressEl.innerText = `Question ${data.index}/${data.total}`;
   }
+  showFollowupChip(!!data.is_followup);
+
+  // F: the live voice call asks the question itself (it opens on the first one).
+  if (liveVoiceWanted()) {
+    _configureLiveVoiceOnce();
+    showLeadIn("");
+    _setResponseProcessingUi(false, "");
+    _setSendResponseEnabled(false);
+    const live = await liveVoicePresent(data);
+    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    if (live) {
+      _setSendResponseEnabled(true);
+      _setInterviewPhase("listening");
+      _setMicUi(true);
+      _setStatusText("Live conversation — speak naturally. The interviewer moves on when you finish.");
+      return;
+    }
+    // Could not open the call: this question (and the rest) use the standard voice.
+  }
+
+  // B: the spoken lead-in ("Thanks — let's go deeper on…") before the question.
+  showLeadIn(data.lead_in || "");
+
   if (fastTransition) {
     _setResponseProcessingUi(false, "");
     _setSendResponseEnabled(false);
     _setInterviewPhase("ai_speaking");
+    if (data.lead_in) {
+      await _speakQuestionAudioOnly(data.lead_in);
+      if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    }
     await _speakQuestionAudioOnly(rendered);
     if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
     _setSendResponseEnabled(true);
@@ -1456,9 +1515,14 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
     } catch (_) {
       /* startMicRecordingAuto updates status */
     }
+    setClarifyTools(true, _handleClarifyRequest);
     return;
   }
 
+  if (data.lead_in) {
+    await _speakQuestionAudioOnly(data.lead_in);
+    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+  }
   const speakPromise = _speakQuestionAudioOnly(rendered);
   await speakPromise;
   if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
@@ -1471,6 +1535,114 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   } catch (_) {
     /* startMicRecordingAuto updates status */
   }
+  setClarifyTools(true, _handleClarifyRequest);
+}
+
+/* ---------------------------------------------------------------------------
+ * C — "repeat that" / "what do you mean?" (9 Oct 2026)
+ *
+ * The microphone owns the turn, so the request stops it WITHOUT transcribing
+ * (a voice request is only the request; a button press keeps what the
+ * candidate had already said), speaks the server's reply, then listens again.
+ * The turn sequence is bumped so the stopped recorder's late `onstop` can
+ * never transcribe "can you repeat that" into the answer.
+ * ------------------------------------------------------------------------- */
+let _clarifyInFlight = false;
+
+async function _handleClarifyRequest(mode, { fromVoice = false } = {}) {
+  if (!conversationSettings()?.clarify || _clarifyInFlight) return false;
+  if (_interviewFlowStopped || state.endingInterview || state.redirecting) return false;
+  if (!fromVoice && (_aiSpeaking || _answerSubmitInFlight || _pressInFlight)) return false;
+  _clarifyInFlight = true;
+  setClarifyToolsBusy(true);
+  const keep = fromVoice ? "" : String(spokenAnswerText || "").trim();
+  const seq = ++_questionLoadSeq;
+  try {
+    stopAutoAdvanceTurn();
+    stopWarmupCountdown();
+    _stopMicWithoutTranscription();
+    _setResponseProcessingUi(false, "");
+    _setSendResponseEnabled(false);
+    _logTurnEvent("clarify_requested", { mode, from_voice: fromVoice });
+    const reply = await requestClarify(mode);
+    if (reply.text) {
+      lastSpokenQuestion = "";
+      await _speakQuestionAudioOnly(reply.text);
+    } else if (reply.message) {
+      _showCandidateToast(reply.message, 2600);
+    }
+  } finally {
+    _clarifyInFlight = false;
+    setClarifyToolsBusy(false);
+  }
+  if (seq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return true;
+  _resetQuestionTurnState("clarified");
+  if (keep) _setSpokenAnswer(keep);
+  _setSendResponseEnabled(true);
+  _setInterviewPhase("waiting_for_answer");
+  try {
+    await startMicRecordingAuto();
+  } catch (_) {
+    /* startMicRecordingAuto updates status */
+  }
+  return true;
+}
+
+/* ---------------------------------------------------------------------------
+ * F — live voice hooks (9 Oct 2026). The live call reuses this page's own
+ * pieces: the same /answer POST, the same question rendering, the same submit.
+ * ------------------------------------------------------------------------- */
+let _liveConfigured = false;
+
+function _configureLiveVoiceOnce() {
+  if (_liveConfigured) return;
+  _liveConfigured = true;
+  configureLiveVoice({
+    getAudioStream: _pickAudioStream,
+    postAnswer: async ({ ans, skipped }) => {
+      const params = new URLSearchParams({
+        ans: skipped ? SKIPPED_ANSWER_TOKEN : String(ans || ""),
+        action: skipped ? "skip" : "send",
+        turn: Number.isFinite(Number(state.currentQuestionIndex)) ? String(state.currentQuestionIndex) : "",
+        auto_advance_meta: JSON.stringify({ trigger: "live_voice", skipped: !!skipped }),
+      });
+      if (skipped) params.set("skip_reason", "Candidate chose to move on (live voice)");
+      try {
+        const res = await apiFetch("/answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && !data.error) data.error = `Request failed with status ${res.status}`;
+        _logTurnEvent("answer_saved", { action: skipped ? "skip" : "send", skipped: !!skipped, live: true });
+        return data;
+      } catch (err) {
+        return { error: err?.message || String(err) };
+      }
+    },
+    present: async (next) => {
+      const seq = ++_questionLoadSeq;
+      await _transitionToNextQuestion(next, seq, { fastTransition: true });
+    },
+    fallback: async (data) => {
+      const seq = ++_questionLoadSeq;
+      await _transitionToNextQuestion(data, seq, { fastTransition: true });
+    },
+    finish: async () => {
+      if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+      _setInterviewPhase("evaluating");
+      await submitInterview({});
+    },
+    onSpeaking: (on) => {
+      _aiSpeaking = !!on;
+      _candidateHostSpeaking(!!on);
+      _setInterviewPhase(on ? "ai_speaking" : "listening");
+    },
+    onStatus: (text) => _setStatusText(text),
+    onCaption: (text) => showLeadIn(text),
+    onCandidateText: (text) => _setSpokenAnswer(text),
+  });
 }
 
 async function _fetchNextQuestionPayload(timeoutMs = 30000) {
@@ -1570,6 +1742,20 @@ function _autoSkipMustWaitForTranscription(autoAdvanceMeta) {
 export async function submitCandidateAnswer(forceSkip = false, _retryAfterTranscription = false, options = {}) {
   const skipRequested = forceSkip === true;
   let autoAdvanceMeta = options.autoAdvanceMeta || null;
+
+  // F: in a live voice call, Send / Skip move the call on (same /answer route).
+  if (liveVoiceActive()) {
+    if (_pressInFlight) return;
+    _pressInFlight = true;
+    _setSendResponseEnabled(false);
+    try {
+      await liveVoiceManualAdvance(skipRequested);
+    } finally {
+      _pressInFlight = false;
+      if (liveVoiceActive()) _setSendResponseEnabled(true);
+    }
+    return;
+  }
 
   if (_answerSubmitInFlight || _submitInterviewInFlight || _interviewFlowStopped || state.endingInterview || state.redirecting) {
     console.warn("[SUBMIT] Ignored — interview busy or submit in flight");
@@ -1743,6 +1929,19 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       return;
     }
 
+    // C: "sorry, can you repeat that?" said out loud reaches here as a short
+    // answer — honour it instead of saving it (template switch only).
+    if (!explicitSkip && conversationSettings()?.clarify) {
+      const intent = detectTurnIntent(ans);
+      if (intent) {
+        _answerSubmitInFlight = false;
+        _pressInFlight = false;
+        _setResponseProcessingUi(false, "");
+        void _handleClarifyRequest(intent, { fromVoice: true });
+        return;
+      }
+    }
+
     if (explicitSkip) {
       _showCandidateToast("Question skipped");
     }
@@ -1886,6 +2085,9 @@ export async function submitInterview(options = {}) {
   _submitInterviewInFlight = true;
   setRecordingBadge(false);
   stopWarmupCountdown();
+  // A live voice call (if any) ends with the interview, whichever path got here.
+  stopLiveVoice();
+  setClarifyTools(false);
 
   // Flush and finalize the session recording here rather than in the
   // `window.submitInterview` wrapper: the timer-expiry, premature-completion

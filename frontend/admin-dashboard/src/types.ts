@@ -75,6 +75,11 @@ export type InterviewRecord = {
   report?: Record<string, any>;
   // Optional: if present in newer records
   turns?: InterviewTurn[];
+  /** Which OpenAI model asked the questions / scored the report (9 Oct 2026). */
+  model?: string;
+  model_label?: string;
+  evaluation_model?: string;
+  evaluation_model_label?: string;
 };
 
 export type AtsStatus = "Strong Match" | "Moderate Match" | "Weak Match";
@@ -99,6 +104,9 @@ export interface CandidateInterviewSummary {
   status: InterviewStatus | string;
   difficulty: string;
   model: string;
+  model_label?: string;
+  evaluation_model?: string;
+  evaluation_model_label?: string;
   skills: string[];
   questions_count: number;
   answers_count: number;

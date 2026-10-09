@@ -54,7 +54,14 @@ import { ProfessionalAssessmentSections } from "../components/candidate-report/P
 import type { StrengthsWeaknessesAnalysis } from "../types/strengthsWeaknesses";
 import { DeleteInterviewRecordModal } from "../components/DeleteInterviewRecordModal";
 import { RecordingViewer } from "../components/interview-recording/RecordingViewer";
+import {
+  ConversationSummary,
+  conversationFromReport,
+  followupQuestionSet,
+  isFollowupQuestion,
+} from "../components/candidate-report/ConversationSummary";
 import { CrmMetaLine } from "../components/CrmMetaLine";
+import { InterviewModelChips } from "../components/AiModelChip";
 import { focusRing } from "../crm/components/ui";
 import { navButtonMotion } from "../lib/motionPresets";
 
@@ -309,6 +316,11 @@ export function CandidateReportPage({
   const atsPct = wScore;
   const turns = useMemo(() => enrichedTurnsFromRecord(record), [record]);
   const introductionTurn = useMemo(() => introductionTurnFromRecord(record), [record]);
+  const conversation = useMemo(
+    () => conversationFromReport((record?.report || null) as Record<string, unknown> | null),
+    [record],
+  );
+  const followupSet = useMemo(() => followupQuestionSet(conversation), [conversation]);
 
   const excludedQuestionsCount = useMemo(() => {
     const ss = report?.scoring_summary as Record<string, unknown> | undefined;
@@ -1040,6 +1052,16 @@ export function CandidateReportPage({
                   <span className="text-xs font-semibold text-muted">
                     Interview: {fmtWhen(activeSummary?.updated_at_ist || activeSummary?.created_at_ist)}
                   </span>
+                  <InterviewModelChips
+                    model={record?.model || activeSummary?.model}
+                    modelLabel={record?.model_label || activeSummary?.model_label}
+                    evaluationModel={
+                      (record?.evaluation_model ||
+                        (record?.report as Record<string, unknown> | undefined)?.evaluation_model ||
+                        activeSummary?.evaluation_model) as string | undefined
+                    }
+                    evaluationModelLabel={record?.evaluation_model_label || activeSummary?.evaluation_model_label}
+                  />
                 </div>
               </div>
             </div>
@@ -1388,6 +1410,11 @@ export function CandidateReportPage({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-black uppercase text-brand-500">Question {t.idx}</span>
+                        {isFollowupQuestion(followupSet, t.question) ? (
+                          <span className="text-xs font-bold uppercase tracking-wide rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200 px-2 py-0.5">
+                            Follow-up
+                          </span>
+                        ) : null}
                         {t.boundaryLabel ? (
                           <span className="text-xs font-bold uppercase tracking-wide rounded-full border border-subtle bg-warning-soft text-warning px-2 py-0.5">
                             {t.boundaryLabel}
@@ -1468,6 +1495,7 @@ export function CandidateReportPage({
                   </div>
                 </details>
               ))}
+              <ConversationSummary conv={conversation} />
               </>
             )}
           </div>

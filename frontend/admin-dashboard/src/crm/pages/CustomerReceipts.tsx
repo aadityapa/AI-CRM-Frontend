@@ -11,7 +11,8 @@
  * API: routers/crm/customer_receipts.py.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Check, Lock, Plus, Trash2, Wallet } from "lucide-react";
+import { DialogActions, DialogFailure, DialogHero, DialogSection } from "../components/dialogKit";
 import { crmDelete, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -22,7 +23,7 @@ import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/Cus
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { CrmLink } from "../routerHooks";
 import {
-  ConfirmModal, ErrorBox, Field, Modal, StatusBadge, btnPrimary, btnSecondary, inputCls, useToast,
+  ConfirmModal, ErrorBox, Modal, StatusBadge, btnPrimary, inputCls, useToast,
 } from "../components/ui";
 
 type Allocation = {
@@ -41,6 +42,8 @@ type InvoiceOption = {
   id: number; invoice_number: string; invoice_date: string | null; project_name?: string | null;
   employee_name?: string | null; grand_total: number; paid_amount: number; balance_amount: number;
   payment_status: string;
+  /** 8 Oct 2026 — why money cannot go on it yet (customer approval / IRN); null = open. */
+  payment_block?: string | null;
 };
 
 const PAYMENT_MODES = ["NEFT", "RTGS", "IMPS", "UPI", "Cheque", "Cash", "Wire", "Other"];
@@ -300,16 +303,28 @@ export function CustomerReceiptsPage() {
   );
 }
 
+/** "2026-10-08" for today minus `daysBack`, in local time. PURE. */
+function isoDay(daysBack = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysBack);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * "Add received amount" (redesigned 8 Oct 2026 on the dialog kit): the money
+ * (customer · amount · date · mode · reference) → the invoices it settles
+ * (an invoice still waiting for the customer's approval / its IRN is shown
+ * LOCKED with the reason — the server refuses it too) → notes, with a live
+ * "where the money goes" summary beside it. Same POST as before.
+ */
 function AddReceiptModal({ customers, onClose, onSaved }: {
   customers: { value: string; label: string }[];
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
   const [customerId, setCustomerId] = useState("");
-  const [receivedDate, setReceivedDate] = useState(() => {
-    const d = new Date(); const p = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  });
+  const [receivedDate, setReceivedDate] = useState(() => isoDay(0));
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState("NEFT");
   const [reference, setReference] = useState("");
@@ -320,6 +335,7 @@ function AddReceiptModal({ customers, onClose, onSaved }: {
   const [invQuery, setInvQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const openOptions = useMemo(() => options.filter((o) => !o.payment_block), [options]);
   /* Search across invoice no., employee and project; ticked rows stay in
      the list whatever the query so a selection can't silently vanish. */
   const visibleOptions = useMemo(() => {
@@ -355,12 +371,17 @@ function AddReceiptModal({ customers, onClose, onSaved }: {
     return { rows, left };
   }, [amt, options, selected]);
   const takeFor = (id: number) => preview.rows.find((r) => r.id === id)?.take ?? 0;
+  const allocated = Math.max(0, amt - preview.left);
+  const selectedBalance = options.filter((o) => selected.has(o.id)).reduce((t, o) => t + o.balance_amount, 0);
+  const toggle = (o: InvoiceOption) => {
+    if (o.payment_block) return;
+    setSelected((s) => { const n = new Set(s); if (n.has(o.id)) n.delete(o.id); else n.add(o.id); return n; });
+  };
+  const missing = !customerId ? "Pick the customer" : !receivedDate ? "Pick the received date" : !(amt > 0) ? "Enter the amount received" : "";
 
   const submit = async () => {
     setError("");
-    if (!customerId) { setError("Pick the customer"); return; }
-    if (!receivedDate) { setError("Received date is required"); return; }
-    if (!(amt > 0)) { setError("Enter the amount received"); return; }
+    if (missing) { setError(missing); return; }
     setBusy(true);
     try {
       const res = await crmPost("/api/customer-receipts", {
@@ -375,110 +396,164 @@ function AddReceiptModal({ customers, onClose, onSaved }: {
     }
   };
 
+  const customerName = customers.find((c) => c.value === customerId)?.label;
   return (
-    <Modal title="Add received amount" onClose={onClose} medium dirty={!!(amount || reference || notes || selected.size)}>
-      <div className="space-y-4">
-        {error && <ErrorBox error={error} />}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Customer" required>
-            <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-              <option value="">— pick customer —</option>
-              {customers.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Received date" required>
-            <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
-          </Field>
-          <Field label="Amount (₹)" required>
-            <input type="number" min={0} step="0.01" className={inputCls} value={amount} placeholder="e.g. 250000"
-              onChange={(e) => setAmount(e.target.value)} />
-          </Field>
-          <Field label="Payment mode">
-            <select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}>
-              {PAYMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </Field>
-          <Field label="Reference number">
-            <input className={inputCls} value={reference} placeholder="UTR / cheque no. / transaction id"
-              onChange={(e) => setReference(e.target.value)} />
-          </Field>
-        </div>
-
-        <div>
-          <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">
-            Invoices this covers (per employee) {selected.size > 0 && <span className="font-medium normal-case">— {selected.size} selected</span>}
-          </div>
-          {!customerId ? (
-            <p className="text-xs text-muted">Pick the customer to see their open invoices.</p>
-          ) : optLoading ? (
-            <p className="text-xs text-muted">Loading invoices…</p>
-          ) : options.length === 0 ? (
-            <p className="text-xs text-muted">No open invoices for this customer — the amount will be held on account.</p>
-          ) : (
-            <>
-            <div className="mb-1.5 flex items-center gap-2">
-              <input className={`${inputCls} !h-8 text-sm`} value={invQuery} placeholder="Search invoice no., employee or project…"
-                onChange={(e) => setInvQuery(e.target.value)} aria-label="Search invoices" />
-              <button type="button" className="whitespace-nowrap text-xs font-semibold text-sky-600 hover:underline"
-                onClick={() => setSelected((s) => { const n = new Set(s); visibleOptions.forEach((o) => n.add(o.id)); return n; })}
-                title="Select every invoice currently listed">
-                Select all{invQuery ? " shown" : ""}
-              </button>
-              {selected.size > 0 && (
-                <button type="button" className="whitespace-nowrap text-xs font-semibold text-muted hover:underline"
-                  onClick={() => setSelected(new Set())}>
-                  Clear
-                </button>
-              )}
+    <Modal title="Add received amount" onClose={onClose} wide dirty={!!(amount || reference || notes || selected.size)}
+      hero={<DialogHero tone="emerald" icon={Wallet} eyebrow="Customer received amount" title="Record money received"
+        subtitle={customerName ? <>From <b>{customerName}</b> — settle their invoices, the rest stays on account.</> : "A bank credit from a customer, settled against their invoices."}
+        flow={{ steps: ["Money received", "Invoices settled", "Balance on account"], current: selected.size ? 1 : 0 }} />}
+      footer={<DialogActions tone="emerald" icon={Wallet} label={amt > 0 ? `Save ${inr(amt)}` : "Save received amount"}
+        busy={busy} disabled={!!missing} onCancel={onClose} onConfirm={() => void submit()}
+        hint={missing ? <span className="text-warning">{missing}</span> : "Ctrl + Enter to save"} />}
+    >
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
+        <div className="space-y-4">
+          <DialogSection n={1} title="The money" tone="emerald" done={!!customerId && amt > 0 && !!receivedDate}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block sm:col-span-2">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Customer *</span>
+                <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                  <option value="">— pick customer —</option>
+                  {customers.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Amount received (₹) *</span>
+                <input type="number" min={0} step="0.01" className={`${inputCls} text-lg font-bold tabular-nums`} value={amount}
+                  placeholder="0.00" onChange={(e) => setAmount(e.target.value)} />
+                {selectedBalance > 0 && (
+                  <button type="button" className="mt-1 text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
+                    onClick={() => setAmount(String(Math.round(selectedBalance * 100) / 100))}>
+                    Use the ticked balance · {inr(selectedBalance)}
+                  </button>
+                )}
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Received on *</span>
+                <input type="date" className={inputCls} value={receivedDate} max={isoDay(0)} onChange={(e) => setReceivedDate(e.target.value)} />
+                <span className="mt-1 flex gap-1.5">
+                  {[["Today", 0], ["Yesterday", 1]].map(([label, back]) => (
+                    <button key={label} type="button" className={pillCls(receivedDate === isoDay(Number(back)))}
+                      onClick={() => setReceivedDate(isoDay(Number(back)))}>{label}</button>
+                  ))}
+                </span>
+              </label>
+              <div className="sm:col-span-2">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Payment mode</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {PAYMENT_MODES.map((m) => (
+                    <button key={m} type="button" className={pillCls(mode === m)} onClick={() => setMode(m)}>{m}</button>
+                  ))}
+                </div>
+              </div>
+              <label className="block sm:col-span-2">
+                <span className="mb-1 block text-xs font-semibold text-secondary">Reference number</span>
+                <input className={`${inputCls} font-mono`} value={reference} placeholder="UTR / cheque no. / transaction id"
+                  onChange={(e) => setReference(e.target.value)} />
+              </label>
             </div>
-            <div className="max-h-56 overflow-y-auto rounded-control border border-subtle">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-2 text-left text-[11px] uppercase text-muted">
-                  <tr><th className="w-8 px-2 py-1.5" /><th className="py-1.5">Invoice</th><th>Employee</th><th>Project</th><th className="text-right">Balance</th><th className="pr-2 text-right">Will apply</th></tr>
-                </thead>
-                <tbody>
-                  {visibleOptions.length === 0 && (
-                    <tr><td colSpan={6} className="px-3 py-2 text-xs text-muted">No invoice matches “{invQuery}”.</td></tr>
-                  )}
+          </DialogSection>
+
+          <DialogSection n={2} title="Invoices it settles" tone="emerald" done={selected.size > 0} optional
+            hint="Ticked invoices are settled oldest first; an invoice still waiting for the customer's approval or its IRN cannot take money yet."
+            action={options.length > 0 ? (
+              <div className="flex gap-2 text-xs font-semibold">
+                <button type="button" className="text-emerald-700 hover:underline dark:text-emerald-300"
+                  onClick={() => setSelected((s) => { const n = new Set(s); visibleOptions.forEach((o) => { if (!o.payment_block) n.add(o.id); }); return n; })}>
+                  Select all open{invQuery ? " shown" : ""}
+                </button>
+                {selected.size > 0 && (
+                  <button type="button" className="text-muted hover:underline" onClick={() => setSelected(new Set())}>Clear</button>
+                )}
+              </div>
+            ) : undefined}>
+            {!customerId ? (
+              <p className="text-xs text-muted">Pick the customer to see their open invoices.</p>
+            ) : optLoading ? (
+              <p className="text-xs text-muted">Loading invoices…</p>
+            ) : options.length === 0 ? (
+              <p className="text-xs text-muted">No open invoices for this customer — the amount will be held on account.</p>
+            ) : (
+              <>
+                <input className={`${inputCls} mb-2 text-sm`} value={invQuery} placeholder="Search invoice no., employee or project…"
+                  onChange={(e) => setInvQuery(e.target.value)} aria-label="Search invoices" />
+                <ul className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                  {visibleOptions.length === 0 && <li className="px-1 py-2 text-xs text-muted">No invoice matches “{invQuery}”.</li>}
                   {visibleOptions.map((o) => {
                     const on = selected.has(o.id);
+                    const locked = !!o.payment_block;
+                    const take = takeFor(o.id);
                     return (
-                      <tr key={o.id} className={`cursor-pointer border-t border-subtle ${on ? "bg-surface-2" : "hover:bg-surface-2/60"}`}
-                        onClick={() => setSelected((s) => { const n = new Set(s); n.has(o.id) ? n.delete(o.id) : n.add(o.id); return n; })}>
-                        <td className="px-2 py-1.5"><input type="checkbox" readOnly checked={on} className="accent-brand-600" /></td>
-                        <td className="py-1.5 font-semibold text-primary">{o.invoice_number}<span className="ml-1 text-xs font-normal text-muted">{fmtDate(o.invoice_date)}</span></td>
-                        <td>{o.employee_name || "—"}</td>
-                        <td className="text-secondary">{o.project_name || "—"}</td>
-                        <td className="text-right tabular-nums">{inr(o.balance_amount)}</td>
-                        <td className={`pr-2 text-right tabular-nums ${on && takeFor(o.id) > 0 ? "font-semibold text-success" : "text-muted"}`}>
-                          {on ? inr(takeFor(o.id)) : "—"}
-                        </td>
-                      </tr>
+                      <li key={o.id}>
+                        <button type="button" onClick={() => toggle(o)} disabled={locked}
+                          title={locked ? o.payment_block || "" : undefined}
+                          className={`flex w-full items-center gap-3 rounded-control border px-3 py-2 text-left transition-colors ${locked
+                            ? "cursor-not-allowed border-subtle bg-surface-2 opacity-70"
+                            : on ? "border-emerald-400 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950/30"
+                              : "border-subtle bg-surface-1 hover:border-emerald-300"}`}>
+                          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${on ? "border-emerald-600 bg-emerald-600 text-white" : "border-subtle bg-surface-1"}`} aria-hidden>
+                            {locked ? <Lock size={11} className="text-muted" /> : on ? <Check size={13} /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-primary">
+                              {o.invoice_number} <span className="text-xs font-normal text-muted">· {fmtDate(o.invoice_date)}</span>
+                            </span>
+                            <span className="block truncate text-xs text-secondary">
+                              {[o.employee_name, o.project_name].filter(Boolean).join(" · ") || "—"}
+                            </span>
+                            {locked && <span className="block text-[11px] text-warning">{o.payment_block}</span>}
+                          </span>
+                          <span className="shrink-0 text-right">
+                            <span className="block text-xs text-muted tabular-nums">Balance {inr(o.balance_amount)}</span>
+                            <span className={`block text-sm font-bold tabular-nums ${on && take > 0 ? "text-emerald-700 dark:text-emerald-300" : "text-muted"}`}>
+                              {on ? (take > 0 ? `− ${inr(take)}` : "nothing left") : ""}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-            </>
-          )}
-          {amt > 0 && selected.size > 0 && (
-            <p className="mt-1 text-xs text-muted">
-              Applied oldest invoice first. {preview.left > 0
-                ? <>{inr(preview.left)} will stay <b>unallocated</b> (on account).</>
-                : <>Fully allocated.</>}
-            </p>
-          )}
+                </ul>
+                {openOptions.length < options.length && (
+                  <p className="mt-1.5 text-[11px] text-muted">
+                    {options.length - openOptions.length} invoice(s) locked until the customer approves them and Finance adds the IRN.
+                  </p>
+                )}
+              </>
+            )}
+          </DialogSection>
+
+          <DialogSection n={3} title="Notes" tone="emerald" optional done={!!notes.trim()}>
+            <textarea className={`${inputCls} !h-auto min-h-[64px]`} value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. Part payment for August — balance promised next week" aria-label="Notes" />
+          </DialogSection>
+          {error && <DialogFailure message={error} />}
         </div>
 
-        <Field label="Notes">
-          <textarea className={`${inputCls} !h-auto min-h-[64px]`} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
-
-        <div className="flex justify-end gap-2">
-          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save received amount"}</button>
-        </div>
+        <aside className="h-max space-y-3 rounded-card border border-subtle bg-surface-1 p-4 shadow-raised lg:sticky lg:top-0">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Where the money goes</div>
+          <div>
+            <div className="text-xs text-muted">Received</div>
+            <div className="text-2xl font-extrabold tabular-nums text-primary">{inr(amt)}</div>
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+            <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"
+              style={{ width: `${amt > 0 ? Math.min(100, Math.round((allocated / amt) * 100)) : 0}%` }} />
+          </div>
+          <dl className="space-y-1 text-sm">
+            <div className="flex justify-between"><dt className="text-muted">Settles {preview.rows.length} invoice(s)</dt><dd className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{inr(allocated)}</dd></div>
+            <div className="flex justify-between"><dt className="text-muted">On account</dt><dd className="font-semibold tabular-nums text-primary">{inr(preview.left)}</dd></div>
+            {selectedBalance > amt && amt > 0 && (
+              <div className="flex justify-between"><dt className="text-muted">Still due on ticked</dt><dd className="font-semibold tabular-nums text-warning">{inr(selectedBalance - amt)}</dd></div>
+            )}
+          </dl>
+          <p className="text-[11px] text-muted">Oldest invoice first, up to each balance. Deleting the receipt later puts every amount back.</p>
+        </aside>
       </div>
     </Modal>
   );
 }
+
+const pillCls = (on: boolean) => `rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${on
+  ? "border-emerald-500 bg-emerald-600 text-white shadow-raised"
+  : "border-subtle bg-surface-1 text-secondary hover:border-emerald-300 hover:text-primary"}`;

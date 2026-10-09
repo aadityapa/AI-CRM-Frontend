@@ -27,7 +27,7 @@ import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
-import { AiInterviewCell } from "../components/AiInterviewCell";
+import { ApplicantsBoard, type ApplicantRow } from "../components/ApplicantsBoard";
 import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
 import { NewOpportunityForm } from "./opportunity/NewOpportunityForm";
@@ -53,8 +53,7 @@ import {
   inputCls,
   statusLabel,
   useToast } from "../components/ui";
-import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
-import { CANDIDATE_STAGE_BUCKETS, bucketPhase } from "../lib/candidateStageBuckets";
+import { bucketPhase } from "../lib/candidateStageBuckets";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { usePageTab, useSessionState } from "../lib/pageState";
 import { useRefetchOnFocus } from "../lib/useRefetchOnFocus";
@@ -1912,6 +1911,10 @@ export function OpportunityDetailPage() {
           limit: 20,
           search: profileSearch || undefined,
           phase: bucketPhase(profileStage),
+          // 8 Oct 2026: each row carries this login's moves + the pending terms
+          // (act from here), and the stage chips carry their counts.
+          with_actions: true,
+          with_phase_counts: true,
         })}`,
       );
       setProfiles(res.data || []);
@@ -2006,15 +2009,6 @@ export function OpportunityDetailPage() {
   const skills = opp.skills || [];
   const allowedStages = (opp.allowed_next_stages || []).filter((s) => s !== "Archived" || canArchive);
 
-  const fmtCtc = (v?: number | null) =>
-    v === null || v === undefined ? "—" : `₹${Number(v).toLocaleString("en-IN")}`;
-  const fmtHike = (v?: number | null) =>
-    v === null || v === undefined ? "—" : `${Number(v).toFixed(1)}%`;
-  const displayCtc = (profile: ProfileRow, kind: "current" | "expected") => {
-    if (kind === "current") return profile.current_ctc ?? profile.candidate_current_ctc ?? null;
-    return profile.expected_ctc ?? profile.candidate_expected_ctc ?? null;
-  };
-
   const info: [string, React.ReactNode][] = [
     ["Customer", opp.customer_name || "—"],
     ["Branch", opp.branch_name || "—"],
@@ -2026,68 +2020,6 @@ export function OpportunityDetailPage() {
     ["Onboarding status", opp.onboarding_status || "—"],
     ["Created", fmtDate(opp.created_at)],
     ["Updated", fmtDate(opp.updated_at)],
-  ];
-
-  const applicantCols: Column<ProfileRow>[] = [
-    {
-      key: "candidate_name",
-      label: "Candidate",
-      render: (r) => (
-        <span className="font-semibold text-primary">
-          {r.candidate_name || `Candidate #${r.candidate_id}`}
-        </span>
-      ),
-    },
-    { key: "email", label: "Email", render: (r) => r.email || "—" },
-    { key: "phone", label: "Phone", render: (r) => r.phone || "—" },
-    {
-      key: "experience_years",
-      label: "Experience (yrs)",
-      align: "right",
-      render: (r) => (r.experience_years != null ? String(r.experience_years) : "—"),
-    },
-    {
-      key: "current_ctc",
-      label: "Current CTC",
-      align: "right",
-      render: (r) => fmtCtc(displayCtc(r, "current")),
-    },
-    {
-      key: "expected_ctc",
-      label: "Expected CTC",
-      align: "right",
-      render: (r) => fmtCtc(displayCtc(r, "expected")),
-    },
-    {
-      key: "hike_percent",
-      label: "Hike %",
-      align: "right",
-      render: (r) => fmtHike(r.hike_percent),
-    },
-    { key: "notice_period", label: "Notice period", render: (r) => r.notice_period || "—" },
-    { key: "technical_domain", label: "Technical domain", render: (r) => r.technical_domain || "—" },
-    {
-      key: "pipeline_status",
-      label: "Status",
-      render: (r) => (
-        <CandidateStatusBadge status={(r as any).candidate_status} stage={r.pipeline_status}
-          withdrawnFrom={(r as any).withdrawn_from_status} />
-      ),
-    },
-    // The applicants table had no AI interview column at all, so an opportunity
-    // gave no sign of how its candidates had done in their L1.
-    { key: "ai_interview", label: "AI Interview", render: (r) => <AiInterviewCell row={r} /> },
-    {
-      key: "created_at",
-      label: "Applied on",
-      align: "right",
-      render: (r) => fmtDate(r.created_at),
-    },
-    {
-      key: "cv_url",
-      label: "Resume",
-      render: (r) => (r.cv_url ? <FileLink url={r.cv_url} label="Resume" /> : "—"),
-    },
   ];
 
   return (
@@ -2387,55 +2319,12 @@ export function OpportunityDetailPage() {
       )}
 
       {tab === "applicants" && (
-      <div className={cardCls}>
-        <div className="fx-hairline-b mb-4 flex flex-wrap items-center justify-between gap-2 pb-3">
-          <h2 className="text-base font-bold text-primary">
-            Applicants
-            {profileMeta?.total ? (
-              <span className="ml-2 text-sm font-semibold text-muted">({profileMeta.total})</span>
-            ) : null}
-          </h2>
-          {canApplyHere && (
-            <button className={btnSecondary} onClick={() => setApplyHere(true)}>
-              <UserPlus size={15} /> Apply a Candidate
-            </button>
-          )}
-        </div>
-        <p className="mb-3 text-sm text-muted">Candidates applied to this opportunity.</p>
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {CANDIDATE_STAGE_BUCKETS.map((b) => (
-            <button
-              key={b.key}
-              type="button"
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors duration-micro ease-smooth ${
-                profileStage === b.key
-                  ? "bg-brand-600 text-white"
-                  : "border border-subtle bg-surface-2 text-secondary hover:text-primary"
-              }`}
-              onClick={() => { setProfileStage(b.key); setProfilePage(1); }}
-            >
-              {b.label}
-            </button>
-          ))}
-        </div>
-        {profiles.length === 0 && !profileSearch && profileStage === "all" ? (
-          <EmptyState message="No candidates have applied to this opportunity yet." />
-        ) : profiles.length === 0 && profileStage !== "all" && !profileSearch ? (
-          <EmptyState message={`No applicants in ${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === profileStage)?.label || "this stage"} right now.`} />
-        ) : (
-          <DataTable<ProfileRow>
-            columns={applicantCols}
-            rows={profiles}
-            meta={profileMeta}
-            headerRight={profileMeta ? <span className="whitespace-nowrap text-xs font-medium text-muted">{profileMeta.total} {profileMeta.total === 1 ? "applicant" : "applicants"}, page {profileMeta.page}/{Math.max(1, profileMeta.pages || 1)}</span> : undefined}
-            onPage={setProfilePage}
-            search={profileSearch}
-            onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
-            onRowClick={(r) => crmNavigate(`profiles/${r.id}`)} rowHref={(r: any) => `profiles/${r.id}`}
-            emptyMessage="No applicants match your search."
-          />
-        )}
-      </div>
+        <ApplicantsBoard rows={profiles as ApplicantRow[]} meta={profileMeta as any}
+          search={profileSearch} onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
+          page={profilePage} onPage={setProfilePage}
+          stage={profileStage} onStage={(k) => { setProfileStage(k); setProfilePage(1); }}
+          canApply={canApplyHere} onApply={() => setApplyHere(true)}
+          onChanged={() => void loadProfiles()} toast={(m, k) => showToast(m, k)} />
       )}
 
       {tab === "activity" && (

@@ -48,4 +48,6 @@ export const state = {
   warmupTimeLimitSec: 0,
   /** Silero VAD + Whisper segments (no continuous Whisper / Web Speech when true). */
   vadWhisperPipeline: true,
+  /** Two-way conversation settings from /next (9 Oct 2026); null = the template did not enable it. */
+  conversation: null,
 };

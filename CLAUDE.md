@@ -1964,6 +1964,108 @@ Stage badge + email + `opp_id`; dates print en-IN (`fmtDateShort`). Harness `src
 `?w=mi|roles|templates|perms|settings|reports`, `&focus=501`). Verified: tsc green, eslint 0 errors on the touched files,
 vitest rbac 38 + OpportunitiesWorkspace + WorkDesk 21, `vite build` green, every view rendered with no console errors.
 
+**8 Oct 2026 — the recording viewer says why it cannot play (server half in B-V2 `CLAUDE.md`):** a finished
+recording showed a black frame at 0:00 on the report page. `components/interview-recording/RecordingViewer.tsx`
+`DualPlayer`: an `error` listener on the camera element prints `describeMediaError(code, message)` (PURE — "the file is
+damaged — the browser could not decode it" for code 3, …), a `METADATA_TIMEOUT_MS`=12 s watchdog prints "has not loaded"
+when `readyState` never reaches metadata, and both offer **Try the browser player** (`nativeFallback`: a plain `<video
+controls>` on the same blob / URL, with the Download links) — the browser's own demuxer seeks some files our transport's
+`fixDuration` hack cannot. `Recording.valid` (server, 8 Oct) renders a red "no WebM header — the first slice was lost"
+notice above the player. Same component on the Integrity tab and the candidate report. tsc green, eslint 0 errors.
+
+**8 Oct 2026 (later) — recordings play in the page + one file; Redo AI L1; Change template; e-invoice journey; PO and
+received-amount dialogs; My Tasks ticks; Applicants board (server half + migrations 0130 / 0131 in B-V2 `CLAUDE.md`):**
+(1) **`RecordingViewer.tsx`**: `Recording.streamed` / `combined` — every `url` is a signed same-origin streaming URL, so
+the player sets it straight into `<video src>` (the local-driver blob fetch only for an older server). When `combined`
+exists it plays and downloads as ONE file ("Recording"; `Stage combinedView` 28:9 pane labelled Candidate · Screen) with a
+"Separate camera / screen files" switch; while it builds, a "check again" link (not polled — a re-read re-signs the URLs and
+would restart a playing video). Same on the report page and the Integrity tab. (2) **`TemplateRequests.tsx`**: RMG gets
+**Change template** on a Template_Ready / Prepared request (`FulfillModal change` → `relink`, reason ≥ 10); both modes warn
+when the picked template belongs to another opportunity (it is copied for this deal). **Redo AI L1** on Applied
+Candidates (`redoableAi` PURE: a finished PASS, stage Sourcing / Technical_Screening / RMG_Review; TA or RMG / GM) →
+`ScheduleAiInterviewModal` with `reschedule.passed` → `void_previous` forced, reason ≥ `MIN_VOID_NOTE` 10; an ordinary
+reschedule offers the "does not count — wrong template" checkbox. `InterviewRoundsModal` strikes through a voided AI verdict
+("Voided — does not count" + the reason). (3) **`crm/components/invoice/InvoiceJourney.tsx`** replaces
+`CustomerApprovalCard.tsx` (deleted): 4 step cards — Invoice issued → Customer approved (Sales Manager / Head confirm /
+withdraw) → e-Invoice IRN (Finance: Add / Correct IRN, **Open e-invoice**) → Payment (paid bar, **Record payment / Record
+TDS** — locked with the server's `payment_block` until the IRN exists); `journeyStates` PURE. Invoice detail
+(`Finance.tsx`): header **E-invoice** button (authFetch → `/einvoice.pdf` in a new tab), the journey, then a details card
+beside a gradient **Amounts** card (grand total · GST · paid · balance + % received · Generate PDF). (4) **PO form**
+(`POFormModal`): every step is `WizardGroup` blocks with a live strip (customer · PO no · value · period), period picks (3 /
+6 months, 1 year), "Same as billing" delivery, PO type / GST slab / supply as chips, a GST breakdown card with the total,
+payment-term picks, and a PO-card Review. **Add received amount** (`CustomerReceipts.tsx`) on the dialog kit: the money
+(amount big, Today / Yesterday, mode chips, "use the ticked balance"), invoice cards with a LOCK + reason for an invoice
+still waiting for approval / IRN, notes, and a "where the money goes" side panel. (5) **My Tasks** (`WorkDesk.tsx`,
+`taskFilters.tsx`): customer / employee group headers FOLD on click and show count + ₹ total; **Done — tick all N** per
+group and a tick box per item (`POST /api/dashboard/desk/marks`, optimistic); ticked items hide by default ("Show ticked
+(N)", `TaskFilter.done`); the item TITLE is a link (invoice number opens the invoice). (6) **`crm/components/
+ApplicantsBoard.tsx`** replaces the opportunity's Applicants table: gradient header, stage chips in `STAGE_TONE` with
+counts (`with_phase_counts`), avatar rows with exp / CTC→expected / notice chips, status + next interview + AI L1, and the
+row's moves from `with_actions` through the SAME `SalesItemActions` / `SalesActionLauncher` as My Tasks (`applicantAsItem`,
+`applicantActionTab` PURE) + **Interviews** (record the customer's feedback in place). Harness `src/__story/oct8.tsx`
+(`?w=journey|applicants|tasks`). Verified: tsc green, eslint 0 errors, vitest groupBySection 6 + WorkDesk 7, `vite build`
+green, the three views rendered with no console errors.
+
+**9 Oct 2026 — two-way AI interview (opt-in per template) + candidate resume library (`app.js?v=39`; server half +
+migration 0132 in B-V2 `CLAUDE.md`):** ⚠️ nothing changes for a template that does not turn Conversation on — every client
+switch reads the server's `conversation` block, which is absent then. **Template form**
+(`components/interview-template/ConversationSettings.tsx`, mounted in `pages/TemplateForm.tsx`, saved as
+`weights.conversation`): Follow-up questions (+ max per interview 0–5) · Probe very short answers · Natural lead-ins ·
+Repeat / explain on request · Candidate questions at the end · Voice: Standard / Live (with its cost note). **Candidate
+runtime**: new `js/conversation.js` — `applyConversationPayload` (state.conversation), `showLeadIn` (the spoken bridge shown
+above the question; `candidate.js` speaks it before the question), `showFollowupChip`, `setClarifyTools` (Repeat · Explain
+buttons under the question) + voice intent (`detectTurnIntent`: a short "can you repeat" / "what do you mean" answer is NOT
+submitted — it calls `/candidate/conversation/clarify` and listening resumes), `runClosingQa` (after the last answer: "do
+you have any questions about the role?", up to 3, each answered aloud from `/candidate/conversation/closing`, then the
+goodbye; "No questions — finish interview" ends it at any point). New `js/live_voice.js` — the live mode: `/candidate/realtime/session` mints a client
+secret, WebRTC to OpenAI, the model's tools are relayed to the ORDINARY `/next` + `/answer` (the realtime transcript is the
+answer, `auto_advance_meta.trigger = "live_voice"`), so the server keeps the questions, scoring, clock and integrity; the
+model's voice is mirrored into the recording (`recording_mix.mirrorStreamToRecording`); usage is posted to
+`/candidate/realtime/usage` every 20 s and at the end; up to 2 reconnects, then the page falls back to the standard voice for
+the rest of the interview (`hooks.fallback`) — nothing throws into the candidate page. **Report page**:
+`components/candidate-report/ConversationSummary.tsx` (follow-ups · repeats · explanations · the candidate's questions and
+the answers given · Live voice chip — "not scored") and a **Follow-up** chip on those questions in the transcript
+(`followupQuestionSet`). **Resume library** (`crm/components/ResumeLibrary.tsx`): the candidate page gains two tabs —
+**Resumes** (`ResumeLibraryTab`: every version with Main star, source, size, uploader; Add a resume with a name + "make it the
+main resume", Rename, Make main, Remove (never the main one); writers = TA · RMG · Sales · Sales Head · HR, the server's
+gate) and **Matching positions** (`MatchingPositionsTab`: every open position scored against every version — score ring,
+"Good fit" at ≥ 60 %, matched / missing skills, each version's score, experience-band and budget flags, an "Applied · status
+· by" badge linking the profile; filters Good fits only · Hide applied · search). **TA only**: tick positions, pick the
+version per position, **AI review** on click (stored — shows as "AI 70%" next time) and the sticky **Apply to N positions**
+bar → `MultiApplyDialog` (dialog kit; per-position result with a profile link; a position already applied is skipped).
+Applied Candidates rows (`Requirements.tsx`) show "Also in N other positions" → `candidates/{id}?tab=matching` and "N
+resumes" → `?tab=resumes`. Verified: tsc green, eslint 0 errors on the new files, `vite build` green, `node --check` on the
+runtime modules; the sandbox browser could not start (missing system libraries), so no harness render this round.
+
+**9 Oct 2026 (later) — the AI model is named on every screen; Settings ▸ AI engine (`lib/aiEngine.test.tsx` 7;
+`app.js?v=40`; server half in B-V2 `CLAUDE.md`):** ⚠️ **the client keeps NO table of model names** — every label comes from
+`GET /interview/ai-engine` (staff only). **`src/lib/aiEngine.ts`**: types `AiModel` / `AiEngine`, `fetchAiEngine()` (one
+fetch per page load, retried after a failure), `useAiEngine()` (null while loading / on error — every caller falls back),
+`modelLabel(id, label)` / `prettifyModelId` (only for an id that arrived without a label), `resetAiEngineCache`.
+**`src/components/AiModelChip.tsx`**: `AiModelChip` (purple pill, tooltip "OpenAI GPT-6 Astra · reasoning model") and
+`InterviewModelChips` (one chip, or "Questions: … · Scoring: …" when an older interview was re-scored on another model).
+Mounted on: the candidate report header (`CandidateReportPage`, from the record's `model` / `evaluation_model`;
+`InterviewRecord` + `CandidateInterviewSummary` types gained the four model fields), the profile's AI verdict card
+(`AiInterviewOverview`, from the summary), AI Costs (a **By model** panel from `by_model` beside "Where the money goes" —
+the grid is now `lg:grid-cols-2 xl:grid-cols-4` — model chips on every interview row, and a footnote about the one-off
+Astra re-price), Settings ▸ AI engine. **Schedule AI L1** (`ScheduleAiInterviewModal`) subtitle adds "Runs on GPT-6 Astra ·
+questions and scoring"; **TemplateForm** shows "Generating with GPT-6 Astra — this can take up to a minute" while any
+preview / prompt generation runs. **`crm/pages/settings/AiEngineTab.tsx`** (Settings ▸ Operations ▸ AI engine, `?tab=
+ai-engine`): the models in use by role (interview · fast replies · live voice · transcription · spoken questions · Ask AI ·
+reading images) with a "reasoning" tag; Admin / CEO get two selects over the server's `supported` list
+(`ai.interview_model`, `ai.interview_fast_model`, blank = server default / automatic) and the "Show the AI model to
+candidates" switch, saved through `PUT /api/org-settings` (only changed keys). Access Control ▸ Audit log gains an "AI
+engine" group chip (`settings`, Cpu icon) — ⚠️ `GROUP_LOOK` is keyed by the server's groups; a group missing there used
+to fall back to `other`. **Candidate runtime**: new `js/ai_engine.js` (`loadAiEngine` · `interviewModelLabel` ·
+`applyAiEngineLabels`) — called from `revealAppAfterAuth` for staff: `#kxAiProviderLabel` reads "AI interviewer: OpenAI
+GPT-6 Astra" (fallback "AI interviewer: OpenAI"; the hard-coded "GPT-4o optimized" is gone) and `.kx-brand-powered`
+"Powered by OpenAI GPT-6 Astra". `hr.js`: the hidden `#model` select is filled from `/models` (label, no hard-coded
+option in `index.html`), the status line names the label, schedules post `model: ""` (the server decides);
+`hrSetupUi.js` no longer syncs the label from the select. The candidate chip is `#candidateAiChip` — "AI Interviewer ·
+GPT-6 Astra" from the login's `ai_model` (absent while the admin hides it) — plus `#candidateVoiceChip` "Live voice · GPT
+Realtime mini" for a live-voice template (`_applyCandidateModelChips` in `app.js`). Verified: tsc green, eslint 0 errors,
+vitest aiEngine 7 + InterviewCosts 2, `vite build` green, `node --check` on the runtime modules.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```

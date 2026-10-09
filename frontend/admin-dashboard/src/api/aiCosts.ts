@@ -47,6 +47,8 @@ export interface InterviewCostRow {
   opportunity_title: string | null;
   customer_id: number | null;
   customer_name: string | null;
+  /** Labels of the OpenAI models this interview's calls used, costliest first (9 Oct 2026). */
+  models?: string[];
 }
 
 export interface CostBucket {
@@ -98,6 +100,8 @@ export interface InterviewCostReport {
   };
   series: CostBucket[];
   by_kind: { kind: "chat" | "tts" | "stt"; label: string; cost_usd: number }[];
+  /** The interviews on screen, split by the OpenAI model that ran the calls. */
+  by_model?: { model: string; label: string; calls: number; interviews: number; cost_usd: number; cost_inr: number }[];
   by_customer: CostGroup[];
   by_template: CostGroup[];
   by_ta: CostGroup[];

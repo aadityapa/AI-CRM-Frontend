@@ -754,13 +754,6 @@ export function initHrSetupUi() {
     }
   });
 
-  const modelEl = document.getElementById("customModel") || document.getElementById("model");
-  const providerEl = document.getElementById("kxAiProviderLabel");
-  if (providerEl && modelEl) {
-    const sync = () => {
-      providerEl.textContent = `AI provider: OpenAI ${(modelEl.value || "gpt-4o-mini").trim()} optimized`;
-    };
-    sync();
-    modelEl.addEventListener("change", sync);
-  }
+  // The model label comes from the server (/interview/ai-engine) — staff only,
+  // so it is filled in once an HR login reveals this screen (app.js).
 }

@@ -34,6 +34,8 @@ export type FilterableItem = {
   /** TA's "Pending activities" (30 Sep 2026): which list the item came from, and the round to book. */
   activity?: string | null;
   round_kind?: string | null;
+  /** Ticked "done" by this login on My Tasks (8 Oct 2026) — hidden unless shown. */
+  done?: boolean;
 };
 
 export type GroupBy = "section" | "employee";
@@ -50,10 +52,12 @@ export type TaskFilter = {
   priority: "" | "urgent" | "attention" | "on_track";
   /** How the list is sectioned: the server's `section` (customer / salesperson) or the employee. */
   groupBy: GroupBy;
+  /** "show" = list the items this login ticked as done too (8 Oct 2026). */
+  done: "" | "show";
 };
 
 export const EMPTY_FILTER: TaskFilter = {
-  q: "", customer: "", project: "", month: "", employee: "", activity: "", round: "", status: "", priority: "", groupBy: "section",
+  q: "", customer: "", project: "", month: "", employee: "", activity: "", round: "", status: "", priority: "", groupBy: "section", done: "",
 };
 
 /** Statuses beyond this many are noise, not a filter — the search box covers them. */
@@ -121,6 +125,7 @@ export function facetOptions(items: FilterableItem[], customer = ""): FacetOptio
 export function filterItems<T extends FilterableItem>(items: T[], f: TaskFilter): T[] {
   const words = f.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return items.filter((i) => {
+    if (i.done && f.done !== "show") return false;
     if (f.customer && i.customer !== f.customer) return false;
     if (f.project && i.project !== f.project) return false;
     if (f.month && i.month !== f.month) return false;
@@ -139,7 +144,7 @@ export function filterItems<T extends FilterableItem>(items: T[], f: TaskFilter)
 }
 
 export function isFiltering(f: TaskFilter): boolean {
-  return (Object.keys(f) as (keyof TaskFilter)[]).some((k) => k !== "groupBy" && f[k] !== "");
+  return (Object.keys(f) as (keyof TaskFilter)[]).some((k) => k !== "groupBy" && k !== "done" && f[k] !== "");
 }
 
 /** The group each item lands in under `groupBy` — the server's section, or the employee. */
@@ -156,6 +161,7 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
   shown: number;
 }) {
   const opts = facetOptions(items, filter.customer);
+  const ticked = items.filter((i) => i.done).length;
   const set = (patch: Partial<TaskFilter>) => onChange({ ...filter, ...patch });
   const select = (label: string, value: string, options: [string, string][], onPick: (v: string) => void,
     all: string) => (
@@ -190,7 +196,7 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
       {opts.priorities && select("Priority", filter.priority,
         (Object.keys(PRIORITY_LABEL) as Exclude<TaskFilter["priority"], "">[]).map((k) => [k, PRIORITY_LABEL[k]]),
         (v) => set({ priority: v as TaskFilter["priority"] }), "Any priority")}
-      {opts.employees.length > 0 && items.some((i) => i.section) && (
+      {opts.employees.length > 0 && (items.some((i) => i.section) || opts.employees.length > 1) && (
         <div className="inline-flex rounded-control bg-surface-1 p-0.5 ring-1 ring-inset ring-subtle" role="group" aria-label="Group by">
           {(["section", "employee"] as GroupBy[]).map((g) => (
             <button key={g} type="button" aria-pressed={filter.groupBy === g} onClick={() => set({ groupBy: g })}
@@ -201,8 +207,15 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
           ))}
         </div>
       )}
+      {ticked > 0 && (
+        <button type="button" aria-pressed={filter.done === "show"} onClick={() => set({ done: filter.done === "show" ? "" : "show" })}
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${filter.done === "show"
+            ? "border-emerald-500 bg-emerald-600 text-white" : "border-subtle bg-surface-1 text-secondary hover:text-primary"}`}>
+          {filter.done === "show" ? `Hide ticked (${ticked})` : `Show ticked (${ticked})`}
+        </button>
+      )}
       <span className="ml-auto text-xs text-muted tnum" aria-live="polite">
-        {isFiltering(filter) ? `${shown} of ${items.length}` : `${items.length} item${items.length === 1 ? "" : "s"}`}
+        {isFiltering(filter) || ticked ? `${shown} of ${items.length}` : `${items.length} item${items.length === 1 ? "" : "s"}`}
       </span>
       {isFiltering(filter) && (
         <button type="button" onClick={() => onChange(EMPTY_FILTER)}

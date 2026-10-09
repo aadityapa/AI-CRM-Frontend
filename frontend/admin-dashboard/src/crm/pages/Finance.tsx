@@ -2,7 +2,7 @@
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Ban, Building2, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText,
+  Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
   IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search, Undo2,
   FileSpreadsheet, Landmark, ScrollText,
 } from "lucide-react";
@@ -21,7 +21,7 @@ import {
 } from "../components/ui";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import {
-  InfoChip, SectionHeaderBanner, WizardField, WizardFooter, WizardShell, WizardStepCard,
+  InfoChip, SectionHeaderBanner, WizardField, WizardFooter, WizardGroup, WizardShell, WizardStepCard,
   WizardTopBar, type WizardStep,
 } from "../components/wizard";
 import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
@@ -31,7 +31,7 @@ import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
 import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
 } from "../components/invoice/ProformaActions";
-import { CustomerApprovalCard } from "../components/invoice/CustomerApprovalCard";
+import { InvoiceJourney } from "../components/invoice/InvoiceJourney";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 /* ---------------------------------------------------------------- helpers */
 
@@ -1017,7 +1017,6 @@ function POFormModal({
     );
   }
 
-  const gridCls = "grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2";
   const branchOptions = branches.map((b) => (
     <option key={b.id} value={b.id}>{b.branch_name}{b.is_primary ? " (primary)" : ""}</option>
   ));
@@ -1028,133 +1027,187 @@ function POFormModal({
   const billingAddressText = formatAddrForm(billingAddr);
   const deliveryAddressText = formatAddrForm(deliveryAddr);
   const contactName = contacts.find((c) => String(c.id) === contactId)?.name;
-  const readonlyCls = `${inputCls} bg-surface-2 text-secondary`;
   const showGstCalc = slabN !== null && totalN !== undefined;
   const allocLocked = isEdit && hadExistingAlloc;
+
+  // PO form redesign (8 Oct 2026): each step is grouped into labelled blocks
+  // (`WizardGroup`), dates / terms / GST take one-tap picks, and the PO being
+  // built rides at the top of every step (`PoLiveStrip`) so nobody has to go
+  // to Review to see what they are about to create. Same fields, same payload.
+  const customerName = customers[Number(customerId)] || "";
+  const employeeName = employees.find((e) => e.value === employeeId)?.label || "";
+  const periodMonths = startDate && endDate && endDate >= startDate
+    ? Math.max(1, Math.round((new Date(`${endDate}T00:00:00`).getTime() - new Date(`${startDate}T00:00:00`).getTime()) / (30.44 * 86400000)))
+    : null;
+  const setPeriod = (months: number) => {
+    const from = startDate || new Date().toISOString().slice(0, 10);
+    const d = new Date(`${from}T00:00:00`);
+    d.setMonth(d.getMonth() + months);
+    d.setDate(d.getDate() - 1);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    if (!startDate) setStartDate(from);
+    setEndDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+  };
+  const PICK = "rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors";
+  const pickCls = (on: boolean) => `${PICK} ${on
+    ? "border-indigo-500 bg-indigo-600 text-white shadow-raised"
+    : "border-subtle bg-surface-1 text-secondary hover:border-indigo-300 hover:text-primary"}`;
+  const TERMS = ["Net 30 days", "Net 45 days", "Net 60 days", "Net 90 days", "Immediate"];
+  const liveStrip = (
+    <div className="mb-5 grid grid-cols-2 gap-2 rounded-card border border-indigo-100 bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 p-3 text-xs dark:border-indigo-900 dark:from-indigo-950/40 dark:via-sky-950/30 dark:to-emerald-950/30 sm:grid-cols-4">
+      {[
+        { k: "Customer", v: customerName || "Not chosen" , ok: !!customerId },
+        { k: "PO No.", v: poNumber.trim() || "—", ok: !!poNumber.trim() && !poNumberTaken },
+        { k: "PO value", v: totalN !== undefined && totalN > 0 ? inr(totalN) : "—", ok: totalN !== undefined && totalN > 0 },
+        { k: "Period", v: startDate || endDate ? `${startDate ? fmtDate(startDate) : "…"} → ${endDate ? fmtDate(endDate) : "…"}${periodMonths ? ` · ${periodMonths} mo` : ""}` : "—", ok: !!(startDate && endDate) },
+      ].map((c) => (
+        <div key={c.k} className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted">{c.k}</div>
+          <div className={`truncate font-semibold ${c.ok ? "text-primary" : "text-muted"}`} title={c.v}>{c.v}</div>
+        </div>
+      ))}
+    </div>
+  );
 
   const renderStep = (key: string) => {
     if (key === "header") {
       return (
-        <div className={gridCls}>
-          <WizardField label="Customer" required icon="building" filled={!!customerId}>
-            <select
-              className={inputCls}
-              value={customerId}
-              onChange={(e) => {
-                const v = e.target.value;
-                setCustomerId(v);
-                // Editable on EDIT too (user request, 26 Aug 2026) — a wrong
-                // pick must be fixable. Everything customer-scoped resets;
-                // the server refuses the save if invoices/allocations exist.
-                if (isEdit) {
-                  setBillingId(""); setDeliveryId(""); setContactId("");
-                  setBillingAddr(emptyAddr()); setDeliveryAddr(emptyAddr());
-                  setAllocProjectId(""); setAllocAmount("");
-                  setBranches([]); setContacts([]);
-                  if (v) {
-                    crmGet<any[]>(`/api/customers/${v}/branches`).then((r) => setBranches(r.data || [])).catch(() => {});
-                    crmGet<any[]>(`/api/customers/${v}/contacts`).then((r) => setContacts(r.data || [])).catch(() => {});
+        <div className="space-y-5">
+          {liveStrip}
+          <WizardGroup icon={Building2} title="Who it is from" accent="from-indigo-500 to-violet-600"
+            done={!!customerId && !!poNumber.trim() && !poNumberTaken}
+            hint="The customer's purchase order — its number is the customer's reference and is checked for duplicates as you type.">
+            <WizardField label="Customer" required icon="building" filled={!!customerId}>
+              <select
+                className={inputCls}
+                value={customerId}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCustomerId(v);
+                  // Editable on EDIT too (user request, 26 Aug 2026) — a wrong
+                  // pick must be fixable. Everything customer-scoped resets;
+                  // the server refuses the save if invoices/allocations exist.
+                  if (isEdit) {
+                    setBillingId(""); setDeliveryId(""); setContactId("");
+                    setBillingAddr(emptyAddr()); setDeliveryAddr(emptyAddr());
+                    setAllocProjectId(""); setAllocAmount("");
+                    setBranches([]); setContacts([]);
+                    if (v) {
+                      crmGet<any[]>(`/api/customers/${v}/branches`).then((r) => setBranches(r.data || [])).catch(() => {});
+                      crmGet<any[]>(`/api/customers/${v}/contacts`).then((r) => setContacts(r.data || [])).catch(() => {});
+                    }
                   }
-                }
-              }}
+                }}
+              >
+                <option value="">Select customer…</option>
+                {Object.entries(customers).map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            </WizardField>
+            <WizardField label="PO No" required icon="hash" filled={!!poNumber.trim() && !poNumberTaken}
+              error={poNumberTaken || undefined}>
+              <input
+                className={inputCls}
+                value={poNumber}
+                onChange={(e) => setPoNumber(e.target.value)}
+                placeholder="e.g. 4560474441"
+              />
+            </WizardField>
+            <WizardField label="Employee it funds (optional)" icon="user" filled={!!employeeId}>
+              <SearchableSelect
+                value={employeeId}
+                options={employees}
+                searchable
+                placeholder="Search employee…"
+                onChange={setEmployeeId}
+              />
+            </WizardField>
+            <WizardField label="PO Date" icon="calendar" filled={!!receivedDate}>
+              <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
+            </WizardField>
+          </WizardGroup>
+
+          <WizardGroup icon={CalendarRange} title="How long it runs" accent="from-sky-500 to-cyan-600"
+            done={!!startDate && !!endDate && endDate >= startDate}
+            hint="Pick the start date, then a length — or type the end date yourself."
+            action={
+              <div className="flex flex-wrap gap-1.5">
+                {[3, 6, 12].map((m) => (
+                  <button key={m} type="button" className={pickCls(periodMonths === m)} onClick={() => setPeriod(m)}>
+                    {m === 12 ? "1 year" : `${m} months`}
+                  </button>
+                ))}
+              </div>
+            }>
+            <WizardField label="PO Start Date" icon="calendar" filled={!!startDate}>
+              <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </WizardField>
+            <WizardField
+              label="PO End Date"
+              icon="calendar"
+              filled={!!endDate}
+              error={startDate && endDate && endDate < startDate ? "Must be on or after PO Start Date" : undefined}
             >
-              <option value="">Select customer…</option>
-              {Object.entries(customers).map(([id, name]) => (
-                <option key={id} value={id}>{name}</option>
-              ))}
-            </select>
-          </WizardField>
-          <WizardField label="PO No" required icon="hash" filled={!!poNumber.trim() && !poNumberTaken}
-            error={poNumberTaken || undefined}>
-            <input
-              className={inputCls}
-              value={poNumber}
-              onChange={(e) => setPoNumber(e.target.value)}
-              placeholder="e.g. PO-2026-001"
-            />
-          </WizardField>
-          <WizardField label="Employee" icon="user" filled={!!employeeId}>
-            <SearchableSelect
-              value={employeeId}
-              options={employees}
-              searchable
-              placeholder="Search employee…"
-              onChange={setEmployeeId}
-            />
-          </WizardField>
-          <WizardField label="PO Date" icon="calendar" filled={!!receivedDate}>
-            <input type="date" className={inputCls} value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} />
-          </WizardField>
-          <WizardField label="PO Start Date" icon="calendar" filled={!!startDate}>
-            <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </WizardField>
-          <WizardField
-            label="PO End Date"
-            icon="calendar"
-            filled={!!endDate}
-            error={startDate && endDate && endDate < startDate ? "Must be on or after PO Start Date" : undefined}
-          >
-            <input
-              type="date"
-              className={inputCls}
-              value={endDate}
-              min={startDate || undefined}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </WizardField>
+              <input
+                type="date"
+                className={inputCls}
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </WizardField>
+          </WizardGroup>
           {/* Contact person removed from the header (26 Aug 2026, user decision):
               a contact only means something once a project is chosen, so the
-              field now lives on the Allocate step / Allocate modal. Legacy POs
-              keep their stored header contact untouched. */}
+              field now lives on the Allocate step / Allocate modal. */}
         </div>
       );
     }
     if (key === "address") {
+      const addrGroup = (kind: "billing" | "delivery") => {
+        const isBilling = kind === "billing";
+        const id = isBilling ? billingId : deliveryId;
+        return (
+          <WizardGroup key={kind} icon={MapPin} cols={1}
+            title={isBilling ? "Billing address" : "Delivery address"}
+            accent={isBilling ? "from-violet-500 to-fuchsia-600" : "from-emerald-500 to-teal-600"}
+            done={!!id}
+            hint={isBilling ? "Printed as Bill To — the branch the invoice is raised on." : "Where the service is delivered (Ship To)."}
+            action={!isBilling && billingId && deliveryId !== billingId ? (
+              <button type="button" className={pickCls(false)} onClick={() => { selectDeliveryBranch(billingId); }}>
+                Same as billing
+              </button>
+            ) : undefined}>
+            <WizardField label={isBilling ? "Billing branch" : "Delivery branch"} icon="map" filled={!!id}>
+              <select
+                className={inputCls}
+                value={id}
+                onChange={(e) => (isBilling ? selectBillingBranch(e.target.value) : selectDeliveryBranch(e.target.value))}
+                disabled={!customerId}
+              >
+                <option value="">{customerId ? "Select branch…" : "Select a customer first…"}</option>
+                {branchOptions}
+              </select>
+            </WizardField>
+            {id ? (
+              <PoAddressFields
+                title={isBilling ? "Billing Address" : "Delivery Address"}
+                addr={isBilling ? billingAddr : deliveryAddr}
+                onChange={isBilling ? setBillingAddr : setDeliveryAddr}
+              />
+            ) : (
+              <p className="text-xs text-muted">Pick a branch to load its address — you can edit it for this PO.</p>
+            )}
+          </WizardGroup>
+        );
+      };
       return (
-        <div className={gridCls}>
-          <div className="space-y-3">
-            <WizardField label="Billing branch" icon="map" filled={!!billingId}>
-              <select
-                className={inputCls}
-                value={billingId}
-                onChange={(e) => selectBillingBranch(e.target.value)}
-                disabled={!customerId}
-              >
-                <option value="">—</option>
-                {branchOptions}
-              </select>
-            </WizardField>
-            {billingId ? (
-              <PoAddressFields
-                title="Billing Address"
-                addr={billingAddr}
-                onChange={setBillingAddr}
-              />
-            ) : (
-              <p className="text-xs text-muted">Select a billing branch to load and edit its address.</p>
-            )}
-          </div>
-          <div className="space-y-3">
-            <WizardField label="Delivery branch" icon="map" filled={!!deliveryId}>
-              <select
-                className={inputCls}
-                value={deliveryId}
-                onChange={(e) => selectDeliveryBranch(e.target.value)}
-                disabled={!customerId}
-              >
-                <option value="">—</option>
-                {branchOptions}
-              </select>
-            </WizardField>
-            {deliveryId ? (
-              <PoAddressFields
-                title="Delivery Address"
-                addr={deliveryAddr}
-                onChange={setDeliveryAddr}
-              />
-            ) : (
-              <p className="text-xs text-muted">Select a delivery branch to load and edit its address.</p>
-            )}
+        <div className="space-y-5">
+          {liveStrip}
+          <div className="grid gap-5 lg:grid-cols-2">
+            {addrGroup("billing")}
+            {addrGroup("delivery")}
           </div>
         </div>
       );
@@ -1163,216 +1216,224 @@ function POFormModal({
       const canPickProject = !!(customerId && billingId) && !allocLocked;
       const projectName = projects.find((p) => String(p.id) === allocProjectId)?.name;
       return (
-        <div className={gridCls}>
-          <WizardField label="Project" icon="building" filled={!!allocProjectId}>
-            <select
-              className={inputCls}
-              value={allocProjectId}
-              disabled={!canPickProject}
-              onChange={(e) => {
-                const id = e.target.value;
-                setAllocProjectId(id);
-                if (!id) setAllocAmount("");
-                else if (allocAmount === "" || allocAmount === totalValue) setAllocAmount(totalValue);
-              }}
-            >
-              <option value="">
-                {allocLocked
-                  ? (projectName || `Project #${allocProjectId}`)
-                  : !customerId
-                    ? "Select a customer first…"
-                    : !billingId
-                      ? "Select a billing branch first…"
-                      : projects.length === 0
-                        ? "No projects for this customer/branch"
-                        : "Select project…"}
-              </option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-              {allocLocked && allocProjectId && !projects.some((p) => String(p.id) === allocProjectId) && (
-                <option value={allocProjectId}>{projectName || `Project #${allocProjectId}`}</option>
-              )}
-            </select>
-          </WizardField>
-          <WizardField label="Allocated amount (₹)" icon="hash" filled={!!allocAmount && !!allocProjectId}>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              className={inputCls}
-              value={allocAmount}
-              disabled={!allocProjectId || allocLocked}
-              placeholder={allocProjectId ? "Defaults to full PO value" : "Select a project first"}
-              onChange={(e) => setAllocAmount(e.target.value)}
-            />
-          </WizardField>
-          {/* Contact person moved HERE from the PO header (26 Aug 2026): it is
-              recorded on the allocation, where it actually means something. */}
-          <WizardField label="Contact person" icon="user" filled={!!contactId}>
-            <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-5">
+          {liveStrip}
+          <WizardGroup icon={Layers} title="Which project it funds" accent="from-amber-500 to-orange-600"
+            done={!!allocProjectId}
+            hint={allocLocked
+              ? "Existing allocation shown — add more from the PO page."
+              : "Optional. Invoices of this project draw on the PO. Skip it and allocate later from the PO page."}>
+            <WizardField label="Project" icon="building" filled={!!allocProjectId}>
               <select
-                className={`${inputCls} min-w-0 flex-1`}
-                value={contactId}
-                onChange={(e) => setContactId(e.target.value)}
-                disabled={!allocProjectId || allocLocked}
+                className={inputCls}
+                value={allocProjectId}
+                disabled={!canPickProject}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  setAllocProjectId(pid);
+                  if (!pid) setAllocAmount("");
+                  else if (allocAmount === "" || allocAmount === totalValue) setAllocAmount(totalValue);
+                }}
               >
-                <option value="">—</option>
-                {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="">
+                  {allocLocked
+                    ? (projectName || `Project #${allocProjectId}`)
+                    : !customerId
+                      ? "Select a customer first…"
+                      : !billingId
+                        ? "Select a billing branch first…"
+                        : projects.length === 0
+                          ? "No projects for this customer/branch"
+                          : "Select project…"}
+                </option>
+                {projects.map((pr) => (
+                  <option key={pr.id} value={pr.id}>{pr.name}</option>
+                ))}
+                {allocLocked && allocProjectId && !projects.some((pr) => String(pr.id) === allocProjectId) && (
+                  <option value={allocProjectId}>{projectName || `Project #${allocProjectId}`}</option>
+                )}
               </select>
-              <button
-                type="button"
-                className={`${btnSecondary} !px-2.5 !py-2 shrink-0`}
-                disabled={!customerId}
-                title={!customerId ? "Select a customer first" : "Create new contact person"}
-                onClick={() => setShowNewContact(true)}
-              >
-                <Plus size={15} /> New Contact
-              </button>
+            </WizardField>
+            <WizardField label="Allocated amount (₹)" icon="hash" filled={!!allocAmount && !!allocProjectId}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                className={inputCls}
+                value={allocAmount}
+                disabled={!allocProjectId || allocLocked}
+                placeholder={allocProjectId ? "Defaults to full PO value" : "Select a project first"}
+                onChange={(e) => setAllocAmount(e.target.value)}
+              />
+            </WizardField>
+            {/* Contact person lives on the allocation (26 Aug 2026). */}
+            <WizardField label="Customer contact for this project" icon="user" filled={!!contactId}>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className={`${inputCls} min-w-0 flex-1`}
+                  value={contactId}
+                  onChange={(e) => setContactId(e.target.value)}
+                  disabled={!allocProjectId || allocLocked}
+                >
+                  <option value="">—</option>
+                  {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button
+                  type="button"
+                  className={`${btnSecondary} !px-2.5 !py-2 shrink-0`}
+                  disabled={!customerId}
+                  title={!customerId ? "Select a customer first" : "Create new contact person"}
+                  onClick={() => setShowNewContact(true)}
+                >
+                  <Plus size={15} /> New Contact
+                </button>
+              </div>
+            </WizardField>
+          </WizardGroup>
+          {allocProjectId && totalN !== undefined && totalN > 0 && !allocLocked && (
+            <div className="rounded-card border border-subtle bg-surface-1 p-3 text-xs text-secondary">
+              <div className="mb-1 flex justify-between font-semibold text-primary">
+                <span>{projectName}</span>
+                <span className="tabular-nums">{inr(num(allocAmount) ?? totalN)} of {inr(totalN)}</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+                <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-500"
+                  style={{ width: `${Math.min(100, Math.round(((num(allocAmount) ?? totalN) / totalN) * 100))}%` }} />
+              </div>
             </div>
-          </WizardField>
-          {allocProjectId && (
-            <p className="sm:col-span-2 text-xs text-muted">
-              {allocLocked
-                ? <>Existing allocation to <span className="font-semibold text-secondary">{projectName || `#${allocProjectId}`}</span>
-                  {allocAmount && num(allocAmount) !== undefined ? ` · ${inr(num(allocAmount)!)}` : ""}. Use Allocate on the PO detail to add more.</>
-                : <>
-                    Mapping to <span className="font-semibold text-secondary">{projectName}</span>
-                    {totalN !== undefined ? ` · PO value ${inr(totalN)}` : ""}
-                    {(allocAmount === "" || allocAmount === totalValue) && totalN !== undefined
-                      ? " (allocated amount defaults to full PO value)"
-                      : ""}
-                  </>}
-            </p>
           )}
         </div>
       );
     }
     if (key === "commercial") {
       return (
-        <div className={gridCls}>
-          <WizardField label="PO Type" required icon="hash" filled={!!poType}>
-            <select className={inputCls} value={poType} onChange={(e) => setPoType(e.target.value)}>
-              <option value="Open PO">Open PO</option>
-              <option value="Regular PO">Regular PO</option>
-              {(poType === "Standard" || poType === "Blanket") && (
-                <option value={poType}>{poType} (legacy)</option>
-              )}
-            </select>
-          </WizardField>
-          <WizardField label="PO Value (₹)" required icon="hash" filled={totalN !== undefined && totalN > 0}>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              className={inputCls}
-              value={totalValue}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!allocLocked && (allocAmount === "" || allocAmount === totalValue)) setAllocAmount(v);
-                setTotalValue(v);
-              }}
-            />
-          </WizardField>
-          <WizardField label="Tax Slab (GST)" icon="hash" filled={!!taxSlabKey}>
-            <select className={inputCls} value={taxSlabKey} onChange={(e) => setTaxSlabKey(e.target.value)}>
-              <option value="">Select slab…</option>
-              {GST_SLAB_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </WizardField>
-          <div className="flex items-end pb-1">
-            <label className="inline-flex items-center gap-2 text-sm font-semibold text-primary cursor-pointer">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-subtle text-accent focus:ring-accent"
-                checked={interState}
-                onChange={(e) => setInterState(e.target.checked)}
-              />
-              IGST (inter-state supply)
-            </label>
-          </div>
-          {showGstCalc && (
-            <>
-              <WizardField label="Sub Value" icon="hash" filled>
-                <input className={readonlyCls} readOnly value={fmtAmt2(subValueAmt)} tabIndex={-1} />
-              </WizardField>
-              <WizardField label="GST Amount" icon="hash" filled>
-                <input className={readonlyCls} readOnly value={fmtAmt2(gstAmt)} tabIndex={-1} />
-              </WizardField>
-              <WizardField label="Total Value" icon="hash" filled>
-                <input className={readonlyCls} readOnly value={fmtAmt2(totalWithGstAmt)} tabIndex={-1} />
-              </WizardField>
-              {interState ? (
-                <WizardField label="IGST Amount" icon="hash" filled>
-                  <input className={readonlyCls} readOnly value={fmtAmt2(gstAmt)} tabIndex={-1} />
-                </WizardField>
-              ) : (
-                <>
-                  <WizardField label="SGST Amount" icon="hash" filled>
-                    <input className={readonlyCls} readOnly value={fmtAmt2(sgstAmt)} tabIndex={-1} />
-                  </WizardField>
-                  <WizardField label="CGST Amount" icon="hash" filled>
-                    <input className={readonlyCls} readOnly value={fmtAmt2(cgstAmt)} tabIndex={-1} />
-                  </WizardField>
-                </>
-              )}
-            </>
-          )}
-          <div className="sm:col-span-2">
-            <WizardField label="Payment terms">
-              <textarea className={inputCls} rows={2} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. Net 30 from invoice date" />
+        <div className="space-y-5">
+          {liveStrip}
+          <WizardGroup icon={IndianRupee} title="PO value" accent="from-emerald-500 to-teal-600"
+            done={totalN !== undefined && totalN > 0}
+            hint="The value BEFORE GST — invoices draw on it by their sub-total.">
+            <WizardField label="PO Type" required icon="hash" filled={!!poType}>
+              <div className="flex flex-wrap gap-1.5">
+                {["Regular PO", "Open PO"].map((t) => (
+                  <button key={t} type="button" className={pickCls(poType === t)} onClick={() => setPoType(t)}>{t}</button>
+                ))}
+                {(poType === "Standard" || poType === "Blanket") && (
+                  <span className={pickCls(true)}>{poType} (legacy)</span>
+                )}
+              </div>
             </WizardField>
-          </div>
+            <WizardField label="PO Value (₹, before GST)" required icon="hash" filled={totalN !== undefined && totalN > 0}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                className={`${inputCls} text-lg font-bold tabular-nums`}
+                value={totalValue}
+                placeholder="0.00"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!allocLocked && (allocAmount === "" || allocAmount === totalValue)) setAllocAmount(v);
+                  setTotalValue(v);
+                }}
+              />
+            </WizardField>
+          </WizardGroup>
+
+          <WizardGroup icon={Percent} title="GST" accent="from-violet-500 to-indigo-600" done={!!taxSlabKey}
+            hint="Pick the slab; IGST for a customer in another state, else CGST + SGST.">
+            <WizardField label="Tax Slab (GST)" icon="hash" filled={!!taxSlabKey}>
+              <div className="flex flex-wrap gap-1.5">
+                {GST_SLAB_OPTIONS.map((o) => (
+                  <button key={o.value} type="button" className={pickCls(taxSlabKey === o.value)}
+                    onClick={() => setTaxSlabKey(taxSlabKey === o.value ? "" : o.value)}>{o.label}</button>
+                ))}
+              </div>
+            </WizardField>
+            <WizardField label="Supply">
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" className={pickCls(!interState)} onClick={() => setInterState(false)}>Same state · CGST + SGST</button>
+                <button type="button" className={pickCls(interState)} onClick={() => setInterState(true)}>Inter-state · IGST</button>
+              </div>
+            </WizardField>
+          </WizardGroup>
+
+          {showGstCalc && (
+            <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+              <div className="grid grid-cols-2 gap-px bg-[color:var(--border-subtle,#e2e8f0)] sm:grid-cols-4">
+                {[
+                  { k: "Sub value", v: fmtAmt2(subValueAmt) },
+                  ...(interState
+                    ? [{ k: "IGST", v: fmtAmt2(gstAmt) }]
+                    : [{ k: "CGST", v: fmtAmt2(cgstAmt) }, { k: "SGST", v: fmtAmt2(sgstAmt) }]),
+                  { k: "GST total", v: fmtAmt2(gstAmt) },
+                ].map((c) => (
+                  <div key={c.k} className="bg-surface-1 px-3 py-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-muted">{c.k}</div>
+                    <div className="font-semibold tabular-nums text-primary">₹ {c.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-white">
+                <span className="text-xs font-bold uppercase tracking-wide">Total value incl. GST</span>
+                <span className="text-lg font-extrabold tabular-nums">₹ {fmtAmt2(totalWithGstAmt)}</span>
+              </div>
+            </div>
+          )}
+
+          <WizardGroup icon={FileText} title="Payment terms" accent="from-sky-500 to-blue-600" cols={1}
+            done={!!paymentTerms.trim()} hint="The due date of every invoice on this PO comes from here.">
+            <div className="flex flex-wrap gap-1.5">
+              {TERMS.map((t) => (
+                <button key={t} type="button" className={pickCls(paymentTerms.trim() === t)} onClick={() => setPaymentTerms(t)}>{t}</button>
+              ))}
+            </div>
+            <textarea className={inputCls} rows={2} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="e.g. Net 30 days from invoice date" aria-label="Payment terms" />
+          </WizardGroup>
         </div>
       );
     }
-    // review
+    // review — a PO "card" the way it will read on the PO page
     const allocProjectName = projects.find((p) => String(p.id) === allocProjectId)?.name;
+    const reviewRow = (k: string, v: React.ReactNode) => (
+      <div className="flex justify-between gap-3 border-b border-subtle py-1.5 last:border-0">
+        <dt className="text-muted">{k}</dt><dd className="text-right font-semibold text-primary">{v}</dd>
+      </div>
+    );
     return (
       <div className="space-y-5">
-        <div className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 md:grid-cols-3">
-          <InfoItem label="Customer">{customers[Number(customerId)] || "—"}</InfoItem>
-          <InfoItem label="PO No">{poNumber.trim() || "—"}</InfoItem>
-          <InfoItem label="Employee">{employees.find((e) => e.value === employeeId)?.label || "—"}</InfoItem>
-          <InfoItem label="PO Date">{receivedDate ? fmtDate(receivedDate) : "—"}</InfoItem>
-          <InfoItem label="PO Start Date">{startDate ? fmtDate(startDate) : "—"}</InfoItem>
-          <InfoItem label="PO End Date">{endDate ? fmtDate(endDate) : "—"}</InfoItem>
-          <InfoItem label="PO type">{poType}</InfoItem>
-          <InfoItem label="Contact person">{contactName || "—"}</InfoItem>
-          <InfoItem label="Billing branch">
-            <span className="block">{billingBranchName || "—"}</span>
-            {billingAddressText ? <span className="mt-0.5 block text-xs font-normal text-muted">{billingAddressText}</span> : null}
-          </InfoItem>
-          <InfoItem label="Delivery branch">
-            <span className="block">{deliveryBranchName || "—"}</span>
-            {deliveryAddressText ? <span className="mt-0.5 block text-xs font-normal text-muted">{deliveryAddressText}</span> : null}
-          </InfoItem>
-          <InfoItem label="Allocated project">
-            {allocProjectId
-              ? `${allocProjectName || `#${allocProjectId}`} · ${
-                  allocAmount && num(allocAmount) !== undefined ? inr(num(allocAmount)!) : "full PO value"
-                }`
-              : "—"}
-          </InfoItem>
-          <InfoItem label="PO Value" numeric>{totalN !== undefined ? inr(totalN) : "—"}</InfoItem>
-          <InfoItem label="Tax slab">{taxSlabKey ? (GST_SLAB_OPTIONS.find((o) => o.value === taxSlabKey)?.label || `GST ${taxSlabKey}%`) : "—"}</InfoItem>
-          <InfoItem label="IGST">{interState ? "Yes" : "No"}</InfoItem>
-          <InfoItem label="Sub Value" numeric>{showGstCalc ? inr(subValueAmt) : "—"}</InfoItem>
-          <InfoItem label="GST Amount" numeric>{showGstCalc ? inr(gstAmt) : "—"}</InfoItem>
-          <InfoItem label="Total Value" numeric>{showGstCalc ? inr(totalWithGstAmt) : "—"}</InfoItem>
-          <InfoItem label="GST split">
-            {!showGstCalc
-              ? "—"
-              : interState
-                ? `IGST ${fmtAmt2(gstAmt)}`
-                : `SGST ${fmtAmt2(sgstAmt)} + CGST ${fmtAmt2(cgstAmt)}`}
-          </InfoItem>
+        <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+          <div className="flex flex-wrap items-end justify-between gap-3 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-5 py-4 text-white">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wide text-white/80">Purchase order · {poType}</div>
+              <div className="text-xl font-extrabold">{poNumber.trim() || "—"}</div>
+              <div className="text-sm text-white/90">{customerName || "—"}{employeeName ? ` · for ${employeeName}` : ""}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-white/80">PO value (before GST)</div>
+              <div className="text-2xl font-extrabold tabular-nums">{totalN !== undefined ? inr(totalN) : "—"}</div>
+              {showGstCalc && <div className="text-xs text-white/85">₹ {fmtAmt2(totalWithGstAmt)} incl. GST</div>}
+            </div>
+          </div>
+          <div className="grid gap-x-8 px-5 py-4 text-sm md:grid-cols-2">
+            <dl>
+              {reviewRow("PO date", receivedDate ? fmtDate(receivedDate) : "—")}
+              {reviewRow("Period", `${startDate ? fmtDate(startDate) : "—"} → ${endDate ? fmtDate(endDate) : "—"}${periodMonths ? ` (${periodMonths} mo)` : ""}`)}
+              {reviewRow("Payment terms", paymentTerms.trim() || "—")}
+              {reviewRow("GST", taxSlabKey
+                ? `${GST_SLAB_OPTIONS.find((o) => o.value === taxSlabKey)?.label || `GST ${taxSlabKey}%`} · ${interState ? "IGST" : "CGST + SGST"}`
+                : "—")}
+              {showGstCalc && reviewRow("GST split", interState ? `IGST ₹ ${fmtAmt2(gstAmt)}` : `CGST ₹ ${fmtAmt2(cgstAmt)} + SGST ₹ ${fmtAmt2(sgstAmt)}`)}
+            </dl>
+            <dl>
+              {reviewRow("Bill to", <span>{billingBranchName || "—"}{billingAddressText ? <span className="block text-xs font-normal text-muted">{billingAddressText}</span> : null}</span>)}
+              {reviewRow("Ship to", <span>{deliveryBranchName || "—"}{deliveryAddressText ? <span className="block text-xs font-normal text-muted">{deliveryAddressText}</span> : null}</span>)}
+              {reviewRow("Project", allocProjectId
+                ? `${allocProjectName || `#${allocProjectId}`} · ${allocAmount && num(allocAmount) !== undefined ? inr(num(allocAmount)!) : "full PO value"}`
+                : "Not allocated yet")}
+              {reviewRow("Customer contact", contactName || "—")}
+            </dl>
+          </div>
         </div>
-        {paymentTerms.trim() && (
-          <InfoItem label="Payment terms">{paymentTerms}</InfoItem>
-        )}
       </div>
     );
   };
@@ -1410,7 +1471,7 @@ function POFormModal({
         />
       }
     >
-      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir} width="wide">
         <SectionHeaderBanner title={currentStep.title} description={currentStep.subtitle} icon={currentStep.icon} />
         {err && <div className="mb-4 text-sm text-danger" role="alert">{err}</div>}
         {renderStep(currentStep.key)}
@@ -1954,7 +2015,7 @@ function RenewPoModal({
       )}
       <WizardField label="New PO number" required icon="hash"
         info="As issued by the customer — this is their reference, not ours.">
-        <input className={inputCls} value={poNumber} autoFocus
+        <input className={inputCls} value={poNumber}
           onChange={(e) => setPoNumber(e.target.value)} placeholder="e.g. 4500123456" />
       </WizardField>
       <WizardField label="PO value (₹)" required icon="hash"
@@ -2453,7 +2514,7 @@ function InvoiceFormModal({
         />
       }
     >
-      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir}>
+      <WizardStepCard stepKey={currentStep.key} stepDir={stepDir} width="wide">
         <SectionHeaderBanner title={currentStep.title} description={currentStep.subtitle} icon={currentStep.icon} />
         {err && <div className="mb-4 text-sm text-danger" role="alert">{err}</div>}
         {renderStep(currentStep.key)}
@@ -2810,6 +2871,7 @@ export function InvoiceDetailPage() {
     return false;
   });
   const [docxBusy, setDocxBusy] = useState(false);
+  const [einvBusy, setEinvBusy] = useState(false);
   const [revKey, setRevKey] = useState(0);
   // Proforma → Tax (23 Sep 2026): Finance converts / returns / corrects.
   // Convert + Return are an APPROVAL button (`invoice.convert_proforma`) —
@@ -2921,6 +2983,30 @@ export function InvoiceDetailPage() {
     }
   };
 
+  // The e-invoice (8 Oct 2026): the tax invoice with its IRN · Ack No. · Ack
+  // Date band and a QR to the public e-invoice page — opened in a new tab.
+  const einvoiceReady = !isProforma && !!inv.einvoice?.irn;
+  const openEInvoice = async () => {
+    const tab = window.open("", "_blank");
+    setEinvBusy(true);
+    try {
+      const res = await authFetch(`/api/invoices/${id}/einvoice.pdf`);
+      if (!res.ok) {
+        let msg = `E-invoice failed (${res.status})`;
+        try { msg = (await res.json())?.detail || msg; } catch { /* not JSON */ }
+        throw new Error(msg);
+      }
+      const href = URL.createObjectURL(await res.blob());
+      if (tab) tab.location.href = href; else window.open(href, "_blank");
+      window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } catch (e: any) {
+      tab?.close();
+      showToast(e?.message || "Could not open the e-invoice", "err");
+    } finally {
+      setEinvBusy(false);
+    }
+  };
+
   const paymentCols: Column<any>[] = [
     { key: "payment_date", label: "Date", render: (r) => fmtDate(r.payment_date) },
     { key: "amount", label: "Amount", render: (r) => inr(r.amount) },
@@ -2979,6 +3065,12 @@ export function InvoiceDetailPage() {
               )}
             </>
           )}
+          {einvoiceReady && (
+            <button type="button" className={HERO_BTN_SOLID} onClick={() => void openEInvoice()} disabled={einvBusy}
+              title="The e-invoice — this invoice with its IRN, Ack No. and Ack Date, and a QR to its public page">
+              <FileCheck2 size={15} /> {einvBusy ? "Opening…" : "E-invoice"}
+            </button>
+          )}
           {!isProforma && canRequestChange && (
             <button type="button" className={HERO_BTN} onClick={() => setShowEdit(true)}
               title="Request a change (reason required; approved by Sales / Sales Head)">
@@ -2987,7 +3079,7 @@ export function InvoiceDetailPage() {
           )}
           <button
             type="button"
-            className={isProforma ? HERO_BTN : HERO_BTN_SOLID}
+            className={isProforma || einvoiceReady ? HERO_BTN : HERO_BTN_SOLID}
             disabled={taxPdfBusy}
             onClick={downloadTaxInvoicePdf}
           >
@@ -3025,55 +3117,72 @@ export function InvoiceDetailPage() {
           onClose={() => setProformaModal(null)} onSaved={load} notify={showToast} />
       )}
 
-      <Card
-        title="Invoice"
-        hero
-      >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
-          <InfoItem label="Project">
-            {inv.project_id ? <CrmLink to={`projects/${inv.project_id}`} className="text-sky-600 hover:underline">{inv.project_name || `#${inv.project_id}`}</CrmLink> : "—"}
-          </InfoItem>
-          <InfoItem label="Purchase order">
-            {inv.po_id ? <CrmLink to={`pos/${inv.po_id}`} className="text-sky-600 hover:underline">{inv.po_number || `#${inv.po_id}`}</CrmLink> : "—"}
-          </InfoItem>
-          <InfoItem label="Invoice date">{fmtDate(inv.invoice_date)}</InfoItem>
-          <InfoItem label="Due date">{fmtDate(inv.due_date)}</InfoItem>
-          <InfoItem label="Sub-total" numeric>{inr(gst != null ? (gst.subtotal ?? gst.sub_total) : inv.sub_total)}</InfoItem>
-          <InfoItem label="Tax" numeric>{formatGstInr(displayTax)}</InfoItem>
-          <InfoItem label="State code">{stateLabel}</InfoItem>
-          <InfoItem label="Grand total" numeric><span className="font-bold">{formatGstInr(displayGrand)}</span></InfoItem>
-          <InfoItem label="Paid / Balance" numeric>{inr(paid)} / <span className="font-semibold">{formatGstInr(displayBalance)}</span></InfoItem>
-        </div>
-        {gst && (
-          <div className="mt-4 border-t border-subtle pt-4">
-            <InvoiceGstSection gst={gst} />
-          </div>
-        )}
-        {/* Money only moves on a TAX invoice — a Proforma takes no payments, TDS or change requests. */}
-        {canWrite && !isProforma && (
-          <div className="mt-4 flex flex-wrap gap-2 border-t border-subtle pt-4">
-            <button className={btnSecondary} onClick={generatePdf} disabled={pdfBusy}>
-              <FileDown size={15} /> {pdfBusy ? "Generating…" : "Generate PDF"}
-            </button>
-            <button className={btnPrimary} onClick={() => setShowPayment(true)} disabled={paymentBalance <= 0}>
-              <IndianRupee size={15} /> Record Payment
-            </button>
-            {!tds ? (
-              <button className={btnSecondary} onClick={() => setShowTds(true)}>Record TDS</button>
-            ) : (
-              <button className={btnSecondary} onClick={() => setShowTds(true)} disabled={Number(tds.tds_balance) <= 0}>
-                TDS Payment
-              </button>
-            )}
-          </div>
-        )}
-      </Card>
-
       {!isProforma && (
-        <CustomerApprovalCard invoiceId={inv.id} invoiceNumber={inv.invoice_number}
-          approval={inv.customer_approval} einvoice={inv.einvoice}
+        <InvoiceJourney inv={inv} canWrite={canWrite}
+          onPay={() => setShowPayment(true)} onTds={() => setShowTds(true)}
+          onOpenEInvoice={() => void openEInvoice()} einvoiceBusy={einvBusy}
           onChanged={load} notify={(m, k) => showToast(m, k)} />
       )}
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+        <Card title={`${docLabel} details`} hero>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+            <InfoItem label="Customer">{inv.customer_name || inv.buyer?.name || "—"}</InfoItem>
+            <InfoItem label="Project">
+              {inv.project_id ? <CrmLink to={`projects/${inv.project_id}`} className="text-sky-600 hover:underline">{inv.project_name || `#${inv.project_id}`}</CrmLink> : "—"}
+            </InfoItem>
+            <InfoItem label="Purchase order">
+              {inv.po_id ? <CrmLink to={`pos/${inv.po_id}`} className="text-sky-600 hover:underline">{inv.po_number || `#${inv.po_id}`}</CrmLink> : "—"}
+            </InfoItem>
+            <InfoItem label="Invoice date">{fmtDate(inv.invoice_date)}</InfoItem>
+            <InfoItem label="Due date">{fmtDate(inv.due_date)}</InfoItem>
+            <InfoItem label="State code">{stateLabel}</InfoItem>
+          </div>
+          {gst && (
+            <div className="mt-4 border-t border-subtle pt-4">
+              <InvoiceGstSection gst={gst} />
+            </div>
+          )}
+        </Card>
+
+        <section className="flex flex-col overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised" aria-label="Amounts">
+          <div className={`px-4 py-4 text-white ${isProforma ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-600"}`}>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-white/80">Grand total</div>
+            <div className="mt-0.5 text-2xl font-extrabold tabular-nums">{formatGstInr(displayGrand)}</div>
+            <div className="mt-1 text-xs text-white/85">incl. GST {formatGstInr(displayTax)}</div>
+          </div>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-2 px-4 py-3 text-sm">
+            <dt className="text-muted">Sub-total</dt>
+            <dd className="text-right font-semibold tabular-nums text-primary">{inr(gst != null ? (gst.subtotal ?? gst.sub_total) : inv.sub_total)}</dd>
+            <dt className="text-muted">GST</dt>
+            <dd className="text-right font-semibold tabular-nums text-primary">{formatGstInr(displayTax)}</dd>
+            {!isProforma && (
+              <>
+                <dt className="text-muted">Paid</dt>
+                <dd className="text-right font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{inr(paid)}</dd>
+                <dt className="font-semibold text-primary">Balance</dt>
+                <dd className="text-right text-base font-extrabold tabular-nums text-primary">{formatGstInr(displayBalance)}</dd>
+              </>
+            )}
+          </dl>
+          {!isProforma && displayGrand > 0 && (
+            <div className="px-4 pb-3">
+              <div className="h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+                <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"
+                  style={{ width: `${Math.min(100, Math.round((paid / displayGrand) * 100))}%` }} />
+              </div>
+              <div className="mt-1 text-[11px] text-muted">{Math.min(100, Math.round((paid / displayGrand) * 100))}% received</div>
+            </div>
+          )}
+          {canWrite && !isProforma && (
+            <div className="mt-auto border-t border-subtle px-4 py-3">
+              <button className={btnSecondary} onClick={generatePdf} disabled={pdfBusy}>
+                <FileDown size={15} /> {pdfBusy ? "Generating…" : "Generate PDF"}
+              </button>
+            </div>
+          )}
+        </section>
+      </div>
 
       {!isProforma && (
         <InvoiceRevisionsCard invoiceId={inv.id} meId={me.id} refreshKey={revKey}

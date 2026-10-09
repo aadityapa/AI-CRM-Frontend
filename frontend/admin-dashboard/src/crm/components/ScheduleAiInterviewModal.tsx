@@ -15,6 +15,7 @@ import { Bot } from "lucide-react";
 
 import { crmPost, crmPut } from "../api";
 import { realEmail } from "../lib/candidateEmail";
+import { useAiEngine } from "../../lib/aiEngine";
 import { ErrorBox, Modal, btnPrimary, btnSecondary, inputCls } from "./ui";
 import { SectionHeaderBanner, WizardField } from "./wizard";
 
@@ -69,9 +70,13 @@ export type RescheduleSeed = {
   previous: string;
   /** True when the candidate never answered a question (the common case). */
   notAttempted?: boolean;
+  /** 8 Oct 2026: the previous AI L1 PASSED — a fresh link must void it. */
+  passed?: boolean;
 };
 
 export const MIN_RESCHEDULE_NOTE = 5;
+/** Voiding a recorded verdict needs a real reason (server: 10). */
+export const MIN_VOID_NOTE = 10;
 
 export type AiScheduleResult = {
   session_ref: string | null;
@@ -140,9 +145,14 @@ export function ScheduleAiInterviewModal({
   );
   const [notes, setNotes] = useState("");
   const [why, setWhy] = useState("");
+  // Void the previous AI L1 (8 Oct 2026): forced for a PASS, optional otherwise
+  // (e.g. a fail on the wrong template should not count either).
+  const [voidPrev, setVoidPrev] = useState(!!reschedule?.passed);
+  const voiding = isReschedule && (voidPrev || !!reschedule?.passed);
   const [sendEmail, setSendEmail] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const engine = useAiEngine();
 
   const submit = async () => {
     const cleanEmail = email.trim();
@@ -150,6 +160,9 @@ export function ScheduleAiInterviewModal({
     if (!cleanEmail) return setError("Candidate email is required — the invite is sent there");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError("Enter a valid email address");
     if (!when) return setError("Pick the interview date and time");
+    if (voiding && why.trim().length < MIN_VOID_NOTE) {
+      return setError("Say why the previous AI L1 does not count — e.g. it ran on the wrong interview template (at least 10 characters)");
+    }
     if (isReschedule && why.trim().length < MIN_RESCHEDULE_NOTE) {
       return setError("Say why a fresh link is going out — e.g. when the candidate confirmed they will attempt it");
     }
@@ -186,6 +199,7 @@ export function ScheduleAiInterviewModal({
             notes: notes.trim() || undefined,
             send_email: sendEmail,
             reschedule_note: isReschedule ? why.trim() : undefined,
+            void_previous: voiding || undefined,
           },
         );
         showToast(
@@ -203,17 +217,18 @@ export function ScheduleAiInterviewModal({
     }
   };
 
-  const title = isEdit ? "Edit AI interview" : isReschedule ? "Reschedule AI L1" : "Schedule AI interview";
+  const title = isEdit ? "Edit AI interview" : reschedule?.passed ? "Redo AI L1" : isReschedule ? "Reschedule AI L1" : "Schedule AI interview";
   return (
     <Modal title={title} onClose={onClose} medium>
       <WizFormShell
         title={title}
         subtitle={
-          isEdit
+          (isEdit
             ? "Change the date, time or candidate details. The existing invite link and access key stay valid."
             : isReschedule
               ? "A NEW invite link and access key go to the candidate. The previous interview stays on record; every screen follows this one from now on."
-              : "The candidate receives an invite email with the interview link and a secure access key."
+              : "The candidate receives an invite email with the interview link and a secure access key.") +
+          (engine?.interview ? ` Runs on ${engine.interview.label} · questions and scoring.` : "")
         }
         icon={<Bot size={18} />}
       >
@@ -221,21 +236,34 @@ export function ScheduleAiInterviewModal({
         {isReschedule && (
           <div className="mb-4 rounded-card border border-warning bg-warning-soft px-3 py-2 text-sm text-primary">
             <span className="font-semibold">Previous AI L1: {reschedule!.previous}.</span>{" "}
-            {reschedule!.notAttempted
-              ? "The candidate did not answer any question — the link was opened late, the session dropped, or it was never started. Send a fresh link only once they have confirmed they will attempt it."
-              : "Send a fresh link only once the candidate has confirmed they will attempt it again; RMG / GM are told so nobody acts on the old result."}
+            {reschedule!.passed
+              ? "This AI L1 PASSED. Redo it only when it was not a fair test of this role — it asked another position's questions (wrong interview template). The pass is voided: kept on record, labelled, and no longer counts."
+              : reschedule!.notAttempted
+                ? "The candidate did not answer any question — the link was opened late, the session dropped, or it was never started. Send a fresh link only once they have confirmed they will attempt it."
+                : "Send a fresh link only once the candidate has confirmed they will attempt it again; RMG / GM are told so nobody acts on the old result."}
           </div>
+        )}
+        {isReschedule && !reschedule!.passed && (
+          <label className="mb-4 flex items-start gap-2 text-sm text-secondary">
+            <input type="checkbox" className="mt-1" checked={voidPrev} onChange={(e) => setVoidPrev(e.target.checked)} />
+            <span>
+              The previous AI L1 does not count — it ran on the wrong interview template.
+              <span className="block text-xs text-muted">It is labelled “Voided” on the candidate's history.</span>
+            </span>
+          </label>
         )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           {isReschedule && (
-            <WizardField label="Why a fresh link — the candidate's confirmation" required className="sm:col-span-2">
+            <WizardField label={voiding ? "Why the previous AI L1 does not count" : "Why a fresh link — the candidate's confirmation"} required className="sm:col-span-2">
               <textarea
                 rows={2}
                 className={inputCls}
                 value={why}
                 onChange={(e) => setWhy(e.target.value)}
-                placeholder="e.g. Called on 7 Oct — power cut during the first attempt; confirmed they will sit it Thursday 11 AM"
+                placeholder={voiding
+                  ? "e.g. The first AI L1 ran on the AGM ADAS template, not Bluetooth Developer — RMG has linked the right template"
+                  : "e.g. Called on 7 Oct — power cut during the first attempt; confirmed they will sit it Thursday 11 AM"}
               />
               <p className="mt-1 text-xs text-muted">
                 Logged on the candidate's history beside the previous outcome, and sent to RMG / GM.

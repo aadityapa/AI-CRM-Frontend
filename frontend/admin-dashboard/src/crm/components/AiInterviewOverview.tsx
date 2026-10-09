@@ -23,6 +23,7 @@ import { crmGet } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanApprove } from "../useAccess";
 import { ScoreIndicator } from "./ScoreIndicator";
+import { InterviewModelChips } from "../../components/AiModelChip";
 
 /** Roles that hold the Interview Platform's Reports tab — mirrors
  *  `lib/rbac.ts` `iv:candidates` (Admin/CEO implicit via `useHasRole`). */
@@ -81,6 +82,11 @@ export type AiInterviewSummary = {
   effective_result: string | null;
   hr_decision_label: string | null;
   level: string | null;
+  /** Which OpenAI model ran / scored it (9 Oct 2026). */
+  model?: string;
+  model_label?: string;
+  evaluation_model?: string;
+  evaluation_model_label?: string;
 };
 
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)}%`);
@@ -195,6 +201,14 @@ export function AiInterviewOverview({
             {data.recommendation && <span className="font-semibold text-primary">{data.recommendation}</span>}
             {data.recommendation && data.fitment && <span className="text-muted"> · </span>}
             {data.fitment && <span>{data.fitment}</span>}
+            {(data.evaluation_model || data.model) && (
+              <InterviewModelChips
+                model={data.model}
+                modelLabel={data.model_label}
+                evaluationModel={data.evaluation_model}
+                evaluationModelLabel={data.evaluation_model_label}
+              />
+            )}
           </div>
           <div className="mt-1 text-xs text-muted">
             {data.questions.total > 0

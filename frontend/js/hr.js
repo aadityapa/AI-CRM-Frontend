@@ -24,18 +24,22 @@ export async function loadModels() {
   const select = document.getElementById("model");
   const status = document.getElementById("hrStatus");
   try {
+    // The server's model (9 Oct 2026): shown, never chosen here — the server
+    // decides when the session starts (Settings ▸ AI engine).
     const data = await handleJson(await apiFetch("/models"));
-    if (Array.isArray(data.models) && data.models.length > 0) {
+    if (select && Array.isArray(data.models) && data.models.length > 0) {
+      const labels = data.labels || {};
       select.innerHTML = "";
       data.models.forEach((m, idx) => {
         const opt = document.createElement("option");
         opt.value = m;
-        opt.textContent = m;
+        opt.textContent = labels[m] || m;
         if (idx === 0) opt.selected = true;
         select.appendChild(opt);
       });
       if (status && !status.innerText.trim()) {
-        status.innerText = "AI provider: OpenAI.";
+        const first = data.models[0];
+        status.innerText = `AI provider: OpenAI ${labels[first] || first}.`;
       }
     }
   } catch (err) {
@@ -745,7 +749,8 @@ export async function scheduleInterview() {
   const timeLimitMin = (document.getElementById("timeLimitMin")?.value || "0").trim();
   const micAlwaysOn = (document.getElementById("micAlwaysOn")?.value || "false").trim();
   const showSpokenText = (document.getElementById("showSpokenText")?.value ?? "false").trim();
-    const model = (document.getElementById("customModel")?.value || document.getElementById("model")?.value || "gpt-4o-mini").trim();
+    // No model in the schedule: the server picks it when the interview starts.
+    const model = "";
     const jobId = (() => {
       try {
         return (window.localStorage.getItem("atsJobId") || "").trim();

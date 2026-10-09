@@ -2,7 +2,7 @@
  * skills, locations, document types, leave policy types) + app settings. */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Activity, Briefcase, Building2, Cog, Database, FileText, GraduationCap, LifeBuoy, ListChecks, MapPin, MessageSquareText,
+  Activity, Briefcase, Building2, Cog, Cpu, Database, FileText, GraduationCap, LifeBuoy, ListChecks, MapPin, MessageSquareText,
   Network, Pencil, Plus, Power, Receipt, Settings, Sliders, Sparkles, Type, type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
@@ -18,6 +18,7 @@ import {
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { ActivityLogPage } from "./ActivityLog";
 import { BackupTab } from "./settings/BackupTab";
+import { AiEngineTab } from "./settings/AiEngineTab";
 import { SupportTicketsPage } from "./SupportTickets";
 import { EmailDraftsTab } from "./settings/EmailDraftsTab";
 import { fmtDateTime12 } from "../../lib/datetime";
@@ -1369,6 +1370,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   ] },
   { key: "operations", label: "Operations", accent: "from-amber-500 to-orange-600", entries: [
     { key: "operations", label: "Scheduled jobs", blurb: "Leave credit, reminders, month-close mails, retention — on / off and their last run.", icon: Cog },
+    { key: "ai-engine", label: "AI engine", blurb: "Which OpenAI model runs interviews, fast replies, live voice, transcription and Ask AI.", icon: Cpu },
     { key: "app-settings", label: "App Settings", blurb: "Every key the application reads a default from.", icon: Sliders },
     { key: "backup", label: "Backup", blurb: "Download a full data backup — Excel, CSV, JSON and files.", icon: Database },
   ] },
@@ -1585,6 +1587,7 @@ export function CrmSettingsPage() {
         {tab === "organisation" && <OrganisationTab notify={notify} />}
         {tab === "invoice" && <InvoiceSettingsTab notify={notify} />}
         {tab === "operations" && <OperationsTab notify={notify} />}
+        {tab === "ai-engine" && <AiEngineTab notify={notify} />}
         {tab === "email-drafts" && <EmailDraftsTab notify={notify} />}
         {tab === "app-settings" && <AppSettingsTab notify={notify} />}
         {tab === "ui-text" && <UiTextTab notify={notify} />}

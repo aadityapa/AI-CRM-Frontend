@@ -545,6 +545,10 @@ type ResumeRow = {
   is_profile_only?: boolean;
   requirement_id: number;
   candidate_id: number | null;
+  /** Resume library hint (9 Oct 2026): other live positions this candidate is
+   *  already in, and how many resume versions they have. */
+  other_positions?: number;
+  resume_versions?: number;
   /** Bulk upload held this row as a possible duplicate of this candidate. */
   possible_duplicate_of?: number | null;
   /** Manual Archive (30 Sep 2026): a closed candidacy RMG / GM may archive … */
@@ -722,6 +726,19 @@ export function reschedulableAi(r: Pick<ResumeRow,
   return !["Passed", "Selected"].includes(effective);
 }
 
+/** A PASSED AI L1 that may be redone because it was not a fair test — it ran
+ *  on the wrong interview template (8 Oct 2026). Only while the candidate has
+ *  not gone on to Sales: the void is meant for the screening, not to rewrite a
+ *  submission. PURE. */
+export function redoableAi(r: Pick<ResumeRow,
+  "ai_interview_status" | "ai_overall_score_percent" | "ai_effective_result" | "ai_interview_result" | "profile_pipeline_status">): boolean {
+  const finished = r.ai_overall_score_percent != null
+    || (!!r.ai_interview_status && !["Scheduled", "Pending", "In_Progress", "Not_Scheduled"].includes(r.ai_interview_status));
+  const effective = r.ai_effective_result || r.ai_interview_result || "";
+  return finished && ["Passed", "Selected"].includes(effective)
+    && ["Sourcing", "Technical_Screening", "RMG_Review"].includes(r.profile_pipeline_status || "");
+}
+
 /** The previous outcome the reschedule dialog prints. PURE. */
 export function rescheduleSeed(r: Pick<ResumeRow,
   "ai_not_attempted" | "ai_effective_result" | "ai_interview_result" | "ai_overall_score_percent">): RescheduleSeed {
@@ -730,7 +747,10 @@ export function rescheduleSeed(r: Pick<ResumeRow,
   }
   const effective = r.ai_effective_result || r.ai_interview_result || "Finished";
   const score = r.ai_overall_score_percent;
-  return { previous: score != null ? `${effective} (${Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%)` : effective };
+  return {
+    previous: score != null ? `${effective} (${Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%)` : effective,
+    passed: ["Passed", "Selected"].includes(effective),
+  };
 }
 
 type JobPosting = {
@@ -3049,6 +3069,23 @@ export function ResumesTab({
                     TA note: {r.application_details.note}
                   </div>
                 )}
+                {r.candidate_id && ((r.other_positions || 0) > 0 || (r.resume_versions || 0) > 1) ? (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {(r.other_positions || 0) > 0 && (
+                      <CrmLink to={`candidates/${r.candidate_id}?tab=matching`}
+                        title="Other open positions this candidate is in — and where else they fit"
+                        className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-800 ring-1 ring-inset ring-teal-200 hover:bg-teal-100 dark:bg-teal-950 dark:text-teal-200 dark:ring-teal-800">
+                        Also in {r.other_positions} other position{r.other_positions === 1 ? "" : "s"}
+                      </CrmLink>
+                    )}
+                    {(r.resume_versions || 0) > 1 && (
+                      <CrmLink to={`candidates/${r.candidate_id}?tab=resumes`}
+                        className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-800 ring-1 ring-inset ring-indigo-200 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-200 dark:ring-indigo-800">
+                        {r.resume_versions} resumes
+                      </CrmLink>
+                    )}
+                  </div>
+                ) : null}
                 {r.application_details?.skills && (
                   <div className="truncate" title={r.application_details.skills}>
                     Skills: {r.application_details.skills}
@@ -3694,6 +3731,17 @@ export function ResumesTab({
                   ? "The candidate did not attempt the AI L1 — once they confirm they are ready, send a fresh link"
                   : "Send a fresh AI L1 link — the previous result stays on record"}>
                 <RotateCcw size={13} /> Reschedule AI L1
+              </button>
+            )}
+            {/* Redo a PASSED AI L1 that ran on the wrong template (8 Oct 2026):
+                the pass is voided (kept on record, labelled) and a fresh link
+                goes out — TA or RMG / GM, a reason required. */}
+            {(isTA || isRmg) && profileId != null && !aiL1Open && !manualRoute && !r.archived
+              && redoableAi(r) && (
+              <button className={FLOW_BTN.warn} disabled={busy}
+                onClick={() => setRescheduleRow({ row: r, seed: rescheduleSeed(r) })}
+                title="The AI L1 asked another role's questions (wrong template)? Void it and send a fresh link">
+                <RotateCcw size={13} /> Redo AI L1
               </button>
             )}
             {/* The AI L1 exists (7 Oct 2026, user report — "RMG / GM get no buttons"):
