@@ -306,6 +306,10 @@ export default function App() {
     // A screener (GM) reviews AI L1 results from the Screening Desk; the report
     // detail page is part of that job even without the Reports tab.
     if ((v === "candidateReport" || v === "candidateInterviews") && screener) return true;
+    // RMG / GM author the interview templates and their question banks (11 Oct
+    // 2026 — HR does not); a GM's Interview Platform grant is view-only, so the
+    // screener check admits it here, mirroring the server's template author gate.
+    if ((v === "templates" || v === "templateForm") && screener) return true;
     const parentTab: View =
       v === "candidateReport" || v === "candidateInterviews" ? "candidates"
       : v === "upcomingInterviews" || v === "hrSetup" ? "dashboard"

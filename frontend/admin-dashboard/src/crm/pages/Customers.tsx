@@ -1055,6 +1055,7 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
   const [form, setForm] = useState({
     min_hours_full_day: "8",
     min_hours_half_day: "4",
+    normal_hours_per_day: "",
     billable_leaves_per_year: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -1069,6 +1070,8 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
         setForm({
           min_hours_full_day: String(res.data.min_hours_full_day ?? 8),
           min_hours_half_day: String(res.data.min_hours_half_day ?? 4),
+          normal_hours_per_day: res.data.normal_hours_per_day != null
+            ? String(res.data.normal_hours_per_day) : "",
           billable_leaves_per_year: res.data.billable_leaves_per_year != null
             ? String(res.data.billable_leaves_per_year) : "",
         });
@@ -1090,6 +1093,9 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
     if (!Number.isFinite(half) || half < 0 || half > 24) errs.min_hours_half_day = "Must be a number between 0 and 24";
     if (!errs.min_hours_full_day && !errs.min_hours_half_day && half > full)
       errs.min_hours_half_day = "Half-day hours cannot exceed full-day hours";
+    const working = form.normal_hours_per_day === "" ? null : Number(form.normal_hours_per_day);
+    if (working != null && (!Number.isFinite(working) || working <= 0 || working > 24))
+      errs.normal_hours_per_day = "Must be a number between 0 and 24";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setSaving(true);
@@ -1098,6 +1104,7 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
       const res = await crmPut(`/api/customers/${customerId}/billing-policy`, {
         min_hours_full_day: full,
         min_hours_half_day: half,
+        normal_hours_per_day: working,
         billable_leaves_per_year: form.billable_leaves_per_year === ""
           ? null : Number(form.billable_leaves_per_year),
       });
@@ -1141,6 +1148,20 @@ function BillingPolicyTab({ customerId, canWrite, notify }: { customerId: number
             disabled={!canWrite}
             onChange={(e) => setForm((f) => ({ ...f, min_hours_half_day: e.target.value }))}
           />
+        </Field>
+        <Field label="Working hours per day" error={errors.normal_hours_per_day}>
+          <input
+            type="number" step="0.5" min={0} max={24}
+            className={inputCls}
+            value={form.normal_hours_per_day}
+            disabled={!canWrite}
+            placeholder={`Blank = the full day (${form.min_hours_full_day || 8} h)`}
+            onChange={(e) => setForm((f) => ({ ...f, normal_hours_per_day: e.target.value }))}
+          />
+          <p className="mt-1 text-[11px] text-muted">
+            The hours every working day starts with on a timesheet (e.g. 9.5). A branch or
+            project&rsquo;s own value wins; it is never below the full-day hours.
+          </p>
         </Field>
         <Field label="Paid leaves / year (billed to customer)">
           <input

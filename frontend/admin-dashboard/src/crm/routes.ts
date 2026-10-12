@@ -15,6 +15,7 @@ const ProfilesListPage = lazy(() => import("./pages/Profiles").then((m) => ({ de
 const ProfileDetailPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfileDetailPage })));
 const ActivityLogPage = lazy(() => import("./pages/ActivityLog").then((m) => ({ default: m.ActivityLogPage })));
 const EmailCenterPage = lazy(() => import("./pages/EmailCenter").then((m) => ({ default: m.EmailCenterPage })));
+const FileViewPage = lazy(() => import("./pages/FileView").then((m) => ({ default: m.FileViewPage })));
 const CalendarPage = lazy(() => import("./pages/Calendar"));
 const ProjectsListPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsListPage })));
 const ProjectDetailPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetailPage })));
@@ -73,6 +74,9 @@ export const CRM_ROUTES: CrmRoute[] = [
   // The panel member's own technical rounds (7 Oct 2026) — the Interviewer
   // role's one page; RMG / TA who take rounds reach it from the sidebar too.
   { pattern: "my-interviews", element: MyInterviewsPage },
+  // A CRM file in its own tab (10 Oct 2026) — `?file=/api/crm-files/…&name=`.
+  // A bare <a target=_blank> to the file cannot send the bearer token.
+  { pattern: "file-view", element: FileViewPage },
   { pattern: "my-tasks", element: MyTasksPage },
   { pattern: "calendar", element: CalendarPage },
   { pattern: "emails", element: EmailCenterPage },

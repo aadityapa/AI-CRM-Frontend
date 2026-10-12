@@ -133,7 +133,8 @@ export function HrSetupPage() {
   /* --- data --- */
   useEffect(() => {
     apiGet<{ jobs: JobTemplate[] }>("/job/configs", { force: true })
-      .then((d) => setTemplates(Array.isArray(d.jobs) ? d.jobs : []))
+      // Archived templates (their opportunity is closed) cannot schedule interviews.
+      .then((d) => setTemplates((Array.isArray(d.jobs) ? d.jobs : []).filter((j) => !(j as { archived?: boolean }).archived)))
       .catch(() => {});
     apiGet<{ schedules: Schedule[] }>("/hr/schedules", { force: true })
       .then((d) => setSchedules(Array.isArray(d.schedules) ? d.schedules : []))

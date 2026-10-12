@@ -289,7 +289,7 @@ describe("PO selection gate before raising the Proforma", () => {
     // on the Proforma and remembers it on the customer.
     await waitFor(() =>
       expect(crmPost).toHaveBeenCalledWith("/api/timesheets/7/generate-invoice",
-        { po_id: 1, invoice_format: ALL_COLUMNS }),
+        { po_id: 1, invoice_format: ALL_COLUMNS, round_off: false }),
     );
   });
 
@@ -312,7 +312,7 @@ describe("PO selection gate before raising the Proforma", () => {
     fireEvent.click(commitButton());
     await waitFor(() =>
       expect(crmPost).toHaveBeenCalledWith("/api/timesheets/7/generate-invoice",
-        { po_id: 1, invoice_format: { sac: false, leave: true, per_day: false } }),
+        { po_id: 1, invoice_format: { sac: false, leave: true, per_day: false }, round_off: false }),
     );
   });
 

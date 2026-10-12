@@ -113,6 +113,8 @@ type BillingPolicy = {
   comp_off_covers_lop?: boolean;
   min_hours_full_day: number;
   min_hours_half_day: number;
+  /** The customer's working day (project → branch → customer "Normal hours per day"). */
+  working_hours_per_day?: number | null;
 };
 
 type TimesheetDetail = Timesheet & {
@@ -141,7 +143,11 @@ type TimesheetDetail = Timesheet & {
   leave_billable_by_type?: Record<string, boolean>;
   /** Leave balances by type: PE pool when mapped, else employee yearly balances. */
   leave_balances_by_type?: Record<string, number>;
+  /** Max billable hrs/day — sent only when the cap's switch is ON. */
   max_billable_hours_day?: number | null;
+  /** The hours a working day starts with — the server's own rule (12 Oct 2026):
+   *  the customer's working day, never below the full-day threshold. */
+  default_hours_per_day?: number | null;
   holiday_dates?: string[];
   entries: Entry[];
   summary?: Summary | null;
@@ -1342,9 +1348,12 @@ function TimesheetApplyLeaveDialog({
   initialReason,
   onClose,
   onApply,
+  onSyncLeave,
 }: {
   dateLabel: string;
   leaveBalances: Record<string, number>;
+  /** Bring the assignment's leave rows onto the project's current policies. */
+  onSyncLeave?: () => Promise<void>;
   /** Days already requested on other Leave rows for each type (excludes this row). */
   usedByType: Record<string, number>;
   initialType?: string;
@@ -1355,13 +1364,20 @@ function TimesheetApplyLeaveDialog({
 }) {
   const reduce = useReducedMotion();
   const typeSelectRef = useRef<HTMLSelectElement>(null);
-  const available = useMemo(
+  // EVERY leave type of the assignment is listed (12 Oct 2026: types opening at
+  // 0 — an End-of-Period policy, a future effective date — used to vanish, which
+  // read as "the project's leave policy is missing"). Empty ones are disabled.
+  const allTypes = useMemo(
     () => Object.entries(leaveBalances)
       .map(([name, bal]) => ({ name, bal: Number(bal) || 0 }))
-      .filter((t) => t.bal > 0)
       .sort((a, b) => a.name.localeCompare(b.name)),
     [leaveBalances],
   );
+  const available = useMemo(
+    () => allTypes.filter((t) => t.bal > 0 || isCompOffName(t.name)),
+    [allTypes],
+  );
+  const [syncing, setSyncing] = useState(false);
   const [leaveType, setLeaveType] = useState(() => {
     if (initialType && Number(leaveBalances[initialType] ?? 0) > 0) return initialType;
     return "";
@@ -1427,9 +1443,35 @@ function TimesheetApplyLeaveDialog({
 
       <div className="relative z-10 space-y-5">
         {available.length === 0 ? (
-          <p className="rounded-xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-input-bg)]/60 px-3 py-3 text-sm text-[color:var(--wiz-muted)]">
-            No leave balance available
-          </p>
+          <div className="rounded-xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-input-bg)]/60 px-3 py-3 text-sm text-[color:var(--wiz-muted)]">
+            {allTypes.length === 0 ? (
+              <>
+                <p className="font-semibold text-[color:var(--wiz-text)]">No leave types are set up for this assignment</p>
+                <p className="mt-1">The project&rsquo;s leave policies have not been applied to this employee yet.</p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-[color:var(--wiz-text)]">No leave balance left</p>
+                <p className="mt-1">
+                  {allTypes.map((t) => `${t.name} ${round2(t.bal)}`).join(" · ")}
+                </p>
+              </>
+            )}
+            {onSyncLeave && (
+              <button
+                type="button"
+                disabled={syncing}
+                onClick={async () => {
+                  setSyncing(true);
+                  try { await onSyncLeave(); } finally { setSyncing(false); }
+                }}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-control bg-gradient-to-r from-[#6D5DFB] to-[#8B7BFF] px-3 py-1.5 text-xs font-semibold text-[#fff] shadow-sm disabled:opacity-60"
+              >
+                <RefreshCw size={13} className={syncing ? "animate-spin" : ""} aria-hidden />
+                {syncing ? "Applying…" : "Apply the project's leave policies"}
+              </button>
+            )}
+          </div>
         ) : (
           <Field label="Leave type" required>
             <div className="flex flex-wrap items-center gap-2">
@@ -1441,11 +1483,14 @@ function TimesheetApplyLeaveDialog({
                 aria-label="Leave type"
               >
                 <option value="">Select…</option>
-                {available.map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.name} — {round2(t.bal)} day(s)
-                  </option>
-                ))}
+                {allTypes.map((t) => {
+                  const empty = !(t.bal > 0) && !isCompOffName(t.name);
+                  return (
+                    <option key={t.name} value={t.name} disabled={empty}>
+                      {t.name} — {round2(t.bal)} day(s){empty ? " · no balance" : ""}
+                    </option>
+                  );
+                })}
               </select>
               {leaveType ? (
                 <span
@@ -1640,6 +1685,8 @@ export function TimesheetDetailPage() {
   const [projectName, setProjectName] = useState("");
   const [employeeName, setEmployeeName] = useState("");
   const [leaveBalances, setLeaveBalances] = useState<Record<string, number>>({});
+  /** The assignment has no leave rows — the project's policies were never applied. */
+  const [leaveSetupMissing, setLeaveSetupMissing] = useState(false);
   const [applyLeaveRow, setApplyLeaveRow] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1668,7 +1715,12 @@ export function TimesheetDetailPage() {
     return "Working";
   };
 
+  // The server's working day for this sheet (12 Oct 2026: a 9.5-hour customer's
+  // rows started at 8 h and read Half Day). Set by load() before rows are built.
+  const defaultDayRef = useRef<number | null>(null);
   const resolvedDefaultHours = (maxDay?: number | null): string => {
+    const day = defaultDayRef.current;
+    if (day != null && Number(day) > 0) return String(Number(day));
     if (maxDay != null && Number(maxDay) > 0) return String(Number(maxDay));
     return "8";
   };
@@ -1724,6 +1776,15 @@ export function TimesheetDetailPage() {
   const applyLeaveBalances = useCallback((data: TimesheetDetail) => {
     if (data.leave_balances_by_type && Object.keys(data.leave_balances_by_type).length) {
       setLeaveBalances(data.leave_balances_by_type);
+      setLeaveSetupMissing(false);
+      return;
+    }
+    // A sheet on a project assignment reads ITS leave rows only (12 Oct 2026):
+    // falling back to the employee's company-wide balances showed the wrong
+    // leave types and hid that the project's policies were never applied.
+    if (data.project_employee_id) {
+      setLeaveBalances({});
+      setLeaveSetupMissing(true);
       return;
     }
     // Fallback: employee yearly balances (self or HR endpoint).
@@ -1754,6 +1815,7 @@ export function TimesheetDetailPage() {
       setTs(res.data);
       const policy = res.data.billing_policy || defaultPolicy;
       const maxDay = res.data.max_billable_hours_day;
+      defaultDayRef.current = res.data.default_hours_per_day ?? null;
       const balMap = res.data.leave_balances_by_type || {};
       const rows = toRows(
         res.data.entries || [],
@@ -1963,7 +2025,19 @@ export function TimesheetDetailPage() {
 
   const editable = ts.status === "Draft" || ts.status === "Rejected";
 
-  /** Default Hours Worked from project max billable hrs/day; fall back to 8. */
+  /** Apply the project's current leave policies to this assignment (12 Oct 2026).
+   *  Refreshes the leave choices only — unsaved grid edits are kept. */
+  const syncLeave = async () => {
+    try {
+      const res = await crmPost<TimesheetDetail>(`/api/timesheets/${ts.id}/leave/sync`, {});
+      if (res.data) applyLeaveBalances(res.data);
+      showToast(res.message || "Leave updated from the project's policies");
+    } catch (e: any) {
+      showToast(e?.message || "Could not apply the leave policies", "err");
+    }
+  };
+
+  /** Default Hours Worked = the server's working day for this sheet; else the cap; else 8. */
   const defaultHoursWorked = (): string => resolvedDefaultHours(ts.max_billable_hours_day);
 
   const applyDayType = (row: EntryRow, dayType: string): Partial<EntryRow> => {
@@ -2174,6 +2248,21 @@ export function TimesheetDetailPage() {
             </>
           )}
         </div>
+        {leaveSetupMissing && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <AlertTriangle size={16} className="shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1">
+              No leave types are set up for this employee on the project, so <b>Apply leave</b> has nothing
+              to offer. Apply the project&rsquo;s leave policies to this assignment.
+            </span>
+            {editable && (
+              <button type="button" onClick={syncLeave}
+                className="inline-flex items-center gap-1.5 rounded-control bg-amber-600 px-3 py-1.5 text-xs font-semibold text-[#fff] hover:bg-amber-700">
+                <RefreshCw size={13} aria-hidden /> Apply leave policies
+              </button>
+            )}
+          </div>
+        )}
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
           <StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />
           {editable && (
@@ -2183,9 +2272,9 @@ export function TimesheetDetailPage() {
             <button
               type="button"
               className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
-              title={`Set every worked day to the policy's full day (${policy.min_hours_full_day} h); leave, absent (0 h), week-off and holiday rows are left alone`}
+              title={`Set every worked day to the customer's working day (${defaultHoursWorked()} h); leave, absent (0 h), week-off and holiday rows are left alone`}
               onClick={() => {
-                const full = Number(policy.min_hours_full_day || 0);
+                const full = Number(defaultHoursWorked() || 0);
                 if (!(full > 0)) return;
                 setEntries((prev) => {
                   const nextRows = prev.map((row) => {
@@ -2210,7 +2299,7 @@ export function TimesheetDetailPage() {
                 setDirty(true);
               }}
             >
-              Fill worked days with {policy.min_hours_full_day} h
+              Fill worked days with {defaultHoursWorked()} h
             </button>
             <button
               type="button"
@@ -2826,6 +2915,7 @@ export function TimesheetDetailPage() {
           initialPeriod={applyLeaveDialog.row.leave_period || "Full"}
           initialReason={applyLeaveDialog.row.leave_reason || ""}
           onClose={() => setApplyLeaveRow(null)}
+          onSyncLeave={editable ? syncLeave : undefined}
           onApply={(leaveType, leavePeriod, leaveReason) => {
             updateEntry(applyLeaveDialog.idx, {
               attendance_status: "Leave",

@@ -183,8 +183,14 @@ export function tickInterviewTimeWarnings(remainingSec) {
   for (const level of WARNING_LEVELS) {
     const thresh = Math.max(0, Number(thresholds[level.key]) || 0);
     if (thresh <= 0) continue;
-    if (rem > thresh) continue;
     if (state.timeWarningsShown[level.key]) continue;
+    // A warning at or above the whole limit (a "5 minutes left" banner on a
+    // 5-minute interview) would fire the moment the clock starts — skip it.
+    if (thresh >= limit) {
+      state.timeWarningsShown[level.key] = true;
+      continue;
+    }
+    if (rem > thresh) continue;
     state.timeWarningsShown[level.key] = true;
     _showTimeWarningBanner(level);
     _logTimeWarningAudit(level.key);

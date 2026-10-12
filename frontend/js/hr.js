@@ -454,7 +454,8 @@ export async function loadJobConfigs() {
       select.innerHTML = `<option value="">Loading templates...</option>`;
     }
     const data = await handleJson(await apiFetch("/job/configs", { method: "GET" }));
-    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    // 10 Oct 2026: a template whose opportunity is closed is archived — not offered.
+    const jobs = (Array.isArray(data.jobs) ? data.jobs : []).filter((j) => !j.archived);
     _jobConfigsCache = jobs;
     if (!select) return jobs;
     select.classList.remove("is-loading");
@@ -581,6 +582,8 @@ export function createShowScreen() {
     const screens = {
       hr: "screenHr",
       candidate: "screenCandidate",
+      // The HR-run interview's results (11 Oct 2026 — showing it blanked the page).
+      result: "screenResult",
     };
     const tabs = { hr: "tabHr", candidate: "tabCandidate" };
     Object.values(screens).forEach((id) => {

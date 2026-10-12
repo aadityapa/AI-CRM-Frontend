@@ -357,7 +357,8 @@ function FulfillModal({ row, onClose, onDone, toast, change }: {
     setLoadingJobs(true);
     try {
       const data = await apiGet<{ jobs: JobTpl[] }>("/job/configs", { force: true });
-      setJobs(Array.isArray(data.jobs) ? data.jobs : []);
+      // Archived templates (their opportunity is closed) are never offered to link.
+      setJobs((Array.isArray(data.jobs) ? data.jobs : []).filter((j) => !(j as { archived?: boolean }).archived));
     } catch (e: any) {
       setErr(e?.message || "Failed to load templates");
     } finally {

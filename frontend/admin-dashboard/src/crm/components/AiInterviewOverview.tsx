@@ -87,7 +87,46 @@ export type AiInterviewSummary = {
   model_label?: string;
   evaluation_model?: string;
   evaluation_model_label?: string;
+  /** 13 Oct 2026: the interview ran on ANOTHER opportunity's template. */
+  template_mismatch?: TemplateMismatch | null;
 };
+
+/** The server's "taken on another opportunity's template" flag (13 Oct 2026). */
+export type TemplateMismatch = {
+  job_id: string;
+  /** The opportunity the template belongs to. */
+  owner: string;
+  /** The template's role title — what the candidate was actually asked about. */
+  title: string;
+  /** This candidate's own opportunity. */
+  opportunity: string;
+};
+
+/**
+ * Red notice: this AI L1 asked another position's questions, so its score says
+ * nothing about THIS role (reported 13 Oct 2026 — a Bluetooth Developer
+ * candidate was interviewed on the "AGM - R&D (ADAS & ARAS)" template and the
+ * profile still read "AI L1 Passed"). Shown on the AI card and the RMG banner.
+ */
+export function WrongTemplateNotice({ mismatch, className = "" }: { mismatch: TemplateMismatch; className?: string }) {
+  return (
+    <div role="alert"
+      className={`flex items-start gap-2.5 rounded-control border border-danger bg-danger-soft px-3 py-2.5 text-sm ${className}`}>
+      <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+      <div className="text-secondary">
+        <p className="font-semibold text-danger">
+          Taken on the wrong template — “{mismatch.title}” of {mismatch.owner}
+        </p>
+        <p className="mt-0.5">
+          The candidate was asked another position's questions, so this score does not assess
+          {mismatch.opportunity ? ` ${mismatch.opportunity}` : " this position"}. Ask RMG to link this
+          opportunity's own template (Template Requests ▸ Change template), then use <b>Redo AI L1</b> on
+          Applied Candidates — the old result is kept on record but stops counting.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)}%`);
 
@@ -175,6 +214,7 @@ export function AiInterviewOverview({
 
   return (
     <div className="mt-4 rounded-control border border-subtle bg-surface-2 p-4" data-testid="ai-interview-overview">
+      {data.template_mismatch && <WrongTemplateNotice mismatch={data.template_mismatch} className="mb-3" />}
       {/* Headline row: ring · verdict · counts · full report */}
       <div className="flex flex-wrap items-center gap-4">
         <ScoreIndicator score={data.overall_score_percent} size="lg" />

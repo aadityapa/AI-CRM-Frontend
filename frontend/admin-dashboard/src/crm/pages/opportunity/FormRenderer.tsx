@@ -297,7 +297,7 @@ function FieldControl({
             disabled={disabled}
             aria-invalid={!!err}
             aria-describedby={describedBy}
-            className={`${inputCls} file:mr-3 file:rounded-control file:border-0 file:bg-brand-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-brand-700`}
+            className={`${inputCls} file:mr-3 file:rounded-control file:border-0 file:bg-brand-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-brand-700 dark:file:bg-brand-900/50 dark:file:text-brand-200`}
             ref={(el) => registerRef?.(f.key, el)}
             onBlur={() => onBlur(f)}
             onChange={(e) => {

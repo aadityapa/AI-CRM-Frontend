@@ -12,7 +12,8 @@
  * Branch → form caps: max_billable_hours_per_day → max_billable_hours_day (etc.)
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { CircleDot, Clock3, FolderKanban, GitBranch, Plus, Timer, Trash2, Users } from "lucide-react";
+import { ArrowRight, Building2, Check, CircleDot, Clock3, FolderKanban, GitBranch, Plus, Sparkles, Timer, Trash2, Users } from "lucide-react";
+import { useActiveCustomers } from "../lib/activeCustomers";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { ConfirmModal, btnSecondary, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
@@ -21,6 +22,7 @@ import {
   SectionHeaderBanner,
   WizardField,
   WizardFooter,
+  WizardGroup,
   WizardShell,
   WizardStepCard,
   WizardTopBar,
@@ -77,7 +79,6 @@ export type ProjectWizardInitial = {
   initial_no_billing_period?: string | null;
 };
 
-type CustomerOption = { id: number; name: string };
 type BranchOption = { id: number; branch_name: string };
 
 type SectionDef = {
@@ -303,14 +304,12 @@ function leaveRowPayload(row: LeaveRow) {
 function ProjectWizard({
   mode,
   initial,
-  customers = [],
   onClose,
   onSaved,
   notify,
 }: {
   mode: "create" | "edit";
   initial?: ProjectWizardInitial;
-  customers?: CustomerOption[];
   onClose: () => void;
   onSaved: (project?: { id: number }) => void;
   notify: Notify;
@@ -399,6 +398,15 @@ function ProjectWizard({
   branchIdRef.current = branchId;
 
   const branchRequired = !!customerId && branches.length > 0;
+  // The Customers tab's ACTIVE list (12 Oct 2026) — the dropdown used to list
+  // every customer ever imported. A saved project keeps its own customer.
+  const activeCustomers = useActiveCustomers(customerId);
+  const customerOptions = useMemo(
+    () => activeCustomers.map((c) => ({ value: String(c.id), label: c.name })),
+    [activeCustomers],
+  );
+  const customerLabel = activeCustomers.find((c) => String(c.id) === customerId)?.name || "";
+  const branchLabel = branches.find((b) => String(b.id) === branchId)?.branch_name || "";
   const branchOptions = useMemo(
     () => branches.map((b) => ({ value: String(b.id), label: b.branch_name })),
     [branches],
@@ -583,12 +591,21 @@ function ProjectWizard({
     }
   };
 
-  const createLeavePolicies = async (id: number) => {
+  /** Per-row, best-effort (12 Oct 2026): one refused policy used to abort the
+   *  whole create AFTER the project existed — employee mapping never ran and the
+   *  user read "Failed to create project". Returns the rows that failed. */
+  const createLeavePolicies = async (id: number): Promise<string[]> => {
     const base = `/api/projects/${id}/leave-policies`;
+    const failed: string[] = [];
     for (const row of leaveRows) {
       if (!row.leave_type_id) continue;
-      await crmPost(base, leaveRowPayload(row));
+      try {
+        await crmPost(base, leaveRowPayload(row));
+      } catch (e: any) {
+        failed.push(e?.message || `leave type #${row.leave_type_id}`);
+      }
     }
+    return failed;
   };
 
   const submit = async () => {
@@ -641,7 +658,7 @@ function ProjectWizard({
         }
         const res = await crmPost<{ id: number }>("/api/projects", body);
         const created = res.data;
-        await createLeavePolicies(created.id);
+        const leaveErrors = await createLeavePolicies(created.id);
         // Map Employees step (best-effort per row): the project EXISTS now, so
         // a failed mapping must not roll anything back — it is reported and
         // repeatable from Project Employees.
@@ -665,7 +682,10 @@ function ProjectWizard({
             mapErrors.push(`${who}: ${e?.message || "failed"}`);
           }
         }
-        if (mapErrors.length) {
+        if (leaveErrors.length) {
+          notify(`Project created · ${mapped} employee${mapped === 1 ? "" : "s"} mapped · `
+            + `leave policies not saved: ${leaveErrors.join("; ")} — add them in Edit Project`, "err");
+        } else if (mapErrors.length) {
           notify(`Project created · ${mapped} employee${mapped === 1 ? "" : "s"} mapped · failed: ${mapErrors.join("; ")}`, "err");
         } else if (mapped > 0) {
           notify(`Project created · ${mapped} employee${mapped === 1 ? "" : "s"} mapped`);
@@ -1022,66 +1042,146 @@ function ProjectWizard({
         );
       case "projectDetails":
         return (
-          <div className="space-y-5">
-            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <div className="space-y-4">
+            <WizardGroup
+              icon={FolderKanban}
+              title="Name the project"
+              hint="What the team, timesheets and invoices will call it"
+              done={!!name.trim()}
+              cols={1}
+              accent="from-indigo-500 to-violet-600"
+            >
               <WizardField
-                label="Name"
+                label="Project name"
                 required
                 error={errors.name}
                 icon={<FolderKanban size={15} className="text-muted" aria-hidden />}
                 filled={!!name.trim()}
               >
-                <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+                <input className={inputCls} value={name} maxLength={120}
+                  placeholder="e.g. Harman · Infotainment platform team"
+                  onChange={(e) => setName(e.target.value)} />
               </WizardField>
-              <WizardField
-                label="Status"
-                icon={<CircleDot size={15} className="text-muted" aria-hidden />}
-                filled={!!status}
-              >
-                <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-                  {PROJECT_STATUSES.map((s) => (
-                    <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                  ))}
-                </select>
-              </WizardField>
+              <div>
+                <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[color:var(--wiz-muted)]">
+                  <CircleDot size={13} aria-hidden /> Status
+                </div>
+                <div role="radiogroup" aria-label="Project status" className="flex flex-wrap gap-2">
+                  {PROJECT_STATUSES.map((s) => {
+                    const on = status === s;
+                    const tone = s === "Active" ? "emerald" : s === "On_Hold" ? "amber" : "slate";
+                    return (
+                      <button key={s} type="button" role="radio" aria-checked={on} onClick={() => setStatus(s)}
+                        className={`inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-sm font-semibold ring-1 ring-inset transition-colors duration-micro ${
+                          on
+                            ? tone === "emerald" ? "bg-emerald-600 text-[#fff] ring-emerald-600"
+                              : tone === "amber" ? "bg-amber-500 text-[#fff] ring-amber-500"
+                                : "bg-slate-700 text-[#fff] ring-slate-700"
+                            : "bg-[color:var(--wiz-elevated)] text-secondary ring-[color:var(--wiz-border)] hover:text-primary"}`}>
+                        {on ? <Check size={14} aria-hidden /> : null}
+                        {s.replace(/_/g, " ")}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </WizardGroup>
+
+            <WizardGroup
+              icon={Building2}
+              title="Who it is for"
+              hint={`${customerOptions.length} active customer${customerOptions.length === 1 ? "" : "s"} · the same list as the Customers tab`}
+              done={!!customerId && (!branchRequired || !!branchId)}
+              cols={1}
+              accent="from-sky-500 to-cyan-600"
+            >
               <WizardField
                 label="Customer"
                 required
                 error={errors.customer}
                 icon="building"
-                filled={!!customerId}
-              >
-                <select className={inputCls} value={customerId} onChange={(e) => onCustomerChange(e.target.value)}>
-                  <option value="">Select customer…</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </WizardField>
-              <WizardField
-                label="Branch"
-                required={branchRequired}
-                error={errors.branch}
-                icon={<GitBranch size={15} className="text-muted" aria-hidden />}
-                filled={!!branchId}
+                filled={false /* the picker draws its own "Change"; the group header shows the tick */}
               >
                 <SearchableSelect
-                  value={branchId}
-                  options={branchOptions}
-                  onChange={onBranchChange}
-                  disabled={!customerId || branchesLoading}
-                  placeholder={
-                    !customerId
-                      ? "Select a customer first"
-                      : branchesLoading
-                        ? "Loading branches…"
-                        : branches.length === 0
-                          ? "No branches for this customer"
-                          : "Select branch…"
-                  }
-                  err={errors.branch}
+                  value={customerId}
+                  options={customerOptions}
+                  onChange={onCustomerChange}
+                  placeholder="Search active customers…"
+                  err={errors.customer}
                 />
               </WizardField>
+
+              <div>
+                <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[color:var(--wiz-muted)]">
+                  <GitBranch size={13} aria-hidden /> Branch
+                  {branchRequired ? <span className="text-rose-500">*</span> : null}
+                  {branches.length > 0 ? (
+                    <span className="ml-auto font-normal">{branches.length} branch{branches.length === 1 ? "" : "es"}</span>
+                  ) : null}
+                </div>
+                {!customerId ? (
+                  <p className="rounded-xl border border-dashed border-[color:var(--wiz-border)] px-4 py-3 text-sm text-[color:var(--wiz-muted)]">
+                    Pick the customer first — its branches appear here.
+                  </p>
+                ) : branchesLoading ? (
+                  <p className="rounded-xl border border-dashed border-[color:var(--wiz-border)] px-4 py-3 text-sm text-[color:var(--wiz-muted)]">
+                    Loading {customerLabel || "the customer"}&rsquo;s branches…
+                  </p>
+                ) : branches.length === 0 ? (
+                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                    {customerLabel || "This customer"} has no branch yet — the project will follow the customer&rsquo;s default policy.
+                  </p>
+                ) : branches.length > 8 ? (
+                  <SearchableSelect
+                    value={branchId}
+                    options={branchOptions}
+                    onChange={onBranchChange}
+                    placeholder="Search branches…"
+                    err={errors.branch}
+                  />
+                ) : (
+                  <div role="radiogroup" aria-label="Branch" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {branches.map((b) => {
+                      const on = String(b.id) === branchId;
+                      return (
+                        <button key={b.id} type="button" role="radio" aria-checked={on}
+                          onClick={() => onBranchChange(String(b.id))}
+                          className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-shadow duration-micro ${
+                            on
+                              ? "border-transparent bg-[color:var(--wiz-bg)] shadow-raised ring-2 ring-sky-500"
+                              : "border-[color:var(--wiz-border)] bg-[color:var(--wiz-elevated)] hover:shadow-raised"}`}>
+                          <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${on ? "bg-sky-600 text-[#fff]" : "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300"}`}>
+                            {on ? <Check size={15} aria-hidden /> : <GitBranch size={15} aria-hidden />}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[color:var(--wiz-text)]" title={b.branch_name}>
+                            {b.branch_name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {errors.branch && branches.length > 0 && branches.length <= 8 ? (
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600">{errors.branch}</p>
+                ) : null}
+              </div>
+            </WizardGroup>
+
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[color:var(--wiz-border)] bg-[color:var(--wiz-elevated)] px-4 py-3 text-xs text-[color:var(--wiz-muted)]">
+              <Sparkles size={14} className="text-violet-500" aria-hidden />
+              {branchId ? (
+                <span>
+                  Next steps are pre-filled from <span className="font-bold text-[color:var(--wiz-text)]">{branchLabel || "the branch"}</span>:
+                </span>
+              ) : (
+                <span>After this step:</span>
+              )}
+              {["Leave & holiday policy", "Billing properties", "Map employees (optional)"].map((t, i) => (
+                <span key={t} className="inline-flex items-center gap-2">
+                  {i > 0 ? <ArrowRight size={12} aria-hidden /> : null}
+                  <span className="rounded-full bg-[color:var(--wiz-bg)] px-2.5 py-1 font-semibold text-[color:var(--wiz-text)] ring-1 ring-inset ring-[color:var(--wiz-border)]">{t}</span>
+                </span>
+              ))}
             </div>
           </div>
         );
@@ -1226,12 +1326,10 @@ export function EditProjectWizard({
  * No Opportunity field: projects stand on their own (internal work, direct
  * engagements). Forcing a pick here fabricated sales lineage. */
 export function CreateProjectWizard({
-  customers,
   onClose,
   onSaved,
   notify,
 }: {
-  customers: CustomerOption[];
   onClose: () => void;
   onSaved: (project: { id: number }) => void;
   notify: Notify;
@@ -1239,7 +1337,6 @@ export function CreateProjectWizard({
   return (
     <ProjectWizard
       mode="create"
-      customers={customers}
       onClose={onClose}
       onSaved={(p) => { if (p) onSaved(p); }}
       notify={notify}

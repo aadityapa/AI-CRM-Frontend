@@ -26,11 +26,18 @@ import { ApprovalGrants, ApprovalGrantsHeading, type ApprovalDef } from "../comp
 import { ResetPasswordModal } from "../components/ResetPasswordModal";
 import { Avatar } from "../components/Avatar";
 import {
+  CandidateStagesModal, StageAccessLine, type StageAccess, type StageCatalogue,
+} from "../components/access/CandidateStagesModal";
+import {
   ConfirmModal, EmptyState, ErrorBox, Modal, Spinner, StatusBadge,
   btnPrimary, btnSecondary, inputCls,
 } from "../components/ui";
 
-type BuiltinRole = { name: string; label: string; builtin: true; members_count: number; description: string; department?: string };
+type BuiltinRole = {
+  name: string; label: string; builtin: true; members_count: number; description: string; department?: string;
+  /** Which candidate stages the role sees (13 Oct 2026). */
+  candidate_stages?: StageAccess;
+};
 type CustomRole = {
   id: number; name: string; description: string; is_active: boolean;
   tab_access: GrantMap; field_access: Record<string, Record<string, string>>;
@@ -40,6 +47,7 @@ type CustomRole = {
   /** Where the role sits on this page (7 Oct 2026) — a registry department key. */
   department?: string;
   members_count: number; builtin: false;
+  candidate_stages?: StageAccess;
 };
 type Member = { id: number; full_name: string; email: string; username: string; is_active: boolean };
 type UserOpt = { id: number; full_name: string; email: string; username: string; is_active: boolean; roles?: string[]; custom_roles?: string[] };
@@ -99,17 +107,21 @@ export function RolesPanel({ notify }: { notify: Notify }) {
   const [deleteFor, setDeleteFor] = useState<CustomRole | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  /* Candidate stages per role (13 Oct 2026). */
+  const [stageCatalogue, setStageCatalogue] = useState<StageCatalogue | null>(null);
+  const [stagesFor, setStagesFor] = useState<{ label: string; builtin?: string; customId?: number; access: StageAccess } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const [roles, reg] = await Promise.all([
-        crmGet<{ builtin: BuiltinRole[]; custom: CustomRole[] }>("/api/roles"),
+        crmGet<{ builtin: BuiltinRole[]; custom: CustomRole[]; candidate_stages?: StageCatalogue }>("/api/roles"),
         crmGet<{ tabs: RegistryTab[]; approvals?: ApprovalDef[]; departments?: Department[] }>("/api/access-templates/registry"),
       ]);
       setBuiltin(roles.data?.builtin || []);
       setCustom(roles.data?.custom || []);
+      setStageCatalogue(roles.data?.candidate_stages ?? null);
       setRegistry(reg.data?.tabs || []);
       setApprovals(reg.data?.approvals || []);
       if (reg.data?.departments?.length) setDepartments(reg.data.departments);
@@ -154,6 +166,8 @@ export function RolesPanel({ notify }: { notify: Notify }) {
           <p className="text-sm text-secondary">
             Roles are grouped by <strong>department</strong>. A built-in role carries the product's own rules; a
             custom role is a name plus exactly the tabs and buttons you tick — add people to it and that is all they get.
+            Every role also carries its <strong>candidate stages</strong>: the stages (and candidates) it sees on
+            Candidate Profiles and inside every opportunity — press <em>Stages</em> on a card.
           </p>
           <p className="mt-1 text-xs text-muted">
             {builtin.length + custom.length} roles · {totalMembers} memberships · {groups.length} departments
@@ -228,6 +242,8 @@ export function RolesPanel({ notify }: { notify: Notify }) {
                     </div>
                   </dl>
                   <p className="mt-2 truncate text-[11px] text-muted" title={tabSummary(r.tab_access, labels)}>{tabSummary(r.tab_access, labels)}</p>
+                  <StageAccessLine access={r.candidate_stages} catalogue={stageCatalogue}
+                    onEdit={r.candidate_stages ? () => setStagesFor({ label: r.name, customId: r.id, access: r.candidate_stages! }) : undefined} />
                   <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
                     <button className={actionBtn} onClick={() => setMembersFor(r)} title="Add or remove members, reset a member's password">
                       <Users size={13} /> Members
@@ -261,6 +277,8 @@ export function RolesPanel({ notify }: { notify: Notify }) {
                       <dd className="text-sm font-semibold text-primary">Users ▸ Edit roles</dd>
                     </div>
                   </dl>
+                  <StageAccessLine access={r.candidate_stages} catalogue={stageCatalogue}
+                    onEdit={r.candidate_stages ? () => setStagesFor({ label: r.label, builtin: r.name, access: r.candidate_stages! }) : undefined} />
                 </article>
               ))}
             </div>
@@ -279,6 +297,12 @@ export function RolesPanel({ notify }: { notify: Notify }) {
           onSaved={() => { setEditing(null); void load(); }}
           notify={notify}
         />
+      )}
+      {stagesFor && stageCatalogue && (
+        <CandidateStagesModal roleLabel={stagesFor.label} builtin={stagesFor.builtin} customId={stagesFor.customId}
+          access={stagesFor.access} catalogue={stageCatalogue}
+          onClose={() => setStagesFor(null)}
+          onSaved={(msg) => { setStagesFor(null); notify(msg); void load(); }} />
       )}
       {membersFor && (
         <RoleMembersModal role={membersFor} labels={labels} onClose={() => { setMembersFor(null); void load(); }} notify={notify} />

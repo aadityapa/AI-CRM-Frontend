@@ -286,7 +286,7 @@ export function AccessTemplatesPage() {
     return (
       <article key={t.id}
         className={`flex flex-col rounded-card border p-3 transition-colors duration-micro ${
-          editing && form.id === t.id ? "border-brand-600 bg-brand-50 ring-1 ring-brand-600" : t.is_active ? "border-subtle bg-surface-1" : "border-dashed border-subtle bg-surface-2 opacity-80"}`}>
+          editing && form.id === t.id ? "border-brand-600 bg-brand-50 ring-1 ring-brand-600 dark:border-brand-400 dark:bg-brand-900/30" : t.is_active ? "border-subtle bg-surface-1" : "border-dashed border-subtle bg-surface-2 opacity-80"}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <LayoutTemplate size={16} className="flex-none text-brand-600 dark:text-brand-300" aria-hidden />

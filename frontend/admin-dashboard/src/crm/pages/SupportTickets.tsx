@@ -302,7 +302,7 @@ export function SupportTicketDetailPage() {
             ) : (
               <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto text-xs">
                 {(t.bot_transcript || []).map((m, i) => (
-                  <div key={i} className={`rounded-control px-2 py-1 ${m.role === "user" ? "bg-brand-50/60 text-primary" : "bg-surface-2 text-secondary"}`}>
+                  <div key={i} className={`rounded-control px-2 py-1 ${m.role === "user" ? "bg-brand-50/60 text-primary dark:bg-brand-900/30" : "bg-surface-2 text-secondary"}`}>
                     <span className="font-semibold">{m.role === "user" ? "User" : "Bot"}:</span> {m.content}
                   </div>
                 ))}

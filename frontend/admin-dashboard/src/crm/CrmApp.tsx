@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { APP_NAME } from "../lib/brand";
 import { crmGet, crmPost, CrmApiError } from "./api";
-import { CrmLink, CrmRouter, crmNavigate, crmUrl, isPushNavigation, readCrmPath } from "./routerHooks";
+import { CrmLink, CrmRouter, crmNavigate, isPushNavigation, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
 import { CRM_NAV, type CrmNavItem } from "./nav";
 import { ErrorBox, Spinner } from "./components/ui";
@@ -84,6 +84,9 @@ export type Me = {
   display_roles?: string[];
   /** A manager rung (Sales Manager) / Sales Head / Admin — works the whole team. */
   sees_team?: boolean;
+  /** The candidate stages this login sees (13 Oct 2026, Access Control ▸ Roles);
+   *  null = every stage. The stage chips show only these. */
+  candidate_stages?: string[] | null;
 };
 
 const BUILT_IN_ROLES = ["CEO", "Admin", "Sales_Head", "Sales", "RMG", "TA", "HR", "Finance"];
@@ -718,18 +721,17 @@ function CrmNavLinkItem({
   );
 }
 
-/** Replace the Dashboard with My Interviews for a panel-only login — once,
- *  on the empty path; Back / Forward and explicit links are untouched. */
-function PanelLanding() {
-  useEffect(() => {
-    if (readCrmPath() === "") {
-      // replaceState, not a push: Back must not return to a Dashboard that
-      // only sends them here again.
-      window.history.replaceState({}, "", crmUrl("my-interviews"));
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }
-  }, []);
-  return null;
+/**
+ * A panel-only login (the "Interviewer" custom role): no built-in role, and My
+ * Interviews is the only tab beside the Dashboard. Since 10 Oct 2026 such a
+ * login lands on its OWN dashboard (`PanelDashboard`) instead of being sent
+ * straight to My Interviews, and never sees the hiring control tower.
+ */
+export function isPanelOnlyLogin(me: Me): boolean {
+  if (me.roles.some((r) => BUILT_IN_ROLES.includes(r))) return false;
+  if (!crmTabVisibleFromMe(me, "my-interviews", false, false)) return false;
+  return !NAV.some((n) => n.path !== "" && n.path !== "my-interviews"
+    && crmTabVisibleFromMe(me, n.path, n.roles.some((r) => me.roles.includes(r)), false));
 }
 
 export default function CrmApp() {
@@ -951,13 +953,9 @@ export default function CrmApp() {
   // A login whose ONLY page is My Interviews (the Interviewer custom role:
   // no built-in role, one granted tab) opens on it — the Dashboard would be
   // a single tile pointing there (7 Oct 2026).
-  const panelOnly = !me.roles.some((r) => BUILT_IN_ROLES.includes(r))
-    && visible.filter((n) => n.path !== "").every((n) => n.path === "my-interviews")
-    && visible.some((n) => n.path === "my-interviews");
 
   return (
     <MeCtx.Provider value={me}>
-      {panelOnly && <PanelLanding />}
       {/* Desktop (md+): fixed app-shell — the shell itself never scrolls; only
           <main> does. Sidebar + platform bar + CRM header stay pinned without
           relying on position:sticky (which ancestor overflow rules defeat). */}

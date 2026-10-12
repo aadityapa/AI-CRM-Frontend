@@ -37,7 +37,11 @@ import {
 } from "./interview_auto_advance.js";
 import { createQuestionProvider, InterviewEngine } from "./interview_engine.js";
 import { stopSessionRecording } from "./session_recorder.js";
+import { deactivateInterviewSecurity, setSecurityPaused } from "./interview_security.js";
+import { stopFaceMonitoring } from "./face_detection.js";
+import { enterPausedFromServer, isPausedByRecruiter, stopLiveJoinWatch } from "./live_join.js";
 import { startWarmupCountdown, stopWarmupCountdown } from "./warmup_timer.js";
+import { closeTypedQuestion, isTypedPayload, presentTypedQuestion, renderStageStrip, typedAnswerSnapshot } from "./skill_bank.js";
 import {
   applyConversationPayload,
   conversationSettings,
@@ -752,6 +756,31 @@ async function _submitBoundaryAnswerBeforeFinalize({ timeExpired = false, manual
   await waitForMicTranscriptionIdleWithTimeout(FINALIZE_GRACE_MS);
   _stopMicImmediate();
 
+  // A pseudo-code / coding question still open (skill-wise bank, 10 Oct
+  // 2026): save what is on screen — the option clicked or the code typed.
+  const typed = typedAnswerSnapshot();
+  if (typed) {
+    closeTypedQuestion();
+    const hasAnswer = typed.kind === "pseudo" ? typed.choice !== null : !!String(typed.ans || "").trim();
+    const body = new URLSearchParams({
+      ans: hasAnswer ? String(typed.ans || "") : "skip",
+      action: hasAnswer ? "send" : "skip",
+    });
+    if (hasAnswer && typed.choice !== null) body.set("choice", String(typed.choice));
+    if (!hasAnswer) body.set("skip_reason", timeExpired ? "Interview time expired — no answer given" : "Interview ended");
+    try {
+      await handleJson(await apiFetch("/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      }));
+    } catch (err) {
+      const m = String(err?.message || err);
+      if (!/already completed|No active session/i.test(m)) console.warn("[FLOW] BOUNDARY_TYPED_SAVE_FAILED", m);
+    }
+    return hasAnswer ? String(typed.ans || "") : "";
+  }
+
   const snap = getAutoAdvanceCaptureSnapshot();
   const text = _collectPendingAnswerText();
   if (text) {
@@ -1407,6 +1436,13 @@ function _applyRuntimeFromNextPayload(data) {
 async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   const { fastTransition = false } = options;
   if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+  // A recruiter paused the interview (11 Oct 2026): nothing is asked until
+  // they resume — the live-join card takes over the screen.
+  if (data && data.code === "live_paused") {
+    holdForRecruiter();
+    enterPausedFromServer(data.live || {});
+    return;
+  }
 
   stopAutoAdvanceTurn();
   stopWarmupCountdown();
@@ -1418,6 +1454,7 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   // template turned the feature on.
   applyConversationPayload(data);
   setClarifyTools(false);
+  closeTypedQuestion();
 
   const questionEl = document.getElementById("candidateQuestion");
   const progressEl = document.getElementById("progressPill");
@@ -1475,7 +1512,29 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   } else if (data.total && progressEl) {
     progressEl.innerText = `Question ${data.index}/${data.total}`;
   }
+  // Skill-wise interview (12 Oct 2026): every question on a strip, by kind.
+  renderStageStrip(data);
   showFollowupChip(!!data.is_followup);
+
+  // Skill-wise question bank (10 Oct 2026): a pseudo-code or coding question is
+  // READ on screen — no voice, no microphone — in its own panel with a timer.
+  if (isTypedPayload(data)) {
+    showLeadIn("");
+    _setResponseProcessingUi(false, "");
+    _setSendResponseEnabled(false);
+    _setInterviewPhase("waiting_for_answer");
+    _setStatusText(
+      data.kind === "coding"
+        ? "Coding question — type your answer in the editor, then Submit."
+        : "Pseudo-code question — choose one option, then Submit.",
+    );
+    presentTypedQuestion(data, {
+      onSubmit: (result) => _submitTypedAnswer(result),
+      // The candidate's own camera stays visible (small) while they type.
+      getCameraStream: () => getProctorStream(),
+    });
+    return;
+  }
 
   // F: the live voice call asks the question itself (it opens on the first one).
   if (liveVoiceWanted()) {
@@ -1739,6 +1798,76 @@ function _autoSkipMustWaitForTranscription(autoAdvanceMeta) {
   return _recordedAudioBytes() >= RECORDED_AUDIO_MIN_BYTES && transcriptionRecentlyDown();
 }
 
+/**
+ * Save a pseudo-code / coding answer (skill-wise bank) and move on. Returns
+ * `{ retry: true, message }` when the panel should stay open for another try.
+ */
+async function _submitTypedAnswer(result) {
+  if (_submitInterviewInFlight || _interviewFlowStopped || state.endingInterview || state.redirecting) return {};
+  if (_answerSubmitInFlight || _pressInFlight) return { retry: true, message: "Please wait — saving…" };
+  _answerSubmitInFlight = true;
+  _pressInFlight = true;
+  const turn = Number(state.currentQuestionIndex);
+  const skipped = !!result?.skipped;
+  const params = new URLSearchParams({
+    ans: skipped ? SKIPPED_ANSWER_TOKEN : String(result?.ans || ""),
+    action: skipped ? "skip" : "send",
+    turn: Number.isFinite(turn) ? String(turn) : "",
+  });
+  if (!skipped && result?.choice !== null && result?.choice !== undefined) params.set("choice", String(result.choice));
+  // Coding (12 Oct 2026): the language the candidate picked in the editor.
+  if (result?.language) params.set("code_language", String(result.language));
+  if (skipped) {
+    params.set("skip_reason", result?.trigger === "time_limit" ? "Time ran out on this question" : "Candidate skipped");
+  }
+  const loadSeq = ++_questionLoadSeq;
+  try {
+    _setInterviewPhase("evaluating");
+    _setResponseProcessingUi(true, skipped ? "Skipping question..." : "Saving answer...");
+    const res = await apiFetch("/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      _setResponseProcessingUi(false, "");
+      if (data?.code === "live_paused") {
+        holdForRecruiter();
+        enterPausedFromServer(data.live || {});
+        return {};
+      }
+      _setInterviewPhase("waiting_for_answer");
+      return { retry: true, message: data?.error || `Could not save (status ${res.status}). Please try again.` };
+    }
+    const resp = await handleJson(res);
+    _logTurnEvent("answer_saved", { action: skipped ? "skip" : "send", skipped, typed: result?.kind || "" });
+    _resetQuestionTurnState(skipped ? "after_skip_saved" : "after_answer_saved");
+    closeTypedQuestion();
+    if (resp.next) {
+      await _transitionToNextQuestion(resp.next, loadSeq, { fastTransition: true });
+    } else {
+      _setInterviewPhase("generating_next");
+      await loadQuestion({ fastTransition: true });
+    }
+    return {};
+  } catch (err) {
+    if (_interviewFlowStopped || state.endingInterview || state.redirecting) return {};
+    const m = String(err?.message || err);
+    if (/already completed/i.test(m)) {
+      closeTypedQuestion();
+      await submitInterview({});
+      return {};
+    }
+    _setResponseProcessingUi(false, "");
+    _setInterviewPhase("waiting_for_answer");
+    return { retry: true, message: m };
+  } finally {
+    _answerSubmitInFlight = false;
+    _pressInFlight = false;
+  }
+}
+
 export async function submitCandidateAnswer(forceSkip = false, _retryAfterTranscription = false, options = {}) {
   const skipRequested = forceSkip === true;
   let autoAdvanceMeta = options.autoAdvanceMeta || null;
@@ -1757,6 +1886,7 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
     return;
   }
 
+  if (state.liveHold) return; // a recruiter has the interview paused
   if (_answerSubmitInFlight || _submitInterviewInFlight || _interviewFlowStopped || state.endingInterview || state.redirecting) {
     console.warn("[SUBMIT] Ignored — interview busy or submit in flight");
     return;
@@ -2011,6 +2141,11 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
       } catch (_) {
         blocked = null;
       }
+      if (blocked?.code === "live_paused") {
+        holdForRecruiter();
+        enterPausedFromServer(blocked.live || {});
+        return;
+      }
       if (blocked?.speech_blocked) {
         // The server heard speech evidence: the answer must be sent, not
         // skipped. Re-arming the silence timer here looped skip→409→skip
@@ -2079,6 +2214,51 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
 }
 
 
+/* ---------------------------------------------------------------------------
+ * A recruiter joins the interview (11 Oct 2026) — js/live_join.js drives these.
+ * ------------------------------------------------------------------------- */
+export function holdForRecruiter() {
+  if (state.liveHold || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
+  state.liveHold = true;
+  state.liveHoldStartedAt = Date.now();
+  ++_questionLoadSeq; // any question still being spoken / loaded is dropped
+  try {
+    stopAutoAdvanceTurn();
+    stopWarmupCountdown();
+    _cancelActiveSpeech();
+    _stopMicWithoutTranscription();
+    setClarifyTools(false);
+    closeTypedQuestion();
+    _setSendResponseEnabled(false);
+    _setResponseProcessingUi(false, "");
+  } catch (err) {
+    console.warn("[live-join] hold cleanup:", err?.message || err);
+  }
+  setSecurityPaused(true);
+  _setStatusText("Interview paused by a recruiter — please wait.");
+  _logTurnEvent("recruiter_paused", {});
+}
+
+export async function releaseRecruiterHold() {
+  if (!state.liveHold) return;
+  const pausedMs = Math.max(0, Date.now() - (state.liveHoldStartedAt || Date.now()));
+  state.liveHold = false;
+  state.liveHoldStartedAt = 0;
+  // The server stopped the clock too; shift ours by the pause until /next
+  // re-anchors it to the server's remaining time.
+  if (state.interviewStartTs) state.interviewStartTs += pausedMs;
+  setSecurityPaused(false);
+  _logTurnEvent("recruiter_resumed", { paused_ms: pausedMs });
+  if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+  _setStatusText("Resuming your interview…");
+  // The current question again — or the recruiter's own, when they queued one.
+  await loadQuestion({ fastTransition: true });
+}
+
+export function isRecruiterHold() {
+  return !!state.liveHold || isPausedByRecruiter();
+}
+
 export async function submitInterview(options = {}) {
   const timeExpired = !!(options && options.timeExpired);
   if (_submitInterviewInFlight) return;
@@ -2088,6 +2268,16 @@ export async function submitInterview(options = {}) {
   // A live voice call (if any) ends with the interview, whichever path got here.
   stopLiveVoice();
   setClarifyTools(false);
+  // Every finalize path tears the watchers down here (11 Oct 2026): the timer,
+  // premature-completion and termination paths skip `window.submitInterview`,
+  // so a fullscreen exit during the final save used to log one more warning.
+  try {
+    stopLiveJoinWatch();
+    stopFaceMonitoring();
+    deactivateInterviewSecurity();
+  } catch (_) {
+    /* teardown is best-effort */
+  }
 
   // Flush and finalize the session recording here rather than in the
   // `window.submitInterview` wrapper: the timer-expiry, premature-completion
@@ -2279,6 +2469,7 @@ export function startInterviewTimer() {
     if (!el || !state.interviewStartTs) return;
     const timed = String(state.timingMode || "").toLowerCase() === "time";
     if (timed && !state.interviewClockSynced) return; // wait for the server's clock
+    if (state.liveHold) return; // paused by a recruiter — the clock stands still
     const elapsed = Math.max(0, Math.floor((Date.now() - state.interviewStartTs) / 1000));
     const limit = Math.max(0, Number(state.interviewLimitSec) || 0);
     const useLimit = String(state.timingMode || "").toLowerCase() === "time" && limit > 0;

@@ -27,7 +27,7 @@ import { crmGet, qs } from "../../api";
 import { authFetch } from "../../../api/client";
 import type { Meta } from "../../api";
 import { useHasRole } from "../../CrmApp";
-import { useCanAct } from "../../useAccess";
+import { useCanAct, useCandidateStages } from "../../useAccess";
 import { crmNavigate } from "../../routerHooks";
 import { DataTable } from "../../components/DataTable";
 import type { Column, ColumnFilterDef, ColumnFilterValue } from "../../components/DataTable";
@@ -42,7 +42,7 @@ import { candidateStatusOptions, useCandidateStatusCatalogue } from "../../compo
 import { DEFAULT_PROFILE_COLUMNS, buildProfileColumns } from "./profileColumns";
 import type { ProfileColumnRow } from "./profileColumns";
 import { ProfileCardGrid } from "./ProfileCardGrid";
-import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE, bucketPhase } from "../../lib/candidateStageBuckets";
+import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE, bucketPhase, stageRangeLabel, visibleStageBuckets } from "../../lib/candidateStageBuckets";
 import { ProfileToolbar } from "./ProfileToolbar";
 import type { ViewMode } from "./ProfileToolbar";
 import { useProfileFilters } from "./useProfileFilters";
@@ -71,6 +71,10 @@ export function ProfilesListPage({
   renderCreateModal,
 }: Props) {
   const canCreate = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
+  /* Role-wise stages (13 Oct 2026, Access Control ▸ Roles): only the chips of
+     the stages this login's roles carry — the server leaves the rest out. */
+  const seenStages = useCandidateStages();
+  const stageBuckets = visibleStageBuckets(seenStages);
   const [toast, showToast] = useToast();
 
   const { filters, update, clearAll, isFiltered } = useProfileFilters();
@@ -102,7 +106,8 @@ export function ProfilesListPage({
      offering only what can appear under the current In pipeline / Closed view. */
   const statusCatalogue = useCandidateStatusCatalogue();
   const statusOptions = useMemo(
-    () => candidateStatusOptions(statusCatalogue, filters.bucket === "archive" ? "all" : filters.bucket),
+    () => candidateStatusOptions(statusCatalogue,
+      filters.bucket === "archive" || filters.bucket === "joined" ? "all" : filters.bucket),
     [statusCatalogue, filters.bucket],
   );
   const statusLabelOf = useCallback(
@@ -404,7 +409,9 @@ export function ProfilesListPage({
       ? "No candidates in the pipeline yet. Add one, or wait for applications to arrive."
       : filters.bucket === "archive"
         ? "Nothing in Archive. Candidates land here when their opportunity is put on hold, or when RMG / Sales archive them."
-        : "No closed applications.";
+        : filters.bucket === "joined"
+          ? "No one has joined yet. Candidates move here once HR marks them Joined."
+          : "No closed applications.";
 
   const openProfile = (r: ProfileColumnRow) => crmNavigate(`profiles/${r.id}`);
 
@@ -426,7 +433,8 @@ export function ProfilesListPage({
               <p className="text-sm text-white/85">
                 {meta?.total != null ? (
                   <><b className="tnum">{meta.total}</b> candidate{meta.total === 1 ? "" : "s"}
-                    {filters.phase ? ` in ${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === filters.phase)?.label || "this stage"}` : ""}
+                    {filters.phase ? ` in ${CANDIDATE_STAGE_BUCKETS.find((b) => b.key === filters.phase)?.label || "this stage"}`
+                      : filters.bucket === "joined" ? " joined" : ""}
                     {activeFilters.length > 0 ? " · filtered" : ""}</>
                 ) : subtitle}
               </p>
@@ -440,17 +448,24 @@ export function ProfilesListPage({
           )}
         </div>
         <div className="flex gap-1.5 overflow-x-auto px-3 py-2.5" role="tablist" aria-label="Stages">
-          {CANDIDATE_STAGE_BUCKETS.map((b) => {
-            const selectedKey = filters.bucket === "archive" ? "" : filters.phase || (filters.bucket === "rejected" ? "closed" : "all");
+          {stageBuckets.map((b) => {
+            const selectedKey = filters.bucket === "archive" ? ""
+              : filters.bucket === "joined" ? "joined"
+              : filters.phase || (filters.bucket === "rejected" ? "closed" : "all");
             const on = selectedKey === b.key;
+            // "In pipeline" = every live candidacy: not closed and not joined
+            // (13 Oct 2026 — a joiner's candidacy is finished; they live under Joined).
             const count = phaseCounts
-              ? b.key === "all" ? (phaseCounts.all ?? 0) - (phaseCounts.closed ?? 0) : phaseCounts[b.key] ?? 0
+              ? b.key === "all"
+                ? (phaseCounts.all ?? 0) - (phaseCounts.closed ?? 0) - (phaseCounts.joined ?? 0)
+                : phaseCounts[b.key] ?? 0
               : null;
+            const ownBucket = b.key === "closed" ? "rejected" : b.key === "joined" ? "joined" : "active";
             return (
               <button key={b.key} type="button" role="tab" aria-selected={on}
                 onClick={() => update({
-                  phase: b.key === "all" || b.key === "closed" ? "" : b.key,
-                  bucket: b.key === "closed" ? "rejected" : "active",
+                  phase: ownBucket === "active" && b.key !== "all" ? b.key : "",
+                  bucket: ownBucket,
                   status: "",
                 })}
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-shadow duration-micro ${
@@ -465,10 +480,16 @@ export function ProfilesListPage({
           {/* Archive (6 Oct 2026): candidates parked because their opportunity is on
               Customer / Sales hold, or archived by hand. They come back on their own
               when the deal is reactivated. */}
+          {seenStages && (
+            <span className="ml-auto inline-flex shrink-0 items-center self-center rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-muted"
+              title="Your role shows these stages only — Admin sets it in Access Control ▸ Roles">
+              Your role: {stageRangeLabel(seenStages)}
+            </span>
+          )}
           <button type="button" role="tab" aria-selected={filters.bucket === "archive"}
             title="Candidates whose opportunity is on hold, or archived by RMG / Sales"
             onClick={() => update({ phase: "", bucket: "archive", status: "" })}
-            className={`ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-shadow duration-micro ${
+            className={`${seenStages ? "" : "ml-auto "}inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-shadow duration-micro ${
               filters.bucket === "archive" ? "bg-slate-700 text-white ring-slate-700 shadow-raised"
                 : "bg-slate-100 text-slate-700 ring-subtle hover:shadow-raised dark:bg-slate-800 dark:text-slate-200"}`}>
             <Archive size={13} aria-hidden /> Archive
@@ -588,7 +609,7 @@ export function ProfilesListPage({
                       {!(sortIsLatest && currentSort.dir === "desc") && (
                         <button
                           type="button"
-                          className="ml-2 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 hover:bg-brand-100"
+                          className="ml-2 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700 hover:bg-brand-100 dark:bg-brand-900/40 dark:text-brand-200 dark:hover:bg-brand-900/60"
                           onClick={() => setLayout({ ...layout, sort: [{ by: LATEST_SORT_KEY, dir: "desc" }] })}
                           title="Show the candidates with the most recent change first"
                         >

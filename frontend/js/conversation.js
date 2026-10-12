@@ -77,12 +77,12 @@ function _ensureStyles() {
   const css = `
   .cand-conv-leadin{margin:0 0 6px;font-size:.92rem;line-height:1.4;color:#475569;font-style:italic;display:flex;gap:6px;align-items:flex-start}
   .cand-conv-leadin::before{content:"";flex:none;width:6px;height:6px;margin-top:.5em;border-radius:50%;background:#6366f1}
-  html.dark .cand-conv-leadin{color:#cbd5e1}
+  html.dark .cand-conv-leadin,html.kx-dark .cand-conv-leadin{color:#cbd5e1}
   .cand-conv-tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .cand-conv-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.08);color:#4338ca;border-radius:999px;padding:6px 12px;font-size:.8rem;font-weight:600;cursor:pointer}
   .cand-conv-btn:hover:not(:disabled){background:rgba(99,102,241,.16)}
   .cand-conv-btn:disabled{opacity:.45;cursor:not-allowed}
-  html.dark .cand-conv-btn{color:#c7d2fe;border-color:rgba(165,180,252,.4);background:rgba(99,102,241,.18)}
+  html.dark .cand-conv-btn,html.kx-dark .cand-conv-btn{color:#c7d2fe;border-color:rgba(165,180,252,.4);background:rgba(99,102,241,.18)}
   .cand-conv-chip{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:999px;background:#ede9fe;color:#5b21b6;font-size:.7rem;font-weight:700;letter-spacing:.02em;vertical-align:middle}
   .conv-closing{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.55);backdrop-filter:blur(4px);padding:16px}
   .conv-closing-card{width:min(560px,100%);border-radius:18px;background:#fff;color:#0f172a;box-shadow:0 24px 60px rgba(15,23,42,.35);overflow:hidden}
@@ -152,6 +152,13 @@ export function showFollowupChip(on) {
 }
 
 /**
+ * The Repeat / Explain buttons under the question were REMOVED from the candidate
+ * screen (12 Oct 2026, user decision): they cluttered the question card. The
+ * switch below keeps the code in place; set it to true to bring them back.
+ */
+const SHOW_CLARIFY_BUTTONS = false;
+
+/**
  * The Repeat / Explain buttons under the question. `onRequest(mode)` is the
  * candidate page's handler (it owns the microphone). Hidden unless the template
  * enabled clarifications.
@@ -160,7 +167,7 @@ export function setClarifyTools(visible, onRequest) {
   const q = document.getElementById("candidateQuestion");
   if (!q) return;
   let bar = document.getElementById("candidateConvTools");
-  const enabled = !!conversationSettings()?.clarify && visible;
+  const enabled = SHOW_CLARIFY_BUTTONS && !!conversationSettings()?.clarify && visible;
   if (!enabled) {
     if (bar) bar.hidden = true;
     return;

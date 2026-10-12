@@ -7635,6 +7635,185 @@
       border-radius: 10px;
       padding: 8px 12px;
     }
+
+    /* --- Spoken question screen v3 (12 Oct 2026) -------------------------------
+       (1) The QUESTION comes first in the left column and the AI orb shrinks to a
+       band — on a laptop the question used to sit at the bottom edge under a
+       420 px orb. (2) A light theme that follows the dashboard / OS setting,
+       like the pseudo-code and coding panels already do (html.kx-dark = dark).
+       (3) Phones: the header wraps and the camera no longer covers the question.
+       Every id, class hook and state class is unchanged. */
+    .qc-left { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+    .qc-question-card { order: -1; padding: 20px 22px 18px; border-radius: 20px; }
+    .qc-question-card .cand-question { font-size: 23px; line-height: 1.4; font-weight: 700; }
+    .qc-question-card:has(#kxQuestionStrip:not([hidden])) #progressPill { display: none; }
+    .qc-ai-stage { flex: 1 1 auto; min-height: 220px; border-radius: 20px; }
+    .qc-ai-center { transform: translate(-50%, -50%) scale(.8); }
+    .qc-stage-label { bottom: 18px; }
+    .qc-controls { left: auto; right: 14px; top: 12px; bottom: auto; z-index: 3; }
+    #screenCandidate .qc-controls .cand-btn.ghost { width: auto; min-height: 0; padding: 6px 12px; font-size: 11px; border-radius: 999px; }
+    .qc-answer-hint {
+      display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 9px 12px;
+      border-radius: 12px; font-size: 12.5px; line-height: 1.45;
+      color: #a7f3d0; background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.22);
+    }
+    .qc-answer-hint b { font-weight: 800; }
+    .qc-answer-hint-ic { flex: none; display: inline-flex; margin-top: 1px; }
+    .cand-conv-tools { margin-top: 12px; }
+    #screenCandidate .cand-conv-tools .cand-conv-btn { display: inline-flex; flex: 0 0 auto; width: auto; min-height: 0; margin: 0; padding: 6px 12px; font-size: 12px; border-radius: 999px; box-shadow: none; text-transform: none; letter-spacing: 0; }
+    html.kx-dark .cand-conv-btn, #screenCandidate .cand-conv-btn { color: #c7d2fe; border-color: rgba(165,180,252,.4); background: rgba(99,102,241,.18); }
+    #screenCandidate .cand-conv-leadin { color: #cbd5e1; }
+
+    /* Light theme (the default when the OS / dashboard is light). */
+    html:not(.kx-dark) #screenCandidate.quantum-shell {
+      background: radial-gradient(70% 60% at 40% 0%, #e0e7ff 0%, #f1f5fb 45%, #eef2f7 100%);
+    }
+    html:not(.kx-dark) #screenCandidate .qc-title { color: #0f172a; }
+    html:not(.kx-dark) #screenCandidate .qc-center-timer { background: #fff; border-color: #e2e8f0; box-shadow: 0 6px 18px rgba(15,23,42,.08); }
+    html:not(.kx-dark) #screenCandidate .qc-metric-k { color: #64748b; }
+    html:not(.kx-dark) #screenCandidate .qc-metric-v { color: #4f46e5; }
+    html:not(.kx-dark) #screenCandidate .qc-question-card,
+    html:not(.kx-dark) #screenCandidate .qc-status-tracker,
+    html:not(.kx-dark) #screenCandidate .qc-response-card,
+    html:not(.kx-dark) #screenCandidate .qc-transcript-panel {
+      background: #fff; border-color: #e2e8f0; box-shadow: 0 8px 24px rgba(15,23,42,.06); backdrop-filter: none;
+    }
+    html:not(.kx-dark) #screenCandidate .qc-question-card { border-top: 3px solid #6366f1; }
+    html:not(.kx-dark) #screenCandidate .qc-q-k { color: #4f46e5; }
+    html:not(.kx-dark) #screenCandidate #progressPill { color: #64748b; }
+    html:not(.kx-dark) #screenCandidate .qc-question-card .cand-question { color: #0f172a; }
+    html:not(.kx-dark) #screenCandidate #kxQuestionStrip .kxsb-strip-legend { color: #475569; }
+    html:not(.kx-dark) #screenCandidate #kxQuestionStrip .kxsb-strip-legend .count { color: #1e293b; }
+    html:not(.kx-dark) #screenCandidate .qc-answer-hint { color: #065f46; background: #ecfdf5; border-color: #a7f3d0; }
+    html:not(.kx-dark) #screenCandidate .cand-conv-btn { color: #4338ca; border-color: rgba(99,102,241,.35); background: rgba(99,102,241,.08); }
+    html:not(.kx-dark) #screenCandidate .cand-conv-leadin { color: #475569; }
+    html:not(.kx-dark) #screenCandidate .qc-ai-stage {
+      background: radial-gradient(60% 80% at 50% 45%, #e0e7ff 0%, #f8fafc 70%); border-color: #e2e8f0;
+    }
+    html:not(.kx-dark) #screenCandidate .qc-chip-row { border-bottom-color: #e2e8f0; }
+    html:not(.kx-dark) #screenCandidate .qc-chip-row .cand-chip { color: #1e293b; }
+    html:not(.kx-dark) #screenCandidate .qc-chip-row .cand-chip.soft { color: #64748b; }
+    html:not(.kx-dark) #screenCandidate .qc-mic-core { background: #fff; border-color: #c7d2fe; box-shadow: 0 10px 36px rgba(99,102,241,.25); }
+    html:not(.kx-dark) #screenCandidate .qc-mic-core svg { color: #4f46e5; filter: none; }
+    html:not(.kx-dark) #screenCandidate .qc-stage-label { color: #475569; }
+    html:not(.kx-dark) #screenCandidate .qc-controls .cand-btn.ghost { background: #fff; color: #334155; border-color: #cbd5e1; }
+    html:not(.kx-dark) #screenCandidate .qc-status-tracker-k { color: #6366f1; }
+    html:not(.kx-dark) #screenCandidate .qc-status-tracker-v { color: #0f172a; }
+    html:not(.kx-dark) #screenCandidate .qc-transcript-h { color: #6366f1; }
+    html:not(.kx-dark) #screenCandidate .qc-transcript-panel .cand-spoken-box { background: #f8fafc; color: #0f172a; border-color: #e2e8f0; }
+    html:not(.kx-dark) #screenCandidate .cand-listen-status { color: #64748b; background: #f8fafc; border-color: #e2e8f0; }
+    html:not(.kx-dark) #screenCandidate .cand-listen-status.listening { color: #047857; background: #ecfdf5; border-color: #6ee7b7; box-shadow: none; }
+    html:not(.kx-dark) #screenCandidate .cand-listen-status.ai-speaking { color: #4338ca; background: #eef2ff; border-color: #c7d2fe; }
+    html:not(.kx-dark) #screenCandidate .cand-listen-status.processing { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
+    html:not(.kx-dark) #screenCandidate .qc-response-card .cand-skip { background: #f1f5f9; color: #334155; border-color: #cbd5e1; }
+    html:not(.kx-dark) #screenCandidate .qc-response-card .cand-skip:hover { background: #e2e8f0; }
+    html:not(.kx-dark) #screenCandidate .qc-response-card .cand-send:not(:disabled) {
+      background: linear-gradient(180deg, #4f7cf7, #2563eb); color: #fff; border-color: #1d4ed8; box-shadow: 0 8px 20px rgba(37,99,235,.28);
+    }
+    html:not(.kx-dark) #screenCandidate .qc-response-card .cand-send:disabled { background: #e2e8f0; color: #94a3b8; border-color: #e2e8f0; }
+    html:not(.kx-dark) #screenCandidate .cand-mini { color: #64748b; }
+    html:not(.kx-dark) #screenCandidate .qc-cam-card { border-color: #e2e8f0; box-shadow: 0 8px 24px rgba(15,23,42,.08); }
+
+    /* Phones / narrow windows: one scrolling column, nothing overlaps. */
+    @media (max-width: 760px) {
+      body.interview-mode .main, body.interview-mode #screenCandidate { height: auto; min-height: 100vh; overflow: visible; }
+      #screenCandidate.quantum-shell, .cand-shell { height: auto; min-height: 100vh; overflow: visible; }
+      .qc-layout { height: auto; }
+      .qc-top { flex-wrap: wrap; row-gap: 10px; }
+      .qc-lefthead, .qc-righthead { min-width: 0; }
+      .qc-center-timer { position: static; transform: none; order: 3; width: 100%; max-width: none; flex-direction: row; justify-content: center; padding: 6px 12px; }
+      .qc-end-btn { width: auto; padding: 10px 14px; font-size: 12px; }
+      .qc-grid { display: flex; flex-direction: column; flex: none; }
+      .qc-ai-stage { min-height: 150px; height: 150px; flex: none; }
+      .qc-ai-center { transform: translate(-50%, -50%) scale(.42); }
+      .qc-chip-row .cand-chip.soft { display: none; }
+      .qc-cam-card { max-height: 200px; }
+      .qc-question-card .cand-question { font-size: 19px; }
+    }
+    /* =============================================================
+       Interview rules v3 (12 Oct 2026, user ask: "correct the question
+       count and update this page for the current AI interview"). The
+       real format comes from the server (`_interview_format`); the page
+       is a header, a "Your interview" summary on the left and four rule
+       groups on the right; consent + buttons stay pinned at the bottom.
+       ============================================================= */
+    .rules-v3 .rv-card { display: flex; flex-direction: column; gap: 18px; }
+    .rules-v3 .rv-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px; }
+    .rules-v3 .rv-head .rules-title { margin: 10px 0 4px; font-size: clamp(28px, 3.2vw, 42px); }
+    .rules-v3 .rv-head .rules-sub { margin: 0; }
+    .rules-v3 .rv-body { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 20px; flex: 1 1 auto; min-height: 0; }
+    .rules-v3 .rv-aside {
+      align-self: start; position: sticky; top: 0;
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 18px; border-radius: 20px;
+      background: linear-gradient(160deg, rgba(37, 99, 235, 0.22), rgba(79, 70, 229, 0.14) 60%, rgba(14, 165, 233, 0.10));
+      border: 1px solid rgba(147, 197, 253, 0.28);
+    }
+    .rules-v3 .rv-aside-title { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #bfdbfe; }
+    .rules-v3 .rv-stat { display: flex; gap: 12px; align-items: flex-start; }
+    .rules-v3 .rv-stat-ico, .rules-v3 .rv-ends-ico {
+      flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+      background: rgba(255, 255, 255, 0.10); color: #dbeafe;
+    }
+    .rules-v3 .rv-stat-label { display: block; font-size: 12px; color: #a5b4cf; font-weight: 600; }
+    .rules-v3 .rv-stat-value { display: block; font-size: 22px; font-weight: 800; color: #f8fafc; line-height: 1.2; }
+    .rules-v3 .rv-stat-hint { display: block; font-size: 12px; color: #9fb3c8; margin-top: 2px; }
+    .rules-v3 .rv-mix { display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 2px 50px; }
+    .rules-v3 .rv-mix-chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .rules-v3 .rv-mix-chip b { font-size: 13px; }
+    .rules-v3 .rv-mix-chip--spoken { background: rgba(14, 165, 233, 0.30); }
+    .rules-v3 .rv-mix-chip--pseudo { background: rgba(245, 158, 11, 0.32); }
+    .rules-v3 .rv-mix-chip--coding { background: rgba(16, 185, 129, 0.32); }
+    .rules-v3 .rv-skills { margin: 0; font-size: 12.5px; color: #c7d2fe; background: rgba(99, 102, 241, 0.18); border-radius: 12px; padding: 8px 12px; }
+    .rules-v3 .rv-ends {
+      display: flex; gap: 12px; align-items: flex-start; margin-top: 4px; padding: 12px; border-radius: 14px;
+      background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .rules-v3 .rv-ends strong { display: block; color: #f1f5f9; font-size: 13.5px; }
+    .rules-v3 .rv-ends span { display: block; color: #cbd5e1; font-size: 13px; line-height: 1.45; }
+    .rules-v3 .rv-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-content: start; overflow-y: auto; padding-right: 4px; }
+    .rules-v3 .rv-group { min-width: 0; }
+    .rules-v3 .rv-group-title { margin: 0 0 8px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: #93c5fd; }
+    .rules-v3 .rv-group-title--stop { color: #fca5a5; }
+    .rules-v3 .rv-rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .rules-v3 .rv-rule {
+      display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px;
+      background: rgba(30, 41, 59, 0.62); border: 1px solid rgba(148, 163, 184, 0.16);
+      transition: border-color 150ms, transform 150ms;
+    }
+    .rules-v3 .rv-rule[hidden] { display: none; }
+    .rules-v3 .rv-rule:hover { border-color: rgba(147, 197, 253, 0.38); transform: translateY(-1px); }
+    .rules-v3 .rv-rule-ico { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+    .rules-v3 .rv-rule strong { display: block; color: #f1f5f9; font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .rules-v3 .rv-rule span { display: block; color: #a8b6c8; font-size: 13px; line-height: 1.5; }
+    .rules-v3 .rv-rule span span { display: inline; }
+    .rules-v3 .rv-rule b { color: #e2e8f0; }
+    .rules-v3 .rv-rule--stop { background: rgba(127, 29, 29, 0.30); border-color: rgba(248, 113, 113, 0.34); }
+    .rules-v3 .rv-rule--stop .rv-rule-ico { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+    .rules-v3 .rv-rule--stop b { color: #fecaca; }
+    .rules-v3 .rv-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; justify-content: space-between; padding-top: 4px; border-top: 1px solid rgba(148, 163, 184, 0.14); }
+    .rules-v3 .rv-foot .rules-ack { flex: 1 1 420px; margin: 0; }
+    .rules-v3 .rv-foot .rules-actions { flex: 0 0 auto; }
+    /* One screen: header + summary + rules + pinned consent; only the rules scroll. */
+    @media (min-width: 861px) {
+      .rules-v3 .rv-card { height: calc(100dvh - 2 * clamp(18px, 3vh, 36px)); min-height: 0; }
+      .rules-v3 .rv-body { overflow: hidden; }
+      .rules-v3 .rv-groups { max-height: 100%; }
+      .rules-v3 .rv-aside { max-height: 100%; overflow-y: auto; }
+    }
+    .rules-v3 .rules-ack { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; line-height: 1.45; color: #e2e8f0; }
+    .rules-v3 .rules-actions { display: flex; gap: 12px; }
+    .rules-v3 .rules-actions button { white-space: nowrap; width: auto; flex: 0 0 auto; min-width: 120px; padding-left: 22px; padding-right: 22px; }
+    .rules-v3 [hidden] { display: none !important; }
+    @media (max-width: 1100px) { .rules-v3 .rv-groups { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      .rules-v3 .rv-body { grid-template-columns: 1fr; }
+      .rules-v3 .rv-aside { position: static; }
+      .rules-v3 .rv-foot .rules-actions { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -8203,14 +8382,16 @@
 
     Continue stays disabled until the acknowledgement box is ticked.
   -->
-  <section id="screenInterviewRules" class="startup-screen rules-screen" aria-labelledby="interviewRulesTitle" hidden>
+  <section id="screenInterviewRules" class="startup-screen rules-screen rules-v3" aria-labelledby="interviewRulesTitle" hidden>
     <div class="startup-container rules-container">
-      <div class="rules-card">
-        <header class="rules-head">
-          <span class="rules-chip">Before you begin</span>
-          <h1 id="interviewRulesTitle" class="rules-title">Interview rules</h1>
+      <div class="rules-card rv-card">
+        <header class="rv-head">
+          <div class="rv-head-text">
+            <span class="rules-chip">Before you begin</span>
+            <h1 id="interviewRulesTitle" class="rules-title">How this interview works</h1>
+            <p class="rules-sub">Please read this once. These rules are applied automatically during the interview.</p>
+          </div>
           <div class="device-test-steps rules-steps" aria-label="Setup steps">
-            <span class="device-test-steps-label">Setup Steps:</span>
             <span class="dstep dstep--done">1. Welcome</span>
             <span class="dstep-arrow dstep-arrow--active" aria-hidden="true">⟶</span>
             <span class="dstep dstep--active">2. Rules</span>
@@ -8219,94 +8400,131 @@
             <span class="dstep-arrow" aria-hidden="true">⟶</span>
             <span class="dstep">4. Interview</span>
           </div>
-          <p class="rules-sub">
-            This interview is monitored. Please read these rules — they are enforced automatically.
-          </p>
         </header>
 
-        <div id="interviewRulesFormat" class="rules-format" role="group" aria-label="Interview format">
-          <div class="rules-stat">
-            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span>
-            <span class="rules-stat-label">Duration</span>
-            <span class="rules-stat-value" id="rulesDuration">—</span>
-          </div>
-          <div class="rules-stat">
-            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg></span>
-            <span class="rules-stat-label">Questions</span>
-            <span class="rules-stat-value" id="rulesQuestions">—</span>
-          </div>
-          <div class="rules-stat">
-            <span class="rules-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M19 6v4M22 7v2"/></svg></span>
-            <span class="rules-stat-label">Answer by</span>
-            <span class="rules-stat-value">Speaking</span>
+        <div class="rv-body">
+          <aside class="rv-aside" id="interviewRulesFormat" aria-label="Your interview">
+            <div class="rv-aside-title">Your interview</div>
+            <div class="rv-stat">
+              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span>
+              <div><span class="rv-stat-label">Time</span><span class="rv-stat-value" id="rulesDuration">—</span><span class="rv-stat-hint" id="rulesDurationHint"></span></div>
+            </div>
+            <div class="rv-stat">
+              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg></span>
+              <div><span class="rv-stat-label">Questions</span><span class="rv-stat-value" id="rulesQuestions">—</span><span class="rv-stat-hint" id="rulesQuestionsHint"></span></div>
+            </div>
+            <div class="rv-mix" id="rulesMix" hidden></div>
+            <div class="rv-stat">
+              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></span>
+              <div><span class="rv-stat-label">You answer by</span><span class="rv-stat-value" id="rulesAnswerBy">Speaking</span><span class="rv-stat-hint" id="rulesAnswerHint">The AI reads each question aloud.</span></div>
+            </div>
+            <p class="rv-skills" id="rulesSkillsNote" hidden></p>
+            <div class="rv-ends">
+              <span class="rv-ends-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg></span>
+              <div><strong>How it ends</strong><span id="rulesEndCondition">It submits automatically when the questions run out.</span></div>
+            </div>
+          </aside>
+
+          <div class="rv-groups">
+            <section class="rv-group" aria-label="Your setup">
+              <h2 class="rv-group-title">Your setup</h2>
+              <ul class="rv-rules" role="list">
+              <li class="rv-rule ">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/></svg></span>
+                <div><strong>Laptop or desktop with a camera.</strong><span>Phones and tablets cannot be used. Sit somewhere quiet and well lit.</span></div>
+              </li>
+
+              <li class="rv-rule " id="rulesRecordRule">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
+                <div><strong>Camera, microphone and your whole screen are recorded.</strong><span>You will share your <b>entire screen</b> in the next step. The recording is reviewed by the hiring team.</span></div>
+              </li>
+
+              <li class="rv-rule ">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="M18 8l4 4M22 8l-4 4"/></svg></span>
+                <div><strong>Only you, on camera, the whole time.</strong><span>No one else in the room or in view, no phone, notes or other help. Another face on camera counts as a warning.</span></div>
+              </li>
+
+              </ul>
+            </section>
+
+            <section class="rv-group" aria-label="Stay in the interview">
+              <h2 class="rv-group-title rv-group-title--stop">Stay in the interview</h2>
+              <ul class="rv-rules" role="list">
+              <li class="rv-rule rv-rule--stop" id="rulesGazeRule">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+                <div><strong>Keep your eyes on the screen.</strong><span>The camera follows where you look. Looking away — to the side, down at a phone or notes, or out of the camera — for a few seconds gives a soft reminder. <b id="rulesGazeLimit">The 10th reminder ends the interview.</b> Looking down at the keyboard during a coding question is fine.</span></div>
+              </li>
+
+              <li class="rv-rule rv-rule--stop">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/><path d="M9.5 14.5l5 3M14.5 14.5l-5 3"/></svg></span>
+                <div><strong>Stay on this page, in full screen.</strong><span>Switching tabs or windows, leaving full screen or stopping the screen share each counts as a warning. <b>After 3 warnings, the next one ends the interview</b> and submits what you have answered.</span></div>
+              </li>
+
+              <li class="rv-rule rv-rule--stop">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>
+                <div><strong>The keyboard is switched off.</strong><span><span id="rulesKeyboardText">You answer by speaking, so typing, copy and paste are off. Use the mouse for the buttons.</span></span></div>
+              </li>
+
+              </ul>
+            </section>
+
+            <section class="rv-group" aria-label="Answering">
+              <h2 class="rv-group-title">Answering</h2>
+              <ul class="rv-rules" role="list">
+              <li class="rv-rule ">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h3l4 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 9a3 3 0 0 1 0 6M19 6a7 7 0 0 1 0 12"/></svg></span>
+                <div><strong>Spoken questions: listen, then answer aloud.</strong><span>Your microphone opens when the AI finishes reading. Speak clearly, then press <b>Send Response</b>. A short introduction comes first — it is not scored.</span></div>
+              </li>
+
+              <li class="rv-rule " id="rulesTypedRule" hidden>
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16"/></svg></span>
+                <div><strong>Pseudo-code and coding questions are on screen.</strong><span><span id="rulesTypedText">Each has its own timer. Choose the right option, or write your code in the editor — the keyboard works inside the editor only.</span></span></div>
+              </li>
+
+              <li class="rv-rule " id="rulesFollowupRule" hidden>
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg></span>
+                <div><strong>The AI may ask a short follow-up.</strong><span><span id="rulesFollowupText">Based on your answer — answer it like any other question.</span></span></div>
+              </li>
+
+              <li class="rv-rule ">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span>
+                <div><strong>One question at a time — no going back.</strong><span>You can skip a question you do not know, but a skipped question scores zero.</span></div>
+              </li>
+
+              </ul>
+            </section>
+
+            <section class="rv-group" aria-label="Good to know">
+              <h2 class="rv-group-title">Good to know</h2>
+              <ul class="rv-rules" role="list">
+              <li class="rv-rule " id="rulesRecruiterRule">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11h5M19.5 8.5v5"/></svg></span>
+                <div><strong>A recruiter may join live.</strong><span>They can pause the AI, show you a note, ask their own question or call you on video. The clock stops while the interview is paused.</span></div>
+              </li>
+
+              <li class="rv-rule ">
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>
+                <div><strong>If your connection drops, reopen the same link.</strong><span>On the same computer you continue from where you left off — answers already sent are saved.</span></div>
+              </li>
+
+              </ul>
+            </section>
           </div>
         </div>
 
-        <ul class="rules-list" role="list">
-          <li class="rules-item rules-item--stop">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg></span>
-            <div>
-              <strong>Stay on this tab, in fullscreen.</strong>
-              Leaving fullscreen, switching tabs or switching windows is recorded as a
-              violation. Repeated violations end the interview automatically and submit
-              whatever you have answered so far.
-            </div>
-          </li>
-          <li class="rules-item rules-item--stop">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg></span>
-            <div>
-              <strong>The keyboard is disabled.</strong>
-              You answer by speaking, so typing, copying and pasting are switched off for
-              the whole interview. Use your mouse for the on-screen buttons.
-            </div>
-          </li>
-          <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></span>
-            <div>
-              <strong>Speak your answer, then press Send Response.</strong>
-              The AI reads each question aloud. Your microphone opens automatically when it
-              finishes. Speak clearly and at a normal pace.
-            </div>
-          </li>
-          <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
-            <div>
-              <strong>Camera and microphone stay on.</strong>
-              Your session is proctored. More than one face in view is recorded as a
-              violation, so please sit alone.
-            </div>
-          </li>
-          <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-            <div>
-              <strong>The interview ends on its own.</strong>
-              <span id="rulesEndCondition">It submits automatically when the time or the
-              question list runs out</span> — whichever comes first. You do not need to do
-              anything to finish.
-            </div>
-          </li>
-          <li class="rules-item">
-            <span class="rules-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span>
-            <div>
-              <strong>You cannot revisit a question.</strong>
-              Once you send a response the interview moves on. You may skip a question, but
-              a skipped question scores zero.
-            </div>
-          </li>
-        </ul>
-
-        <label class="rules-ack" for="interviewRulesAck">
-          <input type="checkbox" id="interviewRulesAck">
-          <span>I have read and understood these rules, and I consent to being recorded and proctored for this interview.</span>
-        </label>
-
-        <div class="rules-actions">
-          <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
-          <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
-            Continue to device check
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          </button>
-        </div>
+        <footer class="rv-foot">
+          <label class="rules-ack" for="interviewRulesAck">
+            <input type="checkbox" id="interviewRulesAck">
+            <span>I have read these rules, and I agree to my camera, microphone and screen being recorded and proctored for this interview.</span>
+          </label>
+          <div class="rules-actions">
+            <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
+            <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
+              Continue to device check
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   </section>
@@ -8415,7 +8633,7 @@
               <span class="device-test-tile-badge">Required</span>
             </div>
             <div class="device-test-tile-body">
-              <p class="device-test-tile-hint">Required. Click <strong>Share screen</strong> and choose this tab — your screen is recorded with the interview so the reviewer sees each question as you answer it.</p>
+              <p class="device-test-tile-hint">Required. Click <strong>Share screen</strong>, choose <strong>Entire screen</strong> and press Share — your whole screen is recorded with the interview.</p>
             </div>
             <div class="device-test-tile-actions">
               <button class="cand-btn cand-media-primary" type="button" data-action="screen-share">Share screen</button>
@@ -8967,8 +9185,13 @@
             </div>
             <div class="qc-question-card">
               <div class="qc-q-k">Assessment Query <span id="progressPill"></span></div>
+              <div id="kxQuestionStrip" hidden></div>
               <div class="cand-question" id="candidateQuestion">Waiting for HR setup...</div>
               <div class="cand-mini muted cand-voice-notice" id="candidateVoiceNotice" role="status" aria-live="polite" hidden></div>
+              <div class="qc-answer-hint" id="kxAnswerHint">
+                <span class="qc-answer-hint-ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></span>
+                <span><b>Answer aloud.</b> Your microphone turns on once the question has been read out &mdash; press <b>Send Response</b> when you have finished.</span>
+              </div>
             </div>
           </section>
 
@@ -9097,7 +9320,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=40"></script>
+  <script type="module" src="js/app.js?v=49"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

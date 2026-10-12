@@ -57,6 +57,9 @@ export function getScreenSurface() {
   }
 }
 
+/** The candidate must share the whole screen, not a tab or a window (11 Oct 2026). */
+export const REQUIRE_ENTIRE_SCREEN = true;
+
 /**
  * Ask the candidate to share their screen. MUST run inside a click handler.
  * Resolves `{ ok, reason, surface }` — never rejects.
@@ -66,12 +69,14 @@ export async function requestScreenShare() {
   releaseScreenShare();
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 4, max: 8 } },
+      // The ENTIRE screen (11 Oct 2026): a shared tab only records the
+      // interview page, which shows nothing a reviewer needs (another window,
+      // a second app). Chrome opens the picker on "Entire screen".
+      video: { frameRate: { ideal: 4, max: 8 }, displaySurface: "monitor" },
       audio: false,
-      // Chrome: offer THIS tab first — the interview page is what we want on
-      // record — but any surface the candidate picks is accepted.
-      preferCurrentTab: true,
-      selfBrowserSurface: "include",
+      preferCurrentTab: false,
+      selfBrowserSurface: "exclude",
+      monitorTypeSurfaces: "include",
       surfaceSwitching: "exclude",
       systemAudio: "exclude",
     });
@@ -79,6 +84,18 @@ export async function requestScreenShare() {
     if (!track) {
       try { stream.getTracks().forEach((t) => t.stop()); } catch (_) { /* ignore */ }
       return { ok: false, reason: "no_track" };
+    }
+    let picked = "";
+    try {
+      picked = String((track.getSettings && track.getSettings().displaySurface) || "");
+    } catch (_) {
+      picked = "";
+    }
+    // A browser that does not say what was shared is trusted; one that says
+    // "a tab" or "a window" is asked again.
+    if (REQUIRE_ENTIRE_SCREEN && picked && picked !== "monitor") {
+      try { stream.getTracks().forEach((t) => t.stop()); } catch (_) { /* ignore */ }
+      return { ok: false, reason: "not_entire_screen", surface: picked };
     }
     _stream = stream;
     track.addEventListener("ended", () => {

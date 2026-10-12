@@ -13,6 +13,14 @@
  *   values are banned.
  * - Type: text-xs..text-2xl land exactly on the 12/14/16/20/24/32 scale.
  */
+/**
+ * Every token colour is alpha-capable (10 Oct 2026). A bare `var(--x)` can
+ * not take an opacity modifier, so `bg-brand-50/40` or `dark:bg-brand-900/30`
+ * compiled to NO rule at all — the light background stayed in dark mode and
+ * the text on it vanished. `color-mix` lets Tailwind put the alpha in.
+ */
+const mix = (v) => `color-mix(in srgb, var(${v}) calc(<alpha-value> * 100%), transparent)`;
+
 module.exports = {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
@@ -20,73 +28,73 @@ module.exports = {
     extend: {
       colors: {
         brand: {
-          50: "var(--brand-50)",
-          100: "var(--brand-100)",
-          200: "var(--brand-200)",
-          300: "var(--brand-300)",
-          400: "var(--brand-400)",
-          500: "var(--brand-500)",
-          600: "var(--brand-600)",
-          700: "var(--brand-700)",
-          800: "var(--brand-800)",
-          900: "var(--brand-900)",
+          50: mix("--brand-50"),
+          100: mix("--brand-100"),
+          200: mix("--brand-200"),
+          300: mix("--brand-300"),
+          400: mix("--brand-400"),
+          500: mix("--brand-500"),
+          600: mix("--brand-600"),
+          700: mix("--brand-700"),
+          800: mix("--brand-800"),
+          900: mix("--brand-900"),
         },
         neutral: {
-          0: "var(--neutral-0)",
-          50: "var(--neutral-50)",
-          100: "var(--neutral-100)",
-          200: "var(--neutral-200)",
-          300: "var(--neutral-300)",
-          400: "var(--neutral-400)",
-          500: "var(--neutral-500)",
-          600: "var(--neutral-600)",
-          700: "var(--neutral-700)",
-          800: "var(--neutral-800)",
-          900: "var(--neutral-900)",
+          0: mix("--neutral-0"),
+          50: mix("--neutral-50"),
+          100: mix("--neutral-100"),
+          200: mix("--neutral-200"),
+          300: mix("--neutral-300"),
+          400: mix("--neutral-400"),
+          500: mix("--neutral-500"),
+          600: mix("--neutral-600"),
+          700: mix("--neutral-700"),
+          800: mix("--neutral-800"),
+          900: mix("--neutral-900"),
         },
         surface: {
-          0: "var(--surface-0)",
-          1: "var(--surface-1)",
-          2: "var(--surface-2)",
-          3: "var(--surface-3)",
+          0: mix("--surface-0"),
+          1: mix("--surface-1"),
+          2: mix("--surface-2"),
+          3: mix("--surface-3"),
         },
         // v3 secondary hue (gradient far-stop only — never standalone action).
         violet: {
-          300: "var(--violet-300)",
-          400: "var(--violet-400)",
-          500: "var(--violet-500)",
-          600: "var(--violet-600)",
-          700: "var(--violet-700)",
-          800: "var(--violet-800)",
+          300: mix("--violet-300"),
+          400: mix("--violet-400"),
+          500: mix("--violet-500"),
+          600: mix("--violet-600"),
+          700: mix("--violet-700"),
+          800: mix("--violet-800"),
         },
         // v3 cyan accent — SPARINGLY: live indicators, AI highlights, focus accents.
         accent: {
-          300: "var(--accent-300)",
-          400: "var(--accent-400)",
-          500: "var(--accent-500)",
-          600: "var(--accent-600)",
+          300: mix("--accent-300"),
+          400: mix("--accent-400"),
+          500: mix("--accent-500"),
+          600: mix("--accent-600"),
         },
         // *-500 = v3 family anchors: decorative/large-UI/charts only (not text-grade on light).
-        success: { DEFAULT: "var(--success)", soft: "var(--success-soft)", 500: "var(--success-500)" },
-        warning: { DEFAULT: "var(--warning)", soft: "var(--warning-soft)", 500: "var(--warning-500)" },
+        success: { DEFAULT: mix("--success"), soft: mix("--success-soft"), 500: mix("--success-500") },
+        warning: { DEFAULT: mix("--warning"), soft: mix("--warning-soft"), 500: mix("--warning-500") },
         danger: {
-          DEFAULT: "var(--danger)",
-          soft: "var(--danger-soft)",
-          solid: "var(--danger-solid)",
-          "solid-hover": "var(--danger-solid-hover)",
-          "solid-active": "var(--danger-solid-active)",
-          500: "var(--danger-500)",
+          DEFAULT: mix("--danger"),
+          soft: mix("--danger-soft"),
+          solid: mix("--danger-solid"),
+          "solid-hover": mix("--danger-solid-hover"),
+          "solid-active": mix("--danger-solid-active"),
+          500: mix("--danger-500"),
         },
-        info: { DEFAULT: "var(--info)", soft: "var(--info-soft)" },
+        info: { DEFAULT: mix("--info"), soft: mix("--info-soft") },
         // Assessment scores get their own scale — reusing success/warning/danger
         // would conflate "scored well" with "operation succeeded". See the
         // SCORE SCALE block in styles/tokens.css for the contrast + CVD working.
         score: {
-          strong:   { bg: "var(--score-strong-bg)",   bd: "var(--score-strong-bd)",   fg: "var(--score-strong-fg)",   ring: "var(--score-strong-ring)" },
-          good:     { bg: "var(--score-good-bg)",     bd: "var(--score-good-bd)",     fg: "var(--score-good-fg)",     ring: "var(--score-good-ring)" },
-          moderate: { bg: "var(--score-moderate-bg)", bd: "var(--score-moderate-bd)", fg: "var(--score-moderate-fg)", ring: "var(--score-moderate-ring)" },
-          weak:     { bg: "var(--score-weak-bg)",     bd: "var(--score-weak-bd)",     fg: "var(--score-weak-fg)",     ring: "var(--score-weak-ring)" },
-          none:     { bg: "var(--score-none-bg)",     bd: "var(--score-none-bd)",     fg: "var(--score-none-fg)",     ring: "var(--score-none-ring)" },
+          strong:   { bg: mix("--score-strong-bg"),   bd: mix("--score-strong-bd"),   fg: mix("--score-strong-fg"),   ring: mix("--score-strong-ring") },
+          good:     { bg: mix("--score-good-bg"),     bd: mix("--score-good-bd"),     fg: mix("--score-good-fg"),     ring: mix("--score-good-ring") },
+          moderate: { bg: mix("--score-moderate-bg"), bd: mix("--score-moderate-bd"), fg: mix("--score-moderate-fg"), ring: mix("--score-moderate-ring") },
+          weak:     { bg: mix("--score-weak-bg"),     bd: mix("--score-weak-bd"),     fg: mix("--score-weak-fg"),     ring: mix("--score-weak-ring") },
+          none:     { bg: mix("--score-none-bg"),     bd: mix("--score-none-bd"),     fg: mix("--score-none-fg"),     ring: mix("--score-none-ring") },
         },
         backdrop: "var(--backdrop)", // modal/overlay scrim (60% ink, theme-tuned)
       },

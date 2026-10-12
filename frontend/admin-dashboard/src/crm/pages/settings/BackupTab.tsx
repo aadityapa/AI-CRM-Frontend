@@ -269,7 +269,7 @@ export function BackupTab({ notify }: { notify: Notify }) {
             <label
               key={d.key}
               className={`flex cursor-pointer items-start gap-2 rounded-control border p-3 text-sm transition-colors duration-micro
-                ${selected.has(d.key) ? "border-brand-500/60 bg-brand-50/40" : "border-subtle bg-surface-1 hover:bg-surface-2"}`}
+                ${selected.has(d.key) ? "border-brand-500/60 bg-brand-50/40 dark:bg-brand-900/25" : "border-subtle bg-surface-1 hover:bg-surface-2"}`}
             >
               <input
                 type="checkbox"
@@ -301,7 +301,7 @@ export function BackupTab({ notify }: { notify: Notify }) {
                 key={label}
                 type="button"
                 className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors duration-micro
-                  ${active ? "border-brand-500 bg-brand-50/60 text-brand-800" : "border-subtle text-secondary hover:bg-surface-2"}`}
+                  ${active ? "border-brand-500 bg-brand-50/60 text-brand-800 dark:bg-brand-900/30 dark:text-brand-200" : "border-subtle text-secondary hover:bg-surface-2"}`}
                 aria-pressed={active}
                 onClick={() => { setDateFrom(f); setDateTo(t); }}
               >

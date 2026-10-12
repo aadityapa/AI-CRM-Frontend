@@ -1,27 +1,53 @@
 /**
- * Multi-face monitoring during live interviews.
- * Uses the browser FaceDetector API when available, otherwise MediaPipe Tasks Vision.
+ * Camera monitor during live interviews — extra faces + looking away.
+ *
+ * Rewritten 13 Oct 2026. The old version never caught a second person:
+ *  - Chrome on Windows has no built-in `FaceDetector` (it is behind a flag),
+ *  - the MediaPipe fallback fetched its model from storage.googleapis.com,
+ *    which the page's Content-Security-Policy did not allow, and
+ *  - the policy had no 'wasm-unsafe-eval', so MediaPipe's WebAssembly could
+ *    not compile anyway. Every failure was swallowed.
+ *
+ * Now: the MediaPipe FACE LANDMARKER (478 points + eye blendshapes, up to four
+ * faces) is self-hosted under /vendor/mediapipe (jsDelivr / Google storage are
+ * fallbacks), the server's CSP allows WebAssembly, and the decisions live in
+ * `camera_monitor_logic.js` (pure, unit-tested):
+ *   - a second face → `multiple_faces` (a strike — the usual warning modal),
+ *   - looking away for 3 s → `gaze_away` (a soft notice; the 10th ends the
+ *     interview — the server decides, `services/interview_integrity.py`).
+ * If nothing can load, ONE informational `camera_monitor_unavailable` event
+ * says so on the Integrity tab instead of failing in silence.
  */
 
-import { reportSecurityViolation } from "./interview_security.js";
+import { reportGazeAway, reportSecurityViolation } from "./interview_security.js";
+import { isTypedQuestionOpen } from "./skill_bank.js";
+import { state } from "./state.js";
+import { CameraMonitorLogic, faceMetrics } from "./camera_monitor_logic.js";
 
-const SCAN_INTERVAL_MS = 2000;
-const VIOLATION_DEBOUNCE_MS = 4500;
-const MIN_FACES_FOR_VIOLATION = 2;
-const MEDIAPIPE_CDN =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/+esm";
-const MEDIAPIPE_MODEL =
-  "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+const MP_VERSION = "0.10.20";
+const LOCAL_BASE = "/vendor/mediapipe";
+const CDN_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+const MODEL_URLS = [
+  `${LOCAL_BASE}/face_landmarker.task`,
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+];
+const SCAN_INTERVAL_MS = 400;
+const MAX_FACES = 4;
 
 let monitoringActive = false;
 let scanTimer = null;
-let lastViolationAt = 0;
 let getVideoElement = null;
-let detectorMode = "";
-let nativeDetector = null;
-let mediapipeDetector = null;
-let mediapipeLoadPromise = null;
 let scanInFlight = false;
+let logic = null;
+let landmarker = null;
+let nativeDetector = null;
+let detectorMode = "";
+let loadPromise = null;
+let unavailableReported = false;
+let loadError = "";
+let lastVideoTime = -1;
+let lastFaces = [];
+let scans = 0;
 
 function resolveVideo() {
   try {
@@ -32,114 +58,169 @@ function resolveVideo() {
 }
 
 function videoReady(video) {
-  if (!video) return false;
-  if (!video.srcObject) return false;
+  if (!video || !video.srcObject) return false;
   const track = video.srcObject.getVideoTracks?.()[0];
   if (!track || track.readyState === "ended") return false;
   return video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0;
 }
 
-async function ensureNativeDetector() {
-  if (nativeDetector) return true;
-  if (typeof window.FaceDetector !== "function") return false;
+async function importVision() {
+  let lastErr = null;
+  for (const base of [LOCAL_BASE, CDN_BASE]) {
+    try {
+      const vision = await import(/* @vite-ignore */ `${base}/vision_bundle.mjs`);
+      return { vision, base };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("MediaPipe could not be loaded");
+}
+
+async function wasmFileset(vision, base) {
+  let simd = true;
   try {
-    nativeDetector = new window.FaceDetector({
-      fastMode: true,
-      maxDetectedFaces: 6,
-    });
-    detectorMode = "native";
-    return true;
+    simd = await vision.FilesetResolver.isSimdSupported();
   } catch (_) {
-    nativeDetector = null;
-    return false;
+    simd = true;
   }
+  if (base === LOCAL_BASE && simd) {
+    return {
+      wasmLoaderPath: `${LOCAL_BASE}/wasm/vision_wasm_internal.js`,
+      wasmBinaryPath: `${LOCAL_BASE}/wasm/vision_wasm_internal.wasm`,
+    };
+  }
+  // Only the SIMD build is self-hosted; anything else comes from jsDelivr.
+  return vision.FilesetResolver.forVisionTasks(`${CDN_BASE}/wasm`);
 }
 
-async function ensureMediapipeDetector() {
-  if (mediapipeDetector) return true;
-  if (!mediapipeLoadPromise) {
-    mediapipeLoadPromise = (async () => {
-      const vision = await import(/* @vite-ignore */ MEDIAPIPE_CDN);
-      const resolver = await vision.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.20/wasm"
-      );
-      mediapipeDetector = await vision.FaceDetector.createFromOptions(resolver, {
-        baseOptions: {
-          modelAssetPath: MEDIAPIPE_MODEL,
-          delegate: "GPU",
-        },
+async function modelBytes() {
+  let lastErr = null;
+  for (const url of MODEL_URLS) {
+    try {
+      const res = await fetch(url, { cache: "force-cache" });
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (buf.length > 100000) return buf;
+      throw new Error(`model at ${url} is too small (${buf.length} bytes)`);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("face model unavailable");
+}
+
+async function createLandmarker() {
+  const { vision, base } = await importVision();
+  const fileset = await wasmFileset(vision, base);
+  const modelAssetBuffer = await modelBytes();
+  let lastErr = null;
+  for (const delegate of ["GPU", "CPU"]) {
+    try {
+      const lm = await vision.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetBuffer, delegate },
         runningMode: "VIDEO",
-        minDetectionConfidence: 0.55,
+        numFaces: MAX_FACES,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: false,
       });
-      detectorMode = "mediapipe";
-      return true;
-    })().catch(() => {
-      mediapipeLoadPromise = null;
-      mediapipeDetector = null;
-      return false;
-    });
+      detectorMode = `landmarker-${delegate.toLowerCase()}`;
+      return lm;
+    } catch (err) {
+      lastErr = err;
+    }
   }
-  return mediapipeLoadPromise;
+  throw lastErr || new Error("FaceLandmarker could not start");
 }
 
-async function ensureDetector() {
-  if (nativeDetector || mediapipeDetector) return true;
-  if (await ensureNativeDetector()) return true;
-  return ensureMediapipeDetector();
+function createNativeDetector() {
+  if (typeof window.FaceDetector !== "function") return null;
+  try {
+    const det = new window.FaceDetector({ fastMode: true, maxDetectedFaces: MAX_FACES });
+    detectorMode = "native";
+    return det;
+  } catch (_) {
+    return null;
+  }
 }
 
-async function countFaces(video) {
-  if (!(await ensureDetector())) return 0;
-  if (nativeDetector) {
-    const faces = await nativeDetector.detect(video);
-    return Array.isArray(faces) ? faces.length : 0;
+function ensureDetector() {
+  if (landmarker || nativeDetector) return Promise.resolve(true);
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      try {
+        landmarker = await createLandmarker();
+        console.info("[camera-monitor] face landmarker ready", detectorMode);
+        return true;
+      } catch (err) {
+        console.warn("[camera-monitor] face landmarker unavailable", err);
+        nativeDetector = createNativeDetector();
+        if (nativeDetector) {
+          console.info("[camera-monitor] using the browser FaceDetector (face count only)");
+          return true;
+        }
+        loadError = String(err && err.message ? err.message : err).slice(0, 160);
+        return false;
+      }
+    })();
   }
-  if (mediapipeDetector) {
-    const result = mediapipeDetector.detectForVideo(video, performance.now());
-    return Array.isArray(result?.detections) ? result.detections.length : 0;
-  }
-  return 0;
+  return loadPromise;
 }
 
-/* Camera events used to attach a JPEG snapshot (15–23 Sep 2026). Removed: the
- * whole-session recording (session_recorder.js) shows what the camera saw at
- * the event's timestamp, at higher fidelity and without a second store. */
+function landmarkerFaces(video) {
+  // detectForVideo needs a strictly increasing timestamp and a new frame.
+  if (video.currentTime === lastVideoTime) return null;
+  lastVideoTime = video.currentTime;
+  const res = landmarker.detectForVideo(video, performance.now());
+  const all = Array.isArray(res?.faceLandmarks) ? res.faceLandmarks : [];
+  const shapes = Array.isArray(res?.faceBlendshapes) ? res.faceBlendshapes : [];
+  return all
+    .map((lm, i) => faceMetrics(lm, shapes[i]?.categories, video.videoWidth, video.videoHeight))
+    .filter(Boolean);
+}
 
-/* "No face" is informational: three consecutive empty scans (~6 s) log one
- * event, then at most one more every NO_FACE_INTERVAL_MS. Never a strike. */
-const NO_FACE_SCANS = 3;
-const NO_FACE_INTERVAL_MS = 30000;
-let _noFaceStreak = 0;
-let _lastNoFaceAt = 0;
+async function nativeFaces(video) {
+  const faces = await nativeDetector.detect(video);
+  const W = Math.max(1, video.videoWidth);
+  return (Array.isArray(faces) ? faces : []).map((f) => ({
+    width: (Number(f?.boundingBox?.width) || 0) / W,
+    hasGaze: false,
+  }));
+}
 
 async function scanOnce() {
   if (!monitoringActive || scanInFlight) return;
   const video = resolveVideo();
   if (!videoReady(video)) return;
+  if (!(landmarker || nativeDetector)) {
+    const ok = await ensureDetector();
+    // Said once, while the interview runs (a preload on the Device Check is
+    // too early — nothing is being recorded yet).
+    if (!ok && !unavailableReported && monitoringActive) {
+      unavailableReported = true;
+      reportSecurityViolation("camera_monitor_unavailable", `Face / eye monitor could not start: ${loadError || "unknown error"}`);
+    }
+    return;
+  }
   scanInFlight = true;
   try {
-    const faceCount = await countFaces(video);
-    if (faceCount === 0) {
-      _noFaceStreak += 1;
-      const now = Date.now();
-      if (_noFaceStreak >= NO_FACE_SCANS && now - _lastNoFaceAt >= NO_FACE_INTERVAL_MS) {
-        _lastNoFaceAt = now;
-        reportSecurityViolation("no_face", `No face detected for ${_noFaceStreak} scans`);
-      }
-      return;
+    const faces = landmarker ? landmarkerFaces(video) : await nativeFaces(video);
+    if (faces === null) return; // same frame as last time
+    lastFaces = faces;
+    scans += 1;
+    const events = logic.step(Date.now(), faces, {
+      paused: !!state.liveHold,
+      typed: isTypedQuestionOpen(),
+    });
+    for (const ev of events) {
+      if (ev.type === "gaze_away") reportGazeAway(ev.details);
+      else reportSecurityViolation(ev.type, `${ev.details} (${detectorMode || "monitor"})`);
     }
-    _noFaceStreak = 0;
-    if (faceCount < MIN_FACES_FOR_VIOLATION) return;
-    const now = Date.now();
-    if (now - lastViolationAt < VIOLATION_DEBOUNCE_MS) return;
-    lastViolationAt = now;
-    reportSecurityViolation("multiple_faces", `${faceCount} faces detected via ${detectorMode || "unknown"}`);
   } catch (err) {
-    try {
-      console.warn("[face-detection] scan failed", err);
-    } catch (_) {
-      /* ignore */
-    }
+    console.warn("[camera-monitor] scan failed", err);
   } finally {
     scanInFlight = false;
   }
@@ -157,10 +238,9 @@ export function startFaceMonitoring(videoResolver) {
   if (monitoringActive) return;
   getVideoElement = typeof videoResolver === "function" ? videoResolver : () => videoResolver;
   monitoringActive = true;
-  lastViolationAt = 0;
-  void ensureDetector().catch(() => {
-    /* detector loads lazily on first successful scan */
-  });
+  logic = new CameraMonitorLogic({}, Date.now());
+  lastVideoTime = -1;
+  void ensureDetector();
   scheduleScan();
 }
 
@@ -172,8 +252,35 @@ export function stopFaceMonitoring() {
   }
   getVideoElement = null;
   scanInFlight = false;
+  logic = null;
 }
 
 export function isFaceMonitoringActive() {
   return monitoringActive;
+}
+
+/** Load the model early (e.g. on the Device Check) so the first scans are not lost. */
+export function preloadFaceMonitor() {
+  return ensureDetector();
+}
+
+/** What the monitor is doing right now — for support / a console check. */
+export function cameraMonitorStatus() {
+  return {
+    active: monitoringActive,
+    mode: detectorMode || (loadPromise ? "loading" : "idle"),
+    scans,
+    faces: lastFaces.length,
+    largest_face_width: lastFaces.length ? Math.max(...lastFaces.map((f) => Number(f.width) || 0)) : 0,
+    baseline_learnt: !!(logic && logic.base),
+    // The largest face's numbers (rounded) — what the look-away rule judges.
+    face: lastFaces.length
+      ? Object.fromEntries(
+        ["yaw", "pitch", "eyeSide", "eyeDown"].map((k) => {
+          const f = lastFaces.reduce((a, b) => ((Number(b.width) || 0) > (Number(a.width) || 0) ? b : a));
+          return [k, Number.isFinite(f[k]) ? Math.round(f[k] * 1000) / 1000 : null];
+        }),
+      )
+      : null,
+  };
 }

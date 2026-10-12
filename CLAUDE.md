@@ -2066,6 +2066,187 @@ GPT-6 Astra" from the login's `ai_model` (absent while the admin hides it) — p
 Realtime mini" for a live-voice template (`_applyCandidateModelChips` in `app.js`). Verified: tsc green, eslint 0 errors,
 vitest aiEngine 7 + InterviewCosts 2, `vite build` green, `node --check` on the runtime modules.
 
+**10 Oct 2026 — skill-wise question bank: template editor, skill picker, practice question, code / pseudo-code
+panel, evidence on the report (`app.js?v=41`; `SkillBankEditor.test.tsx` 4; server half in B-V2 `CLAUDE.md`):**
+(1) **`components/interview-template/SkillBankEditor.tsx`** — mounted in `pages/TemplateForm.tsx` after Question Type,
+saved as `weights.skillBank` (`skillBankToWeights` / `skillBankFromWeights` use the server's key names): the mix
+(coding / pseudo-code counts, spoken questions per skill, minutes, pick min / max) with a live length estimate
+(`estimateMinutes`), one accordion per skill with an "Always asked" / "Candidate's choice" toggle, and Add **Normal** ·
+**Pseudo-code (options)** · **Coding** cards (pseudo: code + options + the correct one; coding: language, starter code,
+reference answer). `bankProblems` blocks the save on an error (pseudo with no correct option…) and warns on a thin bank;
+`validateStep` uses it while the bank is on. **`pages/Templates.tsx`**: Active / Archive tabs with counts — a template
+whose opportunity closed is in Archive with the server's `archived_reason` and comes back when the deal reopens; a
+"Skill bank · N" chip. `hr.js`, `TemplateRequests.tsx` and `HrSetup.tsx` leave archived templates out of their pickers.
+(2) **Candidate runtime — `js/skill_bank.js`**: `showSkillPicker(pick, submit)` (after login, before
+`startInterviewTimer`; mandatory skills locked, the rest pick-able within min / max, `POST /candidate/skill-selection`;
+`started` / `not_skill_bank` answers are tolerated), `showPracticeScreen(kinds)` (an unscored practice of the panel),
+`presentTypedQuestion(data, {onSubmit})` — a split panel: question + code on one side, the options (pseudo) or an editor
+(coding) on the other; NO voice, the mic stays off; its own countdown auto-submits; Skip; an untouched starter = skipped;
+Tab indents; paste / drop / copy are blocked quietly. ⚠️ The editor carries `data-kx-code-editor`, and
+`interview_security.js` lets typing (and Ctrl+Z / Y / A) through inside it while swallowing Ctrl+C / V / X WITHOUT a
+violation — keyboard lockdown everywhere else is unchanged. `candidate.js`: a typed payload goes to the panel instead of
+TTS + recording, `_submitTypedAnswer` posts `ans` / `action` / `turn` / `choice` (retry on failure, submit on "already
+completed"), the boundary auto-save posts the panel's snapshot, `closeTypedQuestion` runs in
+`_transitionToNextQuestion`. (3) **Report** — `utils/reportExtract.EnrichedTurn` gains `evidence`, `questionKind`,
+`skill`, `code`, `language`, `options`, `correctOption`, `selectedOption`; `components/candidate-report/TypedAnswerView.tsx`
+— `QuestionKindChips`, `AnswerBlock` (pseudo: the code + every option with the correct ✓ and the candidate's pick; coding:
+the typed code; every answer: an "Evidence for the score" quote), `SkillBankSummary` (skills picked + spoken / pseudo /
+coding scores). `CandidateReportPage` uses them and hides the communication dimensions on typed rows. Verified: tsc green,
+eslint 0 errors on the new files, vitest 4/4, `vite build` green, `skill_bank.js` exercised in jsdom.
+
+**11 Oct 2026 — skill bank follow-ups (`app.js?v=42`; `SkillBankEditor.test.tsx` now 6; server half in B-V2
+`CLAUDE.md`):** (1) **`SkillBankEditor`**: copy says RMG / GM (HR does not author templates); an **"AI tops up a short
+skill"** checkbox (`ai_fill`, default on — medium-level spoken questions for a picked skill short of "Normal per skill";
+with it off, `bankProblems` warns per short skill); each pseudo-code option other than the correct one has a **Partly**
+toggle and, once any is set, "A partly right option earns 25 / 50 / 75 % of the marks" (`partial` / `partial_credit`,
+`PARTIAL_CREDIT_DEFAULT`); the coding reference text says the AI judges right / partly right / wrong. (2) **`App.tsx`**:
+`templates` / `templateForm` are allowed for a screener (`isScreener` — the GM custom role), mirroring the server's
+template author gate. (3) **Candidate runtime** `js/skill_bank.js`: the coding panel's button is **"Run & submit"**
+("Running…" while it posts — the AI checks the code, nothing executes it); the picker's button reads "Preparing your
+questions…" while the server may be writing top-up questions. (4) **Report** (`utils/reportExtract` + `TypedAnswerView`):
+`partialOptions` / `partialCredit` (a chosen partly-right option is amber with "Partly right · N %"), `verdict` →
+`VerdictChip` "Code: Correct / Partly correct / Incorrect", `aiWritten` → a purple "AI-written · medium" chip;
+`SkillBankSummary` prints "N partly" for pseudo-code and the coding verdict counts. Verified: tsc green, eslint 0 errors,
+vitest 6/6, `vite build` green, `node --check` on `skill_bank.js`.
+
+**10 Oct 2026 — the interviewer's screens + every token colour takes an alpha (server half in B-V2 `CLAUDE.md`;
+`pages/dashboard/PanelDashboard.test.ts` 3):** (1) ⚠️ **`tailwind.config.cjs` `colors` now go through `mix(v)` =
+`color-mix(in srgb, var(v) calc(<alpha-value> * 100%), transparent)`** — so `bg-brand-50/40`, `dark:bg-brand-900/30`,
+`bg-surface-2/60` and every other alpha on a token finally compile (F17 closed: ~146 classes were silently dead, which is
+how `FilterChips`' dark background, among others, never applied). A plain `bg-brand-50` is unchanged. Light-only
+`bg-brand-50` spots got dark variants (My Interviews active card — the screenshot — Access Templates card, profile chip,
+support widget, opportunity file button, Backup tab, support thread). (2) **My Interviews**: phase `no_show` ("Didn't
+join", danger) counted under Done; CTC / notice and `lakhs()` removed; an upcoming round shows "Feedback opens <time>"
+(`feedbackOpensAt`, start + `FEEDBACK_OPENS_AFTER_MIN`=10); **Candidate didn't join** (`NoShowDialog` on
+`DecisionDialog`, reason picks from the server, note ≥ 5 → `POST …/no-show`); a no-show row offers "Candidate joined —
+record feedback"; **Job description** section (`JdSection`: band, the text collapsed past 700 chars, RMG / customer JD
+files); the AI section is **`crm/components/AiEvidenceReport.tsx`** — headline, caveats, *Ask about these*, *Skill by
+skill* (from answers vs AI estimate, "overstated" chip), *Question by question* (answer, got right / missed, what a good
+answer covers) and the model's own summary last, collapsed, labelled unchecked. (3) **Resume "Open in new tab"** works:
+new route **`file-view`** (`pages/FileView.tsx`, `?file=/api/crm-files/…&name=`; `fileViewHref` / `safeFilePath` accept
+only same-origin CRM file paths) renders `FilePreviewPane` — a bare `<a target=_blank>` to the file had no bearer and
+failed. `file` / `name` joined `CRM_FILTER_KEYS`. (4) **Interviewer Dashboard**: `CrmApp.isPanelOnlyLogin(me)` (no
+built-in role, My Interviews the only working tab) → `CrmDashboard` renders **`pages/dashboard/PanelDashboard.tsx`** only
+(tiles Today · Feedback due · Upcoming · Decided this month · Didn't join; panels Today with Join links · Feedback you owe
+· Next 7 days · Recently decided; every row opens `my-interviews?focus=`) — no work desk, Start-here or hiring tower.
+`PanelLanding` (the redirect to My Interviews) is gone. `HiringControlTower.SKIP_ONLY_ROLES` gains "Interviewer".
+
+**11 Oct 2026 (later) — practice editor overflow (`app.js?v=43`):** the practice screen's "Try the editor" box ran out of its tile (`.kxsb-editor` had no `box-sizing` and `height:100%` inside a tile). `.kxsb-editor` is now `box-sizing:border-box`, and inside a practice tile it is 150 px high. Screens rendered from the real `skill_bank.js` (skill picker · practice · pseudo-code · coding) and the template editor / report in a harness.
+
+**12 Oct 2026 — interview workspace redesign + coding in any language + the template's "where questions come from"
+(`app.js?v=44`; `SkillBankEditor.test.tsx` now 10; server half in B-V2 `CLAUDE.md`):** user ask — light/dark matching the
+dashboard, a strip of every question marked spoken / pseudo-code / coding, line numbers + syntax colours, a small camera
+during typed questions, every language an automotive / Android shop hires for, and "where do I add pseudo-code and coding?".
+**Candidate runtime:** new `js/code_editor.js` — `LANGUAGES` (same keys as the server), `BOILERPLATE` per language,
+`highlight` (keywords / types / strings / numbers / comments / preprocessor, per language), `renderCodeBlock` (read-only
+snippet with a line gutter) and `createCodeEditor` (a transparent textarea over the highlighted `<pre>` + gutter, Tab
+indent, `data-kx-code-editor` so `interview_security` lets typing through; copy / paste / cut / drop / context menu blocked
+quietly); dark colours under `html.kx-dark .kxce`. `js/skill_bank.js` rewritten on `--sb-*` theme variables (`.kxsb-theme`,
+dark overrides follow `html.kx-dark` = the dashboard theme toggle): the skill picker, practice screen, and the typed panel
+— language picker on a coding question (the server's `languages`; switching keeps typed code, loads the starter / boiler-
+plate for an untouched editor), a small **camera window** (`getCameraStream` → the proctoring stream on a
+second `<video>`, never a second `getUserMedia`), and `renderStageStrip(data)` → `#kxQuestionStrip` under "Assessment
+Query" (one dot per question from the server's `question_map`: spoken · pseudo-code · coding icons, done / current /
+upcoming). `_submitTypedAnswer` posts `code_language`. **Template form:** the Question Type `<select>` is replaced by
+**`QuestionTypeCards`** (exported from `TemplateForm.tsx`): AI-generated · Manual list · Question Bank · **Skill-wise:
+spoken + pseudo-code + coding**, each card listing which of the three kinds it can hold (struck through when not) — the
+mode is `skillBank.enabled ? "skill" : questionType`; choosing Skill-wise enables the bank and keeps `questionType`
+"dynamic" (the server gives the bank priority), any other card switches it off. In skill mode the editor REPLACES the
+JD / manual / bank panels and the AI preview row, and step 3 renders **`SkillBankReview`** (skills, length, coding
+languages, the kind counts and the order). **`SkillBankEditor` rebuilt** (renders nothing unless enabled — the switch is
+the card): gradient header with the flow (Picks skills → Spoken × N/skill → Pseudo-code × N → Coding × N → AI scores) and
+tabs **1 · Skills** (skill cards: Always asked / Candidate's choice, one-click + Spoken / + Pseudo-code / + Coding with
+counts, "Add a skill") · **2 · Spoken** (AI top-up switch) · **3 · Pseudo-code** · **4 · Coding** (each with what / how and a
+have/need tile from PURE `kindNeed`) · **5 · Mix & timing** (steppers + the order preview from PURE `sampleOrder`, the
+client twin of the server's interleave). Question cards carry a skill select; pseudo-code has a snippet colour select
+(`SNIPPET_LANGUAGES`); coding has `CodingLanguages` (Any language, presets Embedded · Automotive tools · Android · Backend,
+grouped chips Embedded & automotive / Android & mobile / General & web) and `StarterCode` (one tab per offered language)
+beside the reference solution. `skillBankToWeights` writes `languages` / non-empty `starters`; the report prints
+`languageName()` ("Embedded C", "Kotlin (Android)"). Harness `src/__story/sbank.tsx` (+ `?v=review`). Verified: tsc green,
+eslint 0 errors, vitest SkillBankEditor 10/10, `vite build` green, editor + cards rendered light / dark / 400 px with no
+console errors.
+
+**12 Oct 2026 (later) — active customers only in the pickers; New Project step 1 redesigned
+(`crm/lib/activeCustomers.test.ts` 3; server half in B-V2 `CLAUDE.md`):** **`crm/lib/activeCustomers.ts`** —
+`fetchActiveCustomers()` (`/api/customers/names?status=Active`, one request per page load), PURE
+`withCurrentCustomer(active, all, currentId)` (an edited record's now-inactive customer is added back as "<name>
+(inactive)") and **`useActiveCustomers(currentId?, {includeInactive?})`**. Used by every picker that STARTS a record:
+the New Project wizard (`EditProjectWizard` — the `customers` prop is gone, `CreateProjectWizard` takes none), the PO form
+(`Finance.tsx` POFormModal — `pickerCustomers`), Add received amount (`CustomerReceipts.tsx`, with an "Include inactive
+customers" checkbox for money still owed) and the Opportunity form (`NewOpportunityForm` filters its full rows by
+`status === "Active"` + the current one). Holidays already listed Active only. ⚠️ List FILTERS and reports keep
+`/api/customers/names` bare — do not narrow them. **New Project ▸ Project Details** is two `WizardGroup`s — *Name the
+project* (name + Active / Completed / On Hold status chips) and *Who it is for* (customer as a `SearchableSelect` over the
+active list with the count, branches as radio cards — a `SearchableSelect` past 8, an amber note when the customer has
+none) — and a "Next steps are pre-filled from <branch>" strip. The customer field passes `filled={false}` because
+`SearchableSelect` draws its own "Change" where `WizardField` would put the tick. Harness `src/__story/proj.tsx`.
+Verified: tsc green, eslint 0 errors, vitest 3/3, `vite build` green, light / dark / 400 px rendered with no console errors.
+
+**12 Oct 2026 (later) — the spoken (theory) question screen redesigned; 9.5 h days and project leave on the timesheet
+(`app.js?v=45`; `TimesheetApprovals.test.tsx` re-pinned for `round_off`; server half in B-V2 `CLAUDE.md`):**
+(1) **Candidate runtime** (`index.html` CSS block "Spoken question screen v3", appended last in the `<style>`): the
+QUESTION card comes first in the left column (`order:-1`), the AI orb is a band (`scale(.8)`, Fullscreen a small pill in
+its corner), a green **"Answer aloud"** hint (`#kxAnswerHint`) sits under the question, `#progressPill` hides when the
+question strip shows (`:has`), the strip's count reads "Question 4 of 9 · <skill>" (`skill_bank.buildStrip`), Repeat /
+Explain are compact chips (`#screenCandidate .cand-conv-tools .cand-conv-btn` — the global `button` min-height made them
+46 px bars), and `conversation.js`'s dark styles also key off `html.kx-dark` (they only knew `html.dark`). ⚠️ **The screen
+now follows the theme**: `html:not(.kx-dark) #screenCandidate …` is a light theme (white cards, indigo accents, blue Send),
+matching the pseudo-code / coding panels — it was always dark before. Phones (≤ 760 px): one scrolling column, header
+wraps, the timer drops below, the orb shrinks — the camera used to cover the question. Screens:
+`outputs/theory-screen/` (before / after). (2) **Timesheets.tsx**: new rows / a day switched back to Working / "Fill
+worked days with N h" use the server's `default_hours_per_day` (`defaultDayRef`); the cap clamp only applies when the
+server sends `max_billable_hours_day` (switch ON). Apply-leave dialog lists EVERY leave type of the assignment (empty ones
+disabled, "no balance"), says when none are set up, and offers **Apply the project's leave policies**
+(`POST /api/timesheets/{id}/leave/sync`, refreshes leave choices only — unsaved grid edits stay); an amber banner on the
+sheet says the same. ⚠️ A sheet on an assignment no longer falls back to the employee's company-wide yearly balances
+(`leaveSetupMissing`). (3) **Customers ▸ Default Billing Policy** gains "Working hours per day" (`normal_hours_per_day`).
+(4) **EditProjectWizard**: leave policies are created per row, best-effort — one refusal no longer aborts employee mapping
+after the project exists (the toast names what was not saved).
+
+**12 Oct 2026 (night) — laptop / PC only; no model name and no Repeat / Explain on the candidate screen
+(`app.js?v=46`; server half in B-V2 `CLAUDE.md`):** (1) new **`js/device_class.js`** — `detectHandheld(nav)` (handheld =
+`userAgentData.mobile`, a phone / tablet UA, Macintosh UA with multi-touch (iPad desktop mode), or touch with no fine
+pointer ("desktop site" on a phone); a touchscreen laptop has a fine pointer and passes) and
+`showDesktopRequiredScreen({message})` (full-page notice above every screen, three steps, the link + **Copy interview
+link**; cannot be dismissed). `bootstrapInviteFlow` checks it right after STEP-1, before the welcome screen;
+`handleVerifySubmit` / `proceedWithInviteLogin` show it on the server's `code: "desktop_required"`. (2) **The model name is
+gone from the candidate page** (user decision): `_applyCandidateModelChips` always prints "AI Interviewer" and hides the
+voice chip; `ai_engine.applyAiEngineLabels` leaves `#kxAiProviderLabel` as "AI interviewer: OpenAI" and no longer rewrites
+`.kx-brand-powered`. The dashboard still shows the model to staff. (3) **Repeat / Explain buttons removed**:
+`conversation.SHOW_CLARIFY_BUTTONS = false` keeps `setClarifyTools` from drawing them (set true to restore). Saying "can you
+repeat that" still works in a template with Clarify on (`detectTurnIntent`, unchanged).
+
+**11 Oct 2026 — recruiter joins a live interview, friendly errors, "We write the questions", Reports list
+(`app.js?v=47`; `OurQuestionsEditor.test.ts` 3, `InterviewReports.test.ts` 5; server half in B-V2 `CLAUDE.md`):**
+(1) **Candidate runtime** — new `js/live_join.js`: `startLiveJoinWatch(hooks)` (started at STEP-8 beside the recorder)
+polls `GET /candidate/live/state` every `poll_sec` (3 s); paused → `candidate.holdForRecruiter()` (bumps `_questionLoadSeq`,
+stops auto-advance / warm-up clock / voice / mic without transcription, closes a typed panel, `state.liveHold`, timer frozen,
+`interview_security.setSecurityPaused(true)`) and a full-screen card (note shown); resume →
+`releaseRecruiterHold()` shifts `interviewStartTs` by the pause and `loadQuestion()` (the current question again, or the
+recruiter's). A `live_paused` body from `/next` / a 409 from `/answer` enters the same hold (`enterPausedFromServer`). Call:
+answers the TA's offer with CLONES of the proctor camera + verified mic (never a second getUserMedia), vanilla ICE, posts
+`/candidate/live/answer`; the TA's voice plays and is mirrored into the recording (`recording_mix.mirrorStreamToRecording`).
+`submitInterview` now stops the live watch, face monitoring and security watchers on EVERY path (F3 closed). (2) **Errors** —
+`core.js`: `readJsonSafe`, `friendlyHttpMessage(status)`, `jsonOrError(res)` (verify / login / lookup use it), `handleJson`
+never throws a parse error, and `apiFetch` turns a network `TypeError` into a sentence (F6 closed). Also: `screen_share.js`
+asks for the **Entire screen** (`displaySurface: "monitor"`, `REQUIRE_ENTIRE_SCREEN`; a tab / window → `not_entire_screen`
+with instructions in `device_test.js`); `job_title` escaped (F7); `hr.createShowScreen` maps `result` (F1). (3) **Dashboard** —
+`components/interview-live/LiveJoinPanel.tsx` (Modal `xl`: status strip with Pause / Resume, candidate-online dot, real-time
+call video + self view, Call / Mute / Camera / End, queue question, note with quick picks, activity log; polls
+`GET /interview/live/{token}` every 2 s; starting a call pauses first) opened from Integrity ▸ live row ▸ **Join this
+interview** (`IntegrityLogs.RowDetail`, rows in `LIVE_SESSION_STATUSES` except pending). Verified: a headless Chromium
+WebRTC handshake through `live_join.js` reaches `connected` with remote media. (4) **Templates** —
+`components/interview-template/OurQuestionsEditor.tsx` replaces the tabbed `SkillBankEditor` in `TemplateForm`: numbered
+cards (Question · Answer we expect · Type Spoken / Pseudo-code / Coding · optional Skill), Paste many (`Q:` / `A:`), reorder,
+duplicate, *More options* (candidate chooses skills, AI top-up, minutes). `simplify` / `finalizeBank` (PURE) derive the
+counts so every question is asked; a blank skill is filled with the first required skill (else "General") on save.
+`QuestionTypeCards` shows two cards — **We write the questions** / **AI writes the questions**; Fixed list and Question Bank
+appear only on a template already using them. `SkillBankEditor.tsx` keeps the shared pieces (`QuestionCard` and `newId` now
+exported). (5) **Reports tab** — `pages/InterviewReports.tsx` (`Candidates.tsx` renders it; the old sidebar `Dashboard.tsx` is
+no longer routed): `PageHeader` with stats, verdict pills with counts (`verdictOf` PURE: recommendation → Hire / Consider /
+Reject, Not attempted, Terminated, Report pending, else score), search, customer → position, date, sort, group by; rows open
+the report; delete via `DeleteInterviewRecordModal`.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -2696,3 +2877,93 @@ sessions in a process-local dict. With `UVICORN_WORKERS > 1` and no sticky sessi
 - `app.js:761-867` — `proceedWithInviteLogin`; the ordering is load-bearing.
 - The `window.*` bridge (`app.js:997-1034`) — deleting a markup-referenced global produces a silent
   `ReferenceError` inside an inline `onclick`. Any rename must edit `index.html` in the same commit.
+
+**12 Oct 2026 (night) — after the first test interview: template question mix, rules page v3, instant join, one limit
+(`app.js?v=48`; `OurQuestionsEditor.test.ts` now 4; server half in B-V2 `CLAUDE.md`):** (1) **`OurQuestionsEditor` rebuilt**
+— Step 1 "How many questions of each kind": three tiles (Spoken · Pseudo-code · Coding) with an Ask stepper, "N in your list"
+and what it means ("each candidate gets a different 5 of your 8", "the AI writes 3 more"), the total + minutes; the "let the
+AI write extra spoken questions" switch lets Spoken go above the list. Step 2 spoken questions in BULK — one question per
+line (`parseBulkQuestions`: numbering, bullets, "Q:" removed, "A:" lines and repeats dropped, Ctrl+Enter adds) and a
+compact numbered list (inline edit, optional skill, reorder, duplicate, remove all). **No "Answer we expect" for spoken
+questions** (the AI judges on the topic). Step 3 pseudo-code & coding cards (`QuestionCard` + a type toggle footer).
+`SkillBankConfig.spoken_count`; PURE `simplify(c, {prev})` keeps the three counts within the list and lets an "ask all"
+number follow the list; `askedByKind` / `bankQuestionTotal`. `TemplateForm`: in count mode the question count IS the mix
+(read-only chip), `numQ` saved from it; count mode saves `timeLimitSec` 0. (2) **Rules page v3** (`index.html`
+`#screenInterviewRules.rules-v3`, CSS block "Interview rules v3", appended last): "Your interview" summary (Time · Questions
++ spoken / pseudo-code / coding chips · How you answer · skills you choose · How it ends) beside four rule groups (Your setup ·
+Stay in the interview · Answering · Good to know — laptop + camera, entire screen recorded, 3 warnings then the next ends,
+keyboard only inside the code editor, follow-ups, a recruiter may join, reopen the same link); consent + buttons pinned, only
+the rules scroll (desktop). `interview_rules.applyRulesConfig` reads the server's `_interview_format` (`app.js` spreads the
+schedule into `_inviteInterviewConfig`); conditional items carry `hidden` (`.rules-v3 [hidden]` forces it). (3) **Instant
+join**: `live_join.js` polls first at 600 ms, then the server's `poll_ms` (1 s while a recruiter has the panel open);
+`time_up` → `hooks.onTimeUp` → `submitInterview({timeExpired})`; ICE waits ≤ 1.5 s, 250 ms after a reflexive / relay
+candidate. `LiveJoinPanel`: POSTs `join` at once (in parallel with the first read), `presence` every 15 s, polls 800 ms while
+ringing / after an action, pause + getUserMedia in parallel, same ICE rule, **"Join now · talk to the candidate"** button,
+`autoCall` prop; Integrity ▸ live row: **Join this interview now** (pauses and calls in one click) + "Open the controls
+without calling". (4) Bank without a picker but with AI top-up: the page posts `skill_autofill.skills` to
+`/candidate/skill-selection` before question 1 ("Preparing your questions…").
+
+**12 Oct 2026 (night, last) — gpt-4o-mini retired (server half in B-V2 `CLAUDE.md`):** the dashboard keeps no model
+names — Settings ▸ AI engine lists the server's `supported` (now GPT-6 Astra and GPT-5.5 only). `pages/ATS.tsx` no longer
+posts `model: "gpt-4o-mini"` on the upload score (the server decides). `lib/aiEngine.test.tsx` mock moved to the current
+models. The candidate runtime needed no change (`hr.js` fills its select from `/models`).
+
+
+**13 Oct 2026 — extra-face detection that works + look-away warnings + time warnings fix (`app.js?v=49`;
+`scripts/tests/camera_monitor_logic.test.mjs` 10, run with `node --test scripts/tests/`; server half in B-V2 `CLAUDE.md`):**
+(1) **`frontend/vendor/mediapipe/`** (README with versions + SHA-256): `@mediapipe/tasks-vision@0.10.20` `vision_bundle.mjs`,
+the SIMD `wasm/vision_wasm_internal.{js,wasm}` and the `face_landmarker.task` model (~13 MB, Apache-2.0). jsDelivr (code,
+non-SIMD wasm) and storage.googleapis.com (model) are fallbacks. (2) **`js/face_detection.js` rewritten** — same exports
+(`startFaceMonitoring` / `stopFaceMonitoring` / `isFaceMonitoringActive`) plus `preloadFaceMonitor()` (called by
+`device_test.js` once the webcam is confirmed, so the 13 MB is fetched during the checks) and `cameraMonitorStatus()` (mode ·
+scans · faces · the largest face's yaw / pitch / eye numbers). Face Landmarker (VIDEO, 4 faces, blendshapes; GPU then CPU
+delegate) → browser `FaceDetector` (count only) → one informational `camera_monitor_unavailable` event, reported once while
+the interview runs. Scans every 400 ms. (3) **`js/camera_monitor_logic.js`** (pure, no imports) — `faceMetrics(landmarks,
+blendshapes, w, h)` (face width, head yaw = nose offset ÷ eye distance, pitch = (nose − eyes) ÷ (mouth − eyes), eye side /
+down from blendshapes, blink), `awayReason(m, base, cfg, {typed})`, `CameraMonitorLogic.step(now, faces, {paused, typed})`
+and `MONITOR_DEFAULTS` (the ONE place to tune): a second face ≥ 7 % of the frame wide for 1.2 s → `multiple_faces` (15 s
+cooldown); looking away for 3 s → `gaze_away` (head turned ±0.24, head down +0.16, eyes to the side ±0.42, eyes down +0.42 —
+all against the candidate's OWN baseline learnt from 12 scans and adapted slowly while on screen); the face gone 5 s (after a
+10 s warm-up grace) also counts; min 10 s between warnings, a long look-away re-warns after 10 s. **Looking up never counts**
+(thinking), and **looking down never counts while a pseudo-code / coding panel is open** (`skill_bank.isTypedQuestionOpen()`).
+A recruiter pause clears everything. Verified in headless Chromium with fake-camera video files: two faces → one
+`multiple_faces`; one face → nothing; no face → one `gaze_away`; the OLD CSP → `camera_monitor_unavailable` (CompileError).
+(4) **`js/interview_security.js`**: `reportGazeAway(details)` — a SOFT amber toast (`#gazeWarnToast`, "Look-away warning 3 of
+10", red with "N more will end the interview" in the last 3), POSTs `gaze_away`, takes `gaze_count` / `gaze_limit` from the
+server, and on `auto_terminated` shows "The interview has ended because you looked away from the screen too many times" and
+submits; offline fallback = the local limit. The strike modal now says WHY for `multiple_faces` / clipboard / devtools
+(`WARNING_REASON`). (5) **`js/vad_silero.js`**: Silero is OFF unless `window.KARNEX_SILERO_VAD === true` — the old CSP blocked
+its WebAssembly, so interviews have always run without it; allowing WebAssembly for the face monitor must not switch the speech
+path untested. (6) Rules page: new "Keep your eyes on the screen" rule (`#rulesGazeRule`, limit from the server's
+`gaze_limit`); the camera rule says another face is a warning. (7) `interview_time_warnings.js`: a warning at or above the
+whole limit is skipped. (8) Dashboard: Integrity tab family chip **Looked away** (`gaze`, Eye icon).
+
+**13 Oct 2026 (later) — the wrong-template warning + refusal (server half in B-V2 `CLAUDE.md`):**
+`crm/components/AiInterviewOverview.tsx` exports **`WrongTemplateNotice`** + type `TemplateMismatch` (red alert: "Taken on
+the wrong template — “<title>” of <owner>", what to do: RMG Change template, then Redo AI L1). Shown at the top of the AI
+card (summary `template_mismatch`), under the profile's **RMG review needed** text and in the AI Interview tab's "Latest
+completed AI interview" box (`AiInterviewLink.template_mismatch` from the list endpoint; `voided` typed). `AiTemplateGate`:
+`AiTemplateState` gains `archived` / `other_opportunity`; the pop-up's other_opportunity mode (rose hero "This position is
+linked to another position's template", the linked template + owner, RMG → Open Template Requests, others → Check again);
+`isTemplateNotReadyError` / `statusFromError` recognise the server's "other position's questions" refusal. tsc green,
+eslint clean.
+
+**13 Oct 2026 (later) — Joined leaves "In pipeline" (server half in B-V2 `CLAUDE.md`):** Candidate Profiles
+(`profiles/ProfilesListPage.tsx`): the Joined chip now sets `bucket=joined` (no phase); "In pipeline" (`bucket=active`)
+no longer lists joiners and its count is all − closed − joined. `useProfileFilters` bucket gains `"joined"`; an old
+bookmark with `f_stage=joined` is read as the Joined bucket. Empty message + header ("N candidates joined") follow it.
+
+**13 Oct 2026 (later) — role-wise candidate stages, set on Access Control ▸ Roles (`crm/lib/stageAccess.test.ts` 4;
+server half + migration 0133 in B-V2 `CLAUDE.md`):** every role card (built-in and custom) on `RolesAdmin.tsx` carries a
+"Candidate stages" line (`StageAccessLine`: "Sales Screening → Closed · default", an amber N/12 chip when narrowed, a
+**Stages** button; Admin / CEO read "Every stage (always)"). It opens **`crm/components/access/CandidateStagesModal.tsx`**
+(dialog kit, indigo): presets from the server (Every stage · From Sales Screening · Up to Technical Interview + Closed ·
+From Customer Shortlisted), the twelve stages as numbered toggles in their chip colours, "What this changes" with the
+hidden list, "Role default" / "Go back to the role default", Save → `PUT /api/roles/stage-access`. PURE helpers
+`stageSummary` / `sameStages`. The chips follow `/api/me.candidate_stages` (`Me.candidate_stages`,
+`useAccess.useCandidateStages()` — null for Admin/CEO): `candidateStageBuckets.visibleStageBuckets(allowed)` ("All" + the
+role's stages) on Candidate Profiles (`ProfilesListPage` — plus a muted "Your role: Sales Screening → Closed" chip before
+Archive), the opportunity's Applicants (`ApplicantsBoard`) and Applied Candidates (`Requirements.tsx` `ResumesTab`,
+`usePageTab` allow-list too). The server already leaves those candidates out of rows, counts and exports — the client only
+hides chips that could never list anyone. Also fixed: `ApplicantsBoard`'s "All" count summed every key INCLUDING the
+server's `all`, so it read double — it now uses `phase_counts.all`.

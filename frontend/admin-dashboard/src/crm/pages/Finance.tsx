@@ -27,6 +27,7 @@ import {
 import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
 import { SearchableSelect, type SearchableOption } from "../components/SearchableSelect";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
+import { useActiveCustomers } from "../lib/activeCustomers";
 import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
 import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
@@ -628,6 +629,9 @@ function POFormModal({
 }) {
   const isEdit = editPoId != null;
   const [customerId, setCustomerId] = useState("");
+  // The picker lists the Customers tab's ACTIVE customers (12 Oct 2026); an
+  // existing PO keeps its own customer even when that one is inactive now.
+  const pickerCustomers = useActiveCustomers(customerId);
   const [branches, setBranches] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [billingId, setBillingId] = useState("");
@@ -1100,8 +1104,8 @@ function POFormModal({
                 }}
               >
                 <option value="">Select customer…</option>
-                {Object.entries(customers).map(([id, name]) => (
-                  <option key={id} value={id}>{name}</option>
+                {pickerCustomers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </WizardField>

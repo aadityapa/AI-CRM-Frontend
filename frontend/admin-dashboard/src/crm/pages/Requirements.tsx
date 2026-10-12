@@ -37,7 +37,7 @@ import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole, useMe } from "../CrmApp";
-import { useCanAct, useCanApprove, useCrmAccess } from "../useAccess";
+import { useCanAct, useCanApprove, useCandidateStages, useCrmAccess } from "../useAccess";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -53,7 +53,7 @@ import {
 import {
   CandidateRoundStatus, CandidateStageBadge, CandidateStatusBadge, WaitingChip,
 } from "../components/CandidateStatusBadge";
-import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE, bucketPhase } from "../lib/candidateStageBuckets";
+import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE, bucketPhase, visibleStageBuckets } from "../lib/candidateStageBuckets";
 import {
   ClosedNoteBox, OpeningMailChip, OverBudgetChip, SendOpeningMailButton, TaDecisionModal, TaFlowButtons,
   isClosedCandidacy, taDecisionsFor, type ClosedNote, type OpeningMail, type TaDecision,
@@ -2593,14 +2593,17 @@ export function ResumesTab({
      the Stage column prints (`CANDIDATE_STAGE_BUCKETS`, sent as `?phase=`).
      Server-side — the list is paginated. `bucket` is the Applied Candidates |
      Archive switch: Archive holds the closed candidacies RMG / GM moved there. */
-  const [stagePill, setStagePill] = usePageTab<string>("phase", "all", CANDIDATE_STAGE_BUCKETS.map((b) => b.key));
+  /* Role-wise stages (13 Oct 2026, Access Control ▸ Roles): only the chips of
+     the stages this login's roles carry — the server leaves the rest out. */
+  const stageBuckets = visibleStageBuckets(useCandidateStages());
+  const [stagePill, setStagePill] = usePageTab<string>("phase", "all", stageBuckets.map((b) => b.key));
   const [bucket, setBucket] = usePageTab<AppliedBucket>("sub", "live", APPLIED_BUCKETS);
   /* Candidates per stage, live and archived apart — from the list's own meta. */
   const [statusCounts, setStatusCounts] = useState<StatusCounts | null>(null);
   const bucketCounts = statusCounts?.phases?.[bucket] ?? null;
   /* Every stage on the live list (a rejected candidate stays there, under
      Closed, until archived); Archive can only hold closed candidacies. */
-  const stageChips = CANDIDATE_STAGE_BUCKETS.filter((b) => bucket === "live" || b.key === "all" || b.key === "closed");
+  const stageChips = stageBuckets.filter((b) => bucket === "live" || b.key === "all" || b.key === "closed");
   /* Tick rows → "Send N for Technical Screening" (1 Oct 2026, user ask: keep
      the per-row button AND a batch send, but only for the profiles TA picked).
      Only a candidate still at Sourcing with TA can be sent (`taDecisionsFor`

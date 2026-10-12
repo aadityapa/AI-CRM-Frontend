@@ -254,7 +254,7 @@ export function SupportWidget() {
       <LifeBuoy size={16} className="text-brand-600" aria-hidden />
       <div className="min-w-0 flex-1 truncate text-sm font-bold text-primary">{title}</div>
       {view !== "tickets" && view !== "thread" && (
-        <button type="button" className="rounded-full px-2 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+        <button type="button" className="rounded-full px-2 py-0.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/40"
           onClick={() => { setError(""); setView("tickets"); }}>
           My tickets{openCount > 0 ? ` (${openCount})` : ""}
         </button>
@@ -311,7 +311,7 @@ export function SupportWidget() {
                               <ThumbsUp size={12} aria-hidden /> Solved
                             </button>
                           )}
-                          <button type="button" className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold text-brand-700 hover:bg-brand-50"
+                          <button type="button" className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/40"
                             onClick={() => startTicket(t)}>
                             {t.escalate ? <TicketCheck size={12} aria-hidden /> : <ThumbsDown size={12} aria-hidden />}
                             {t.escalate ? "Raise a ticket" : "Not helpful — raise a ticket"}

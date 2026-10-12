@@ -86,7 +86,6 @@ export function AtsPage() {
       const fd = new FormData();
       fd.append("jd_file", jdFile);
       fd.append("cv_file", cvFile);
-      fd.append("model", "gpt-4o-mini");
       const res = await authFetch("/ats/score/upload", {
         method: "POST",
         body: fd,

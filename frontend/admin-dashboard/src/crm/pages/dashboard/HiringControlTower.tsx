@@ -282,7 +282,9 @@ function TargetsModal({ data, onClose, onSaved }: { data: HiringData; onClose: (
  *  and money, not the Sales → TA funnel, so a pure HR/Finance login skips it;
  *  a custom role (any other name) reaches it exactly like a templated user —
  *  the server gate is the "dashboard" tab, which every template carries. */
-const SKIP_ONLY_ROLES = new Set(["HR", "Finance"]);
+// "Interviewer" (10 Oct 2026): a panel member takes rounds; the company's
+// hiring pace is not their desk (user: "remove this Hiring control tower").
+const SKIP_ONLY_ROLES = new Set(["HR", "Finance", "Interviewer"]);
 
 export function useShowsHiringTower(): boolean {
   const me = useMe();

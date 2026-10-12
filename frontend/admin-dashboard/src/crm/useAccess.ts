@@ -62,6 +62,15 @@ export function useCanApprove(action: ApprovalAction): boolean {
   return canApprove(me, action);
 }
 
+/** The candidate stages this login sees (13 Oct 2026) — set per role on
+ *  Access Control ▸ Roles; null = every stage. Feed it to
+ *  `visibleStageBuckets` for the stage chips. */
+export function useCandidateStages(): string[] | null {
+  const me = useMe();
+  if (isSuperAdmin(me.roles) || me.access?.full) return null;
+  return me.candidate_stages ?? null;
+}
+
 function bareTabKey(pathOrKey: string): string {
   if (pathOrKey.startsWith("crm:")) return pathOrKey.slice(4) || "dashboard";
   return pathOrKey || "dashboard";

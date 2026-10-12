@@ -63,8 +63,22 @@ export function sileroVadAvailable() {
  *   onFrameProbability?: (prob: number) => void,
  * }} callbacks
  */
+/**
+ * 13 Oct 2026 — OFF unless a page sets `window.KARNEX_SILERO_VAD = true`.
+ * Until today the server's Content-Security-Policy had no 'wasm-unsafe-eval',
+ * so the browser refused to compile Silero's WebAssembly and every interview
+ * ran on the FFT detector + transcription fallback. The face / eye monitor
+ * needs WebAssembly, so the policy now allows it — which would have switched
+ * the speech path to Silero on every interview without anyone testing it.
+ * Keeping it off keeps answer capture exactly as it has been running.
+ */
+export function sileroEnabled() {
+  return typeof window !== "undefined" && window.KARNEX_SILERO_VAD === true;
+}
+
 export async function startSileroVad(stream, callbacks = {}) {
   await stopSileroVad();
+  if (!sileroEnabled()) return false;
   if (!stream || !stream.getAudioTracks?.().length || !sileroVadAvailable()) {
     return false;
   }

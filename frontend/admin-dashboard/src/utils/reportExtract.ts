@@ -73,6 +73,23 @@ export type EnrichedTurn = {
   excludedAt?: string;
   excludedReason?: string;
   isIntroduction?: boolean;
+  /** 10 Oct 2026 — the candidate's own words / code line that earned the score. */
+  evidence?: string;
+  /** Skill-wise question bank: normal (spoken) · pseudo (options) · coding (typed). */
+  questionKind?: "normal" | "pseudo" | "coding";
+  skill?: string;
+  code?: string;
+  language?: string;
+  options?: string[];
+  correctOption?: number;
+  selectedOption?: number;
+  /** 11 Oct 2026 — pseudo-code options that earn part of the marks, and how much (%). */
+  partialOptions?: number[];
+  partialCredit?: number;
+  /** 11 Oct 2026 — coding: the AI's right / wrong call. */
+  verdict?: "correct" | "partially_correct" | "incorrect";
+  /** 11 Oct 2026 — a spoken question the AI wrote to top up a short skill. */
+  aiWritten?: boolean;
 };
 
 export function introductionTurnFromRecord(record: InterviewRecord | null): EnrichedTurn | null {
@@ -329,6 +346,23 @@ export function enrichedTurnsFromRecord(record: InterviewRecord | null): Enriche
       excludedReason: excludedFromScore
         ? safeText(pq.excluded_reason || pq.reason) || undefined
         : undefined,
+      evidence: safeText(pq.evidence) || undefined,
+      questionKind: ["normal", "pseudo", "coding"].includes(String(pq.question_kind))
+        ? (pq.question_kind as "normal" | "pseudo" | "coding")
+        : undefined,
+      skill: safeText(pq.skill) || undefined,
+      code: safeText(pq.code) || undefined,
+      language: safeText(pq.language) || undefined,
+      options: Array.isArray(pq.options) ? (pq.options as unknown[]).map(safeText) : undefined,
+      correctOption: Number.isFinite(Number(pq.correct_option)) && pq.correct_option !== null ? Number(pq.correct_option) : undefined,
+      selectedOption: Number.isFinite(Number(pq.selected_option)) && pq.selected_option !== null && pq.selected_option !== undefined
+        ? Number(pq.selected_option) : undefined,
+      partialOptions: Array.isArray(pq.partial_options)
+        ? (pq.partial_options as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : undefined,
+      partialCredit: Number.isFinite(Number(pq.partial_credit)) && pq.partial_credit != null ? Number(pq.partial_credit) : undefined,
+      verdict: ["correct", "partially_correct", "incorrect"].includes(String(pq.verdict))
+        ? (pq.verdict as "correct" | "partially_correct" | "incorrect") : undefined,
+      aiWritten: pq.question_source === "ai_fill" || undefined,
     });
   }
   return out.filter((x) => x.question || x.answer);

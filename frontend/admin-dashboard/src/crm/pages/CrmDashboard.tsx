@@ -6,7 +6,7 @@ import {
   Layers, Percent, Receipt, RefreshCw, Settings, ShieldCheck, Sparkles, UserCheck, UserSearch, Users, X,
 } from "lucide-react";
 import { crmGet, qs } from "../api";
-import { roleTitle, useHasRole, useMe } from "../CrmApp";
+import { isPanelOnlyLogin, roleTitle, useHasRole, useMe } from "../CrmApp";
 import { CrmLink } from "../routerHooks";
 import { FadeInUp } from "../components/motion3d";
 import { EmptyState, ErrorBox, Modal, SkeletonText, Spinner, btnSecondary, statusColor } from "../components/ui";
@@ -16,6 +16,7 @@ import {
 } from "../components/controlTower";
 import type { PeriodKind, StateTone } from "../components/controlTower";
 import { WorkDesk } from "./dashboard/WorkDesk";
+import { PanelDashboard } from "./dashboard/PanelDashboard";
 import { PoExpiryPanel } from "./dashboard/PoExpiryPanel";
 import { HiringControlTower, useShowsHiringTower } from "./dashboard/HiringControlTower";
 import { CeoDashboard, PeopleTab } from "./dashboard/CeoDashboard";
@@ -754,7 +755,11 @@ export function CrmDashboardPage() {
   // The Sales → TA control tower (23 Sep 2026): every desk except a pure
   // HR / Finance login reads the same positions, onboardings and pace.
   const showHiringTower = useShowsHiringTower();
-  const nothing = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking && !showHr;
+  // An interviewer (panel-only login, 10 Oct 2026) gets their own dashboard —
+  // today's interviews, feedback owed, the next week, recent verdicts — and
+  // nothing else: no work-desk tiles, no hiring tower, no Start-here card.
+  const panelOnly = isPanelOnlyLogin(me);
+  const nothing = !panelOnly && !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking && !showHr;
 
   // CEO outranks Admin on the chip — a CEO login usually carries both roles.
   // …and a custom role (Sales Manager, GM) is named as itself, never as the
@@ -781,14 +786,14 @@ export function CrmDashboardPage() {
       {/* The login's daily tasks as tabs (28 Sep 2026) — feedback due, rounds
           to schedule, candidates awaiting a call, screening, upcoming, queues.
           The server picks the tabs; every role gets its own set. */}
-      <WorkDesk />
+      {panelOnly ? <PanelDashboard /> : <WorkDesk />}
       {/* Admin / CEO (28 Sep 2026): the company view and nothing else — Finance
           (revenue) is the first tab, so it is the first thing on the page.
           Its Sales tab IS the hiring control tower. The desk widgets (Today
           strip · My work · Coming up · Quick actions · Team) were removed from
           EVERY role's dashboard the same day at the user's request; the
           server endpoints behind them still serve the bell links. */}
-      {isAdmin ? (
+      {panelOnly ? null : isAdmin ? (
         <>
           <CeoDashboard />
           <StartHereCard />

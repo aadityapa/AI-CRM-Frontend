@@ -17,6 +17,7 @@ import { crmDelete, crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
+import { useActiveCustomers } from "../lib/activeCustomers";
 import { DataTable } from "../components/DataTable";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
@@ -324,6 +325,9 @@ function AddReceiptModal({ customers, onClose, onSaved }: {
   onSaved: (msg: string) => void;
 }) {
   const [customerId, setCustomerId] = useState("");
+  // Active customers — the Customers tab's list (12 Oct 2026); inactive ones on request.
+  const [showInactive, setShowInactive] = useState(false);
+  const pickList = useActiveCustomers(customerId, { includeInactive: showInactive });
   const [receivedDate, setReceivedDate] = useState(() => isoDay(0));
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState("NEFT");
@@ -414,8 +418,12 @@ function AddReceiptModal({ customers, onClose, onSaved }: {
                 <span className="mb-1 block text-xs font-semibold text-secondary">Customer *</span>
                 <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
                   <option value="">— pick customer —</option>
-                  {customers.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  {pickList.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
                 </select>
+              </label>
+              <label className="-mt-2 inline-flex items-center gap-1.5 text-[11px] text-muted sm:col-span-2">
+                <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+                Include inactive customers (money still owed by a customer made inactive)
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-semibold text-secondary">Amount received (₹) *</span>

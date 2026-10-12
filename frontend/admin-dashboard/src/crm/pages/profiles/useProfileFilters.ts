@@ -13,8 +13,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export type ProfileFilters = {
-  /** "archive" (6 Oct 2026) = archived by hand, or parked because the deal is on hold. */
-  bucket: "active" | "rejected" | "archive";
+  /** "archive" (6 Oct 2026) = archived by hand, or parked because the deal is on hold.
+   *  "joined" (13 Oct 2026) = the candidacy is finished — no longer "In pipeline". */
+  bucket: "active" | "joined" | "rejected" | "archive";
   /** The stage strip (29 Sep 2026): a `services/candidate_status.STAGES` key, sent as `phase`. */
   phase: string;
   /** Derived candidate-status keys, CSV (sent as `status_key`). */
@@ -64,11 +65,17 @@ const PARAM = {
 function read(): ProfileFilters {
   if (typeof window === "undefined") return { ...DEFAULTS };
   const p = new URLSearchParams(window.location.search);
-  const bucket = p.get(PARAM.bucket);
+  const rawBucket = p.get(PARAM.bucket);
+  const rawPhase = p.get(PARAM.phase) || "";
   const page = Number(p.get(PARAM.page));
+  // A bookmark from before 13 Oct 2026 asked for the Joined STAGE inside the
+  // live list; Joined is its own bucket now, so read it as that.
+  const bucket = rawBucket === "rejected" || rawBucket === "archive" || rawBucket === "joined"
+    ? rawBucket
+    : rawPhase === "joined" ? "joined" : "active";
   return {
-    bucket: bucket === "rejected" || bucket === "archive" ? bucket : "active",
-    phase: p.get(PARAM.phase) || "",
+    bucket,
+    phase: rawPhase === "joined" ? "" : rawPhase,
     status: p.get(PARAM.status) || "",
     opportunityId: p.get(PARAM.opportunityId) || "",
     taOwnerId: p.get(PARAM.taOwnerId) || "",

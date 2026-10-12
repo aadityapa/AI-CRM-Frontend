@@ -459,7 +459,6 @@ export function ProjectsListPage() {
       )}
       {showNew && (
         <CreateProjectWizard
-          customers={customers}
           onClose={() => setShowNew(false)}
           onSaved={(p) => { setShowNew(false); crmNavigate(`projects/${p.id}`); }}
           notify={showToast}

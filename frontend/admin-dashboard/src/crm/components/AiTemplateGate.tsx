@@ -9,6 +9,9 @@
  *
  *   missing    → nothing requested yet: "Request template from RMG" in place
  *   requested  → a request waits for RMG: its number, status and date
+ *   other_opportunity → the linked template belongs to ANOTHER deal (13 Oct 2026:
+ *                a Bluetooth Developer candidate got the "AGM - R&D (ADAS & ARAS)"
+ *                questions) — RMG must use Change template first
  *   ready      → the caller's action simply runs
  *
  * `useAiTemplateGate()` wraps any "schedule" click: `gate({profileId | requirementId}, proceed)`.
@@ -25,7 +28,7 @@ import { fmtDateShort } from "../../lib/datetime";
 import { DialogActions, DialogFailure, DialogHero, WhatHappens } from "./dialogKit";
 import { Modal } from "./ui";
 
-export type AiTemplateState = "ready" | "requested" | "missing";
+export type AiTemplateState = "ready" | "requested" | "missing" | "archived" | "other_opportunity";
 
 export type AiTemplateStatus = {
   ready: boolean;
@@ -42,6 +45,9 @@ export type AiTemplateStatus = {
   requirement_id?: number | null;
   opportunity_id?: number | null;
   reason?: string;
+  /** other_opportunity: the deal the linked template belongs to, and its title. */
+  template_owner?: string | null;
+  template_title?: string | null;
 };
 
 export type AiTemplateTarget = { profileId?: number | null; requirementId?: number | null };
@@ -60,14 +66,18 @@ export async function fetchAiTemplateStatus(t: AiTemplateTarget): Promise<AiTemp
 
 /** True for the server's "no template" refusal (current and older wording). */
 export function isTemplateNotReadyError(message?: string | null): boolean {
-  return /interview template is not ready|no interview template|has not linked a template/i.test(String(message || ""));
+  return /interview template is not ready|no interview template|has not linked a template|belongs to .*other position's questions/i
+    .test(String(message || ""));
 }
 
 /** A status for a refusal that came back from a schedule call (no prior check). */
 export function statusFromError(message: string, requirementId?: number | null): AiTemplateStatus {
+  const other = /other position's questions/i.test(message);
   return {
     ready: false,
-    state: /template request/i.test(message) && /waiting|has not linked/i.test(message) ? "requested" : "missing",
+    state: other
+      ? "other_opportunity"
+      : /template request/i.test(message) && /waiting|has not linked/i.test(message) ? "requested" : "missing",
     reason: message,
     requirement_id: requirementId ?? null,
   };
@@ -98,6 +108,7 @@ export function TemplateNotReadyModal({ status: initial, candidateName, onClose,
   const reqId = status.requirement_id ?? null;
   const tr = status.request;
   const missing = status.state === "missing";
+  const wrong = status.state === "other_opportunity";
 
   const recheck = async () => {
     setBusy(true);
@@ -106,7 +117,9 @@ export function TemplateNotReadyModal({ status: initial, candidateName, onClose,
       const fresh = await fetchAiTemplateStatus({ requirementId: reqId });
       if (fresh?.ready) { onClose(); onReady?.(); return; }
       if (fresh) setStatus(fresh);
-      setFailure("The template is still not linked. RMG is notified of the request.");
+      setFailure(fresh?.state === "other_opportunity"
+        ? "Still linked to the other position's template — RMG has to use Change template."
+        : "The template is still not linked. RMG is notified of the request.");
     } catch (e: any) {
       setFailure(e?.message || "Could not check the template");
     } finally {
@@ -134,7 +147,11 @@ export function TemplateNotReadyModal({ status: initial, candidateName, onClose,
 
   const openRequests = () => { onClose(); crmNavigate("template-requests"); };
 
-  const primary = missing && canRequest
+  const primary = wrong
+    ? (canFulfil
+      ? { label: "Open Template Requests", busyLabel: "Opening…", icon: ExternalLink, run: openRequests }
+      : { label: "Check again", busyLabel: "Checking…", icon: Hourglass, run: recheck })
+    : missing && canRequest
     ? { label: "Request template from RMG", busyLabel: "Requesting…", icon: Send, run: requestTemplate }
     : canFulfil
       ? { label: "Open Template Requests", busyLabel: "Opening…", icon: ExternalLink, run: openRequests }
@@ -142,26 +159,49 @@ export function TemplateNotReadyModal({ status: initial, candidateName, onClose,
 
   return (
     <Modal
-      title="AI interview template not ready"
+      title={wrong ? "Wrong interview template linked" : "AI interview template not ready"}
       medium
       onClose={() => { if (!busy) onClose(); }}
-      hero={
+      hero={wrong ? (
+        <DialogHero tone="rose" icon={FileWarning} eyebrow="Cannot schedule the AI L1 yet"
+          title="This position is linked to another position's template"
+          subtitle="The candidate would be asked the other position's questions, and the report would name the other deal."
+          person={candidateName ? { name: candidateName } : null}
+          flow={{ steps: ["RMG uses Change template", "Schedule AI L1"], current: 0 }} />
+      ) : (
         <DialogHero tone="amber" icon={FileWarning} eyebrow="Cannot schedule the AI L1 yet"
           title="The AI interview template is not ready"
           subtitle="Each AI interview asks the questions of a template RMG builds for the position."
           person={candidateName ? { name: candidateName } : null}
           flow={{ steps: ["Template requested", "RMG links the template", "Schedule AI L1"], current: missing ? 0 : 1 }} />
-      }
+      )}
       footer={
-        <DialogActions tone="amber" icon={primary.icon} label={primary.label} busyLabel={primary.busyLabel}
+        <DialogActions tone={wrong ? "rose" : "amber"} icon={primary.icon} label={primary.label} busyLabel={primary.busyLabel}
           busy={busy} onCancel={onClose} onConfirm={() => void primary.run()}
-          hint={justRequested
-            ? <span className="text-success">Requested — RMG has been notified</span>
-            : "You can schedule the AI L1 once RMG links the template"} />
+          hint={wrong
+            ? (canFulfil ? "Open the request and use Change template" : "Ask RMG to change the linked template")
+            : justRequested
+              ? <span className="text-success">Requested — RMG has been notified</span>
+              : "You can schedule the AI L1 once RMG links the template"} />
       }
     >
       <div className="space-y-4">
-        {missing ? (
+        {wrong ? (
+          <div className="flex items-start gap-3 rounded-card border border-danger bg-danger-soft p-3.5">
+            <FileWarning className="mt-0.5 h-5 w-5 shrink-0 text-danger" aria-hidden />
+            <div className="text-sm text-secondary">
+              <p className="font-semibold text-primary">
+                Linked template: “{status.template_title || status.template_job_id || "unknown"}”
+                {status.template_owner ? <> — belongs to {status.template_owner}</> : null}
+              </p>
+              <p className="mt-0.5">
+                {canFulfil
+                  ? "Open Template Requests, choose this opportunity's request and use Change template to link its own template. Then schedule the AI L1."
+                  : "Ask RMG to open Template Requests and use Change template on this opportunity's request. Then schedule the AI L1."}
+              </p>
+            </div>
+          </div>
+        ) : missing ? (
           <div className="flex items-start gap-3 rounded-card border border-warning bg-warning-soft p-3.5">
             <ClipboardList className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden />
             <div className="text-sm text-secondary">
@@ -199,13 +239,13 @@ export function TemplateNotReadyModal({ status: initial, candidateName, onClose,
           <p className="text-xs leading-relaxed text-muted">{status.reason}</p>
         )}
 
-        <WhatHappens tone="amber" items={[
+        {!wrong && <WhatHappens tone="amber" items={[
           { icon: Send, text: "TA raises a template request (one per opportunity)." },
           { icon: Link2, text: "RMG builds or picks the interview template and links it in Template Requests." },
           { icon: Bot, text: "TA schedules the AI L1 — the candidate gets the invite with the questions ready." },
-        ]} />
+        ]} />}
 
-        {!missing && (
+        {!missing && !wrong && (
           <button type="button" onClick={openRequests}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline">
             <ExternalLink className="h-3.5 w-3.5" aria-hidden /> Open Template Requests

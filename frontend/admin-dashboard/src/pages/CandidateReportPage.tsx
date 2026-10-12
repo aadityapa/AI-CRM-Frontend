@@ -60,6 +60,7 @@ import {
   followupQuestionSet,
   isFollowupQuestion,
 } from "../components/candidate-report/ConversationSummary";
+import { AnswerBlock, QuestionKindChips, SkillBankSummary } from "../components/candidate-report/TypedAnswerView";
 import { CrmMetaLine } from "../components/CrmMetaLine";
 import { InterviewModelChips } from "../components/AiModelChip";
 import { focusRing } from "../crm/components/ui";
@@ -1404,12 +1405,14 @@ export function CandidateReportPage({
                   </div>
                 </details>
               ) : null}
+              <SkillBankSummary report={report} />
               {turns.map((t) => (
                 <details key={t.idx} className="group open:bg-surface-2">
                   <summary className="cursor-pointer list-none px-6 py-4 flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-black uppercase text-brand-500">Question {t.idx}</span>
+                        <QuestionKindChips turn={t} />
                         {isFollowupQuestion(followupSet, t.question) ? (
                           <span className="text-xs font-bold uppercase tracking-wide rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200 px-2 py-0.5">
                             Follow-up
@@ -1467,11 +1470,8 @@ export function CandidateReportPage({
                     </div>
                   </summary>
                   <div className="px-6 pb-5 space-y-4 border-t border-subtle bg-surface-2">
-                    <div>
-                      <p className="text-xs font-black uppercase text-muted mb-1">Candidate answer</p>
-                      <p className="text-sm text-secondary whitespace-pre-wrap">{t.answer || "—"}</p>
-                    </div>
-                    <ProfessionalAssessmentSections turn={t} includeCommunication={assessesCommunication} />
+                    <AnswerBlock turn={t} />
+                    <ProfessionalAssessmentSections turn={t} includeCommunication={assessesCommunication && t.questionKind !== "coding" && t.questionKind !== "pseudo"} />
                     {t.excludedFromScore ? (
                       <div className="rounded-card border border-subtle bg-surface-2 p-3 space-y-1">
                         <p className="text-xs font-black uppercase text-muted">Status</p>

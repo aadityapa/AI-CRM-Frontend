@@ -922,7 +922,11 @@ export function NewOpportunityForm({
   }, [state.isLoaded, isSales]);
 
   const options: OptionsMap = useMemo(() => ({
-    customers: customers.map((c) => ({ value: String(c.id), label: c.name })),
+    // Only the Customers tab's ACTIVE customers (12 Oct 2026); an opportunity
+    // already raised for a now-inactive customer keeps it, marked.
+    customers: customers
+      .filter((c) => (c.status || "Active") === "Active" || String(c.id) === String(state.core.customer_id))
+      .map((c) => ({ value: String(c.id), label: (c.status || "Active") === "Active" ? c.name : `${c.name} (inactive)` })),
     branches: branches.map((b) => ({ value: String(b.id), label: b.branch_name })),
     contacts: contactPersons.map((c) => ({ value: String(c.id), label: c.name || "" })),
     hiringManagers: hiringManagers.length
@@ -945,7 +949,7 @@ export function NewOpportunityForm({
     wfoRemote: WFO_REMOTE_OPTIONS,
     appraisalCycle: APPRAISAL_CYCLE_OPTIONS,
     engineers: engineers.map((e) => ({ value: e.id, label: e.name })),
-  }), [customers, branches, contactPersons, hiringManagers, skills, customerHasPo, customRoles, isSales, engineers]);
+  }), [customers, branches, contactPersons, hiringManagers, skills, customerHasPo, customRoles, isSales, engineers, state.core.customer_id]);
 
   // ---- change handlers -----------------------------------------------------
   const setCore = (key: string, value: unknown) =>

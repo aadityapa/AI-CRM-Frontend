@@ -21,13 +21,17 @@ import {
   toggleMicInput,
   reopenMediaPermissionGate,
   startInterviewTimer,
+  stopInterviewTimer,
   submitCandidateAnswer,
   submitInterview,
   cancelAutoAdvance,
   submitAutoAdvanceNow,
   showCandidateToast,
   getProctorStream,
+  holdForRecruiter,
+  releaseRecruiterHold,
 } from "./candidate.js";
+import { startLiveJoinWatch } from "./live_join.js";
 import {
   downloadLatestReportExcel,
   downloadInterviewQaPdf,
@@ -37,6 +41,7 @@ import {
   printManagementReport,
   unlockResult,
 } from "./results.js";
+import { detectHandheld, showDesktopRequiredScreen } from "./device_class.js";
 // The 3D background needs three.js from a CDN. It is decoration: on a network
 // that blocks cdn.jsdelivr.net a STATIC import here aborted the whole module
 // graph and the candidate saw a blank page (15 Sep 2026). Load it lazily and
@@ -53,12 +58,13 @@ function setInterviewMode(isInterview) {
   void _sceneReady.then((m) => { try { m?.setInterviewMode?.(isInterview); } catch (_) { /* ignore */ } });
 }
 import { initAvatar } from "./avatar.js";
-import { apiFetch, handleJson } from "./core.js";
+import { apiFetch, escapeHtml, handleJson, jsonOrError } from "./core.js";
 import { switchAuthMode, switchAuthPane } from "./auth/sharedAuth.js";
 import { initAuthMotion, initAuthEnterSubmit } from "./auth/authMotion.js";
 import { initBrandLogoFallback } from "./brandLogo.js";
 import { formatHrDateTimeDisplay, initHrSetupUi } from "./hrSetupUi.js";
 import { applyAiEngineLabels } from "./ai_engine.js";
+import { showPracticeScreen, showSkillPicker } from "./skill_bank.js";
 import { setRecordingBadge } from "./recording_badge.js";
 import { initHrAccessDetailsUi } from "./hrAccessDetails.js";
 import { initAutoAdvanceBannerUi } from "./interview_auto_advance.js";
@@ -494,19 +500,18 @@ async function restoreSessionIfPossible() {
 }
 
 /**
- * "AI Interviewer · GPT-6 Astra" (9 Oct 2026). The login response carries
- * `ai_model` (and `voice_model` for a live-voice template) only while the admin
- * shows the model to candidates; otherwise the chip keeps "AI Interviewer".
+ * The candidate's chip reads "AI Interviewer" only. The model name ("GPT-6
+ * Astra", "GPT Realtime mini") was shown here from 9 Oct 2026 and REMOVED on
+ * 12 Oct 2026 (user decision) — the candidate never sees which model runs it,
+ * whatever the server sends.
  */
-function _applyCandidateModelChips(data) {
+function _applyCandidateModelChips(_data) {
   const chip = document.getElementById("candidateAiChip");
-  const label = String(data?.ai_model?.label || "").trim();
-  if (chip && label) chip.textContent = `AI Interviewer · ${label}`;
+  if (chip) chip.textContent = "AI Interviewer";
   const voiceChip = document.getElementById("candidateVoiceChip");
-  const voice = String(data?.voice_model?.label || "").trim();
   if (voiceChip) {
-    voiceChip.textContent = voice ? `Live voice · ${voice}` : "";
-    voiceChip.hidden = !voice;
+    voiceChip.textContent = "";
+    voiceChip.hidden = true;
   }
 }
 
@@ -847,12 +852,17 @@ async function handleVerifySubmit() {
       body: fd,
       headers: { "x-device-id": _ensureInviteDeviceId() },
     });
-    const data = await res.json();
+    const data = await jsonOrError(res);
     if (!res.ok || data.error) {
       const st = data.invite_state;
       if (st === "completed" || st === "terminated") {
         showInviteTerminalState(st, { candidate_name: data.candidate_name });
         if (btn) btn.disabled = false;
+        return;
+      }
+      if (data.code === "desktop_required") {
+        hideVerificationScreen();
+        showDesktopRequiredScreen({ message: data.error });
         return;
       }
       if (data.status === "scheduled_wait") {
@@ -893,7 +903,7 @@ async function proceedWithInviteLogin() {
         method: "POST",
         headers,
       }, { timeoutMs: 90000 });
-      const data = await res.json();
+      const data = await jsonOrError(res);
       console.info("[STEP-3] Session created", {
         status: data.status,
         ms: Date.now() - loginStartedAt,
@@ -905,6 +915,11 @@ async function proceedWithInviteLogin() {
         const st = data.invite_state;
         if (st === "completed" || st === "terminated") {
           showInviteTerminalState(st, { candidate_name: data.candidate_name });
+          return;
+        }
+        if (data.code === "desktop_required") {
+          _hideInviteLoadingOverlay();
+          showDesktopRequiredScreen({ message: data.error });
           return;
         }
         const loginErr = new Error(data.error || `Request failed with status ${res.status}`);
@@ -938,6 +953,50 @@ async function proceedWithInviteLogin() {
       const meta = document.getElementById("candidateMeta");
       if (meta) {
         meta.innerText = `Name: ${schedule.candidate_name || user.full_name || "Candidate"} | Scheduled: ${formatHrDateTimeDisplay(schedule.scheduled_at_local)} | Mode: Invite Link`;
+      }
+      // Skill-wise question bank (10 Oct 2026): the candidate picks the skills
+      // they have worked on BEFORE the clock starts (the server starts it at the
+      // first question), then a short unscored practice of the answer screens.
+      if (data.skill_pick && Array.isArray(data.skill_pick.offered) && data.skill_pick.offered.length) {
+        _hideInviteLoadingOverlay();
+        await showSkillPicker(data.skill_pick, async (skills) => {
+          try {
+            const r = await apiFetch("/candidate/skill-selection", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-device-id": _ensureInviteDeviceId() },
+              body: JSON.stringify({ skills }),
+            });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok || body.error) {
+              // Already started elsewhere (a reload after choosing) — carry on.
+              if (body.code === "started" || body.code === "not_skill_bank") return { ok: true };
+              return { ok: false, error: body.error || `Could not save (status ${r.status}).` };
+            }
+            return { ok: true, plan: body.plan };
+          } catch (err) {
+            return { ok: false, error: err?.message || "Network error — please try again." };
+          }
+        });
+        console.info("[STEP-6a] Skills selected");
+      }
+      // No picker, but the AI tops up the spoken questions (12 Oct 2026): confirm
+      // the default skills now so those questions exist before question 1.
+      if (!data.skill_pick && data.skill_autofill && Array.isArray(data.skill_autofill.skills)) {
+        _showInviteLoadingOverlay("Preparing your questions…");
+        try {
+          await apiFetch("/candidate/skill-selection", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-device-id": _ensureInviteDeviceId() },
+            body: JSON.stringify({ skills: data.skill_autofill.skills }),
+          }, { timeoutMs: 45000 });
+        } catch (err) {
+          console.warn("[STEP-6a] Question top-up failed — continuing with the written questions", err?.message || err);
+        }
+      }
+      if (data.practice && Array.isArray(data.practice.kinds)) {
+        _hideInviteLoadingOverlay();
+        await showPracticeScreen(data.practice.kinds);
+        console.info("[STEP-6b] Practice done");
       }
       console.info("[STEP-7] Timer started");
       startInterviewTimer();
@@ -978,6 +1037,22 @@ async function proceedWithInviteLogin() {
       // feed on Windows laptops. Getters, not streams: the feed is usually
       // still opening at this point.
       void startSessionRecording(getProctorStream, getVerifiedMicStream).catch(() => {});
+      // A recruiter may join from the Integrity tab (11 Oct 2026): pause, a
+      // note, their own question, a call. One small check every few seconds.
+      startLiveJoinWatch({
+        onPause: () => holdForRecruiter(),
+        onResume: () => releaseRecruiterHold(),
+        getCameraStream: () => getProctorStream(),
+        getMicStream: () => getVerifiedMicStream(),
+        // The server's clock says the time limit passed (12 Oct 2026) — end now,
+        // whatever the page's own countdown thinks.
+        onTimeUp: () => {
+          const st = document.getElementById("candidateStatus");
+          if (st) st.innerText = "Time limit reached. Saving and submitting interview…";
+          stopInterviewTimer();
+          void submitInterview({ timeExpired: true });
+        },
+      });
       console.info("[STEP-8] Candidate active");
       _setCandidateStartupControlsDisabled(false);
       const status = document.getElementById("candidateStatus");
@@ -1052,7 +1127,10 @@ function showCandidateWelcome() {
           const metaEl = document.getElementById("inviteWelcomeMeta");
           // Capture the template's format so the rules screen can state the
           // real duration and question count instead of a generic promise.
+          // The server's `_interview_format` (12 Oct 2026): the real question
+          // count and mix, how it ends, typed questions, recruiter join.
           _inviteInterviewConfig = {
+            ...schedule,
             timing_mode: schedule.timing_mode || data.timing_mode,
             time_limit_sec: schedule.time_limit_sec ?? data.time_limit_sec,
             num_questions:
@@ -1065,7 +1143,7 @@ function showCandidateWelcome() {
           // heading; the name renders on its own line (display:block).
           if (candidate && nameEl) nameEl.textContent = candidate;
           if (subEl && schedule.job_title) {
-            subEl.innerHTML = `Your AI-powered interview for <strong>${schedule.job_title}</strong> is ready. ` +
+            subEl.innerHTML = `Your AI-powered interview for <strong>${escapeHtml(schedule.job_title)}</strong> is ready. ` +
               "Please review the checklist to ensure optimal performance. When prepared, select <strong>Start Interview</strong>.";
           }
           if (metaEl && schedule.scheduled_at_local) {
@@ -1098,7 +1176,7 @@ async function autoLoginFromInviteToken() {
     _verifiedDeviceId = _ensureInviteDeviceId();
 
     const lookupRes = await apiFetch(`/candidate/invite/${encodeURIComponent(inviteTokenFromUrl)}`);
-    const lookup = await lookupRes.json();
+    const lookup = await jsonOrError(lookupRes);
 
     if (!lookupRes.ok || lookup.error) {
       const st = lookup.invite_state;
@@ -1133,7 +1211,7 @@ async function autoLoginFromInviteToken() {
           body: new FormData(),
           headers: { "x-device-id": _ensureInviteDeviceId() },
         });
-        const vdata = await vres.json();
+        const vdata = await jsonOrError(vres);
         if (vres.ok && vdata && vdata.already_verified) {
           await proceedWithInviteLogin();
           return true;
@@ -1278,6 +1356,18 @@ async function bootstrapInviteFlow() {
     });
   }
   console.info("[STEP-1] Interview page opened", { invite: inviteTokenFromUrl ? "present" : "none" });
+  // Laptop / PC only (12 Oct 2026): a phone or tablet stops here, before the
+  // welcome screen asks for anything. The server refuses the same devices.
+  const device = detectHandheld();
+  if (device.handheld) {
+    console.info("[STEP-1] Handheld device — interview needs a laptop or PC", device);
+    for (const id of ["screenStartup", "screenAuth"]) {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove("active");
+    }
+    showDesktopRequiredScreen();
+    return;
+  }
   while (true) {
     await showCandidateWelcome();
 

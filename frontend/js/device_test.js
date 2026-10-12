@@ -708,6 +708,11 @@ function _confirmWebcam(tileState) {
   _setTileStatus("webcam", "ok");
   _setStatusMsg("Webcam confirmed.");
   _refreshContinueButton(tileState);
+  // Start fetching the face / eye monitor (~13 MB, 13 Oct 2026) while the
+  // candidate finishes the checks, so it is ready on the first question.
+  void import("./face_detection.js")
+    .then((m) => m.preloadFaceMonitor())
+    .catch(() => { /* the interview starts it again; nothing to do here */ });
 }
 
 /** Explicit "Skip — no camera" path so a candidate can bypass even when their
@@ -781,13 +786,22 @@ async function _runScreenShare(tileState) {
     _screenHint(`Sharing ${word}. Keep it shared until the interview ends — stopping it is logged.`);
     _setStatusMsg("Screen sharing confirmed.");
     _deviceDebug("screen_share_ok", { surface: result.surface || "" });
+  } else if (result.reason === "not_entire_screen") {
+    tileState.screen = "error";
+    _setTileStatus("screen", "error");
+    const word = SURFACE_WORDS[String(result.surface || "")] || "only part of your screen";
+    _screenHint("Choose the “Entire screen” option in the sharing window.");
+    _setStatusMsg(
+      `You shared ${word}. This interview records your ENTIRE screen — click Share screen again, ` +
+      "open the “Entire screen” tab in the browser's window, pick your screen and press Share."
+    );
   } else if (result.reason === "denied") {
     tileState.screen = "error";
     _setTileStatus("screen", "error");
     _setStatusMsg(
       SCREEN_REQUIRED
         ? "Screen sharing was cancelled. This interview records your screen along with the " +
-          "camera — click Share screen and choose this tab (or your entire screen)."
+          "camera — click Share screen and choose your Entire screen."
         : "Screen sharing was cancelled. You can continue without it."
     );
   } else {

@@ -28,37 +28,138 @@ function formatDuration(seconds) {
   return `${hours}h ${rest}m`;
 }
 
+/** Hide / show an element. */
+function _toggle(id, on) {
+  const el = document.getElementById(id);
+  if (el) el.hidden = !on;
+}
+
+function _setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
 /**
- * Show the real numbers from the template rather than a generic promise.
- * `config` may be partial — anything missing simply reads "—".
+ * Show the REAL format of this interview (12 Oct 2026). Everything comes from
+ * the server's `_interview_format` on the invite lookup: how it ends (time
+ * limit OR question count — never both), how many questions and of what kind,
+ * whether the candidate chooses skills, typed questions, follow-ups and
+ * whether a recruiter may join. `config` may be partial — an older server
+ * sends only timing_mode / time_limit_sec / num_q.
  */
 export function applyRulesConfig(config = {}) {
-  const durationEl = document.getElementById("rulesDuration");
-  const questionsEl = document.getElementById("rulesQuestions");
-  const endEl = document.getElementById("rulesEndCondition");
-
   const timingMode = String(config.timing_mode || "count").toLowerCase();
-  const duration = formatDuration(config.time_limit_sec);
-  const count = Number(config.num_questions || config.total || 0) || 0;
+  const timed = timingMode === "time";
+  const limitSec = timed ? Number(config.time_limit_sec) || 0 : 0;
+  const duration = formatDuration(limitSec);
+  const count = Number(config.num_questions ?? config.num_q ?? config.total ?? 0) || 0;
+  const mix = config.question_mix && typeof config.question_mix === "object" ? config.question_mix : null;
+  const spoken = mix ? Number(mix.spoken) || 0 : count;
+  const pseudo = mix ? Number(mix.pseudo) || 0 : 0;
+  const coding = mix ? Number(mix.coding) || 0 : 0;
+  const typed = pseudo + coding > 0;
+  const varies = !!config.mix_varies;
+  const estimate = Number(config.minutes_estimate) || 0;
 
-  if (durationEl) durationEl.textContent = duration || "No fixed limit";
-  if (questionsEl) questionsEl.textContent = count ? String(count) : "Varies";
+  // Time
+  if (timed && duration) {
+    _setText("rulesDuration", duration);
+    _setText("rulesDurationHint", "Hard stop — the interview ends on the clock.");
+  } else {
+    _setText("rulesDuration", "No time limit");
+    _setText("rulesDurationHint", estimate ? `Usually about ${formatDuration(estimate * 60)}.` : "Take the time you need for each answer.");
+  }
 
-  if (endEl) {
-    if (duration && count) {
-      endEl.textContent =
-        `It submits automatically after ${duration} or after ${count} questions`;
-    } else if (duration) {
-      endEl.textContent = `It submits automatically after ${duration}`;
-    } else if (count) {
-      endEl.textContent = `It submits automatically after ${count} questions`;
+  // Questions
+  if (count) {
+    _setText("rulesQuestions", `${timed ? "Up to " : varies ? "About " : ""}${count}`);
+    _setText(
+      "rulesQuestionsHint",
+      timed ? "The clock may end the interview first." : varies ? "Depends on the skills you choose." : "Plus a short, unscored introduction.",
+    );
+  } else {
+    _setText("rulesQuestions", timed ? "As many as fit" : "—");
+    _setText("rulesQuestionsHint", timed && duration ? `Within ${duration}.` : "");
+  }
+  const mixEl = document.getElementById("rulesMix");
+  if (mixEl) {
+    const chips = [];
+    if (spoken) chips.push(`<span class="rv-mix-chip rv-mix-chip--spoken"><b>${spoken}</b> spoken</span>`);
+    if (pseudo) chips.push(`<span class="rv-mix-chip rv-mix-chip--pseudo"><b>${pseudo}</b> pseudo-code</span>`);
+    if (coding) chips.push(`<span class="rv-mix-chip rv-mix-chip--coding"><b>${coding}</b> coding</span>`);
+    mixEl.innerHTML = chips.join("");
+    mixEl.hidden = !(typed && chips.length);
+  }
+
+  // How you answer
+  _setText("rulesAnswerBy", typed ? "Speaking + on screen" : "Speaking");
+  _setText(
+    "rulesAnswerHint",
+    typed
+      ? "Spoken questions are read aloud; pseudo-code and coding ones appear on screen."
+      : "The AI reads each question aloud — you answer by speaking.",
+  );
+
+  // Skills the candidate picks
+  const choice = config.skills_choice && typeof config.skills_choice === "object" ? config.skills_choice : null;
+  const skillsEl = document.getElementById("rulesSkillsNote");
+  if (skillsEl) {
+    if (choice && Number(choice.max) > 0) {
+      const lo = Number(choice.min) || 1;
+      const hi = Number(choice.max) || lo;
+      skillsEl.textContent =
+        `Before the first question you choose ${lo === hi ? lo : `${lo}–${hi}`} skill${hi === 1 ? "" : "s"} you have worked on; the questions come from those skills.`;
+      skillsEl.hidden = false;
     } else {
-      endEl.textContent =
-        timingMode === "time"
-          ? "It submits automatically when the time runs out"
-          : "It submits automatically when the questions run out";
+      skillsEl.hidden = true;
     }
   }
+
+  // Typed questions + the keyboard rule
+  _toggle("rulesTypedRule", typed);
+  if (typed) {
+    const tm = config.typed_minutes || {};
+    const parts = [];
+    if (pseudo) parts.push(`pseudo-code: pick the right option (${Number(tm.pseudo) || 2} min each)`);
+    if (coding) parts.push(`coding: write your code in the editor (${Number(tm.coding) || 10} min each)`);
+    _setText("rulesTypedText", `Each has its own timer — ${parts.join("; ")}. Copy and paste stay off.`);
+    _setText(
+      "rulesKeyboardText",
+      "Typing works only inside the code editor of a coding question. Everywhere else — and copy / paste — the keyboard is off; use the mouse for buttons.",
+    );
+  } else {
+    _setText("rulesKeyboardText", "You answer by speaking, so typing, copy and paste are off. Use the mouse for the buttons.");
+  }
+
+  // Follow-ups, recruiter, recording
+  const followups = Number(config.followups) || 0;
+  _toggle("rulesFollowupRule", followups > 0);
+  if (followups > 0) {
+    _setText("rulesFollowupText", `Based on your answer, up to ${followups} in the interview — answer it like any other question.`);
+  }
+  _toggle("rulesRecruiterRule", config.recruiter_may_join !== false);
+  // Look-away reminders (13 Oct 2026): the server's limit, 0 = never ends it.
+  if (config.gaze_limit !== undefined && config.gaze_limit !== null) {
+    const gl = Number(config.gaze_limit) || 0;
+    _setText(
+      "rulesGazeLimit",
+      gl > 0
+        ? `The ${gl}${gl % 10 === 1 && gl !== 11 ? "st" : gl % 10 === 2 && gl !== 12 ? "nd" : gl % 10 === 3 && gl !== 13 ? "rd" : "th"} reminder ends the interview.`
+        : "Reminders are recorded for the recruiter.",
+    );
+  }
+
+  // How it ends — exactly one rule, the one the template chose.
+  let end;
+  if (timed && duration) {
+    end = `At ${duration} the interview submits itself — even if questions are left. It also ends earlier if the questions run out.`;
+  } else if (count) {
+    end = `After ${varies ? "your" : "the"} ${count} question${count === 1 ? "" : "s"}, the interview submits itself. There is no clock.`;
+  } else {
+    end = "It submits itself when the last question is answered.";
+  }
+  if (config.closing_qa) end += " At the end you may ask a question about the role.";
+  _setText("rulesEndCondition", end);
 }
 
 /**

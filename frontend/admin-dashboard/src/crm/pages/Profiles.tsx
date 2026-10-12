@@ -20,7 +20,7 @@ import { useHasRole, useMe } from "../CrmApp";
 import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
 import { RmgVerdictHero } from "../components/ScreeningDecisionModal";
 import { DialogActions } from "../components/dialogKit";
-import { AiInterviewOverview, useCanOpenAiReport } from "../components/AiInterviewOverview";
+import { AiInterviewOverview, WrongTemplateNotice, useCanOpenAiReport, type TemplateMismatch } from "../components/AiInterviewOverview";
 import { InterviewRoundsModal } from "../components/InterviewRoundsModal";
 import { hrOfferVisible, type HrOffer } from "../lib/hrOffer";
 import { SearchableSelect } from "../components/SearchableSelect";
@@ -311,6 +311,9 @@ type AiInterviewLink = {
   /** Same-origin admin URL to the full interview report (null until completed). */
   report_link: string | null;
   pending: boolean;
+  /** 13 Oct 2026: the interview ran on ANOTHER opportunity's template. */
+  template_mismatch?: TemplateMismatch | null;
+  voided?: boolean;
   /** Session details from the legacy interview_schedule row. */
   scheduled_at_local?: string | null;
   access_key?: string | null;
@@ -845,6 +848,9 @@ function RmgDecisionBanner({
                 ? <>AI L1 interview <span className="font-semibold text-emerald-600 dark:text-emerald-400">{latest.result}</span> with <span className="font-semibold">{latest.overall_score_percent}%</span>. Review the report, then decide: request an L2 round, or submit to the Sales team.</>
                 : <>This candidate is awaiting your review. Check the AI interview report, then decide: request an L2 round, or submit to the Sales team.</>}
           </p>
+          {!onManualRoute && latest?.template_mismatch && (
+            <WrongTemplateNotice mismatch={latest.template_mismatch} className="mt-3" />
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {latest?.report_link ? (
@@ -4086,6 +4092,7 @@ function AiInterviewTab({
               </a>
             )}
           </div>
+          {latest.template_mismatch && <WrongTemplateNotice mismatch={latest.template_mismatch} className="mt-3" />}
         </div>
       )}
 

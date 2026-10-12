@@ -28,7 +28,8 @@ import { FLOW_BTN } from "./flowButtons";
 import { SalesActionLauncher, SalesItemActions, TermsLine, type SalesAct, type SalesDeskItem } from "./SalesDeskActions";
 import type { OfferTerms } from "./OfferApprovalGate";
 import { FileLink } from "./FileUpload";
-import { CANDIDATE_STAGE_BUCKETS, STAGE_TONE } from "../lib/candidateStageBuckets";
+import { STAGE_TONE, visibleStageBuckets } from "../lib/candidateStageBuckets";
+import { useCandidateStages } from "../useAccess";
 import { CrmLink } from "../router";
 import { fmtDateShort, fmtDateTime12 } from "../../lib/datetime";
 import type { Meta } from "../api";
@@ -111,8 +112,12 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
   const [act, setAct] = useState<SalesAct | null>(null);
   const [rounds, setRounds] = useState<{ profileId: number; name: string } | null>(null);
   const counts = meta?.phase_counts || {};
-  const total = useMemo(() => Object.entries(counts).filter(([k]) => k !== "archive")
-    .reduce((t, [, n]) => t + (Number(n) || 0), 0), [counts]);
+  // "All" = the server's own total ("all"); summing every key counted it twice.
+  const total = useMemo(() => counts.all != null ? Number(counts.all) || 0
+    : Object.entries(counts).filter(([k]) => k !== "archive" && k !== "all")
+      .reduce((t, [, n]) => t + (Number(n) || 0), 0), [counts]);
+  /* Role-wise stages (13 Oct 2026, Access Control ▸ Roles). */
+  const stageBuckets = visibleStageBuckets(useCandidateStages());
   const pages = Math.max(1, meta?.pages || 1);
 
   return (
@@ -135,7 +140,7 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
       </header>
 
       <div className="flex flex-wrap gap-1.5 border-b border-subtle bg-surface-2 px-5 py-3" role="tablist" aria-label="Stages">
-        {CANDIDATE_STAGE_BUCKETS.map((b) => {
+        {stageBuckets.map((b) => {
           const on = stage === b.key;
           const n = b.key === "all" ? total : counts[b.key];
           return (

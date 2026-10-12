@@ -51,3 +51,22 @@ export const STAGE_TONE: Record<string, string> = {
 export function bucketPhase(key: string): string | undefined {
   return key && key !== "all" && CANDIDATE_STAGE_BUCKETS.some((b) => b.key === key) ? key : undefined;
 }
+
+/** The chips a login may see (13 Oct 2026, Access Control ▸ Roles): "All"
+ *  plus the stages its roles carry — `me.candidate_stages`, null = every
+ *  stage. The server already leaves the hidden stages' candidates out of the
+ *  list and the counts; this only stops a chip that could never list anyone. */
+export function visibleStageBuckets(allowed: string[] | null | undefined): StageBucket[] {
+  if (!allowed) return CANDIDATE_STAGE_BUCKETS;
+  const keep = new Set(allowed);
+  return CANDIDATE_STAGE_BUCKETS.filter((b) => b.key === "all" || keep.has(b.key));
+}
+
+/** "Sales Screening → Closed" — the short name of a stage set, for hints. */
+export function stageRangeLabel(allowed: string[] | null | undefined): string {
+  if (!allowed || !allowed.length) return "Every stage";
+  const shown = CANDIDATE_STAGE_BUCKETS.filter((b) => allowed.includes(b.key));
+  if (shown.length === CANDIDATE_STAGE_BUCKETS.length - 1) return "Every stage";
+  if (shown.length === 1) return shown[0].label;
+  return `${shown[0].label} → ${shown[shown.length - 1].label}`;
+}

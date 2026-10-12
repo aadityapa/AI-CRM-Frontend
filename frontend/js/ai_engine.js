@@ -29,18 +29,14 @@ export async function interviewModelLabel() {
 }
 
 /**
- * Write the model into the HR setup labels:
- *   #kxAiProviderLabel  "AI interviewer: OpenAI GPT-6 Astra" (else "AI interviewer: OpenAI")
- *   .kx-brand-powered   "Powered by OpenAI GPT-6 Astra" (else unchanged)
+ * The interview page no longer prints the model name (12 Oct 2026, user
+ * decision): #kxAiProviderLabel stays "AI interviewer: OpenAI" and
+ * .kx-brand-powered keeps its static text. The label is still returned for
+ * callers that log it; the dashboard (Settings ▸ AI engine, reports, AI Costs)
+ * keeps showing the model to staff.
  */
 export async function applyAiEngineLabels() {
   const provider = document.getElementById("kxAiProviderLabel");
-  const label = await interviewModelLabel();
-  if (provider) provider.textContent = label ? `AI interviewer: OpenAI ${label}` : "AI interviewer: OpenAI";
-  if (label) {
-    document.querySelectorAll(".kx-brand-powered").forEach((el) => {
-      el.textContent = `Powered by OpenAI ${label}`;
-    });
-  }
-  return label;
+  if (provider) provider.textContent = "AI interviewer: OpenAI";
+  return interviewModelLabel();
 }

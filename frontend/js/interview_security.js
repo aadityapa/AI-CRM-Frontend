@@ -63,6 +63,8 @@ const INTEGRITY_VIOLATION_TYPES = new Set([
   "screen_share_stopped",
   // 7 Oct 2026 — why a recording has no screen half (not shared / unsupported / server off).
   "screen_share_missing",
+  // 13 Oct 2026 — the face / eye monitor could not start on this browser.
+  "camera_monitor_unavailable",
 ]);
 
 const VIOLATION_LABELS = {
@@ -83,11 +85,25 @@ const VIOLATION_LABELS = {
   devtools: "Developer tools",
   screen_share_stopped: "Screen sharing stopped",
   screen_share_missing: "Screen not recorded",
+  camera_monitor_unavailable: "Face / eye monitor unavailable",
+  gaze_away: "Looked away from the screen",
 };
 
 /* Events that only inform the Integrity tab — they never raise the on-screen
  * warning count. (The server decides termination from its own strike set.) */
-const SILENT_VIOLATION_TYPES = new Set(["no_face", "context_menu", "key_escape", "key_f11", "screen_share_stopped", "screen_share_missing"]);
+const SILENT_VIOLATION_TYPES = new Set([
+  "no_face", "context_menu", "key_escape", "key_f11", "screen_share_stopped", "screen_share_missing",
+  "camera_monitor_unavailable",
+]);
+
+/* What the warning modal says for the strike that raised it (13 Oct 2026 —
+ * an extra face used to show the fullscreen text). */
+const WARNING_REASON = {
+  multiple_faces:
+    "Another person was detected on your camera. Only you may be visible during the interview — please make sure you are alone.",
+  clipboard: "Copy and paste are not allowed during the interview.",
+  devtools: "Developer tools are not allowed during the interview.",
+};
 
 const WARNING_COPY = {
   default: [
@@ -319,14 +335,14 @@ function createViolationBadge() {
   violationBadge = badge;
 }
 
-function showWarning(level) {
+function showWarning(level, type = "") {
   if (!warningModal) createWarningModal();
   // The copy has two entries; the third warning (the last one before
   // termination) reuses the sterner of them rather than being skipped — a
   // candidate must never be ended on a strike they were not warned about.
   const warn = WARNING_COPY.default[Math.min(Math.max(level, 1), 2) - 1] || WARNING_COPY.default[0];
   document.getElementById("secWarnTitle").textContent = warn.title;
-  document.getElementById("secWarnMsg").textContent = warn.message;
+  document.getElementById("secWarnMsg").textContent = WARNING_REASON[type] || warn.message;
   const shown = Math.min(Math.max(level, 1), MAX_WARNINGS);
   const last = shown >= MAX_WARNINGS;
   document.getElementById("secWarnCounter").textContent = last
@@ -342,12 +358,12 @@ function showWarning(level) {
   warningModal.style.display = "flex";
 }
 
-function showTerminationWarning() {
+function showTerminationWarning(message = "", counter = "") {
   if (!warningModal) createWarningModal();
   const warn = WARNING_COPY.termination;
   document.getElementById("secWarnTitle").textContent = warn.title;
-  document.getElementById("secWarnMsg").textContent = warn.message;
-  document.getElementById("secWarnCounter").textContent = `Total violations: ${violationCount}`;
+  document.getElementById("secWarnMsg").textContent = message || warn.message;
+  document.getElementById("secWarnCounter").textContent = counter || `Total violations: ${violationCount}`;
   document.getElementById("secWarnIcon").textContent = "🚫";
   const btn = document.getElementById("secWarnBtn");
   btn.textContent = "Interview Ended";
@@ -404,8 +420,16 @@ let lastIntegrityEventTime = 0;
  * @param {string} type      one of INTEGRITY_VIOLATION_TYPES
  * @param {string} details   human text for the log
  */
+let _pausedByRecruiter = false;
+
+/** A recruiter paused the interview (11 Oct 2026): nothing counts until resume. */
+export function setSecurityPaused(on) {
+  _pausedByRecruiter = !!on;
+}
+
 async function reportViolation(type, details = "") {
   if (!INTEGRITY_VIOLATION_TYPES.has(type)) return;
+  if (_pausedByRecruiter) return;
   const silent = SILENT_VIOLATION_TYPES.has(type);
   const now = Date.now();
   if (!silent) {
@@ -420,7 +444,7 @@ async function reportViolation(type, details = "") {
   if (terminate) {
     showTerminationWarning();
   } else if (!silent) {
-    showWarning(violationCount);
+    showWarning(violationCount, type);
     void restoreFullscreenAfterReturn();
   }
 
@@ -458,6 +482,91 @@ async function reportViolation(type, details = "") {
 export function reportSecurityViolation(type, details = "") {
   if (!securityActive) return;
   reportViolation(type, details);
+}
+
+/* ------------------------------------------------------------------ gaze
+ * Looking away from the screen (13 Oct 2026, camera_monitor_logic.js). A SOFT
+ * warning — a small notice, not the blocking modal — counted separately from
+ * the three strikes. The server decides the limit (default 10, the 10th ends
+ * the interview) and returns it; the local number is only the offline fallback.
+ */
+let gazeCount = 0;
+let gazeLimit = 10;
+let gazeToastTimer = null;
+
+function _gazeToast(count, limit, reason) {
+  let el = document.getElementById("gazeWarnToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "gazeWarnToast";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    el.style.cssText = `
+      position:fixed; top:16px; left:50%; transform:translate(-50%,-12px); z-index:99990;
+      display:flex; align-items:center; gap:12px; max-width:min(560px,calc(100vw - 32px));
+      padding:12px 18px; border-radius:14px; font:600 14px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      box-shadow:0 14px 40px rgba(15,23,42,.35); opacity:0; pointer-events:none;
+      transition:opacity .2s ease, transform .2s ease;
+    `;
+    el.innerHTML = `
+      <span aria-hidden="true" style="font-size:22px;line-height:1">👀</span>
+      <span style="display:flex;flex-direction:column;gap:2px">
+        <strong id="gazeWarnTitle">Please keep your eyes on the screen</strong>
+        <span id="gazeWarnBody" style="font-weight:500;font-size:13px;opacity:.92"></span>
+      </span>`;
+    document.body.appendChild(el);
+  }
+  const left = limit > 0 ? Math.max(0, limit - count) : 0;
+  const urgent = limit > 0 && left <= 3;
+  el.style.background = urgent ? "#b91c1c" : "#b45309";
+  el.style.color = "#fff";
+  const body = document.getElementById("gazeWarnBody");
+  if (body) {
+    const counter = limit > 0 ? `Look-away warning ${count} of ${limit}` : `Look-away warning ${count}`;
+    const tail = urgent && left > 0 ? ` · ${left} more will end the interview` : "";
+    body.textContent = `${counter}${tail}${reason ? ` — ${reason}` : ""}`;
+  }
+  el.style.opacity = "1";
+  el.style.transform = "translate(-50%,0)";
+  if (gazeToastTimer) window.clearTimeout(gazeToastTimer);
+  gazeToastTimer = window.setTimeout(() => {
+    el.style.opacity = "0";
+    el.style.transform = "translate(-50%,-12px)";
+  }, 5000);
+}
+
+export function reportGazeAway(details = "") {
+  if (!securityActive || _pausedByRecruiter) return;
+  gazeCount += 1;
+  const reason = String(details || "").replace(/ for \d+ s$/, "");
+  _gazeToast(gazeCount, gazeLimit, reason);
+  const terminateLocally = gazeLimit > 0 && gazeCount >= gazeLimit;
+  const endWith = () => {
+    showTerminationWarning(
+      "The interview has ended because you looked away from the screen too many times.",
+      `Look-away warnings: ${gazeCount}`,
+    );
+    triggerAutoTermination();
+  };
+  void (async () => {
+    try {
+      const ctx = _integrityContext();
+      const fd = new FormData();
+      fd.append("violation_type", "gaze_away");
+      fd.append("details", String(details || VIOLATION_LABELS.gaze_away).slice(0, 500));
+      fd.append("current_question", ctx.current_question);
+      fd.append("fullscreen_status", ctx.fullscreen_status);
+      fd.append("browser_visibility", ctx.browser_visibility);
+      fd.append("window_focus", ctx.window_focus ? "true" : "false");
+      const res = await apiFetch("/interview/violation", { method: "POST", body: fd });
+      const data = await res.json();
+      if (Number.isFinite(Number(data.gaze_limit))) gazeLimit = Number(data.gaze_limit);
+      if (Number.isFinite(Number(data.gaze_count)) && Number(data.gaze_count) > 0) gazeCount = Number(data.gaze_count);
+      if (data.auto_terminated) endWith();
+    } catch (_) {
+      if (terminateLocally) endWith();
+    }
+  })();
 }
 
 function triggerAutoTermination() {
@@ -558,8 +667,33 @@ function _keyboardAllowed(e) {
   return false;
 }
 
+/** The coding-question editor (10 Oct 2026, skill-wise question bank). */
+function _inCodeEditor(el) {
+  return !!(el && el instanceof Element && el.closest("[data-kx-code-editor]"));
+}
+
+/** Editing shortcuts that are harmless inside the code editor: undo, redo, select all. */
+function _codeEditorShortcut(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  const k = String(e.key || "").toLowerCase();
+  return k === "z" || k === "y" || k === "a";
+}
+
 function onIntegrityKeyDown(e) {
   if (!securityActive) return;
+
+  // Typing a coding answer must never raise a warning (user rule, 10 Oct 2026):
+  // inside the editor, Ctrl+C / V / X are refused QUIETLY (the editor shows its
+  // own "paste is off" note) and undo / redo / select-all simply work.
+  if (_inCodeEditor(e.target)) {
+    if (_codeEditorShortcut(e)) return;
+    const k = String(e.key || "").toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (k === "c" || k === "v" || k === "x")) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+  }
 
   const named = _namedViolationFor(e);
   if (named) {
@@ -662,6 +796,7 @@ export function activateInterviewSecurity() {
   if (securityActive) return;
   securityActive = true;
   violationCount = 0;
+  gazeCount = 0; // the server's count wins on the first reply (a resumed interview)
   Object.keys(violationCountsByType).forEach((k) => delete violationCountsByType[k]);
   lastBlurTime = 0;
   _keyboardAttemptCount = 0;

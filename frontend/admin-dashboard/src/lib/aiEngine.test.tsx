@@ -13,16 +13,16 @@ import { fetchAiEngine, modelLabel, prettifyModelId, resetAiEngineCache } from "
 
 const ENGINE = {
   interview: { id: "gpt-6-astra", label: "GPT-6 Astra", provider: "OpenAI", reasoning: true },
-  fast: { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "OpenAI", reasoning: false },
-  live_voice: { id: "gpt-realtime-mini", label: "GPT Realtime mini", provider: "OpenAI", reasoning: false },
-  transcription: { id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", provider: "OpenAI", reasoning: false },
+  fast: { id: "gpt-5.5", label: "GPT-5.5", provider: "OpenAI", reasoning: true },
+  live_voice: { id: "gpt-realtime-2", label: "GPT Realtime 2", provider: "OpenAI", reasoning: false },
+  transcription: { id: "gpt-transcribe", label: "GPT Transcribe", provider: "OpenAI", reasoning: false },
   voice: { id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", provider: "OpenAI", reasoning: false },
-  ask_ai: { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "OpenAI", reasoning: false },
-  ocr: { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "OpenAI", reasoning: false },
+  ask_ai: { id: "gpt-5.5", label: "GPT-5.5", provider: "OpenAI", reasoning: true },
+  ocr: { id: "gpt-5.5", label: "GPT-5.5", provider: "OpenAI", reasoning: true },
   show_to_candidates: true,
   supported: [
     { id: "gpt-6-astra", label: "GPT-6 Astra", provider: "OpenAI", reasoning: true },
-    { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "OpenAI", reasoning: false },
+    { id: "gpt-5.5", label: "GPT-5.5", provider: "OpenAI", reasoning: true },
   ],
 };
 

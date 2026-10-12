@@ -22,15 +22,16 @@ import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Shield, AlertTriangle, CheckCircle2, XCircle, Clock, Monitor, ChevronDown, ChevronUp,
   Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, RefreshCw,
-  Video, FileText, UserRound,
+  Video, FileText, UserRound, Radio, Eye,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
 import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../components/interview-recording/RecordingViewer";
 import { PageHeader, HERO_BTN } from "../crm/components/PageHeader";
+import { LiveJoinPanel } from "../components/interview-live/LiveJoinPanel";
 
 /* ---------- types (mirror services/interview_integrity.py) ---------- */
 
-type Family = "tab" | "focus" | "fullscreen" | "keys" | "face" | "clipboard" | "devtools";
+type Family = "tab" | "focus" | "fullscreen" | "keys" | "face" | "clipboard" | "devtools" | "gaze";
 
 interface IntegrityRow {
   invite_token: string;
@@ -102,8 +103,10 @@ const FAMILY_META: Record<Family, { label: string; icon: React.ReactNode }> = {
   face: { label: "Camera", icon: <Camera className="h-3 w-3" /> },
   clipboard: { label: "Clipboard", icon: <Copy className="h-3 w-3" /> },
   devtools: { label: "Dev tools", icon: <Code2 className="h-3 w-3" /> },
+  // 13 Oct 2026 — soft look-away reminders from the camera monitor (the 10th ends the interview).
+  gaze: { label: "Looked away", icon: <Eye className="h-3 w-3" /> },
 };
-const FAMILY_ORDER: Family[] = ["tab", "focus", "fullscreen", "face", "clipboard", "devtools", "keys"];
+const FAMILY_ORDER: Family[] = ["tab", "focus", "fullscreen", "face", "gaze", "clipboard", "devtools", "keys"];
 
 function scoreTone(score: number, status: string): { ring: string; text: string; word: string } {
   if (status === "terminated") return { ring: "stroke-danger", text: "text-danger", word: "Terminated" };
@@ -253,6 +256,9 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
 
   const sectionTitle = "text-[11px] font-bold uppercase tracking-wider text-muted";
   const live = isLiveRecording(row);
+  // A recruiter may join while the candidate is in the interview (11 Oct 2026).
+  const joinable = LIVE_SESSION_STATUSES.has(row.session_status) && row.session_status !== "pending";
+  const [joinOpen, setJoinOpen] = useState<false | "call" | "panel">(false);
 
   return (
     <div className="grid gap-4 rounded-card border border-subtle bg-surface-2 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
@@ -309,6 +315,34 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
       {/* ---- right: where to go + the recording, bounded ---- */}
       <div className="min-w-0 space-y-3 xl:border-l xl:border-subtle xl:pl-4">
         <RowActions row={row} />
+        {joinable && (
+          <div className="overflow-hidden rounded-card border border-brand-500/40 bg-gradient-to-r from-brand-600 to-violet-600 text-white shadow-raised">
+            <button
+              type="button"
+              onClick={() => setJoinOpen("call")}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-opacity hover:opacity-95"
+            >
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20"><Radio className="h-4 w-4" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">Join this interview now</span>
+                <span className="block text-xs text-white/80">Pauses the AI and calls the candidate — live in a second or two</span>
+              </span>
+            </button>
+            <button type="button" onClick={() => setJoinOpen("panel")}
+              className="block w-full border-t border-white/20 px-4 py-2 text-left text-xs font-semibold text-white/90 hover:bg-white/10">
+              Open the controls without calling (pause · note · queue a question)
+            </button>
+          </div>
+        )}
+        {joinOpen && (
+          <LiveJoinPanel
+            token={row.invite_token}
+            candidateName={row.candidate_name}
+            autoCall={joinOpen === "call"}
+            onClose={() => setJoinOpen(false)}
+            fallbackVideo={<RecordingPanel recording={recording} sessionStatus={row.session_status} token={row.invite_token} onLiveEnded={reload} />}
+          />
+        )}
         <div className="rounded-card border border-subtle bg-surface-1 p-3">
           <div className={`mb-2 flex items-center justify-between ${sectionTitle}`}>
             <span className="inline-flex items-center gap-1.5"><Video className="h-3.5 w-3.5" /> {live ? "Live interview" : "Session recording"}</span>
