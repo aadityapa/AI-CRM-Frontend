@@ -27,7 +27,7 @@
  */
 import React, { useMemo, useState } from "react";
 import {
-  AlertTriangle, Briefcase, Building2, ChevronDown, ChevronRight, RefreshCw, Target, Users, Wallet,
+  AlertTriangle, Briefcase, Building2, ChevronDown, ChevronRight, ReceiptText, RefreshCw, Target, Users, Wallet,
 } from "lucide-react";
 import { crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
@@ -43,10 +43,14 @@ import type { RevenueReportData } from "../reports/RevenueReport";
 import { PaceCard } from "./HiringControlTower";
 import type { HiringData } from "./HiringControlTower";
 import { useDeskData } from "./DeskWidgets";
+import { BillingTracker } from "./BillingTracker";
 
 /* ---------- payload (services/executive_dashboard.py) ---------- */
 
-export type CeoTab = "finance" | "customer" | "sales" | "people";
+/** `billing` (20 Oct 2026) is the Billing Tracker — its own endpoint
+ *  (`/api/dashboard/billing`, Finance · Admin · CEO), not a `/ceo` tab. */
+export type CeoTab = "finance" | "customer" | "sales" | "people" | "billing";
+type DataTab = Exclude<CeoTab, "billing">;
 
 export type CeoPeriod = {
   kind: PeriodKind; key: string; label: string; short_label: string; fy_label: string;
@@ -193,6 +197,7 @@ const TABS: { key: CeoTab; label: string; blurb: string; icon: React.ComponentTy
   { key: "customer", label: "Customer", blurb: "Revenue by customer → project → person", icon: Building2, accent: "from-sky-500 to-blue-600" },
   { key: "sales", label: "Sales", blurb: "Positions, fills, internal vs external, pace", icon: Briefcase, accent: "from-violet-500 to-fuchsia-600" },
   { key: "people", label: "People", blurb: "Headcount, bench, joiners, exits", icon: Users, accent: "from-amber-500 to-orange-600" },
+  { key: "billing", label: "Billing Tracker", blurb: "Timesheet → Proforma → invoice → paid", icon: ReceiptText, accent: "from-rose-500 to-pink-600" },
 ];
 
 const TAB_STORAGE_KEY = "crm.ceo.tab";
@@ -1162,12 +1167,31 @@ export function PeopleTab({ d, period }: { d: PeopleData; period: CeoPeriod }) {
 
 /* ====================================================================== shell */
 
-export function CeoDashboard() {
-  const [tab, setTab] = useState<CeoTab>(readStoredTab);
+/**
+ * `tabs` — which tabs this login opens (19 Oct 2026): Admin / CEO all five;
+ * Finance the Finance tab + the Billing Tracker; the Sales family the Finance
+ * tab alone (the server refuses the others). `canSetTargets` — Finance + Admin / CEO set the revenue targets;
+ * Sales only reads them.
+ */
+export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
+  tabs?: CeoTab[];
+  canSetTargets?: boolean;
+} = {}) {
+  const shownTabs = allowed ? TABS.filter((t) => allowed.includes(t.key)) : TABS;
+  const single = shownTabs.length === 1;
+  const [tab, setTab] = useState<CeoTab>(() => {
+    const stored = readStoredTab();
+    return shownTabs.some((t) => t.key === stored) ? stored : shownTabs[0].key;
+  });
+  // The Billing Tracker fetches for itself; the period payload stays on the
+  // last company tab (so the Targets button and returning to it are instant).
+  const firstData = (shownTabs.find((t) => t.key !== "billing")?.key ?? "finance") as DataTab;
+  const [dataTab, setDataTab] = useState<DataTab>(() => (tab === "billing" ? firstData : tab as DataTab));
+  const isBilling = tab === "billing";
   const [period, setPeriod] = useState<PeriodKind>("fy");
   const [month, setMonth] = useState<string>(thisMonthKey());
 
-  const url = `/api/dashboard/ceo${qs({ tab, month, period })}`;
+  const url = `/api/dashboard/ceo${qs({ tab: dataTab, month, period })}`;
   const { data, loading, error, retry } = useDeskData<CeoPayload<unknown>>(url);
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [toast, showToast] = useToast();
@@ -1189,6 +1213,7 @@ export function CeoDashboard() {
 
   const pick = (t: CeoTab) => {
     setTab(t);
+    if (t !== "billing") setDataTab(t);
     try { localStorage.setItem(TAB_STORAGE_KEY, t); } catch { /* per-viewer convenience only */ }
   };
 
@@ -1197,24 +1222,27 @@ export function CeoDashboard() {
       <header className="rounded-card border border-subtle bg-surface-1 shadow-raised">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
           <div className="min-w-0">
-            <h2 className="text-display text-base font-bold text-primary">Company at a glance</h2>
+            <h2 className="text-display text-base font-bold text-primary">{single ? "Company finance at a glance" : "Company at a glance"}</h2>
             <p className="text-xs text-muted">
-              {data ? `${data.period.label} · as of ${fmtDay(data.as_of)}` : "Finance · Customer · Sales · People, by financial year"}
+              {data ? `${data.period.label} · as of ${fmtDay(data.as_of)}` : single ? "Revenue, collections, profit and cash, by financial year" : `${shownTabs.map((t) => t.label).join(" · ")}`}
+              {!canSetTargets && " · view only"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <PeriodSwitcher value={period} onChange={setPeriod} />
-            <DateStepper month={month} period={period} atCurrent={atCurrent} onShift={(d) => setMonth((m) => shiftMonthKey(m, d))} onPick={setMonth} />
-            <button type="button" className={`${btnSecondary} h-9 min-h-0 gap-1.5`} onClick={() => void openTargets()} title="Set the monthly, quarterly and yearly revenue targets">
-              <Target className="h-4 w-4" aria-hidden /> Targets
-            </button>
-            <button type="button" className={ICON_BTN} onClick={retry} aria-label="Refresh" title="Refresh">
+            {!isBilling && <PeriodSwitcher value={period} onChange={setPeriod} />}
+            {!isBilling && <DateStepper month={month} period={period} atCurrent={atCurrent} onShift={(d) => setMonth((m) => shiftMonthKey(m, d))} onPick={setMonth} />}
+            {canSetTargets && !isBilling && (
+              <button type="button" className={`${btnSecondary} h-9 min-h-0 gap-1.5`} onClick={() => void openTargets()} title="Set the monthly, quarterly and yearly revenue targets">
+                <Target className="h-4 w-4" aria-hidden /> Targets
+              </button>
+            )}
+            {!isBilling && <button type="button" className={ICON_BTN} onClick={retry} aria-label="Refresh" title="Refresh">
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
-            </button>
+            </button>}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 border-t border-subtle px-3 py-3 md:grid-cols-4" role="tablist" aria-label="CEO dashboard tabs">
-          {TABS.map((t) => {
+        {!single && <div className={`grid grid-cols-2 gap-2 border-t border-subtle px-3 py-3 ${shownTabs.length >= 5 ? "md:grid-cols-3 xl:grid-cols-5" : shownTabs.length === 2 ? "md:grid-cols-2" : "md:grid-cols-4"}`} role="tablist" aria-label="CEO dashboard tabs">
+          {shownTabs.map((t) => {
             const active = t.key === tab;
             const Icon = t.icon;
             return (
@@ -1239,17 +1267,18 @@ export function CeoDashboard() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </header>
 
-      {error && <ErrorBox error={error} onRetry={retry} />}
-      {!data && loading && !error && (
+      {isBilling && <BillingTracker />}
+      {!isBilling && error && <ErrorBox error={error} onRetry={retry} />}
+      {!isBilling && !data && loading && !error && (
         <div className="grid gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="rounded-card border border-subtle bg-surface-1 p-4"><SkeletonText lines={2} /></div>)}</div>
       )}
-      {data && data.tab === "finance" && <FinanceTab d={data.data as FinanceData} period={data.period} />}
-      {data && data.tab === "customer" && <CustomerTab d={data.data as CustomerData} period={data.period} />}
-      {data && data.tab === "sales" && <SalesTab d={data.data as SalesData} period={data.period} />}
-      {data && data.tab === "people" && <PeopleTab d={data.data as PeopleData} period={data.period} />}
+      {!isBilling && data && data.tab === "finance" && <FinanceTab d={data.data as FinanceData} period={data.period} />}
+      {!isBilling && data && data.tab === "customer" && <CustomerTab d={data.data as CustomerData} period={data.period} />}
+      {!isBilling && data && data.tab === "sales" && <SalesTab d={data.data as SalesData} period={data.period} />}
+      {!isBilling && data && data.tab === "people" && <PeopleTab d={data.data as PeopleData} period={data.period} />}
       {targetsOpen && targetsFor && (
         <RevenueTargetsModal month={targetsFor.month} targets={targetsFor.targets}
                              onClose={() => setTargetsOpen(false)}

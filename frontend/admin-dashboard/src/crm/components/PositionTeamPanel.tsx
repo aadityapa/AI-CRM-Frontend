@@ -29,7 +29,19 @@ export type TaAssignment = {
   note?: string | null;
 };
 
-export type TaOption = { id: number; name: string };
+/** `stale` (14 Oct 2026): someone already on the team who is no longer an
+ *  active TA login — listed so they can be unticked, never offered fresh. */
+export type TaOption = { id: number; name: string; stale?: boolean };
+
+/** The picker's choices: the active TA logins plus anyone already on the team
+ *  who is no longer one (deactivated / TA role removed). Without them the
+ *  dialog counted a person it never showed, and the save was refused. PURE. */
+export function withStaleAssignees(options: TaOption[], team: Pick<TaAssignment, "user_id" | "name">[]): TaOption[] {
+  const known = new Set(options.map((o) => o.id));
+  const stale = team.filter((a) => !known.has(a.user_id))
+    .map((a) => ({ id: a.user_id, name: a.name || `User #${a.user_id}`, stale: true }));
+  return [...options, ...stale];
+}
 
 /** The team endpoint, as every caller reads it. `options` is non-empty only for a writer. */
 export type TaAssignmentsPayload = { assignments: TaAssignment[]; options: TaOption[] };
@@ -139,7 +151,14 @@ export function TaPicker({ options, picked, onToggle }: {
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[10px] font-bold text-secondary">
                   {initials(o.name)}
                 </span>
-                <span className="truncate font-medium">{o.name}</span>
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{o.name}</span>
+                  {o.stale && (
+                    <span className="block text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                      No longer an active TA — untick to remove
+                    </span>
+                  )}
+                </span>
               </label>
             );
           })}
@@ -154,12 +173,13 @@ function AssignTasModal({ requirementId, label, options, current, onClose, onDon
   requirementId: number;
   label: string;
   options: TaOption[];
-  current: number[];
+  current: TaAssignment[];
   onClose: () => void;
   onDone: (rows: TaAssignment[]) => void;
   toast: ToastFn;
 }) {
-  const [picked, setPicked] = useState<Set<number>>(() => new Set(current));
+  const [picked, setPicked] = useState<Set<number>>(() => new Set(current.map((a) => a.user_id)));
+  const choices = useMemo(() => withStaleAssignees(options, current), [options, current]);
   const toggle = (id: number) => setPicked((s) => {
     const next = new Set(s);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -180,7 +200,7 @@ function AssignTasModal({ requirementId, label, options, current, onClose, onDon
         onClose();
       }}
     >
-      <TaPicker options={options} picked={picked} onToggle={toggle} />
+      <TaPicker options={choices} picked={picked} onToggle={toggle} />
     </DecisionDialog>
   );
 }
@@ -206,7 +226,7 @@ export function AssignTasButton({ requirementId, label, assigned, onChanged, toa
   toast: ToastFn;
   className?: string;
 }) {
-  const [open, setOpen] = useState<{ options: TaOption[]; current: number[] } | null>(null);
+  const [open, setOpen] = useState<{ options: TaOption[]; current: TaAssignment[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const count = assigned?.length ?? 0;
   const start = async (e: React.MouseEvent) => {
@@ -217,7 +237,7 @@ export function AssignTasButton({ requirementId, label, assigned, onChanged, toa
     try {
       const res = await fetchTaAssignments(requirementId);
       if (!res.canAssign) { toast("Your role cannot assign TAs on this position", "err"); return; }
-      setOpen({ options: res.options, current: res.assignments.map((a) => a.user_id) });
+      setOpen({ options: res.options, current: res.assignments });
     } catch (err: any) {
       toast(err?.message || "The sourcing team could not be loaded", "err");
     } finally {
@@ -383,7 +403,7 @@ export function PositionTeamPanel({ requirementId, label, priority, showPriority
           requirementId={requirementId}
           label={label}
           options={options}
-          current={rows.map((a) => a.user_id)}
+          current={rows}
           onClose={() => setAssigning(false)}
           onDone={(next) => { setRows(next); onChanged?.(); }}
           toast={toast}

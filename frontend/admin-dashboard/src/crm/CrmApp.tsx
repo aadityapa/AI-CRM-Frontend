@@ -446,8 +446,10 @@ export function NotificationsBell() {
       // `focus` = the candidate profile id — both validated to their shape.
       const task = (link.match(/[?&]task=([a-z_]{1,32})(?:&|$)/) || [])[1];
       const focus = (link.match(/[?&]focus=(\d{1,10})(?:&|$)/) || [])[1];
+      // Talent Pool saved-search alerts (17 Oct 2026): `saved` = the search id.
+      const saved = (link.match(/[?&]saved=(\d{1,10})(?:&|$)/) || [])[1];
       const extra = [tab ? `tab=${tab}` : "", q ? `q=${encodeURIComponent(q)}` : "",
-        task ? `task=${task}` : "", focus ? `focus=${focus}` : ""].filter(Boolean);
+        task ? `task=${task}` : "", focus ? `focus=${focus}` : "", saved ? `saved=${saved}` : ""].filter(Boolean);
       if (extra.length) path += `?${extra.join("&")}`;
       crmNavigate(path);
       return;
@@ -940,6 +942,14 @@ export default function CrmApp() {
     // The Screening Desk follows the approval the server gates it on, so a GM
     // (custom role) sees it and a templated RMG without the approval does not.
     if (n.path === "screening-desk") return canApprove(me, "profile.rmg_screening");
+    // Talent Pool: its tab grant, or the screening approval (the server's
+    // `screener_or` — a GM custom role is admitted the same way).
+    if (n.path === "talent-pool") {
+      return crmTabVisibleFromMe(me, "talent-pool", roleOk, false) || canApprove(me, "profile.rmg_screening");
+    }
+    // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
+    // login (Admin / CEO included) reaches received amounts from the customer branch page.
+    if (n.path === "received-amounts") return me.roles.includes("Finance");
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (

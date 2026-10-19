@@ -29,6 +29,10 @@ import { apiFetch } from "./core.js";
 import { mirrorClipToRecording } from "./recording_mix.js";
 
 const STREAM_START_TIMEOUT_MS = 6000;
+/** The whole voice request (16 Oct 2026). It had no deadline at all, so one
+ * stalled request left the candidate in silence for 30–60 s; past this the
+ * browser's own voice reads the question instead. */
+const TTS_REQUEST_TIMEOUT_MS = 15000;
 const BLOB_FETCH_TIMEOUT_MS = 15000;
 /** Voice names that sound right for an Indian-English interviewer, best first. */
 const PREFERRED_BROWSER_VOICES = [/en[-_]IN/i, /india/i, /heera|ravi|neerja|prabhat/i];
@@ -89,7 +93,7 @@ export async function speakQuestion(text, hooks = {}) {
 async function _fetchServerAudio(spoken) {
   const fd = new FormData();
   fd.append("text", spoken);
-  const res = await apiFetch("/candidate/tts", { method: "POST", body: fd });
+  const res = await apiFetch("/candidate/tts", { method: "POST", body: fd }, { timeoutMs: TTS_REQUEST_TIMEOUT_MS });
   const contentType = String(res.headers.get("content-type") || "");
   if (!res.ok || contentType.includes("application/json")) {
     // The server now reports a status + code (503 tts_unavailable, …). Surface

@@ -751,7 +751,14 @@ export function CrmDashboardPage() {
   // PO expiry warnings: Finance/Admin plus Sales & Sales Head (they own the
   // customer relationship and drive PO renewals before billing breaks).
   const showPoExpiry = useHasRole("Finance", "Sales", "Sales_Head");
+  // The Dashboard's Finance tab (19 Oct 2026): Finance works it (targets),
+  // the Sales family reads it; the server gate is the same role list.
+  const showCompanyFinance = useHasRole("Finance", "Sales", "Sales_Head");
+  const canSetTargets = useHasRole("Finance");
   const showBench = useHasRole("RMG", "Sales_Head");
+  // The Billing Tracker (20 Oct 2026) is a tab of the company view, after
+  // People — Finance, Admin and CEO (server: role_required("Finance")).
+  const showBilling = useHasRole("Finance");
   // The Sales → TA control tower (23 Sep 2026): every desk except a pure
   // HR / Finance login reads the same positions, onboardings and pace.
   const showHiringTower = useShowsHiringTower();
@@ -801,6 +808,7 @@ export function CrmDashboardPage() {
       ) : (
         <>
           <StartHereCard />
+          {showCompanyFinance && <CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets} />}
           {showHiringTower && <HiringControlTower />}
           {showPoExpiry && <PoExpiryPanel />}
           {showBench && <BenchCard />}

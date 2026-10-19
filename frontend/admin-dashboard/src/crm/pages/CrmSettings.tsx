@@ -390,6 +390,8 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
         hint: "Credits project-employee leave and replays any month it missed. Turning this off stops accrual — balances drift with no error anywhere." },
       { key: "scheduler.project_closures", label: "Close projects after their last working day", type: "bool",
         hint: "Moves a closed project's team to the bench the day after its last working day. Off means scheduled closes never happen." },
+      { key: "scheduler.employee_separations", label: "Mark employees Inactive after their last working day", type: "bool",
+        hint: "An employee whose Separation Details carry a last working day becomes Inactive the day after it. A date already past is applied the moment HR saves it." },
       { key: "scheduler.prompt_log_retention", label: "AI call log retention", type: "bool",
         hint: "Drops the stored prompt and response text from AI call logs past the retention window and purges the expired response cache. Tokens, audio minutes and cost are kept, so AI Costs history is never lost." },
       { key: "notify.employee_emails", label: "Email employees on the HR master", type: "bool",
@@ -408,6 +410,19 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
       { key: "finance.tds_rate_percent", label: "TDS rate (%)",
         hint: "Default deduction under Sec 194J. Used when recording TDS on an invoice.",
         placeholder: "10" },
+    ],
+  },
+  {
+    title: "Billing",
+    hint: "How the GM raises a Proforma from an approved timesheet. Applies to the next Proforma raised — existing invoices are never touched.",
+    fields: [
+      { key: "billing.split_po_enabled", label: "Allow splitting a timesheet across POs", type: "bool",
+        hint: "When a customer's PO covers only part of a month, the GM bills part on one PO and the rest on another (now or later). Off = one PO per timesheet." },
+      { key: "billing.split_po_max_parts", label: "Most parts per timesheet",
+        hint: "A whole number from 2 to 10. Counts every part already raised on the sheet.",
+        placeholder: "10" },
+      { key: "billing.allow_expired_po", label: "Allow billing an expired PO that still has balance", type: "bool",
+        hint: "On: an expired PO is listed with a warning. Off: it is greyed out and refused — the PO must be renewed first." },
     ],
   },
 ];

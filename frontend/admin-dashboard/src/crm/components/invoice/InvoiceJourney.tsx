@@ -144,7 +144,9 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, ei
   const balance = Number(inv.balance_amount || 0);
   const fullyPaid = total > 0 && balance <= 0;
   const states = journeyStates(approval.approved, einvoiceReady, fullyPaid);
-  const paidPct = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
+  // TDS the customer withheld settles the invoice beside the cash (16 Oct 2026).
+  const tdsDeducted = Number(inv.tds_deducted || 0);
+  const paidPct = total > 0 ? Math.min(100, Math.round(((paid + tdsDeducted) / total) * 100)) : 0;
   const paymentsOpen = inv.payments_open !== false;
   const tds = inv.tds_record;
 
@@ -250,8 +252,8 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, ei
                   <IndianRupee size={14} /> Record payment
                 </button>
                 <button type="button" className={BTN_SOFT} onClick={onTds}
-                  disabled={!!tds && Number(tds.tds_balance) <= 0}>
-                  {tds ? "TDS payment" : "Record TDS"}
+                  title={tds ? "The TDS the customer withheld — mark it received when the Form 16A is in" : "The customer deducted TDS from this invoice"}>
+                  {!tds ? "Record TDS" : Number(tds.tds_balance) > 0 ? "TDS pending from client" : "TDS received"}
                 </button>
               </>
             ) : (
@@ -267,7 +269,12 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, ei
           <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
             <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${paidPct}%` }} />
           </div>
-          <div className="mt-1">{fullyPaid ? "Fully paid." : `Balance ${inr(balance)}`}</div>
+          <div className="mt-1">{fullyPaid ? (tdsDeducted > 0 ? "Settled (cash + TDS)." : "Fully paid.") : `Balance ${inr(balance)}`}</div>
+          {tds && (
+            <div className={`mt-0.5 text-[11px] ${Number(tds.tds_balance) > 0 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+              TDS {inr(tds.tds_amount)} · {Number(tds.tds_balance) > 0 ? `${inr(tds.tds_balance)} pending from client` : "received (Form 16A)"}
+            </div>
+          )}
           {!paymentsOpen && inv.payment_block && <div className="mt-1 text-[11px] text-muted">{inv.payment_block}</div>}
         </JourneyStep>
       </ol>

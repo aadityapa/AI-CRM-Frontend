@@ -126,6 +126,8 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   // My Interviews (7 Oct 2026) — the panel member's own rounds; the Interviewer
   // custom role's one grant. RMG by role.
   { key: "crm:my-interviews", label: "My Interviews (panel feedback)", group: "CRM", roles: ["RMG"] },
+  // Talent Pool (16 Oct 2026) — every candidate on record, searched by skill.
+  { key: "crm:talent-pool", label: "Talent Pool", group: "CRM", roles: ["TA", "RMG", "Sales_Head"] },
   // Interview calendar — TA and RMG only (plus Admin/CEO via isSuperAdmin).
   // Sales roles are excluded on purpose; see nav.ts.
   { key: "crm:calendar", label: "Interview Calendar", group: "CRM", roles: ["RMG", "TA"] },

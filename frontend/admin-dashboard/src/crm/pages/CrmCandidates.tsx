@@ -45,6 +45,7 @@ import { Chips, NOTICE_CHIPS, ResumeDropZone } from "../components/UploadResumeM
 import { PhoneField } from "../components/PhoneField";
 import { fmtDateTime12 } from "../../lib/datetime";
 import { usePageTab, useSessionState } from "../lib/pageState";
+import { TalentPoolStatusChip } from "./talentPool/TalentPoolExtras";
 
 /** Local single-screen shell — applies the shared wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -1620,6 +1621,13 @@ export function CandidateDetailPage() {
               </span>
             )}
           </div>
+        </div>
+
+        {/* Talent Pool place (17 Oct 2026): in the pool / leaving soon / left / opted out,
+            with Keep and Remove from pool. Renders nothing for a login without the pool. */}
+        <div className="px-4 pt-3 sm:px-6">
+          <TalentPoolStatusChip candidateId={data.id}
+            name={[data.first_name, data.last_name].filter(Boolean).join(" ")} toast={showToast} />
         </div>
 
         {/* Documents strip — the CV and the resignation certificate, with their uploads. */}

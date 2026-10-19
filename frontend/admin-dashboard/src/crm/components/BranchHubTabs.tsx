@@ -20,6 +20,7 @@ import { crmGet, qs } from "../api";
 import { crmNavigate } from "../routerHooks";
 import { DataTable, type Column } from "./DataTable";
 import { EmptyState, ErrorBox, Field, Spinner, StatusBadge, btnPrimary, inputCls } from "./ui";
+import { WorkMonth } from "./WorkMonth";
 
 /** Lazy so the branch page never pulls the 1,900-line wizard into its bundle. */
 const LazyNewOpportunityForm = React.lazy(() =>
@@ -119,6 +120,7 @@ export function BranchProjectsTab({ projects }: { projects: BranchProject[] }) {
 type BranchTs = {
   id: number; project_id: number; employee_id: number;
   month?: number | null; year?: number | null; status?: string | null;
+  month_label?: string | null; period_label?: string | null;
   submitted_at?: string | null; approved_at?: string | null;
 };
 
@@ -150,7 +152,7 @@ export function BranchTimesheetsTab({ projects }: { projects: BranchProject[] })
   const cols: Column<BranchTs>[] = [
     { key: "project", label: "Project", render: (r) => <span className="font-semibold">{projectName(r.project_id)}</span> },
     { key: "employee", label: "Employee", render: (r) => employeeName(r.employee_id) },
-    { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year ?? ""}` },
+    { key: "period", label: "Month", render: (r) => <WorkMonth label={r.month_label || `${MONTHS[(r.month || 1) - 1]} ${r.year ?? ""}`} period={r.period_label} /> },
     { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status || "—"} /> },
     { key: "submitted_at", label: "Submitted", render: (r) => fmtDate(r.submitted_at) },
     { key: "approved_at", label: "Approved", render: (r) => fmtDate(r.approved_at) },
@@ -186,6 +188,7 @@ export function BranchTimesheetsTab({ projects }: { projects: BranchProject[] })
 type BranchInv = {
   id: number; project_id?: number | null; invoice_number?: string | null;
   invoice_date?: string | null; grand_total?: number | null;
+  month_label?: string | null; period_label?: string | null; employee?: string | null;
   balance_amount?: number | null; payment_status?: string | null;
 };
 
@@ -203,6 +206,8 @@ export function BranchInvoicesTab({ projects }: { projects: BranchProject[] }) {
   );
   const cols: Column<BranchInv>[] = [
     { key: "invoice_number", label: "Invoice", render: (r) => <span className="font-semibold text-primary">{r.invoice_number}</span> },
+    { key: "month_label", label: "For month", render: (r) => <WorkMonth label={r.month_label} period={r.period_label} /> },
+    { key: "employee", label: "Employee", render: (r) => r.employee || <span className="text-muted">—</span> },
     { key: "project", label: "Project", render: (r) => projectName(r.project_id) },
     { key: "invoice_date", label: "Date", render: (r) => fmtDate(r.invoice_date) },
     { key: "grand_total", label: "Grand total", align: "right", render: (r) => money(r.grand_total) },

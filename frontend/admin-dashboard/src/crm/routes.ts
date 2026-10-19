@@ -27,6 +27,8 @@ const LeaveApplicationsPage = lazy(() => import("./pages/LeaveApplications").the
 const HolidaysPage = lazy(() => import("./pages/Holidays").then((m) => ({ default: m.HolidaysPage })));
 const TimesheetsListPage = lazy(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetsListPage })));
 const TimesheetDetailPage = lazy(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetDetailPage })));
+const TalentPoolPage = lazy(() => import("./pages/TalentPool").then((m) => ({ default: m.TalentPoolPage })));
+const ReceivedAmountsPage = lazy(() => import("./pages/CustomerReceipts").then((m) => ({ default: m.ReceivedAmountsPage })));
 const PurchaseOrdersPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
 const PODetailPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.PODetailPage })));
 const InvoicesPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.InvoicesPage })));
@@ -71,6 +73,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "profiles", element: ProfilesListPage },
   { pattern: "profiles/:id", element: ProfileDetailPage },
   { pattern: "screening-desk", element: ScreeningDeskPage },
+  { pattern: "talent-pool", element: TalentPoolPage },
   // The panel member's own technical rounds (7 Oct 2026) — the Interviewer
   // role's one page; RMG / TA who take rounds reach it from the sidebar too.
   { pattern: "my-interviews", element: MyInterviewsPage },
@@ -94,6 +97,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "pos", element: PurchaseOrdersPage },
   { pattern: "pos/:id", element: PODetailPage },
   { pattern: "invoices", element: InvoicesPage },
+  { pattern: "received-amounts", element: ReceivedAmountsPage },
   { pattern: "invoices/tax-generator", element: TaxInvoiceGeneratorPage },
   { pattern: "invoices/:id/tax-invoice", element: InvoiceTaxInvoicePage },
   { pattern: "invoices/:id", element: InvoiceDetailPage },

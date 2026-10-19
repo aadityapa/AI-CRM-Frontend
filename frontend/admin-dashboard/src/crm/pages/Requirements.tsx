@@ -63,6 +63,8 @@ import { FLOW_BTN, FLOW_DONE_CHIP, roundHasStarted } from "../components/flowBut
 import { InterviewRoundsModal } from "../components/InterviewRoundsModal";
 import { AtsBreakdownModal } from "../components/AtsBreakdownModal";
 import { BulkActionBar } from "../components/BulkActionBar";
+import { CallNotesLine, CallNotesModal, type CallNoteSummary } from "../components/CallNotes";
+import { CandidateHoldButton, HoldNote, defaultHoldSide, type CandidateHoldInfo } from "../components/CandidateHold";
 import { REQ_TERMINAL_STATUSES, dueChip, fmtRange } from "../lib/positionRows";
 import { EditApplicantModal, UploadResumeModal } from "../components/UploadResumeModal";
 import { useHandoverNote } from "../components/handoverNote";
@@ -549,6 +551,10 @@ type ResumeRow = {
    *  already in, and how many resume versions they have. */
   other_positions?: number;
   resume_versions?: number;
+  /** Call notes (16 Oct 2026): count + the latest, from the candidate's outreach log. */
+  call_notes?: CallNoteSummary | null;
+  /** Hold by anyone who works the candidate (16 Oct 2026). */
+  hold?: CandidateHoldInfo | null;
   /** Bulk upload held this row as a possible duplicate of this candidate. */
   possible_duplicate_of?: number | null;
   /** Manual Archive (30 Sep 2026): a closed candidacy RMG / GM may archive … */
@@ -691,9 +697,6 @@ type ResumeRow = {
   ai_access_key?: string | null;
   created_at: string | null;
 };
-
-/** localStorage key of the bulk upload's "Email each candidate" choice. */
-const ZIP_OPENING_MAIL_KEY = "crm.zip.openingMail";
 
 /** What TA confirms from the candidate's reply before an Interested candidate
  *  goes for Technical Screening (1 Oct 2026) — the same facts the opening
@@ -2385,6 +2388,8 @@ export function ResumesTab({
   const salesRole = useHasRole("Sales", "Sales_Head");
   const salesCanEdit = useCanAct("requirements", "edit", salesRole);
   const isSales = salesRole && salesCanEdit;
+  const isHrLogin = useHasRole("HR");
+  const holdSide = defaultHoldSide([...(useMe()?.roles || [])]);
   const salesHeadRole = useHasRole("Sales_Head");
   const salesHeadCanEdit = useCanAct("requirements", "edit", salesHeadRole);
   const isSalesHead = salesHeadRole && salesHeadCanEdit;
@@ -2462,14 +2467,27 @@ export function ResumesTab({
   const [verifyQueue, setVerifyQueue] = useState<VerifyQueueItem[] | null>(null);
 
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
-  /* Email every uploaded candidate about the opening (1 Oct 2026, user ask) —
-     on by default, the TA's last choice remembered on this browser. */
-  const [zipOpeningMail, setZipOpeningMail] = useState<boolean>(() => {
-    try { return localStorage.getItem(ZIP_OPENING_MAIL_KEY) !== "0"; } catch { return true; }
-  });
-  const pickZipOpeningMail = (on: boolean) => {
-    setZipOpeningMail(on);
-    try { localStorage.setItem(ZIP_OPENING_MAIL_KEY, on ? "1" : "0"); } catch { /* per-browser nicety only */ }
+  /* The opening email is MANUAL only (16 Oct 2026, user decision): an upload
+     never sends it — TA emails the batch from the results dialog or ticks rows
+     at Sourcing. */
+  const [zipMailing, setZipMailing] = useState(false);
+  const mailZipBatch = async () => {
+    const ids = (zipResult?.applied || []).map((a) => a.profile_id).filter((id): id is number => id != null);
+    if (!ids.length) return;
+    setZipMailing(true);
+    try {
+      const res = await crmPost<{ sent: { profile_id: number; email: string }[]; skipped: { profile_id: number; reason: string }[] }>(
+        "/api/candidate-profiles/opening-email", { profile_ids: ids });
+      const sentTo = new Map(res.data.sent.map((x) => [x.profile_id, x.email]));
+      setZipResult((z) => z && ({ ...z, applied: z.applied.map((a) => (a.profile_id != null && sentTo.has(a.profile_id)
+        ? { ...a, opening_mail: "sent", email: sentTo.get(a.profile_id) } : a)) }));
+      toast(res.message || "Opening emails sent");
+      void load();
+    } catch (e: any) {
+      toast(e?.message || "Could not send the emails", "err");
+    } finally {
+      setZipMailing(false);
+    }
   };
 
   /* The ZIP runs as a BACKGROUND JOB (one AI parse per resume — a full zip is
@@ -2481,7 +2499,6 @@ export function ResumesTab({
     try {
       const start = await crmUpload<{ job_id: string; total: number; oversize: any[] }>(
         `/api/requirements/${req.id}/resumes/bulk-zip`, f,
-        { send_opening_email: zipOpeningMail ? "true" : "false" },
       );
       const jobId = start.data.job_id;
       setZipProgress({ done: 0, total: start.data.total });
@@ -2610,10 +2627,31 @@ export function ResumesTab({
      offers "screen"); other ticked rows are ignored and said so. */
   const [picked, setPicked] = useState<Set<string | number>>(new Set());
   const [batchSending, setBatchSending] = useState(false);
+  /* Call notes pop-up for one row (16 Oct 2026). */
+  const [notesRow, setNotesRow] = useState<ResumeRow | null>(null);
   const canPick = isTA && bucket === "live";
   const sendable = (r: ResumeRow) => r.profile_id != null
     && taDecisionsFor(r).some((d) => d === "screen" || d === "interested");
   const pickedSendable = rows.filter((r) => picked.has(r.id) && sendable(r));
+  /* Ticked Sourcing rows with a real address that were never emailed. */
+  const pickedMailable = rows.filter((r) => picked.has(r.id) && r.profile_id != null && sendable(r)
+    && !!realEmail(r.email) && !r.opening_mail);
+  const [batchMailing, setBatchMailing] = useState(false);
+  const mailPicked = async () => {
+    const ids = pickedMailable.map((r) => r.profile_id as number);
+    if (!ids.length) return;
+    setBatchMailing(true);
+    try {
+      const res = await crmPost<any>("/api/candidate-profiles/opening-email", { profile_ids: ids });
+      toast(res.message || "Opening emails sent");
+      setPicked(new Set());
+      void load();
+    } catch (e: any) {
+      toast(e?.message || "Could not send the emails", "err");
+    } finally {
+      setBatchMailing(false);
+    }
+  };
   const sendPickedForScreening = async () => {
     const ids = pickedSendable.map((r) => r.profile_id as number);
     if (!ids.length) return;
@@ -3053,6 +3091,9 @@ export function ResumesTab({
                 {[r.email, r.phone].filter(Boolean).join(" · ")}
               </div>
             )}
+            {r.candidate_id && (
+              <CallNotesLine notes={r.call_notes} onOpen={() => setNotesRow(r)} />
+            )}
             {(r.applicant_experience || r.application_details) && (
               <div className="mt-1 max-w-xs text-xs leading-relaxed text-muted">
                 <div>
@@ -3231,6 +3272,7 @@ export function ResumesTab({
               )}
             {r.over_budget && <OverBudgetChip expected={r.expected_ctc} budget={r.budget_ctc_max} />}
             <OpeningMailChip mail={r.opening_mail} />
+            <HoldNote hold={r.hold} />
             {/* Why the candidacy was closed, by whom (1 Oct 2026, user rule). */}
             {r.closed_note && <ClosedNoteBox note={r.closed_note} compact />}
           </div>
@@ -3469,9 +3511,17 @@ export function ResumesTab({
               <TaFlowButtons decisions={taDecisionsFor(r)} disabled={busy}
                 onPick={(decision) => setTaPick({ row: r, profileId, decision })} />
             )}
-            {/* The opening email (1 Oct 2026): a bulk upload sends it; here TA
-                sends it for any other Sourcing row, or resends it after
-                correcting the address. Only with a real address. */}
+            {/* Hold with a reason, any stage, anyone who works the candidate
+                (16 Oct 2026). At Sourcing TA keeps its own Hold above. */}
+            {profileId != null && (isTA || isRmg || isSales || isHrLogin)
+              && !(isTA && taDecisionsFor(r).some((d) => d === "hold" || d === "release")) && (
+              <CandidateHoldButton profileId={profileId} candidateName={r.candidate_name || "Candidate"}
+                hold={r.hold} defaultSide={holdSide} disabled={busy}
+                onDone={(m) => { toast(m); void load(); }} />
+            )}
+            {/* The opening email (16 Oct 2026: manual only — no upload sends it):
+                TA sends it for a Sourcing row, or resends it after correcting the
+                address. Only with a real address. */}
             {isTA && profileId != null && realEmail(r.email)
               && taDecisionsFor(r).some((d) => d === "screen" || d === "interested")
               && (!r.opening_mail || r.opening_mail.state === "sent") && (
@@ -4040,12 +4090,6 @@ export function ResumesTab({
                 }}
               />
             </label>
-            <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-secondary"
-              title="Each candidate with an email in their CV gets a short, professional note about this opening and is asked to reply to you with their interest, CTC, notice period and location">
-              <input type="checkbox" className="h-3.5 w-3.5 accent-brand-600" disabled={zipBusy}
-                checked={zipOpeningMail} onChange={(e) => pickZipOpeningMail(e.target.checked)} />
-              <Mail size={13} aria-hidden /> Email each candidate about the opening
-            </label>
             <button className={btnPrimary} onClick={() => setShowUpload(true)}>
               <Plus size={16} /> Upload Resume
             </button>
@@ -4220,6 +4264,16 @@ export function ResumesTab({
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-bold uppercase tracking-wide text-muted">Applied — now in Applied Candidates</span>
                   <span className="flex flex-wrap gap-2">
+                  {isTA && zipResult.applied.some((a) => a.profile_id != null && a.opening_mail !== "sent") && (
+                    <button
+                      className={FLOW_BTN.aiOutline}
+                      disabled={zipMailing}
+                      title="Send each candidate a short note about this opening; they reply to you with interest, CTC, notice and location"
+                      onClick={() => void mailZipBatch()}
+                    >
+                      <Mail size={13} /> {zipMailing ? "Sending…" : "Email all about the opening"}
+                    </button>
+                  )}
                   {isTA && zipResult.applied.some((a) => a.profile_id != null) && (
                     <button
                       className={FLOW_BTN.primary}
@@ -4346,12 +4400,24 @@ export function ResumesTab({
           notify={toast}
         />
       )}
+      {notesRow?.candidate_id && (
+        <CallNotesModal candidateId={notesRow.candidate_id} requirementId={req.id}
+          candidateName={notesRow.candidate_name || "Candidate"}
+          onClose={() => setNotesRow(null)} onSaved={() => void load()} />
+      )}
       {canPick && picked.size > 0 && (
         <BulkActionBar count={picked.size} onClear={() => setPicked(new Set())}>
           <button type="button" className={FLOW_BTN.primary} disabled={batchSending || pickedSendable.length === 0}
             title={pickedSendable.length === 0 ? "None of the ticked candidates is at Sourcing with you" : undefined}
             onClick={() => void sendPickedForScreening()}>
             <Send size={13} /> {batchSending ? "Sending…" : `Send ${pickedSendable.length} for Technical Screening`}
+          </button>
+          <button type="button" className={FLOW_BTN.aiOutline} disabled={batchMailing || pickedMailable.length === 0}
+            title={pickedMailable.length === 0
+              ? "None of the ticked candidates is at Sourcing with a real email that was not already emailed"
+              : "Email each ticked candidate about this opening — they reply to you"}
+            onClick={() => void mailPicked()}>
+            <Mail size={13} /> {batchMailing ? "Sending…" : `Email ${pickedMailable.length} about the opening`}
           </button>
           {pickedSendable.length < picked.size && (
             <span className="text-xs text-muted">{picked.size - pickedSendable.length} not at Sourcing — skipped</span>

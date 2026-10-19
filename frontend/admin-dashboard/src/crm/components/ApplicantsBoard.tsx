@@ -25,6 +25,8 @@ import { AiInterviewCell, type AiInterviewFields } from "./AiInterviewCell";
 import { CandidateStatusBadge } from "./CandidateStatusBadge";
 import { InterviewRoundsModal } from "./InterviewRoundsModal";
 import { FLOW_BTN } from "./flowButtons";
+import { CandidateHoldButton, HoldNote, defaultHoldSide, type CandidateHoldInfo } from "./CandidateHold";
+import { useMe } from "../CrmApp";
 import { SalesActionLauncher, SalesItemActions, TermsLine, type SalesAct, type SalesDeskItem } from "./SalesDeskActions";
 import type { OfferTerms } from "./OfferApprovalGate";
 import { FileLink } from "./FileUpload";
@@ -33,6 +35,10 @@ import { useCandidateStages } from "../useAccess";
 import { CrmLink } from "../router";
 import { fmtDateShort, fmtDateTime12 } from "../../lib/datetime";
 import type { Meta } from "../api";
+
+/** Stored stages a hold never applies to (closed or joined — the server's `SETTLED_PIPELINES`). */
+const CLOSED_STAGES = new Set(["Joined", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected",
+  "Customer_Screen_Rejected", "Customer_L1_Rejected", "Customer_L2_Rejected", "Self_Withdrawn", "Rejected"]);
 
 export type ApplicantRow = AiInterviewFields & {
   id: number;
@@ -57,6 +63,8 @@ export type ApplicantRow = AiInterviewFields & {
   next_interview?: { label?: string | null; when?: string | null; round?: string | null } | null;
   allowed_next_statuses?: string[];
   offer?: OfferTerms | null;
+  /** Hold by anyone who works the candidate (16 Oct 2026). */
+  hold?: CandidateHoldInfo | null;
   approved_ctc_budget?: number | null;
   ctc_slab_band?: string | null;
   opportunity_opp_id?: string | null;
@@ -113,6 +121,7 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
   const [rounds, setRounds] = useState<{ profileId: number; name: string } | null>(null);
   const counts = meta?.phase_counts || {};
   // "All" = the server's own total ("all"); summing every key counted it twice.
+  const holdSide = defaultHoldSide([...(useMe()?.roles || [])]);
   const total = useMemo(() => counts.all != null ? Number(counts.all) || 0
     : Object.entries(counts).filter(([k]) => k !== "archive" && k !== "all")
       .reduce((t, [, n]) => t + (Number(n) || 0), 0), [counts]);
@@ -211,6 +220,7 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
                   )}
                   <div className="text-[11px] text-muted">Applied {fmtDateShort(r.applied_on || r.created_at || "") || "—"}</div>
                   <AiInterviewCell row={r} />
+                  <HoldNote hold={r.hold} />
                 </div>
 
                 <div className="min-w-0">
@@ -225,6 +235,10 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
                       title="Every interview — record the customer's feedback in place">
                       <ClipboardCheck size={13} aria-hidden /> Interviews
                     </button>
+                    {!CLOSED_STAGES.has(r.pipeline_status) && (
+                      <CandidateHoldButton profileId={r.id} candidateName={name} hold={r.hold}
+                        defaultSide={holdSide} onDone={(m) => { toast(m); onChanged(); }} />
+                    )}
                   </div>
                   {!tab && r.pipeline_status === "Customer_Approval" && (
                     <p className="mt-1 text-[11px] text-muted">With the Sales Head for approval.</p>

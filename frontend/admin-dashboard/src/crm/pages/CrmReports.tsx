@@ -162,10 +162,13 @@ export function CrmReportsPage() {
   // Financial Reports tab — mirrors the old sidebar entry's gating
   // (Admin/Finance/Sales_Head + Access Templates).
   const me = useMe();
-  const financialRoleOk = useHasRole("Finance", "Sales_Head");
-  const showFinancial = crmTabVisibleFromMe(me, "finance-reports", financialRoleOk, false);
-  // Revenue is Admin/CEO only — deliberately NOT template-widenable.
-  const showRevenue = useHasRole();
+  // 19 Oct 2026: Finance works the money reports, the Sales family reads them.
+  const financialRoleOk = useHasRole("Finance", "Sales", "Sales_Head");
+  const canSetTargets = useHasRole("Finance");
+  const showFinancial = financialRoleOk || crmTabVisibleFromMe(me, "finance-reports", financialRoleOk, false);
+  // Revenue: Finance + the Sales family by ROLE (Admin / CEO implicit) — the
+  // server gate is reports.FINANCE_VIEW; no template widens it.
+  const showRevenue = useHasRole("Finance", "Sales", "Sales_Head");
   const tabs = [...TABS, ...(showFinancial ? [FINANCIAL_TAB] : []), ...(showRevenue ? [REVENUE_TAB] : [])];
   // A deep link to a tab this user cannot see falls back to the first tab.
   const tab: TabKey = tabs.some((t) => t.key === requestedTab) ? requestedTab : "opportunities";
@@ -397,7 +400,7 @@ export function CrmReportsPage() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{tiles}</div>
       )}
       {tab === "revenue" ? (
-        showRevenue && <RevenueReport />
+        showRevenue && <RevenueReport canSetTargets={canSetTargets} />
       ) : tab === "productivity" ? (
         <RecruiterProductivity />
       ) : tab === "financial" ? (

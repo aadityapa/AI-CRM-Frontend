@@ -3,7 +3,7 @@
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Banknote, Building2, Eye, Lock, MapPin, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload } from "lucide-react";
+import { Banknote, Building2, Eye, Lock, MapPin, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload, Wallet } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
@@ -19,6 +19,10 @@ import { CustomerFormModal } from "../components/CustomerFormModal";
 import { ContactPersonFormModal } from "../components/ContactPersonFormModal";
 import { EditBranchWizard } from "../components/BranchWizardModal";
 import { BranchRateCardEditor } from "./RateCards";
+/* Received Amount (19 Oct 2026, user ask): every amount this customer paid,
+   with its proof — the same store as the branch page and Finance's page. */
+const LazyCustomerReceipts = React.lazy(() =>
+  import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
 const LazyNewOpportunityForm = React.lazy(() =>
   import("./opportunity/NewOpportunityForm").then((m) => ({ default: m.NewOpportunityForm })));
 import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
@@ -32,6 +36,7 @@ import {
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
+import { WorkMonth } from "../components/WorkMonth";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -813,6 +818,8 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
   const [rateCardFor, setRateCardFor] = useState<Branch | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isAdmin = useHasRole("Admin", "CEO");
+  // Received Amount lives on the branch page (16 Oct 2026) — the card opens it.
+  const canSeeReceipts = useCanAct("invoices", "view", useHasRole("Finance", "Sales", "Sales_Head"));
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -884,7 +891,16 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
             </span>
           )}
         </div>
-        <span className="inline-flex shrink-0 gap-1 opacity-70 transition-opacity group-hover:opacity-100">
+        <span className="inline-flex shrink-0 items-center gap-1">
+          {canSeeReceipts && (
+            <button type="button"
+              className="mr-1 inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1 text-xs font-semibold text-[#fff] shadow-raised transition-transform hover:scale-[1.03]"
+              title={`Customer received amount — money ${r.branch_name} paid, and its TDS`}
+              onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}?tab=receipts`); }}>
+              <Wallet size={13} aria-hidden /> Received amount
+            </button>
+          )}
+          <span className="inline-flex gap-1 opacity-70 transition-opacity group-hover:opacity-100">
           <button className={iconBtn} title="Open branch" aria-label="Open branch"
             onClick={(e) => { e.stopPropagation(); crmNavigate(`branch-policy/${r.id}`); }}>
             <Eye size={15} />
@@ -906,6 +922,7 @@ function BranchesTab({ customerId, customerName, canWrite, notify }: { customerI
               </button>
             </>
           )}
+        </span>
         </span>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1747,6 +1764,8 @@ function CustomerInvoicesTab({ customerId }: { customerId: number }) {
   const canWriteInv = useHasRole("Finance", "Sales_Head");
   const cols: Column<any>[] = [
     { key: "invoice_number", label: "Invoice", render: (r) => <span className="font-semibold text-primary">{r.invoice_number}</span> },
+    { key: "month_label", label: "For month", render: (r) => <WorkMonth label={r.month_label} period={r.period_label} /> },
+    { key: "employee", label: "Employee", render: (r) => r.employee || <span className="text-muted">—</span> },
     { key: "invoice_date", label: "Date", render: (r) => fmtDate(r.invoice_date) },
     { key: "grand_total", label: "Grand total", align: "right", render: (r) => hubMoney(r.grand_total) },
     { key: "balance_amount", label: "Balance", align: "right", render: (r) => hubMoney(r.balance_amount) },
@@ -2008,6 +2027,9 @@ export function CustomerDetailPage() {
           // Projects + Project Employees sit AFTER Invoices (14 Aug 2026).
           ...(canSeeProjects ? [{ key: "projects", label: "Projects" }] : []),
           ...(canSeePEs ? [{ key: "project-employees", label: "Project Employees" }] : []),
+          // Received Amount after Project Employees (19 Oct 2026) — the money
+          // tabs follow the Invoices grant (Finance works it, Sales reads it).
+          ...(canSeeInvoices ? [{ key: "receipts", label: "Received Amount" }] : []),
         ]}
         active={tab}
         onChange={setTab}
@@ -2036,6 +2058,11 @@ export function CustomerDetailPage() {
         )}
         {tab === "pos" && canSeePos && <CustomerPosTab customerId={customerId} />}
         {tab === "invoices" && canSeeInvoices && <CustomerInvoicesTab customerId={customerId} />}
+        {tab === "receipts" && canSeeInvoices && (
+          <React.Suspense fallback={<Spinner label="Loading received amounts…" />}>
+            <LazyCustomerReceipts scope={{ customerId, customerName: customer.name }} />
+          </React.Suspense>
+        )}
       </div>
 
       {showEdit && (

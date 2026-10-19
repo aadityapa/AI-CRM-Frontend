@@ -2247,6 +2247,180 @@ no longer routed): `PageHeader` with stats, verdict pills with counts (`verdictO
 Reject, Not attempted, Terminated, Report pending, else score), search, customer → position, date, sort, group by; rows open
 the report; delete via `DeleteInterviewRecordModal`.
 
+**16 Oct 2026 (later) — pseudo-code / coding screen redesigned + the follow-up voice starts fast (`app.js?v=50`;
+server half in B-V2 `CLAUDE.md`):** screenshot report — the pseudo-code question did not fit on one screen, the options
+wrapped into tall bars and no camera showed. ⚠️ **Root cause: `index.html`'s global `button` / `select` / `pre` rules
+(full width, 46 px min-height, gradient `::after`, shadows) leak into body-level overlays.** `skill_bank.js` now injects a
+`:where(.kxsb-theme)` reset (zero specificity added, so every `.kxsb-*` class still wins) — copy this for any new overlay
+outside the screens. Layout: **pseudo-code** = code (left, 7fr) | options (right, 5fr) with the **camera card** under the
+options; **coding** = question + camera (left) | editor (right). `cameraCard(getStream)` replaced the floating
+`cameraWindow`: a 4:3 tile (clamp 150–220 px) with a REC badge and "You are on camera" text, "Starting your camera…" until
+the proctor stream exists (retried every 1 s, timer cleared in `closeTypedQuestion`). Options go 2-across (`.kxsb-opts.two`)
+when there are ≥ 4 and all are ≤ 28 chars; a "Selected B" chip in the options header; option rows `min-height:52px`; the
+footer note stays one line. No option is focused on open (option A used to look pre-selected) — the panel itself takes
+focus, the editor does for coding. `code_editor.js`: `.kxce-hl` resets the global `pre` background / radius / shadow /
+max-height (dark mode showed a white code block). Screens rendered at 1366 / 1920 / dark with a fake camera, no console
+errors. **Voice:** `candidate.js::_spokenTurnText(data, rendered)` — the lead-in and the question are now ONE
+`_speakQuestionAudioOnly` call (the server's `speech_text`, else built the same way) in both transition branches; the
+lead-in still SHOWS above the question (`showLeadIn`). `question_voice.js`: the `/candidate/tts` request has
+`TTS_REQUEST_TIMEOUT_MS`=15 s (`apiFetch` `timeoutMs` covers only the wait for the first response — a stream already
+playing is never cut); past it the browser's own voice reads the question instead of silence.
+
+**16 Oct 2026 (later) — Talent Pool, Phase 1 (`crm/pages/TalentPool.test.ts` 5; server half + migration 0138 in B-V2
+`CLAUDE.md`):** new route **`talent-pool`** → `crm/pages/TalentPool.tsx` (`TalentPoolPage`), sidebar "Talent Pool"
+(Sparkles; roles Admin · TA · RMG · Sales_Head; `CrmApp` shows it on the `talent-pool` grant OR the screening approval —
+a GM, like the Screening Desk), `MANAGEABLE_TABS` `crm:talent-pool`, `TabPermissionMatrix` module Recruitment.
+`PageHeader` (teal) with two modes (`usePageTab("tab")`: search · position) and an evidence legend. **Search the pool**:
+`SkillBrowser` (master skills by category, record + interview counts, a proven count, click = must-have, hover "+nice"),
+`SkillPicker` (must / nice chips with the server's holder counts; free text — Enter = must, Shift+Enter = nice — so a skill
+that exists only on CVs is searchable), search box + availability + sort, "More filters" (experience, location, notice,
+expected CTC ≤ lakh, no activity for N days, proven-only, include bench employees). Filters + page persist per session
+(`useSessionState` `talent.filters` / `talent.page`), free text debounced 350 ms. **`PoolCard`**: availability chip,
+employee code, score ring (only when skills are selected), exp · city → preferred · notice · CTC current → expected, the
+asked skills as chips coloured by EVIDENCE (`EVIDENCE_LOOK`: interview solid emerald with the rating · ATS sky · CV
+indigo · record grey · employee teal · tested-low amber; a missing nice-to-have struck through), the other skills (click
+one = add as nice-to-have), applications with outcome-coloured stage, latest call note, Open candidate / employee · CV
+(`fileViewHref`) · **Apply to positions** (TA → `candidates/{id}?tab=matching`). **Match a position**: live positions
+grouped by customer → the server's suggestions with strengths / gaps, "Only people available now", TA ticks people and
+**Apply N to this position** (`ApplyToPositionDialog`, dialog kit, one `multi-apply` per person, per-person results). PURE
+helpers exported for the test: `addSkill` (a skill is must XOR nice), `poolQuery`, `activeFilterCount`, `groupCatalogue`,
+`lakh`. Harness `/tmp/fs` (`src/__story/pool.tsx` with payloads produced by the real service over the seeded test book,
+`?skills=1`, `?mode=position`). Verified: tsc green, eslint clean, vitest 43 (TalentPool + rbac), `vite build` green,
+rendered light / dark / 400 px with no console errors.
+
+**16 Oct 2026 (night) — one transcription per recording (`app.js?v=51`; server safety net in B-V2 `CLAUDE.md`):**
+screenshot report — the warm-up answer was stored twice. ⚠️ Cause (`candidate.js`): on the warm-up's 60 s clock (a skip
+turned into an answer) `_finalizeSkipTranscriptCapture` transcribed the recording while it was still running, then the Send
+path's `waitForMicTranscriptionIdleWithTimeout(SUBMIT_TAIL_GRACE_MS=2500)` stopped the recorder — `onstop` transcribed the
+WHOLE recording again, and when the 2.5 s grace ran out first, the wait started a THIRD call on the same chunks. Each STT run
+words the audio a little differently, so `_mergeVoiceTranscript`'s exact-overlap check appended them. Now: `_recorderSession`
+(bumped per MediaRecorder), `_transcribeRecordingOnce()` — a call for the same recorder covering at least these chunks is
+AWAITED instead of repeated, nothing is sent when no new chunk arrived — and `_applyRecordingTranscript(job, text)`: a
+whole-recording transcript REPLACES the previous one of the same recorder (it covers the audio from its start), a result
+covering fewer chunks is dropped, and one that finishes after the turn moved on (`job.turnSeq !== _questionLoadSeq`) is
+ignored. `onstop`'s non-VAD branch uses the same path. Safety net: exported PURE `isSameSpeechTranscript(a, b)` (≥ 8 words
+each, length within 1.6×, ≥ 75 % of the shorter one's words in the longer) makes `_mergeVoiceTranscript` keep the longer copy.
+
+**16 Oct 2026 (night, later) — the warm-up's 60 s ends → question 1 at once (`app.js?v=52`; server half in B-V2
+`CLAUDE.md`):** reported — at 0:00 the introduction sat for several seconds before question 1. ⚠️ The countdown called
+`submitCandidateAnswer(true…)`, whose Skip pre-work (`_finalizeSkipTranscriptCapture`) and Send tail-grace waited for the
+WHOLE 60-second recording to be transcribed (plus a 2.5 s grace and an unbounded wait on the in-flight job) before /answer
+was even posted. Now `candidate.js::_expireWarmupTurn(turn, limit)`: takes the press locks, reads what the page already
+heard (`_collectPendingAnswerText` + the capture snapshot), snapshots `recordedChunks`, stops the mic WITHOUT transcription,
+posts /answer at once (send with the text, else skip with the limit as the reason, `trigger: warmup_time_limit`), and moves
+to question 1 through `_transitionToNextQuestion`. In parallel `_upgradeWarmupAnswer` transcribes the snapshot (≥
+`RECORDED_AUDIO_MIN_BYTES`) and posts it to `/candidate/warmup-answer`, which replaces the stored introduction — nothing on
+screen waits for it; a failure only keeps the first text. A save error falls back to `loadQuestion` (the server says which
+question is current). Manual Send / Skip on the warm-up are unchanged.
+
+**17 Oct 2026 — Talent Pool Phases 2 + 3 + retention / opt-out (`pages/talentPool/TalentPoolExtras.test.ts` 3; server
+half + migration 0139 in B-V2 `CLAUDE.md`):** new **`crm/pages/talentPool/TalentPoolExtras.tsx`** — PURE
+`paramsToFilters` / `filtersToParams` / `sameSearch` / `hasCriteria` (a saved search's stored parameters ⇄ the page's
+filters; a sort alone is not a search); **`SavedSearchesBar`** (above the skill picker: the login's saved searches as chips
+with a bell / bell-off icon and an amber "N new" count; clicking one LOADS its filters; the active one shows its summary,
+last check, and Mark N seen · Update to these filters (only when the screen differs) · Daily alert on/off · Delete; **Save
+this search** → `SaveSearchDialog` (name prefilled from the skills, daily alert ticked); `?saved=<id>` — the bell link —
+loads that search on arrival); **`SkillNamesModal`** (header button "Skill names": the built-in synonym groups, the team's
+pairs with remove, "Add a pair" for RMG / GM / Sales Head (`useHasRole("RMG","Sales_Head")`; a GM passes on the server's
+screener gate), and the skill index status with Admin / CEO "Rebuild now"); **`RetentionMode`** (third mode tab
+"Retention", label carries "· N leaving"): Leaving soon · Left the pool · Opted out (counts in the pill labels), search,
+rows with last activity / leaving date / who opted them out, **Keep** (`DecisionDialog`, optional note) and **Back in the
+pool** (reason ≥ 10 — only when the candidate asked), Admin / CEO set the retention period (6–120 months);
+**`PoolOptOutButton`** ("Remove from pool", `DecisionDialog`, reason ≥ 5 with picks) — compact on every candidate card of
+the pool; **`TalentPoolStatusChip`** on the candidate page under the hero (In the pool · Leaves the pool <date> · Left ·
+Opted out, with Keep / Remove from pool; renders nothing for a login without the Talent Pool — the status route 403s).
+`TalentPool.tsx`: saved search state (`pickSaved`), cards matching the active search's `new_keys` carry an amber **New**
+badge and the result line "N new since you last looked"; skill chips in the picker show a shuffle icon + "Also finds: …"
+from the search reply's `synonyms`; the skill browser keys CV-only skills (`id: null`, category "Found on CVs") by name.
+`router.CRM_FILTER_KEYS` += `saved`; `CrmApp.openNotification` forwards a validated `saved` id. Verified: tsc green, eslint
+0 errors on the touched files, vitest TalentPool 5 + TalentPoolExtras 3, `vite build` green.
+
+**19 Oct 2026 — the "Received Amount" sidebar entry is Finance only (UI only):** user rule. `nav.ts` roles `["Finance"]` and `CrmApp` shows it only when `me.roles` includes Finance (Admin / CEO no longer see it either). The `received-amounts` route and the branch page's Received Amount tab are unchanged.
+
+**19 Oct 2026 — Candidate application link on the opportunity's Details tab:** `crm/components/ApplyLinkCard.tsx`
+(rendered in `Opportunities.tsx` Details tab right after `JdSkillsCardForRequirement`, when `opp.requirement_id`). Reads
+`GET /api/requirements/{id}/apply-link`; a 403 hides the card. `applyLinkState(status, is_open)` (pure, tested): before RMG
+approval → "Opens after RMG approval", no link; open → link + Copy link · Open form · Copy job post (`post_text`) · Share on
+LinkedIn · WhatsApp + "N applied"; on hold / fulfilled / closed → link shown, form closed. Applications land at Sourcing in
+the Applicants tab; TA moves them to Technical Screening as usual. The Requirements page Job Postings modal is unchanged.
+
+**19 Oct 2026 — "Total Present Days" explained on the timesheet (UI only):** a 41-day sheet with 12 week-offs + 1 holiday
+read Present 28 beside Billable 41 and looked wrong. 28 is right (attended days; the paid week-offs / holiday are billed, not
+attended). The tile now carries a hint: "of N working days · X more billed (paid week-off / holiday)".
+
+**20 Oct 2026 — payment breakdown redesigned, billing tracker on the Dashboard, the work month on every timesheet / invoice
+(`crm/components/WorkMonth.test.ts` 5; server half in B-V2 `CLAUDE.md`):** (1) **`crm/components/PaymentBreakdownModal.tsx`**
+replaces the plain "Payment breakdown" modal in `Timesheets.tsx` (`InvoiceDetailsSection` now takes `sheet` — employee · month ·
+cross-month period · customer · project): indigo `DialogHero` with month / period / customer chips and "Frozen at approval";
+left — **1 What the timesheet says** (worked / billable days & hours, paid leave, LOP in red, comp-off, worked-vs-billed bar) and
+**2 The rate it bills at** (rate basis large, days billed in period, one day / one hour cost); right, sticky — **How the amount
+is built** (Quantity with `qtyMeaning`, × Rate, LOP − / comp-off +, Sub-total, CGST / SGST or IGST with %, Total GST, gradient
+Grand total). PURE `rupee` (paise only when present — the old pop-up printed "₹49,201.2"). The same kit now dresses the
+timesheet **Reject** dialog (rose hero, flow, `ReasonBox` with picks, what happens), Finance's **Reject this change request**
+(`DecisionDialog`) and the PE **previous-year carry forward** (emerald hero). (2) **`crm/pages/dashboard/BillingTracker.tsx`**
+on the Dashboard for Finance / Admin / CEO (`useHasRole("Finance")`, right under the work desk): gradient header (overdue chip,
+refresh), stage chips with server counts (Needs action · All · each stage, `STAGE_LOOK` colours), search (debounced), Customer and
+Work-month selects (every option, from the server), a table — Work month (+ period) · Customer · project · Employee · Document
+(invoice / PI link + "Timesheet · approved") · Amount · Where it stands (+ Overdue, Finance's return reason) · Open — paged 15 at
+a time; filters remembered per session (`useSessionState("dash.billing")`). (3) **`crm/components/WorkMonth.tsx`** —
+`WorkMonth` chip, PURE `monthName` / `periodText`; used for the "For month" / "Month" columns on Invoices, the customer and
+branch invoice tabs, the project invoices table, the timesheet lists (Timesheets, Projects hub, branch tab); the invoice page
+header gets a "work month" stat and Work month · Employee (→ timesheet) · Branch in its details card. Verified: tsc green, eslint
+0 errors, vitest WorkMonth 5 + TimesheetApprovals 18 + WorkDesk 7, `vite build` green, breakdown + tracker rendered light /
+dark / 420 px with no console errors.
+
+**20 Oct 2026 (later) — the Billing Tracker is a Dashboard TAB after People (UI only):** user ask. `CeoDashboard`'s
+`CeoTab` gains `"billing"` ("Billing Tracker", ReceiptText, rose) — it renders `<BillingTracker />` (its own endpoint,
+`/api/dashboard/billing`), hides the period switcher / date stepper / Targets / Refresh, and the `/ceo` fetch stays on the
+last company tab (`dataTab`). Admin / CEO see all five tabs; Finance gets `tabs={["finance","billing"]}` (so the tab strip
+shows); the Sales family keeps Finance alone. The standalone mount under the work desk in `CrmDashboard.tsx` is gone.
+tsc green, vitest CeoDashboard 4/4.
+
+**20 Oct 2026 (later) — split a timesheet across POs; the Timesheets list and sheet redesigned; apply-link warning
+(`crm/components/invoice/SplitAcrossPos.test.ts` 3, `TimesheetApprovals.test.tsx` re-pinned — the hub tabs are
+`role="tab"` now; server half + migration 0141 in B-V2 `CLAUDE.md`):** (1) **`crm/components/invoice/SplitAcrossPos.tsx`**
+— PURE `splitByQty` (hours / days only on Hourly / Daily without a mid-month rate change), `rowAmount`, `fillToBalances`
+(each PO filled to what it can carry, whole hours / ½ days, the rest on the next), `splitProblems` (the GM's words), and
+`SplitAcrossPos` (numbered lines: PO select with balance · expired · "this employee", hours or amount, amount, "PO after"
+red when negative; "Fill each PO to its balance", "Add another PO", "₹x stays to bill later"). `Timesheets.PoSelectModal`:
+a **One PO / Split across POs** switch in step 3 (forced once a part exists — "Raise the rest…"), an amber "this PO covers
+only ₹x — Split across POs" banner when the picked PO is short, the aside lists the whole sheet · earlier parts · this raise
+· left for later; split mode posts `{splits, invoice_format, round_off}` and hides the Qty / Rate overrides. Invoice Details
+on the sheet prints `SplitPartsList` (part · document · PO · hours · amount · status, progress bar, "₹x still to bill").
+(2) **`crm/pages/timesheets/TimesheetChrome.tsx`** — the sheet's road Fill → Submitted → Approved → Proforma → Tax invoice
+(`tsStepIndex`, `tsNextStep` PURE), `TsMiniRail` (five dots per list row), `TsInvoiceCell` (document or parts + what is
+left; its link stops the row click), `TsIdentityCell` (avatar · employee · project · customer), `TsTabStrip` (hub tabs with
+icons), `TsStatusPills` (status with counts — the status `<select>` on All Timesheets is gone; counts from
+`meta.status_counts`, or the fetched rows in the customer view), `TimesheetHero` (identity band: employee, Emp ID, project
+link · customer · branch · type, month + period + Change period, the road with a "what happens next" line, six facts:
+present · hours · leave · LOP · billable days · hours), `TsSectionHead`, `TS_TOOL_BTN`. The sheet: hero → "Fill the month"
+tools card (only while editable / leave missing / awaiting your decision) → rejection banner → "Day by day" grid →
+Save & submit / Your decision / Approved → Invoice Details → "The month in numbers" → history; every handler unchanged.
+Lists: All Timesheets columns Employee · project / Month / Where it stands / Invoice / Submitted · approved; Due report
+grouped per project with an "N due" chip and the Add / Open button last; Submit for Approval and Approvals tables are
+Employee · Month · Status (+ rejection reason) · Hours & billing (`HoursCell`) · Invoice · Attachments · Actions (sticky
+right column on Approvals). (3) `ApplyLinkCard` warns when the link uses an office-network address (server `base_reach`)
+and links Admin / CEO to Settings ▸ Organisation. Harness `/tmp/fs/src/__story/ts.tsx` (`?w=list&tab=…|detail&status=…
+&split=1|split&split=1`). Verified: tsc green, eslint 0 errors, vitest 30 on the touched files, rendered light / dark / 420 px.
+
+**20 Oct 2026 (later still) — Settings ▸ Organisation ▸ Billing (server half in B-V2 `CLAUDE.md`):** `CrmSettings.tsx`
+`ORG_GROUPS` gains **Billing** — "Allow splitting a timesheet across POs" · "Most parts per timesheet" (2–10) · "Allow
+billing an expired PO that still has balance". `PoSelectModal` reads `po-options.split_rules` (absent = today's rules):
+the One PO / Split toggle and the "covers only ₹x" banner hide when the split is off or the cap is reached, a sheet that
+already has parts shows an amber notice naming why no more can be raised, and `SplitAcrossPos` takes `maxRows` (parts
+left) — "Fill each PO" and "Add another PO" stop at it. An expired PO the server marks `selectable: false` is greyed out
+by the existing picker. tsc green, eslint 0 errors, vitest TimesheetApprovals 18 + SplitAcrossPos 3.
+
+**19 Oct 2026 — "Exit date" button on the employee header (UI only; server rule from 16 Oct unchanged):** user ask —
+HR adds the exit date and the rest happens by itself. `Employees.tsx` `EmployeeDetailPage`: a white **Exit date** /
+**Change exit date** button in the identity band (HR / the employees Edit grant; shown while Active or when an exit date
+exists) and a "Leaving / Left <date>" pill. **`ExitDateModal`** (dialog kit, rose): resignation date (optional, default
+today) · last working day (required; picks Today · End of this month · 30 / 60 / 90 days notice) · notice days worked out ·
+what happens (past date → Inactive on save; future → Active on notice, Inactive the day after) · "Remove the exit date"
+while still Active. One `PUT /api/employees/{id}` `{is_resigned, date_of_resignation, last_working_day,
+notice_period_days}` → `services/employee_separation.apply_separation` + the daily `employee_separations` job; the toast is
+the server's message. tsc green, eslint clean.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -2967,3 +3141,124 @@ Archive), the opportunity's Applicants (`ApplicantsBoard`) and Applied Candidate
 `usePageTab` allow-list too). The server already leaves those candidates out of rows, counts and exports — the client only
 hides chips that could never list anyone. Also fixed: `ApplicantsBoard`'s "All" count summed every key INCLUDING the
 server's `all`, so it read double — it now uses `phase_counts.all`.
+
+**14 Oct 2026 — Assign TAs shows a member who is no longer a TA (server half in B-V2 `CLAUDE.md`):**
+`PositionTeamPanel.withStaleAssignees(options, team)` (PURE) adds anyone on the team who is not an active TA login to the
+picker's choices (`TaOption.stale`), printed with an amber "No longer an active TA — untick to remove". Used by
+`AssignTasModal` (now takes the team's `TaAssignment[]`, not ids) and the RMG approval step in `JdSkillsModal`. Before, the
+dialog said "2 picked" with one visible tick and the save was refused. tsc green, eslint 0 errors.
+
+**14 Oct 2026 (later) — a deactivated TA leaves every sourcing team (server half + migration 0134 in B-V2 `CLAUDE.md`):**
+no new screen. The server now takes a deactivated login off every position's team and never lists one as a member, so the
+list-row chips and the Assign TAs dialog follow by themselves. `UserLifecycle.DeactivateUserModal`'s step 1 hint says
+sourcing teams are released automatically; the success toast is the server's message ("… and taken off N positions'
+sourcing teams").
+
+
+**16 Oct 2026 — manual opening email, call notes, Hold, calendar contact, branch-wise receipts, invoice month /
+branch everywhere, bulk customer approval, separation hint (server half + migration 0135 in B-V2 `CLAUDE.md`):**
+(1) **Applied Candidates** (`Requirements.tsx` `ResumesTab`): the bulk-ZIP "Email each candidate about the opening"
+checkbox and `ZIP_OPENING_MAIL_KEY` are GONE — no upload sends the mail. TA sends it from the ZIP results dialog
+(**Email all about the opening**, `mailZipBatch`) or by ticking Sourcing rows (**Email N about the opening** in the
+`BulkActionBar`, only rows at Sourcing with a real address never emailed) → `POST /api/candidate-profiles/opening-email`;
+the per-row Opening email button is unchanged. (2) **Call notes** — `crm/components/CallNotes.tsx`: `CallNotesLine`
+under the candidate's name ("Notes (3)" chip + the latest note) and `CallNotesModal` (sky dialog: channel + outcome
+picks, note with one-tap phrases, Ctrl+Enter, every earlier note newest first) over `/api/candidates/{id}/outreach` — the
+same store as the profile's Outreach tab. (3) **Hold** — `crm/components/CandidateHold.tsx`: `CandidateHoldButton`
+(amber Hold → `DecisionDialog` with "Whose hold is it?" side picks TA · RMG · Sales · Customer · HR and a required reason;
+emerald Release hold when held), `HoldNote` (the amber "On hold · Customer asked — reason" line in the Status cell),
+`defaultHoldSide(roles)`. On Applied Candidates for TA / RMG / GM / Sales / HR (TA keeps its own Sourcing Hold —
+the general one hides while `taDecisionsFor` offers hold / release) and on the opportunity's Applicants board
+(`ApplicantsBoard`, every live row; `CLOSED_STAGES` mirrors the server's settled set). The badge reads the server's
+"On Hold – Customer". (4) **Calendar** (`Calendar.tsx`): `ContactCard` at the top of the interview pop-up — phone
+(call · WhatsApp via `wa.me` · copy), the real email (mailto · copy; placeholders never shown), city · notice · TA owner;
+the CV button opens through `fileViewHref` (a bare `/api/crm-files` link had no bearer). (5) **Customer Received Amount**
+(`CustomerReceipts.tsx`): Branch column (+ search by branch); allocation chips and the expanded table show the invoice's
+month; the Add dialog gains step 2 **Branch that paid** (radio cards with open count + balance, "No branch on record" when
+the server reports one; one branch is picked for you) and only that branch's invoices are listed, with a month chip,
+search across invoice / employee / project / month and an "All months" select; posts `branch_id`. (6) **Invoices list**
+(`Finance.tsx` `InvoicesPage`): columns For month · Employee · Branch; a Branch select (after a customer is chosen, from
+`meta.branches`) and a month picker (`month=YYYY-MM`) in both views; search placeholder says "or employee". **PO list**:
+a Period column (`PoPeriod`: start → end + "ends in N d" / "expired" chip within 45 days). (7) **My Tasks**
+(`taskFilters.tsx` / `WorkDesk.tsx`): items carry `branch` / `for_month` / `invoice_id`; a **Branch** filter and a
+**By branch** grouping; every invoice row shows its billed month and branch as chips. **Confirm with customer**
+(`inv_confirm`) rows get a checkbox and a `BulkApprovalBar` (select all shown · N selected · ₹ total · **Customer
+approved (N)**) → `DecisionDialog` (`BULK_APPROVAL_SPEC`, optional note) → `POST /api/invoices/customer-approval/bulk`;
+skipped invoices are named in the toast. (8) **Employees ▸ Separation Details**: `SeparationStatusHint` says what saving
+does (past last working day → Inactive now; future → Active until then), the read view says "On notice — becomes Inactive
+automatically the day after …", and the save toast is the server's message (`useEmployeeSave` takes `okMsg = null`).
+Settings ▸ Operations gains "Mark employees Inactive after their last working day". Verified: tsc green, eslint 0 new
+errors on the touched files, `vite build` green.
+
+**16 Oct 2026 (later) — Received Amount moved off the Projects hub, onto the branch + a Finance menu (UI only; the
+server's `branch_id` filter already existed):** user ask "remove it from Projects and map it with the branch". The
+Projects hub's "Customer Received Amount" tab is GONE. `CustomerReceipts.CustomerReceiptsPage({scope?, standalone?})`:
+(1) **branch page** (`BranchPolicy.tsx`, tab **Received Amount** after Invoices, gate = the Invoices tab grant,
+lazy-loaded) passes `scope = {customerId, customerName, branchId, branchName}` — the list sends `customer_id` +
+`branch_id`, hides the Customer / Branch columns and the view toggle, and "Add received amount" is locked to that
+customer + branch (`AddReceiptModal preset`: no customer select, no "Branch that paid" step, `branch_id` pre-set);
+(2) **sidebar "Received Amount"** (`received-amounts` route → `ReceivedAmountsPage` = `standalone`; nav roles Admin ·
+Finance, visibility follows the `invoices` grant in `CrmApp`, NOT in `HUB_COVERED`): `PageHeader` (teal) and the grouped
+view is **Customer ▸ Branch** (one group per customer + branch, key `customer_id*100000 + branch_id`). Scope / preset are
+read as primitive ids in effect deps so a parent re-render never refetches. tsc green, eslint 0 errors, `vite build` green.
+
+**16 Oct 2026 (later) — "Received amount" on every branch card + TDS on received amounts (server half + migration 0136 in
+B-V2 `CLAUDE.md`):** (1) **Customers ▸ Branches**: each branch card has an emerald **Received amount** pill (gate = the
+Invoices tab, Finance / Sales / Sales Head) → `branch-policy/{id}?tab=receipts`. (2) **`crm/components/invoice/
+TdsDeduction.tsx`**: PURE `computeTds(inv, rate, base)` / `netDue(balance, tds)` (mirrors `services/tds.work_out`),
+`tdsStatusLabel`, `DEFAULT_SECTIONS`; **`TdsDeductionModal`** (amber dialog kit: "Did <customer> deduct TDS on <invoice>?"
+Yes / No cards, 10%·194J / 2%·194J / 2%·194C / 1%·194C picks + rate + section, base Value before GST (usual) / Invoice total,
+an aside with value · GST · total · open balance · TDS and **To receive from the customer** + **TDS pending from client**;
+`mode="choose"` hands the choice back, `mode="record"` posts `record-tds` itself); **`TdsChip`** ("TDS ₹x · Pending from
+client", amber / green, `compact` = "pending" / "received"); **`TdsDetailModal`** (the facts, pending days, history from
+`…/tds-payments`, and **Mark received (Form 16A)** — amount · date · certificate no. · note → `…/tds-payment`; gate
+`useCanAct("tds","edit", Finance)`). (3) **Add received amount** (`CustomerReceipts.tsx`): ticking an invoice opens the TDS
+pop-up first (an invoice with TDS already on record is ticked straight away and shows its chip; closing the pop-up leaves it
+unticked); a ticked row shows "TDS 10% · ₹x pending from client · To receive ₹y · Change" or "TDS deducted? Add it" (Select all
+open ticks without asking); the allocation preview and **"Use the amount to receive (after TDS)"** use balance − TDS; the aside
+adds TDS withheld and To receive; the POST carries `tds`. The list: Amount column "+ TDS ₹x pending", each settled invoice gets a
+TDS chip that opens `TdsDetailModal`, the expanded table has a TDS column, the header a **TDS pending from client ₹x** link to
+the register. (4) **Invoice page** (`Finance.tsx`): "TDS deducted by the customer" card (rate / base, section, received,
+pending, chip); Record TDS = `TdsDeductionModal mode="record"`, the TDS button opens `TdsDetailModal`; the old
+`RecordTdsModal` / `TdsPaymentModal` are deleted; the displayed balance subtracts `tds_deducted`. `InvoiceJourney`: the paid
+bar counts cash + TDS, "Settled (cash + TDS)", a TDS line, button "Record TDS" / "TDS pending from client" / "TDS received".
+(5) **TDS Register** tabs Pending from client · Partly received · Received (Form 16A); columns invoice (+ date) · customer · TDS
+(rate · section) · deducted on (+ UTR) · received · pending (+ days, red past 90) · status chip; a row opens the detail pop-up;
+header stat "₹x pending from clients". Harness `/tmp/fs` (`src/__story/tds.tsx`, `?w=branch|register`). Verified: tsc green,
+eslint 0 errors, `vite build` green, receipt list / TDS pop-up / add dialog / detail / register rendered with no console errors.
+
+**19 Oct 2026 — Received Amount on the customer page with payment proof; Financial Reports = Profit · Who owes us ·
+Ledger; finance pages for Finance and Sales (`crm/pages/FinanceReports.test.ts` 3; server half + migration 0140 in B-V2
+`CLAUDE.md`):** (1) **Customers ▸ customer page** gains a **Received Amount** tab after Project Employees (Invoices grant):
+`CustomerReceiptsPage scope={{customerId, customerName}}` (lazy). `BranchScope` now takes an optional branch — customer
+scope shows the Branch column and keeps the "Branch that paid" step; branch scope hides both. (2) **Add received amount**
+step 1 is **Proof of payment** (`ProofPicker`: drop / pick / **Ctrl+V a screenshot**, image preview, uploads at once to
+`POST /api/customer-receipts/proof`; optional, the aside says whether it is attached); the POST carries `proof_url /
+proof_name`. Invoice cards show billed month, employee, branch, invoice total, paid, due date and an "N d late" chip
+(`daysLate`, exported). The list's Reference column shows a `ProofChip` (opens through `fileViewHref`) or "No proof";
+the expanded receipt has **Attach / Replace / Remove proof** (`PUT …/{id}/proof`). (3) **`FinanceReports.tsx` rewritten**
+— tabs (`?ftab=` when embedded in Reports, since Reports owns `?tab=`; `ftab` is in `CRM_FILTER_KEYS`) **Profit** (default)
+· **Who owes us** · **Customer ledger**. Profit reads `/api/reports/revenue` (PeriodSwitcher + DateStepper): six tiles
+(billed excl. GST · people cost · gross profit · margin · collected · still to collect), a "how profit is worked out" note
+(overheads not taken off; missing CTC flagged), one panel By customer / By project / By employee (`FilteredBars` of the top
+12 + a sticky-header table with links, `MarginBar`, losing rows red, search, sort incl. "losses first", totals, CSV) — PURE
+`profitRows` / `sortProfitRows`. Who owes us: a plain-words note on due dates, six clickable tiles (To collect + the five
+`BUCKET_LOOK` buckets, share bars; a tile filters the table), the customer table with the buckets as "N days late" columns
+and an expandable list of each customer's unpaid invoices (invoice link · month · employee · branch · dates · status chip),
+CSV of every open invoice. (4) **Access**: `CrmDashboard` shows `<CeoDashboard tabs={["finance"]} canSetTargets=…/>` to
+Finance / Sales / Sales Head (title "Company finance at a glance", "· view only" without Targets; the tab strip is hidden
+when one tab); `CrmReports` shows Revenue + Financial Reports to the same roles, `RevenueReport canSetTargets` = Finance.
+Admin / CEO unchanged. Verified: tsc green, eslint 0 errors, vitest FinanceReports 3 + CeoDashboard 4, `vite build` green.
+
+**19 Oct 2026 (later) — Change period dialog; the period may cross months (`crm/components/TimesheetPeriodModal.test.ts`
+4; server half in B-V2 `CLAUDE.md`):** the timesheet header's two date inputs (min = 1st of the month, saved on every
+change, deleting days instantly) are replaced by the dates as text + a **Change period** chip (Draft / Rejected) →
+**`crm/components/TimesheetPeriodModal.tsx`** (dialog kit, sky): quick picks Calendar month · 21st → 20th · 20th → 20th
+(PURE `periodPresets`), Start / End inputs reaching two months either way, "N days · crosses a month", **Days added / Days
+removed** tiles (PURE `periodChange` — "N of them have hours or leave — those are deleted" in red), Good-to-know notes
+(no overlap with the neighbouring sheet · Monthly = one month up to a month, longer adds the extra days · next month's sheet
+follows on), Apply disabled while PURE `periodProblem` (the server's rule) objects; a server refusal (e.g. 409 overlap)
+shows in the dialog. Also exports `isoDay` (local, never UTC), `daysBetween`, `cycleEnd`, `fmtDay`. `Timesheets.tsx`
+`applyPeriod` replaces `changePeriod`. Verified: tsc green, eslint 0 errors, vitest 4 + TimesheetApprovals 18, `vite build`
+green.
+

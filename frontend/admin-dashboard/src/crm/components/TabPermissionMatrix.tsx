@@ -29,6 +29,7 @@ export const TAB_MODULES: Record<string, string> = {
   customers: "Sales", opportunities: "Sales", "rate-cards": "Sales", "branch-policy": "Sales",
   requirements: "Recruitment", candidates: "Recruitment", profiles: "Recruitment",
   "template-requests": "Recruitment", "screening-desk": "Recruitment", "my-interviews": "Recruitment",
+  "talent-pool": "Recruitment",
   emails: "General", "activity-log": "General",
   projects: "Projects & Finance", "project-employees": "Projects & Finance",
   timesheets: "Projects & Finance", pos: "Projects & Finance", invoices: "Projects & Finance",

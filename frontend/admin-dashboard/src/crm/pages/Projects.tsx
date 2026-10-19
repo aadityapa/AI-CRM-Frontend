@@ -26,6 +26,7 @@ import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
 import { CloseProjectButton, ProjectClosureBanner } from "../components/ProjectClosure";
 import type { ProjectClosure } from "../components/ProjectClosure";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
+import { WorkMonth } from "../components/WorkMonth";
 
 /* ------------------------------------------------------------ types & consts */
 
@@ -148,8 +149,6 @@ const LazyPurchaseOrders = React.lazy(() =>
   import("./Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
 const LazyInvoices = React.lazy(() =>
   import("./Finance").then((m) => ({ default: m.InvoicesPage })));
-const LazyReceipts = React.lazy(() =>
-  import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
 
 /* ================================================================ LIST PAGE */
 
@@ -334,7 +333,6 @@ export function ProjectsListPage() {
           ...(canPos ? [{ key: "pos", label: "Purchase Orders" }] : []),
           ...(canInv ? [{ key: "invoices", label: "Invoices" }] : []),
           // Money received from customers (7 Sep 2026) — same visibility as Invoices.
-          ...(canInv ? [{ key: "receipts", label: "Customer Received Amount" }] : []),
         ]}
         active={hubTab}
         onChange={setHubTab}
@@ -366,7 +364,6 @@ export function ProjectsListPage() {
           {hubTab === "timesheets" && canTs && <LazyTimesheets embedded />}
           {hubTab === "pos" && canPos && <LazyPurchaseOrders embedded />}
           {hubTab === "invoices" && canInv && <LazyInvoices embedded />}
-          {hubTab === "receipts" && canInv && <LazyReceipts />}
         </React.Suspense>
       ) : (
       <>
@@ -1356,7 +1353,7 @@ function ProjectTimesheetsTab({ project }: { project: ProjectDetail }) {
 
   const columns: Column<any>[] = [
     { key: "employee", label: "Employee", render: (r) => employeeName(r.employee_id) },
-    { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year}` },
+    { key: "period", label: "Month", render: (r) => <WorkMonth label={r.month_label || `${MONTHS[(r.month || 1) - 1]} ${r.year ?? ""}`} period={r.period_label} /> },
     { key: "status", label: "Status", render: (r) => (
       r.id ? <StatusBadge status={r.status} /> : (
         // Synthetic "Due" row: the month is owed (employee was onboarded) but
@@ -1584,6 +1581,8 @@ function FinanceTab({ project }: { project: ProjectDetail }) {
                   </CrmLink>
                 ),
               },
+              { key: "month_label", label: "For month", render: (r) => <WorkMonth label={r.month_label} period={r.period_label} /> },
+              { key: "employee", label: "Employee", render: (r) => r.employee || <span className="text-muted">—</span> },
               { key: "invoice_date", label: "Date", render: (r) => fmtDate(r.invoice_date) },
               { key: "due_date", label: "Due", render: (r) => fmtDate(r.due_date) },
               { key: "grand_total", label: "Grand total", render: (r) => r.grand_total ?? "—" },

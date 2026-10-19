@@ -75,6 +75,14 @@ let recorderStream = null;
 let recordedChunks = [];
 let isMicListening = false;
 let _recordingStartedAt = 0;   // ms epoch; the clip's true length for per-minute STT costing
+// One transcription per recording (16 Oct 2026). A whole-recording
+// transcription always covers the audio FROM ITS START, so a second one of the
+// same recorder must REPLACE the first, never be appended to it — two STT runs
+// of one introduction word slightly differently ("Madhuisa" / "Madhvi"), the
+// overlap check cannot see they are the same, and the answer was stored twice.
+let _recorderSession = 0;      // bumped for every MediaRecorder we open
+let _recordingTx = null;       // { session, chunks, text } — last whole-recording transcript applied
+let _recordingTxInFlight = null; // { session, chunks, promise } — the one running now
 let spokenAnswerText = "";
 let lastSpokenQuestion = "";
 let lastSpeakTs = 0;
@@ -544,15 +552,133 @@ function _startWarmupCountdownIfNeeded() {
   startWarmupCountdown(limit, () => {
     if (!state.isWarmupTurn || Number(state.currentQuestionIndex) !== turn) return;
     if (_pressInFlight || _answerSubmitInFlight || _interviewFlowStopped || state.endingInterview) return;
-    _logTurnEvent("warmup_time_limit", { question_index: turn, limit_sec: limit });
-    const st = document.getElementById("candidateStatus");
-    if (st) st.innerText = "Time is up for the introduction — moving to the first question.";
-    void submitCandidateAnswer(true, false, {
-      skipReason: `Introduction time limit (${limit} s) reached`,
-      autoAdvanceMeta: { trigger: "warmup_time_limit", limit_sec: limit },
-      autoSkipped: true,
-    });
+    void _expireWarmupTurn(turn, limit);
   });
+}
+
+/**
+ * The introduction's clock ran out (16 Oct 2026): move to question 1 AT ONCE.
+ *
+ * The old path went through the Skip button's pre-work, which waited for the
+ * whole 60-second recording to come back from speech-to-text (plus a 2.5 s
+ * grace and a retry) before /answer was even posted — the candidate sat on
+ * "0:00" for many seconds. Now the answer is saved with what the page already
+ * heard, the next question loads straight away, and the full recording is
+ * transcribed in the background and sent to `/candidate/warmup-answer`, which
+ * replaces the stored introduction. The warm-up is never scored, so nothing
+ * the candidate is judged on waits for, or depends on, that late update.
+ */
+async function _expireWarmupTurn(turn, limit) {
+  if (state.liveHold || _submitInterviewInFlight || state.redirecting) return;
+  if (Number(state.currentQuestionIndex) !== turn || !state.isWarmupTurn) return;
+  _pressInFlight = true;
+  _answerSubmitInFlight = true;
+  _setSendResponseEnabled(false);
+  _logTurnEvent("warmup_time_limit", { question_index: turn, limit_sec: limit });
+
+  // Everything already in hand — nothing below waits for the transcriber.
+  const heard = _collectPendingAnswerText();
+  const snap = getAutoAdvanceCaptureSnapshot();
+  const chunks = recordedChunks.slice();
+  const audioMs = _recordingStartedAt ? Date.now() - _recordingStartedAt : 0;
+  stopAutoAdvanceTurn();
+  _stopMicWithoutTranscription();
+  _cancelActiveSpeech();
+  _setInterviewPhase("generating_next");
+  _setStatusText("Time is up for the introduction — here is the first question.");
+
+  const params = new URLSearchParams({
+    ans: heard || SKIPPED_ANSWER_TOKEN,
+    action: heard ? "send" : "skip",
+    turn: Number.isFinite(turn) ? String(turn) : "",
+    auto_advance_meta: JSON.stringify({
+      ...snap,
+      trigger: "warmup_time_limit",
+      limit_sec: limit,
+      auto_submitted: !!heard,
+      partial_answer: true,
+      skipped: !heard,
+    }),
+  });
+  if (!heard) params.set("skip_reason", `Introduction time limit (${limit} s) reached`);
+
+  // The full recording is the better transcript; fetch it in parallel and let
+  // the server swap it in. It never touches the screen or the next turn.
+  const bytes = chunks.reduce((n, c) => n + (c?.size || 0), 0);
+  if (bytes >= RECORDED_AUDIO_MIN_BYTES) {
+    void _upgradeWarmupAnswer(turn, chunks, audioMs, heard);
+  }
+
+  const loadSeq = ++_questionLoadSeq;
+  try {
+    const res = await apiFetch("/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params,
+    });
+    if (res.status === 409) {
+      const blocked = await res.json().catch(() => ({}));
+      if (blocked?.code === "live_paused") {
+        holdForRecruiter();
+        enterPausedFromServer(blocked.live || {});
+        return;
+      }
+      throw new Error(blocked?.error || `Request failed with status ${res.status}`);
+    }
+    const resp = await handleJson(res);
+    _logTurnEvent("answer_saved", { action: heard ? "send" : "skip", skipped: !heard, trigger: "warmup_time_limit" });
+    _resetQuestionTurnState("after_warmup_time_limit");
+    if (resp.next) {
+      if (resp.next.tts_invalidate) {
+        lastSpokenQuestion = "";
+        invalidatePrewarmedQuestion(resp.next.question);
+        prewarmQuestionAudio(resp.next.question);
+      }
+      await _transitionToNextQuestion(resp.next, loadSeq, { fastTransition: true });
+    } else {
+      await loadQuestion({ fastTransition: true });
+    }
+    _logTurnEvent("next_question_displayed", { question_index: state.currentQuestionIndex });
+  } catch (err) {
+    if (_interviewFlowStopped || state.endingInterview || state.redirecting) return;
+    const m = String(err?.message || err);
+    if (/already completed/i.test(m)) {
+      await submitInterview({});
+      return;
+    }
+    console.error("[FLOW] WARMUP_TIMEOUT_SAVE_FAILED", err);
+    // Last resort: ask the server for the current question — if the answer
+    // did land, that is question 1; if not, the warm-up is shown again.
+    try {
+      await loadQuestion({ fastTransition: true });
+    } catch (_) {
+      _setResponseProcessingUi(false, `Error: ${m}`);
+      _setSendResponseEnabled(true);
+    }
+  } finally {
+    _answerSubmitInFlight = false;
+    _pressInFlight = false;
+  }
+}
+
+/** Background: transcribe the whole introduction and replace the stored answer. */
+async function _upgradeWarmupAnswer(turn, chunks, durationMs, heard) {
+  try {
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    const text = String((await transcribeAudioBlob(blob, "candidate-intro.webm", { durationMs })) || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text || text === String(heard || "").replace(/\s+/g, " ").trim()) return;
+    await apiFetch("/candidate/warmup-answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ turn: String(turn), ans: text }),
+    });
+    console.info("[candidate-stt] warmup_answer_upgraded", { turn, chars: text.length });
+  } catch (err) {
+    // The answer already saved stands; this was only a better transcript.
+    console.warn("[candidate-stt] warmup_answer_upgrade_failed", err?.message || err);
+  }
 }
 
 export function cancelAutoAdvance() {
@@ -1069,12 +1195,41 @@ async function _backgroundFinalizeInterview({
   }
 }
 
+/** Words of a transcript, lower-case, punctuation dropped. */
+function _transcriptWords(text) {
+  return String(text || "").toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, " ").split(/\s+/).filter(Boolean);
+}
+
+/**
+ * True when `b` is another transcription of the SAME speech as `a` — speech
+ * to text words one recording slightly differently each time, so an exact
+ * overlap check misses it. Both at least 8 words, similar length, and ≥ 75 %
+ * of the shorter one's words found in the longer one.
+ */
+export function isSameSpeechTranscript(a, b) {
+  const wa = _transcriptWords(a);
+  const wb = _transcriptWords(b);
+  if (wa.length < 8 || wb.length < 8) return false;
+  const [short, long] = wa.length <= wb.length ? [wa, wb] : [wb, wa];
+  if (long.length > short.length * 1.6) return false;
+  const pool = new Map();
+  for (const w of long) pool.set(w, (pool.get(w) || 0) + 1);
+  let hit = 0;
+  for (const w of short) {
+    const n = pool.get(w) || 0;
+    if (n > 0) { hit += 1; pool.set(w, n - 1); }
+  }
+  return hit / short.length >= 0.75;
+}
+
 /** Merge new Whisper output with prior text; strip overlaps / duplicated phrases from repeated mic stops. */
 function _mergeVoiceTranscript(existing, incoming) {
   let a = String(existing || "").trim().replace(/\s+/g, " ");
   let b = String(incoming || "").trim().replace(/\s+/g, " ");
   if (!b) return a;
   if (!a) return b;
+  // Two transcriptions of one recording: keep one (the longer heard more).
+  if (isSameSpeechTranscript(a, b)) return b.length >= a.length ? b : a;
   const al = a.toLowerCase();
   const bl = b.toLowerCase();
   if (bl.length > 10 && (al.includes(bl) || al.endsWith(bl.slice(0, Math.min(bl.length, 32))))) return a;
@@ -1091,8 +1246,8 @@ function _mergeVoiceTranscript(existing, incoming) {
 }
 
 /** Full-blob STT when VAD/Whisper segments produced no text (warmup or missed VAD). */
-async function _transcribeRecordedChunksFallback() {
-  const blob = new Blob(recordedChunks, { type: "audio/webm" });
+async function _transcribeRecordedChunksFallback(chunks = recordedChunks) {
+  const blob = new Blob(chunks, { type: "audio/webm" });
   if (!blob.size) return "";
   try {
     console.info("[candidate-stt] blob_fallback", { bytes: blob.size });
@@ -1120,6 +1275,69 @@ function _setStatusText(text) {
   if (st) st.innerText = String(text || "");
 }
 
+/**
+ * Put a whole-recording transcript into the answer. The text covers the
+ * recording from its first second, so it REPLACES the previous transcript of
+ * the same recorder (wherever that sits in the answer) instead of being
+ * appended. A transcript of FEWER chunks than one already applied is stale
+ * (it finished last but heard less) and is dropped.
+ */
+function _applyRecordingTranscript(job, rawText) {
+  const text = String(rawText || "").replace(/\s+/g, " ").trim();
+  if (!text) return;
+  if (job.turnSeq !== _questionLoadSeq) {
+    console.info("[candidate-stt] stale_recording_transcript_ignored", { turn: job.turnSeq });
+    return;
+  }
+  const prev = _recordingTx && _recordingTx.session === job.session ? _recordingTx : null;
+  if (prev && prev.chunks > job.chunks) return;
+  const current = String(spokenAnswerText || "").replace(/\s+/g, " ").trim();
+  let next;
+  if (prev && prev.text && current.includes(prev.text)) {
+    const at = current.lastIndexOf(prev.text);
+    next = `${current.slice(0, at)} ${text} ${current.slice(at + prev.text.length)}`.replace(/\s+/g, " ").trim();
+  } else {
+    next = _mergeVoiceTranscript(current, text);
+  }
+  _recordingTx = { session: job.session, chunks: job.chunks, text };
+  _setSpokenAnswer(next);
+}
+
+/**
+ * Transcribe the current recording ONCE. Several paths ask for it at nearly
+ * the same moment — the Skip pre-work, the recorder's `onstop`, and the grace
+ * wait that gives up after 2.5 s and asks again while the first call is still
+ * at the server — and each used to start its own STT call on the same audio.
+ * A call for the same recorder that covers at least these chunks is awaited
+ * instead; when nothing new was recorded since the last one, nothing is sent.
+ */
+async function _transcribeRecordingOnce() {
+  const session = _recorderSession;
+  const chunks = recordedChunks.length;
+  if (!chunks) return String(spokenAnswerText || "").trim();
+  const running = _recordingTxInFlight;
+  if (running && running.session === session && running.chunks >= chunks) {
+    await running.promise;
+    return String(spokenAnswerText || "").trim();
+  }
+  if (_recordingTx && _recordingTx.session === session && _recordingTx.chunks >= chunks) {
+    return String(spokenAnswerText || "").trim();
+  }
+  const job = { session, chunks, turnSeq: _questionLoadSeq, promise: null };
+  const snapshot = recordedChunks.slice();
+  job.promise = (async () => {
+    const text = await _transcribeRecordedChunksFallback(snapshot);
+    _applyRecordingTranscript(job, text);
+  })();
+  _recordingTxInFlight = job;
+  try {
+    await job.promise;
+  } finally {
+    if (_recordingTxInFlight === job) _recordingTxInFlight = null;
+  }
+  return String(spokenAnswerText || "").trim();
+}
+
 /** Whisper segments first; fall back to recorded webm blob when empty. */
 async function _finalizeMicTranscription() {
   let text = "";
@@ -1127,15 +1345,12 @@ async function _finalizeMicTranscription() {
   if (useVadWhisper) {
     text = String((await flushAutoAdvanceWhisperTranscription()) || "").trim();
   }
-  if (!text) {
-    text = String((await _transcribeRecordedChunksFallback()) || "").trim();
-  }
   if (text) {
     const merged = _mergeVoiceTranscript(spokenAnswerText, text);
     _setSpokenAnswer(merged);
     return merged;
   }
-  return String(spokenAnswerText || "").trim();
+  return _transcribeRecordingOnce();
 }
 
 function _stopMicInputInternal() {
@@ -1197,6 +1412,7 @@ async function startMicRecordingAuto() {
     recorderStream = await _pickAudioStream();
     recordedChunks = [];
     _recordingStartedAt = 0;
+    _recorderSession += 1;
     const rec = new MediaRecorder(recorderStream, { mimeType: "audio/webm" });
     // The turn this recorder was opened for. Its `onstop` fires asynchronously,
     // and when the next question has already loaded by then (the transition
@@ -1293,8 +1509,7 @@ async function startMicRecordingAuto() {
             } catch (_) {
               /* ignore */
             }
-            const transcribed = await _transcribeCapturedAudio(blob);
-            const merged = _mergeVoiceTranscript(spokenAnswerText, transcribed);
+            const merged = await _transcribeRecordingOnce();
             try {
               console.info("[candidate-stt] transcript_generated", { len: merged.length, preview: merged.slice(0, 120) });
             } catch (_) {
@@ -1433,6 +1648,20 @@ function _applyRuntimeFromNextPayload(data) {
   _getInterviewEngine().applyRuntimePayload(data);
 }
 
+/**
+ * What the interviewer voice says for this turn (16 Oct 2026): the lead-in and
+ * the question as ONE clip. Two clips meant two voice round trips in a row
+ * before every follow-up. `speech_text` is the exact string the server already
+ * warmed; the fallback builds the same shape for an older server.
+ */
+function _spokenTurnText(data, rendered) {
+  const fromServer = String(data?.speech_text || "").trim();
+  if (fromServer) return fromServer;
+  const lead = String(data?.lead_in || "").trim();
+  if (!lead) return rendered;
+  return `${/[.!?…]$/.test(lead) ? lead : `${lead}.`} ${rendered}`;
+}
+
 async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   const { fastTransition = false } = options;
   if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
@@ -1561,11 +1790,7 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
     _setResponseProcessingUi(false, "");
     _setSendResponseEnabled(false);
     _setInterviewPhase("ai_speaking");
-    if (data.lead_in) {
-      await _speakQuestionAudioOnly(data.lead_in);
-      if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
-    }
-    await _speakQuestionAudioOnly(rendered);
+    await _speakQuestionAudioOnly(_spokenTurnText(data, rendered));
     if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
     _setSendResponseEnabled(true);
     _setInterviewPhase("waiting_for_answer");
@@ -1578,11 +1803,7 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
     return;
   }
 
-  if (data.lead_in) {
-    await _speakQuestionAudioOnly(data.lead_in);
-    if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
-  }
-  const speakPromise = _speakQuestionAudioOnly(rendered);
+  const speakPromise = _speakQuestionAudioOnly(_spokenTurnText(data, rendered));
   await speakPromise;
   if (loadSeq !== _questionLoadSeq || _interviewFlowStopped || state.endingInterview || state.redirecting) return;
 

@@ -27,7 +27,7 @@ import { DialogActions, DialogFailure, DialogHero, DialogSection, WhatHappens, u
 import { FileLink } from "./FileUpload";
 import { SkillListEditor, mergeSkillRows, newSkillKey, type SkillMaster, type SkillRow } from "./SkillListEditor";
 import { Modal, focusRing, inputCls } from "./ui";
-import { TaPicker, fetchTaAssignments, type TaOption } from "./PositionTeamPanel";
+import { TaPicker, fetchTaAssignments, withStaleAssignees, type TaOption } from "./PositionTeamPanel";
 
 /** A JD file on the requirement (`kind: "rmg_jd"`). */
 export type JdFile = { id: number; file_url: string; file_name: string | null; kind?: string | null };
@@ -126,7 +126,7 @@ export function JdSkillsModal({
     fetchTaAssignments(req.id)
       .then((r) => {
         if (cancelled) return;
-        setTaOptions(r.options);
+        setTaOptions(withStaleAssignees(r.options, r.assignments));
         setTaPicked(new Set(r.assignments.map((a) => a.user_id)));
       })
       .catch(() => {});

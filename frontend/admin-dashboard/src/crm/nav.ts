@@ -13,12 +13,14 @@ import {
   LayoutDashboard,
   Network,
   Receipt,
+  Sparkles,
   Settings as SettingsIcon,
   Target,
   Mail,
   UserCog,
   Users,
   UsersRound,
+  Wallet,
 } from "lucide-react";
 
 export type CrmNavItem = {
@@ -42,6 +44,10 @@ export const CRM_NAV: CrmNavItem[] = [
   // across opportunities. Visibility is the APPROVAL (`profile.rmg_screening`,
   // see CrmApp), not this role list — a GM custom role has no built-in role.
   { path: "screening-desk", label: "Screening Desk", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
+  // Talent Pool (16 Oct 2026): every candidate we have had, searched by skill.
+  // TA · RMG / GM · Sales Head (user decision); a GM sees it through the
+  // screening approval, like the Screening Desk (see CrmApp).
+  { path: "talent-pool", label: "Talent Pool", icon: Sparkles, roles: ["Admin", "TA", "RMG", "Sales_Head"] },
   // My Interviews (7 Oct 2026): the rounds this login takes as the panel. RMG
   // by role; everyone else (the Interviewer custom role, a TA who interviews)
   // through the `my-interviews` tab grant.
@@ -67,6 +73,8 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "holidays", label: "Holidays", icon: CalendarOff, roles: ["Admin", "HR"] },
   { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
   { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
+  // Every customer branch's received amounts in one place (16 Oct 2026).
+  { path: "received-amounts", label: "Received Amount", icon: Wallet, roles: ["Finance"] },
   // Financial Reports lives INSIDE Reports (Reports → Financial Reports tab)
   // and Payroll INSIDE Timesheets (Timesheets → Payroll tab) since Aug 2026 —
   // no standalone sidebar pages. Their routes stay for deep links.

@@ -31,6 +31,10 @@ export type FilterableItem = {
   month?: string | null;
   /** The person the sheet / invoice is for (billing items, 30 Sep 2026). */
   employee?: string | null;
+  /** The customer BRANCH of a timesheet / invoice (16 Oct 2026). */
+  branch?: string | null;
+  /** The month an invoice bills, as words ("Sep 2026") — 16 Oct 2026. */
+  for_month?: string | null;
   /** TA's "Pending activities" (30 Sep 2026): which list the item came from, and the round to book. */
   activity?: string | null;
   round_kind?: string | null;
@@ -38,7 +42,7 @@ export type FilterableItem = {
   done?: boolean;
 };
 
-export type GroupBy = "section" | "employee";
+export type GroupBy = "section" | "employee" | "branch";
 
 export type TaskFilter = {
   q: string;
@@ -46,6 +50,7 @@ export type TaskFilter = {
   project: string;
   month: string;
   employee: string;
+  branch: string;
   activity: string;
   round: string;
   status: string;
@@ -57,7 +62,7 @@ export type TaskFilter = {
 };
 
 export const EMPTY_FILTER: TaskFilter = {
-  q: "", customer: "", project: "", month: "", employee: "", activity: "", round: "", status: "", priority: "", groupBy: "section", done: "",
+  q: "", customer: "", project: "", month: "", employee: "", branch: "", activity: "", round: "", status: "", priority: "", groupBy: "section", done: "",
 };
 
 /** Statuses beyond this many are noise, not a filter — the search box covers them. */
@@ -98,6 +103,7 @@ export type FacetOptions = {
   projects: string[];
   months: string[];
   employees: string[];
+  branches: string[];
   activities: string[];
   rounds: string[];
   statuses: string[];
@@ -114,6 +120,7 @@ export function facetOptions(items: FilterableItem[], customer = ""): FacetOptio
     projects: distinct(scoped.map((i) => i.project)).sort(byName),
     months: distinct(items.map((i) => i.month)).sort().reverse(),
     employees: distinct(scoped.map((i) => i.employee)).sort(byName),
+    branches: distinct(scoped.map((i) => i.branch)).sort(byName),
     activities: distinct(items.map((i) => i.activity)).sort(byName),
     rounds: distinct(items.map((i) => i.round_kind)),
     statuses: statuses.length <= MAX_STATUS_OPTIONS ? statuses : [],
@@ -130,12 +137,14 @@ export function filterItems<T extends FilterableItem>(items: T[], f: TaskFilter)
     if (f.project && i.project !== f.project) return false;
     if (f.month && i.month !== f.month) return false;
     if (f.employee && i.employee !== f.employee) return false;
+    if (f.branch && i.branch !== f.branch) return false;
     if (f.activity && i.activity !== f.activity) return false;
     if (f.round && i.round_kind !== f.round) return false;
     if (f.status && statusOf(i.chip) !== f.status) return false;
     if (f.priority && !PRIORITY[f.priority](i.tone)) return false;
     if (words.length) {
-      const hay = [i.title, i.subtitle, i.chip, i.section, i.customer, i.project, i.employee, i.month && monthLabel(i.month)]
+      const hay = [i.title, i.subtitle, i.chip, i.section, i.customer, i.project, i.employee, i.branch,
+        i.month && monthLabel(i.month)]
         .filter(Boolean).join(" ").toLowerCase();
       if (!words.every((w) => hay.includes(w))) return false;
     }
@@ -148,8 +157,10 @@ export function isFiltering(f: TaskFilter): boolean {
 }
 
 /** The group each item lands in under `groupBy` — the server's section, or the employee. */
-export function groupKeyOf(item: { section?: string | null; employee?: string | null }, groupBy: GroupBy): string | null {
+export function groupKeyOf(item: { section?: string | null; employee?: string | null; branch?: string | null },
+  groupBy: GroupBy): string | null {
   if (groupBy === "employee") return item.employee || "No employee named";
+  if (groupBy === "branch") return item.branch || "No branch on record";
   return item.section ?? null;
 }
 
@@ -185,6 +196,8 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
         (v) => set({ project: v }), "All projects")}
       {opts.months.length > 1 && select("Month", filter.month, opts.months.map((m) => [m, monthLabel(m)]),
         (v) => set({ month: v }), "All months")}
+      {opts.branches.length > 1 && select("Branch", filter.branch, opts.branches.map((b) => [b, b]),
+        (v) => set({ branch: v }), "All branches")}
       {opts.employees.length > 1 && select("Employee", filter.employee, opts.employees.map((e) => [e, e]),
         (v) => set({ employee: v }), "All employees")}
       {opts.activities.length > 1 && select("Activity", filter.activity, opts.activities.map((a) => [a, a]),
@@ -198,11 +211,11 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
         (v) => set({ priority: v as TaskFilter["priority"] }), "Any priority")}
       {opts.employees.length > 0 && (items.some((i) => i.section) || opts.employees.length > 1) && (
         <div className="inline-flex rounded-control bg-surface-1 p-0.5 ring-1 ring-inset ring-subtle" role="group" aria-label="Group by">
-          {(["section", "employee"] as GroupBy[]).map((g) => (
+          {(["section", ...(opts.branches.length ? ["branch"] : []), "employee"] as GroupBy[]).map((g) => (
             <button key={g} type="button" aria-pressed={filter.groupBy === g} onClick={() => set({ groupBy: g })}
               className={`rounded-control px-2.5 py-1 text-xs font-semibold transition-colors duration-micro ${
                 filter.groupBy === g ? "bg-surface-0 text-primary shadow-raised" : "text-secondary hover:text-primary"}`}>
-              {g === "section" ? "By customer" : "By employee"}
+              {g === "section" ? "By customer" : g === "branch" ? "By branch" : "By employee"}
             </button>
           ))}
         </div>

@@ -17,8 +17,11 @@ import {
   Bot, Building2, Calendar as CalendarIcon, CalendarDays, ChevronLeft, ChevronRight, Code2,
   ExternalLink, FileText, HeartHandshake, Link2, Mail, MapPin, Plus, RefreshCw, User, Users,
   Clock3,
-  Check,
+  Check, Copy, MessageCircle, Phone,
 } from "lucide-react";
+import { fileViewHref } from "./FileView";
+import { realEmail } from "../lib/candidateEmail";
+import { formatPhoneDisplay, normalizePhoneForSave } from "../lib/phone";
 
 import { crmGet, qs } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -53,6 +56,11 @@ type CalendarEvent = {
   candidate_id: number | null;
   candidate_name: string | null;
   candidate_email: string | null;
+  /** Contact block (16 Oct 2026) — so TA can reach a candidate who did not join. */
+  candidate_phone?: string | null;
+  candidate_city?: string | null;
+  candidate_notice?: string | null;
+  ta_owner?: string | null;
   profile_id: number | null;
   opportunity_id: number | null;
   opportunity_title: string | null;
@@ -937,6 +945,8 @@ function EventDetailModal({
           </p>
         </header>
 
+        <ContactCard event={event} />
+
         <dl className="grid gap-3 sm:grid-cols-2">
           <Detail icon={<User size={14} />} label="Candidate">
             {event.profile_id ? (
@@ -952,14 +962,6 @@ function EventDetailModal({
               </button>
             ) : (
               event.candidate_name || "—"
-            )}
-            {event.candidate_email && (
-              <a
-                href={`mailto:${event.candidate_email}`}
-                className="mt-0.5 flex items-center gap-1 text-xs text-muted hover:underline"
-              >
-                <Mail size={11} /> {event.candidate_email}
-              </a>
             )}
           </Detail>
 
@@ -1018,7 +1020,8 @@ function EventDetailModal({
             </a>
           )}
           {event.cv_url && (
-            <a href={event.cv_url} target="_blank" rel="noopener noreferrer" className={btnSecondary}>
+            <a href={fileViewHref(event.cv_url, `${event.candidate_name || "Candidate"} CV`) || event.cv_url}
+              target="_blank" rel="noopener noreferrer" className={btnSecondary}>
               <FileText size={15} /> CV
             </a>
           )}
@@ -1217,5 +1220,58 @@ function ScheduleIntoSlotModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+
+/** "Reach the candidate" strip at the top of the interview pop-up (16 Oct 2026,
+ *  user ask): phone (call · WhatsApp · copy), the real email (mailto · copy),
+ *  city, notice and the TA who owns the candidate. A placeholder address
+ *  (resume-…@noemail.karnex.local) is never shown. */
+function ContactCard({ event }: { event: CalendarEvent }) {
+  const email = realEmail(event.candidate_email);
+  const phoneRaw = (event.candidate_phone || "").trim();
+  const e164 = phoneRaw ? normalizePhoneForSave(phoneRaw) : "";
+  const phone = phoneRaw ? formatPhoneDisplay(phoneRaw) || phoneRaw : "";
+  const [copied, setCopied] = useState("");
+  const copy = (text: string, what: string) => {
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(what);
+      window.setTimeout(() => setCopied(""), 1500);
+    }).catch(() => {});
+  };
+  const chip = "inline-flex items-center gap-1 rounded-full border border-subtle bg-surface-1 px-2.5 py-1 text-xs font-semibold text-secondary hover:border-brand-400 hover:text-primary";
+  const facts = [event.candidate_city && `Lives in ${event.candidate_city}`,
+    event.candidate_notice && `Notice ${event.candidate_notice}`,
+    event.ta_owner && `TA: ${event.ta_owner}`].filter(Boolean) as string[];
+  return (
+    <section aria-label="Contact the candidate"
+      className="rounded-card border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sky-800 dark:text-sky-300">Contact the candidate</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {phone ? (
+          <>
+            <a href={`tel:${e164 || phoneRaw}`} className={chip}><Phone size={12} aria-hidden /> {phone}</a>
+            {e164 && (
+              <a href={`https://wa.me/${e164.replace(/[^0-9]/g, "")}`} target="_blank" rel="noopener noreferrer" className={chip}>
+                <MessageCircle size={12} aria-hidden /> WhatsApp
+              </a>
+            )}
+            <button type="button" className={chip} onClick={() => copy(phoneRaw, "phone")}>
+              <Copy size={12} aria-hidden /> {copied === "phone" ? "Copied" : "Copy"}
+            </button>
+          </>
+        ) : <span className="text-xs font-semibold text-warning">No phone number on record</span>}
+        {email ? (
+          <>
+            <a href={`mailto:${email}`} className={chip}><Mail size={12} aria-hidden /> {email}</a>
+            <button type="button" className={chip} onClick={() => copy(email, "email")}>
+              <Copy size={12} aria-hidden /> {copied === "email" ? "Copied" : "Copy"}
+            </button>
+          </>
+        ) : <span className="text-xs font-semibold text-warning">No email on record</span>}
+      </div>
+      {facts.length > 0 && <p className="mt-2 text-xs text-secondary">{facts.join(" · ")}</p>}
+    </section>
   );
 }

@@ -547,7 +547,8 @@ function CollectionsCard({ data }: { data: RevenueReportData }) {
 
 /* ---------- Page ---------- */
 
-export function RevenueReport() {
+/** `canSetTargets` (19 Oct 2026): Finance + Admin / CEO; Sales reads the page. */
+export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolean } = {}) {
   const params = new URLSearchParams(window.location.search);
   const [month, setMonth] = useState<string>(() => params.get("month") || thisMonthKey());
   const [period, setPeriod] = useState<PeriodKind>(() => {
@@ -679,9 +680,11 @@ export function RevenueReport() {
             <button type="button" className={ICON_BTN} onClick={() => setTick((t) => t + 1)} aria-label="Refresh" title="Refresh">
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
             </button>
-            <button type="button" className={`${btnSecondary} h-9 min-h-0`} onClick={() => setTargetsOpen(true)} disabled={!data}>
-              <Target size={15} aria-hidden /> Targets
-            </button>
+            {canSetTargets && (
+              <button type="button" className={`${btnSecondary} h-9 min-h-0`} onClick={() => setTargetsOpen(true)} disabled={!data}>
+                <Target size={15} aria-hidden /> Targets
+              </button>
+            )}
             <button type="button" className={`${btnPrimary} h-9 min-h-0`} onClick={() => void exportXlsx()} disabled={exporting || !data}>
               <Download size={15} aria-hidden /> {exporting ? "Exporting…" : "Excel pack"}
             </button>

@@ -16,7 +16,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 const CRM_FILTER_KEYS = [
   "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus",
   // page-state params (crm/lib/pageState.ts) — each belongs to one page only
-  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name",
+  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab",
   // Interview Platform report params — meaningless inside the CRM; a copied link
   // carried a stale candidate id back into App.readInitialView on reload.
   "cid", "iid", "ret",

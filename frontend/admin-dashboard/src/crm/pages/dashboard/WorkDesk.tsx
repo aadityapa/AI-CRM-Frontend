@@ -54,6 +54,7 @@ import { ErrorBox, useToast } from "../../components/ui";
 import type { CustomerSlotOffer } from "../../lib/interviewRounds";
 import { CrmLink } from "../../router";
 import { useDeskData } from "./DeskWidgets";
+import { DecisionDialog, type DecisionSpec } from "../../components/dialogKit";
 import { EMPTY_FILTER, TaskFilterBar, filterItems, groupKeyOf, type GroupBy, type TaskFilter } from "./taskFilters";
 
 type DeskItem = {
@@ -81,6 +82,10 @@ type DeskItem = {
   month?: string | null;
   project?: string | null;
   employee?: string | null;
+  /** 16 Oct 2026: the customer branch, the month an invoice bills, the invoice id. */
+  branch?: string | null;
+  for_month?: string | null;
+  invoice_id?: number | null;
   /** Billing items: the invoice amount (group totals). */
   amount?: number | null;
   /** Ticked "done" by this login (8 Oct 2026, B-V2 `work_desk.apply_marks`). */
@@ -161,12 +166,12 @@ const FALLBACK_LOOK = { icon: ListChecks, accent: "from-slate-500 to-slate-700" 
 
 /** Items in their server order, grouped by `section` (a customer, or a stage of
  *  "Submit to Sales Head"). Items without a section form one unlabelled group. */
-export function groupBySection<T extends { section?: string | null; employee?: string | null }>(
+export function groupBySection<T extends { section?: string | null; employee?: string | null; branch?: string | null }>(
   items: T[], groupBy: GroupBy = "section",
 ): { section: string | null; items: T[] }[] {
   const out: { section: string | null; items: T[] }[] = [];
   const at = new Map<string, number>();
-  const sorted = groupBy === "employee"
+  const sorted = groupBy === "employee" || groupBy === "branch"
     ? [...items].sort((a, b) => (groupKeyOf(a, groupBy) || "").localeCompare(groupKeyOf(b, groupBy) || ""))
     : items;
   for (const it of sorted) {
@@ -330,6 +335,9 @@ export function MyTasksPage() {
   const [toastNode, showToast] = useToast();
   /* Ticks (8 Oct 2026): applied at once, then confirmed by the server's next read. */
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  /* Bulk customer approval (16 Oct 2026): ticked invoice ids on "Confirm with customer". */
+  const [bulkIds, setBulkIds] = useState<Set<number>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const tabs = useMemo(() => (data?.tabs ?? []).map((t) => (Object.keys(ticks).length
     ? { ...t, items: t.items.map((it) => (it.key in ticks ? { ...it, done: ticks[it.key] } : it)) }
@@ -426,6 +434,13 @@ export function MyTasksPage() {
             <TaskFilterBar items={active.items} filter={filter} shown={shownItems.length}
               onChange={(f) => setFilters((all) => ({ ...all, [active.key]: f }))} />
           )}
+          {active.key === "inv_confirm" && shownItems.length > 0 && (
+            <BulkApprovalBar
+              shownIds={shownItems.map((it) => it.invoice_id).filter((v): v is number => v != null)}
+              selected={bulkIds} onSelect={setBulkIds} onConfirm={() => setBulkOpen(true)}
+              total={active.items.filter((it) => it.invoice_id != null && bulkIds.has(it.invoice_id))
+                .reduce((t, it) => t + (Number(it.amount) || 0), 0)} />
+          )}
           {active.items.length === 0 ? (
             <p className="flex items-center gap-2 px-5 py-8 text-sm text-success">
               <CheckCircle2 className="h-4 w-4" aria-hidden /> All clear — nothing here.
@@ -471,6 +486,13 @@ export function MyTasksPage() {
               {g.items.map((it) => (
                 <li key={it.key} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-5 py-2.5 ${it.done ? "bg-emerald-50/50 dark:bg-emerald-950/20" : ""}`}>
                   <div className="flex min-w-0 items-start gap-3">
+                    {active.key === "inv_confirm" && it.invoice_id != null && (
+                      <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
+                        aria-label={`Select ${it.title} for bulk customer approval`}
+                        checked={bulkIds.has(it.invoice_id)}
+                        onChange={() => setBulkIds((s) => { const n = new Set(s); const id = it.invoice_id as number;
+                          if (n.has(id)) n.delete(id); else n.add(id); return n; })} />
+                    )}
                     <button type="button" onClick={() => void tick([it.key], !it.done)} aria-pressed={!!it.done}
                       title={it.done ? "Ticked as done — click to put it back" : "Tick as done — it leaves your list"}
                       className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors ${it.done
@@ -486,6 +508,15 @@ export function MyTasksPage() {
                         : <span className={`truncate ${it.done ? "line-through opacity-70" : ""}`}>{it.title}</span>}
                       {it.chip && (
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[TONE[it.tone]]}`}>{it.chip}</span>
+                      )}
+                      {/* What the invoice is for, without opening it (16 Oct 2026). */}
+                      {it.for_month && (
+                        <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-200"
+                          title="The month this invoice bills">{it.for_month}</span>
+                      )}
+                      {it.branch && (
+                        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-secondary ring-1 ring-inset ring-subtle"
+                          title="Customer branch">{it.branch}</span>
                       )}
                     </div>
                     <div className="truncate text-xs text-muted">
@@ -576,7 +607,73 @@ export function MyTasksPage() {
         <SalesActionLauncher act={salesAct} onClose={() => setSalesAct(null)}
           onDone={(msg) => { setSalesAct(null); showToast(msg || "Done"); retry(); }} />
       )}
+      {bulkOpen && (
+        <DecisionDialog
+          spec={{ ...BULK_APPROVAL_SPEC, title: `Customer approved ${bulkIds.size} invoice${bulkIds.size === 1 ? "" : "s"}` }}
+          onClose={() => setBulkOpen(false)}
+          onConfirm={async (note) => {
+            const res = await crmPost<{ confirmed: number[]; skipped: { invoice_number?: string | null; reason: string }[] }>(
+              "/api/invoices/customer-approval/bulk", { invoice_ids: [...bulkIds], note: note || null });
+            setBulkOpen(false);
+            setBulkIds(new Set());
+            const skipped = res.data?.skipped || [];
+            showToast(`${res.message || "Confirmed"}${skipped.length ? ` — ${skipped.slice(0, 2).map((x) => `${x.invoice_number || "invoice"}: ${x.reason}`).join("; ")}` : ""}`,
+              skipped.length && !(res.data?.confirmed || []).length ? "err" : undefined);
+            retry();
+          }} />
+      )}
       {toastNode}
+    </div>
+  );
+}
+
+
+/** The bulk "Customer approved" dialog (16 Oct 2026, user ask). */
+const BULK_APPROVAL_SPEC: DecisionSpec = {
+  tone: "emerald", icon: CheckCircle2, eyebrow: "Confirm with customer", title: "Customer approved",
+  intro: "Confirm that the customer accepted each selected invoice exactly as issued. Finance gets one notice to add the IRNs. An invoice that needs a change goes through a change request instead.",
+  reason: { label: "Note for Finance (optional)", placeholder: "e.g. Approval mail from the customer on 14 Oct",
+    picks: ["Approval received by email", "Confirmed on call", "Customer portal shows approved"] },
+  happens: [
+    { icon: CheckCircle2, text: "Each invoice is stamped \"Customer approved\" with your name and the time." },
+    { icon: Send, text: "Finance is told once, with the list, to record the IRNs." },
+  ],
+  confirmLabel: "Confirm approvals", busyLabel: "Confirming…",
+};
+
+/** Select-all / count / confirm strip over the "Confirm with customer" list. */
+function BulkApprovalBar({ shownIds, selected, onSelect, onConfirm, total }: {
+  shownIds: number[];
+  selected: Set<number>;
+  onSelect: (s: Set<number>) => void;
+  onConfirm: () => void;
+  total: number;
+}) {
+  const allShown = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-subtle bg-emerald-50 px-5 py-2 dark:bg-emerald-950/30">
+      <label className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+        <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={allShown}
+          onChange={() => {
+            const n = new Set(selected);
+            if (allShown) shownIds.forEach((id) => n.delete(id)); else shownIds.forEach((id) => n.add(id));
+            onSelect(n);
+          }} />
+        Select all shown ({shownIds.length})
+      </label>
+      {selected.size > 0 && (
+        <span className="text-xs text-emerald-900 dark:text-emerald-200 tnum">
+          {selected.size} selected · ₹{Math.round(total).toLocaleString("en-IN")}
+        </span>
+      )}
+      <span className="ml-auto flex gap-2">
+        {selected.size > 0 && (
+          <button type="button" className={FLOW_BTN.neutral} onClick={() => onSelect(new Set())}>Clear</button>
+        )}
+        <button type="button" className={FLOW_BTN.success} disabled={selected.size === 0} onClick={onConfirm}>
+          <CheckCircle2 size={13} aria-hidden /> Customer approved{selected.size ? ` (${selected.size})` : ""}
+        </button>
+      </span>
     </div>
   );
 }

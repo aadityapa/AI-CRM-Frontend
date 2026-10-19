@@ -120,7 +120,7 @@ async function renderApprovals(roles: string[]) {
       <TimesheetsListPage />
     </CrmMeProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: /approvals/i }));
+  fireEvent.click(await screen.findByRole("tab", { name: /approvals/i }));
   return await screen.findByText("Amulya H K");
 }
 
@@ -235,7 +235,7 @@ describe("PO selection gate before raising the Proforma", () => {
         <TimesheetsListPage />
       </CrmMeProvider>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: /approvals/i }));
+    fireEvent.click(await screen.findByRole("tab", { name: /approvals/i }));
     await screen.findByText("Amulya H K");
     // Approved + no invoice yet → the button is live but must open the gate,
     // not fire the POST.

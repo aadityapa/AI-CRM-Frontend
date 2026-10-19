@@ -4,9 +4,10 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
   IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search, Undo2,
-  FileSpreadsheet, Landmark, ScrollText,
+  FileSpreadsheet, Landmark, ScrollText, Bell, XCircle,
 } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
+import { DecisionDialog } from "../components/dialogKit";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
 import { useHasRole, useMe } from "../CrmApp";
@@ -33,7 +34,9 @@ import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
 } from "../components/invoice/ProformaActions";
 import { InvoiceJourney } from "../components/invoice/InvoiceJourney";
+import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
+import { WorkMonth } from "../components/WorkMonth";
 /* ---------------------------------------------------------------- helpers */
 
 /** "Proforma" / "Returned to GM" chip — orange, the document's own colour. */
@@ -521,6 +524,7 @@ export function PurchaseOrdersPage({ embedded = false }: { embedded?: boolean } 
                 <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-muted">
                   <th className="px-4 py-2">PO Number</th>
                   <th className="px-3 py-2">Employee</th>
+                  <th className="px-3 py-2">Period</th>
                   <th className="px-3 py-2">Type</th>
                   <th className="px-3 py-2">Total</th>
                   <th className="px-3 py-2">Consumed</th>
@@ -535,6 +539,10 @@ export function PurchaseOrdersPage({ embedded = false }: { embedded?: boolean } 
                     onClick={() => crmNavigate(`pos/${r.id}`)}>
                     <td className="px-4 py-2.5 font-semibold text-primary">{r.po_number}</td>
                     <td className="px-3 py-2.5 text-secondary">{r.employee_name || "—"}</td>
+                    <td className="px-3 py-2.5 text-xs">
+                      {/* PO start → end, without opening the PO (16 Oct 2026, user ask). */}
+                      <PoPeriod start={r.start_date} end={r.end_date} />
+                    </td>
                     <td className="px-3 py-2.5 text-secondary">{r.po_type}</td>
                     <td className="px-3 py-2.5 tnum">{inr(r.total_value)}</td>
                     <td className="px-3 py-2.5 tnum">{inr(r.consumed_value)}</td>
@@ -607,6 +615,24 @@ export function PurchaseOrdersPage({ embedded = false }: { embedded?: boolean } 
       )}
       {toast}
     </div>
+  );
+}
+
+/** "1 Apr 2026 → 31 Mar 2027" + an "ends in N d" / "expired" chip. */
+function PoPeriod({ start, end }: { start?: string | null; end?: string | null }) {
+  if (!start && !end) return <span className="text-muted">—</span>;
+  const days = end ? Math.round((new Date(`${String(end).slice(0, 10)}T00:00:00`).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000) : null;
+  return (
+    <span className="block whitespace-nowrap">
+      <span className="text-secondary">{start ? fmtDate(start) : "—"} → {end ? fmtDate(end) : "open"}</span>
+      {days != null && days <= 45 && (
+        <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-bold ${days < 0
+          ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+          : "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"}`}>
+          {days < 0 ? `expired ${-days} d ago` : days === 0 ? "ends today" : `ends in ${days} d`}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -2116,6 +2142,10 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   /* Customer + project filters (25 Aug 2026): server-side — paginated list. */
   const [customerFilter, setCustomerFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
+  /* Branch (once a customer is chosen) + the month the invoice bills (16 Oct 2026). */
+  const [branchFilter, setBranchFilter] = useState("");
+  const [monthFilter, setMonthFilter] = useState("");
+  const [branchChoices, setBranchChoices] = useState<{ id: number; name: string }[]>([]);
   const customerNames = useNameMap("/api/customers/names");
   // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch the whole
   // status tab so every customer's section is complete.
@@ -2130,21 +2160,46 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         search,
         customer_id: customerFilter || undefined,
         project_id: projectFilter || undefined,
+        branch_id: branchFilter || undefined,
+        month: monthFilter || undefined,
       };
       const req = view === "customer"
         ? fetchAllMaster<any>("/api/invoices", params).then((all) => ({ data: all, meta: undefined }))
         : crmGet<any[]>(`/api/invoices${qs({ ...params, page, limit: 20 })}`);
       req
-        .then((r) => { if (alive) { setRows(r.data || []); setMeta(r.meta); setError(""); } })
+        .then((r) => {
+          if (!alive) return;
+          setRows(r.data || []); setMeta(r.meta); setError("");
+          const bs = (r.meta as any)?.branches as { id: number; name: string }[] | undefined;
+          if (bs) setBranchChoices(bs);
+        })
         .catch((e) => { if (alive) setError(e?.message || "Failed to load invoices"); })
         .finally(() => { if (alive) setLoading(false); });
     }, search ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page, reloadKey, customerFilter, projectFilter, view]);
-  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter]);
+  }, [tab, search, page, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, view]);
+  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter, branchFilter, monthFilter]);
+  useChangeEffect(() => { setBranchFilter(""); setBranchChoices([]); }, [customerFilter]);
+  const extraFilters = (
+    <>
+      {customerFilter && branchChoices.length > 0 && (
+        <select className="input-recessed !w-44 rounded-control px-3 py-2 text-sm"
+          value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} title="Filter by customer branch">
+          <option value="">All branches</option>
+          {branchChoices.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      )}
+      <input type="month" className="input-recessed !w-40 rounded-control px-3 py-2 text-sm" value={monthFilter}
+        onChange={(e) => setMonthFilter(e.target.value)} title="The month the invoice bills" aria-label="Invoice month" />
+    </>
+  );
 
   const columns: Column<any>[] = [
     { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number}</span> },
+    /* What the invoice is for, without opening it (16 Oct 2026, user ask). */
+    { key: "month_label", label: "For month", render: (r) => <WorkMonth label={r.month_label} period={r.period_label} /> },
+    { key: "employee", label: "Employee", render: (r) => r.employee || <span className="text-muted">—</span> },
+    { key: "branch_name", label: "Branch", render: (r) => r.branch_name || <span className="text-muted">—</span> },
     { key: "project", label: "Project", render: (r) => projects[r.project_id] || `#${r.project_id}` },
     { key: "po", label: "PO", render: (r) => (r.po_id ? pos[r.po_id] || `#${r.po_id}` : "—") },
     { key: "invoice_date", label: "Invoice Date", render: (r) => fmtDate(r.invoice_date) },
@@ -2205,8 +2260,9 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
       {view === "customer" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice number…"
+            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice number or employee…"
               value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search invoices" />
+            {extraFilters}
             <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
               value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} title="Filter by project">
               <option value="">All projects</option>
@@ -2275,6 +2331,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
               {Object.entries(projects).sort((a, b) => a[1].localeCompare(b[1]))
                 .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
             </select>
+            {extraFilters}
             <ViewToggle view={view} onChange={setView} />
           </>
         }
@@ -2742,7 +2799,7 @@ function InvoiceRevisionsCard({ invoiceId, meId, refreshKey, onChanged, notify }
   const [meta, setMeta] = useState<any>({});
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState<RevisionRow | null>(null);
-  const [note, setNote] = useState("");
+  const [, setNote] = useState("");
 
   const load = useCallback(() => {
     crmGet<RevisionRow[]>(`/api/invoices/${invoiceId}/revisions`)
@@ -2829,22 +2886,29 @@ function InvoiceRevisionsCard({ invoiceId, meId, refreshKey, onChanged, notify }
         ))}
       </div>
       {rejecting && (
-        <Modal title="Reject this change request" onClose={() => setRejecting(null)}
-          footer={
-            <div className="flex justify-end gap-2">
-              <button className={btnSecondary} onClick={() => setRejecting(null)} disabled={busy}>Cancel</button>
-              <button className={btnDanger} disabled={busy || note.trim().length < 10}
-                onClick={() => void act(`/api/invoices/${invoiceId}/revisions/${rejecting.id}/reject`, { note: note.trim() }, "Rejected")}>
-                Reject
-              </button>
-            </div>
-          }
-        >
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-secondary">Why? (sent to the requester) *</span>
-            <textarea className={`${inputCls} min-h-[72px]`} value={note} onChange={(e) => setNote(e.target.value)} />
-          </label>
-        </Modal>
+        <DecisionDialog
+          person={rejecting.requested_by_name ? { name: rejecting.requested_by_name, meta: "requested this change" } : null}
+          spec={{
+            tone: "rose", icon: XCircle, eyebrow: "Invoice change request", title: "Reject this change",
+            intro: <>The invoice stays exactly as it is. The requester is told why, and can raise a corrected request.</>,
+            reason: { label: "Why? (sent to the requester)", required: true, min: 10,
+              placeholder: "What is wrong with the requested change…",
+              picks: ["Amounts do not match the approved timesheet", "PO balance does not cover it",
+                "Customer has not asked for this change", "Raise it as a credit note instead"] },
+            happens: [
+              { icon: FileText, text: <>Invoice figures, GST and the PO drawdown are untouched.</> },
+              { icon: Bell, text: <>The requester and Finance are notified with your reason.</> },
+            ],
+            confirmLabel: "Reject change", busyLabel: "Rejecting…",
+          }}
+          onClose={() => setRejecting(null)}
+          onConfirm={async (n) => {
+            const res = await crmPost<any>(`/api/invoices/${invoiceId}/revisions/${rejecting.id}/reject`, { note: n });
+            notify(res.message || "Rejected");
+            setRejecting(null); setNote("");
+            load(); onChanged();
+          }}
+        />
       )}
     </Card>
   );
@@ -2907,8 +2971,9 @@ export function InvoiceDetailPage() {
   const displayTax = gst != null ? Number(gst.total_gst) : Number(inv.tax_amount);
   const displayGrand = gst != null ? Number(gst.grand_total) : Number(inv.grand_total);
   const paid = Number(inv.paid_amount || 0);
-  // Balance vs the same grand total shown in the header / GST banner.
-  const displayBalance = Math.max(0, displayGrand - paid);
+  // Balance vs the same grand total shown in the header / GST banner — the TDS
+  // the customer withheld settles the invoice too (16 Oct 2026).
+  const displayBalance = Math.max(0, displayGrand - paid - Number(inv.tds_deducted || 0));
   const paymentBalance = Number(inv.balance_amount || 0);
 
   // Auto-resolved buyer state for display. Prefer explicit API fields; fall back to
@@ -3041,6 +3106,9 @@ export function InvoiceDetailPage() {
           </span>
         }
         stats={[
+          // The month the WORK was done (20 Oct 2026, user ask: "show which month
+          // this invoice is") — the timesheet's month, else the invoice date.
+          ...(inv.month_label ? [{ label: inv.period_label ? `work · ${inv.period_label}` : "work month", value: inv.month_label }] : []),
           ...(inv.grand_total != null ? [{ label: "grand total", value: inr(inv.grand_total) }] : []),
           ...(!isProforma && inv.balance_amount != null ? [{ label: "balance", value: inr(inv.balance_amount) }] : []),
           ...(inv.invoice_date ? [{ label: "dated", value: fmtDate(inv.invoice_date) }] : []),
@@ -3138,6 +3206,20 @@ export function InvoiceDetailPage() {
             <InfoItem label="Purchase order">
               {inv.po_id ? <CrmLink to={`pos/${inv.po_id}`} className="text-sky-600 hover:underline">{inv.po_number || `#${inv.po_id}`}</CrmLink> : "—"}
             </InfoItem>
+            <InfoItem label="Work month">
+              {inv.month_label ? (
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-200">{inv.month_label}</span>
+                  {inv.period_label && <span className="text-xs text-secondary">{inv.period_label}</span>}
+                </span>
+              ) : "—"}
+            </InfoItem>
+            <InfoItem label="Employee">
+              {inv.employee ? (inv.timesheet_id
+                ? <CrmLink to={`timesheets/${inv.timesheet_id}`} className="text-sky-600 hover:underline" title="Open the billed timesheet">{inv.employee}</CrmLink>
+                : inv.employee) : <span className="text-muted">Manual invoice</span>}
+            </InfoItem>
+            <InfoItem label="Branch">{inv.branch_name || "—"}</InfoItem>
             <InfoItem label="Invoice date">{fmtDate(inv.invoice_date)}</InfoItem>
             <InfoItem label="Due date">{fmtDate(inv.due_date)}</InfoItem>
             <InfoItem label="State code">{stateLabel}</InfoItem>
@@ -3198,13 +3280,20 @@ export function InvoiceDetailPage() {
       </Card>
 
       {tds && (
-        <Card title="TDS Record">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
-            <InfoItem label="TDS amount" numeric>{inr(tds.tds_amount)}</InfoItem>
-            <InfoItem label="TDS paid" numeric>{inr(tds.tds_paid)}</InfoItem>
-            <InfoItem label="TDS balance" numeric>{inr(tds.tds_balance)}</InfoItem>
-            <InfoItem label="Status"><StatusBadge status={tds.tds_status} /></InfoItem>
+        <Card title="TDS deducted by the customer">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-5">
+            <InfoItem label="TDS" numeric>
+              {inr(tds.tds_amount)}
+              {tds.tds_rate != null && <span className="block text-xs font-normal text-muted">{tds.tds_rate}% on {tds.tds_base === "total" ? "invoice total" : "value before GST"}</span>}
+            </InfoItem>
+            <InfoItem label="Section">{tds.section || "—"}</InfoItem>
+            <InfoItem label="Received (Form 16A)" numeric>{inr(tds.tds_paid)}</InfoItem>
+            <InfoItem label="Pending from client" numeric>{inr(tds.tds_balance)}</InfoItem>
+            <InfoItem label="Status">
+              <TdsChip tds={tds as TdsInfo} onClick={() => setShowTds(true)} />
+            </InfoItem>
           </div>
+          <p className="mt-2 text-xs text-muted">{tdsStatusLabel(tds)} — the customer paid the invoice less this TDS; it counts as settled and stays pending until the Form 16A / 26AS shows it.</p>
         </Card>
       )}
 
@@ -3224,20 +3313,22 @@ export function InvoiceDetailPage() {
         />
       )}
       {showTds && !tds && (
-        <RecordTdsModal
-          invoiceId={inv.id}
+        <TdsDeductionModal
+          mode="record"
+          invoice={{ id: inv.id, invoice_number: inv.invoice_number, sub_total: Number(inv.sub_total || 0),
+            tax_amount: displayTax, grand_total: displayGrand, paid_amount: paid, balance_amount: paymentBalance }}
+          customerName={inv.customer_name || inv.buyer?.name}
           onClose={() => setShowTds(false)}
-          onSaved={() => { setShowTds(false); showToast("TDS recorded"); load(); }}
-          onError={(m) => showToast(m, "err")}
+          onSaved={(msg) => { setShowTds(false); showToast(msg); load(); }}
         />
       )}
       {showTds && tds && (
-        <TdsPaymentModal
-          invoiceId={inv.id}
-          tds={tds}
+        <TdsDetailModal
+          tds={{ ...(tds as TdsInfo), invoice_id: inv.id }}
+          invoiceNumber={inv.invoice_number}
+          canMark={canWrite}
           onClose={() => setShowTds(false)}
-          onSaved={() => { setShowTds(false); showToast("TDS payment recorded"); load(); }}
-          onError={(m) => showToast(m, "err")}
+          onChanged={(msg) => { setShowTds(false); showToast(msg); load(); }}
         />
       )}
       {toast}
@@ -3388,134 +3479,14 @@ function RecordPaymentModal({
   );
 }
 
-function RecordTdsModal({
-  invoiceId,
-  onClose,
-  onSaved,
-  onError,
-}: {
-  invoiceId: number;
-  onClose: () => void;
-  onSaved: () => void;
-  onError: (msg: string) => void;
-}) {
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState("");
-  const amtN = num(amount);
-  const amountErr = amount !== "" && (amtN === undefined || amtN <= 0) ? "Amount must be a positive number" : "";
-
-  const submit = async () => {
-    if (amountErr) return;
-    setBusy(true);
-    try {
-      const payload: any = {};
-      if (amount !== "" && amtN !== undefined) payload.tds_amount = amtN;
-      await crmPost(`/api/invoices/${invoiceId}/record-tds`, payload);
-      onSaved();
-    } catch (e: any) {
-      const msg = e?.message || "Failed to record TDS";
-      setServerError(msg);
-      onError(msg);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <FinanceModalShell
-      title="Record TDS"
-      subtitle="Record tax deducted at source against this invoice."
-      icon={<Receipt size={20} aria-hidden />}
-      onClose={onClose}
-      busy={busy}
-      error={serverError}
-      onSubmit={() => void submit()}
-      submitLabel="Record TDS"
-      submitBusyLabel="Saving…"
-      submitDisabled={busy || !!amountErr}
-    >
-      <WizardField
-        label="TDS amount (₹)"
-        icon="hash"
-        error={amountErr || undefined}
-        filled={amtN !== undefined && amtN > 0}
-        info={
-          <span className="mt-1 block text-xs text-muted">
-            Defaults to the configured TDS rate on the invoice sub-total when left blank.
-          </span>
-        }
-      >
-        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Leave blank for default" />
-      </WizardField>
-    </FinanceModalShell>
-  );
-}
-
-function TdsPaymentModal({
-  invoiceId,
-  tds,
-  onClose,
-  onSaved,
-  onError,
-}: {
-  invoiceId: number;
-  tds: any;
-  onClose: () => void;
-  onSaved: () => void;
-  onError: (msg: string) => void;
-}) {
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState("");
-  const balance = Number(tds.tds_balance || 0);
-  const amtN = num(amount);
-  const amountErr =
-    amount === "" ? "" :
-    amtN === undefined || amtN <= 0 ? "Amount must be a positive number" :
-    amtN > balance ? `Cannot exceed the TDS balance (${inr(balance)})` : "";
-
-  const submit = async () => {
-    if (amtN === undefined || amtN <= 0 || amountErr) return;
-    setBusy(true);
-    try {
-      await crmPost(`/api/invoices/${invoiceId}/tds-payment`, { amount: amtN });
-      onSaved();
-    } catch (e: any) {
-      const msg = e?.message || "Failed to record TDS payment";
-      setServerError(msg);
-      onError(msg);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <FinanceModalShell
-      title="TDS Payment"
-      subtitle={`TDS balance ${inr(balance)}. Record a payment against the deducted tax.`}
-      icon={<IndianRupee size={20} aria-hidden />}
-      onClose={onClose}
-      busy={busy}
-      error={serverError}
-      onSubmit={() => void submit()}
-      submitLabel="Record TDS Payment"
-      submitBusyLabel="Saving…"
-      submitDisabled={busy || amount === "" || !!amountErr}
-    >
-      <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
-        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-      </WizardField>
-    </FinanceModalShell>
-  );
-}
-
 /* =====================================================================
  * TDS register
  * =================================================================== */
 
 const TDS_TABS = [
-  { key: "Pending", label: "Pending" },
-  { key: "Partially_Paid", label: "Partially Paid" },
-  { key: "Paid", label: "Paid" },
+  { key: "Pending", label: "Pending from client" },
+  { key: "Partially_Paid", label: "Partly received" },
+  { key: "Paid", label: "Received (Form 16A)" },
 ];
 
 export function TdsPage() {
@@ -3545,13 +3516,38 @@ export function TdsPage() {
     return () => { alive = false; window.clearTimeout(t); };
   }, [tab, search, page, reloadKey]);
 
+  const [open, setOpen] = useState<any | null>(null);
+  const canMark = useCanAct("tds", "edit", canWriteRole);
   const columns: Column<any>[] = [
-    { key: "invoice_number", label: "Invoice #", render: (r) => <span className="font-semibold">{r.invoice_number || `Invoice #${r.invoice_id}`}</span> },
+    { key: "invoice_number", label: "Invoice #", render: (r) => (
+      <span onClick={(e) => e.stopPropagation()}>
+        <CrmLink to={`invoices/${r.invoice_id}`} className="font-semibold text-sky-600 hover:underline">
+          {r.invoice_number || `Invoice #${r.invoice_id}`}
+        </CrmLink>
+        {r.invoice_date && <span className="block text-xs text-muted">{new Date(r.invoice_date).toLocaleDateString()}</span>}
+      </span>
+    ) },
     { key: "customer_name", label: "Customer", render: (r) => r.customer_name || "—" },
-    { key: "tds_amount", label: "TDS Amount", render: (r) => inr(r.tds_amount) },
-    { key: "tds_paid", label: "Paid", render: (r) => inr(r.tds_paid) },
-    { key: "tds_balance", label: "Balance", render: (r) => inr(r.tds_balance) },
-    { key: "tds_status", label: "Status", render: (r) => <StatusBadge status={r.tds_status} /> },
+    { key: "tds_amount", label: "TDS", align: "right", render: (r) => (
+      <span className="block text-right">
+        <span className="font-semibold tabular-nums">{inr(r.tds_amount)}</span>
+        {r.tds_rate != null && <span className="block text-xs text-muted">{r.tds_rate}%{r.section ? ` · ${r.section}` : ""}</span>}
+      </span>
+    ) },
+    { key: "deducted_on", label: "Deducted on", render: (r) => (
+      <span>
+        {r.deducted_on ? new Date(r.deducted_on).toLocaleDateString() : "—"}
+        {r.receipt_reference && <span className="block font-mono text-xs text-muted">{r.receipt_reference}</span>}
+      </span>
+    ) },
+    { key: "tds_paid", label: "Received", align: "right", render: (r) => <span className="tabular-nums">{inr(r.tds_paid)}</span> },
+    { key: "tds_balance", label: "Pending from client", align: "right", render: (r) => (
+      <span className="block text-right">
+        <span className={`font-semibold tabular-nums ${Number(r.tds_balance) > 0 ? "text-amber-700 dark:text-amber-300" : "text-muted"}`}>{inr(r.tds_balance)}</span>
+        {r.pending_days != null && <span className={`block text-xs ${r.pending_days > 90 ? "text-danger" : "text-muted"}`}>{r.pending_days} d</span>}
+      </span>
+    ) },
+    { key: "tds_status", label: "Status", render: (r) => <TdsChip tds={r} onClick={() => setOpen(r)} /> },
   ];
 
   return (
@@ -3562,8 +3558,11 @@ export function TdsPage() {
         accent="violet"
         eyebrow="Finance"
         title="TDS Register"
-        subtitle="Tax deducted at source by customers on each invoice — what was deducted, what has been deposited and what is still to reconcile."
-        stats={meta ? [{ label: meta.total === 1 ? "record" : "records", value: meta.total }] : undefined}
+        subtitle="TDS each customer withheld from an invoice payment. It stays pending from the client until the Form 16A / 26AS shows it — click a row's status to mark it received."
+        stats={meta ? [
+          { label: meta.total === 1 ? "record" : "records", value: meta.total },
+          ...((meta as any).pending_total != null ? [{ label: "pending from clients", value: inr((meta as any).pending_total) }] : []),
+        ] : undefined}
       >
         <Tabs tabs={TDS_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
       </PageHeader>
@@ -3577,8 +3576,8 @@ export function TdsPage() {
         search={search}
         onSearch={(q) => { setSearch(q); setPage(1); }}
         onPage={setPage}
-        onRowClick={(r) => crmNavigate(`invoices/${r.invoice_id}`)} rowHref={(r: any) => `invoices/${r.invoice_id}`}
-        emptyMessage={`No ${tab.replace(/_/g, " ").toLowerCase()} TDS records`}
+        onRowClick={(r) => setOpen(r)}
+        emptyMessage={tab === "Pending" ? "Nothing pending from clients" : "No TDS records here"}
         rowActions={canWrite ? (r) => (
           <RowActions
             entity="TDS record"
@@ -3591,6 +3590,11 @@ export function TdsPage() {
           colored />
         ) : undefined}
       />
+      {open && (
+        <TdsDetailModal tds={open} invoiceNumber={open.invoice_number} canMark={canMark}
+          onClose={() => setOpen(null)}
+          onChanged={(msg) => { setOpen(null); showToast(msg); load(); }} />
+      )}
     </div>
   );
 }

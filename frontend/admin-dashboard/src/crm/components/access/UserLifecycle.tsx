@@ -81,7 +81,7 @@ export function DeactivateUserModal({ user, onClose, onDone }: {
       }>
       <div className="space-y-4">
         <DialogSection n={1} title="Hand over their open work" tone="rose" done={!!data && work.length === 0}
-          hint="Nothing is reassigned automatically — move these to someone else so no notice goes unread.">
+          hint="They are taken off every position's sourcing team automatically. Move anything else to someone so no notice goes unread.">
           {!data && !loadErr && <p className="text-sm text-muted">Checking…</p>}
           {loadErr && <p className="text-sm text-warning">{loadErr}</p>}
           {data && work.length === 0 && (

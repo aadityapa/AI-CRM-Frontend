@@ -334,7 +334,9 @@ function injectStyles() {
   .kxce-area{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden}
   .kxce-hl,.kxce-ta{margin:0;padding:12px 14px;border:0;font:inherit;line-height:inherit;tab-size:inherit;letter-spacing:normal;
     white-space:pre;word-wrap:normal;overflow-wrap:normal;box-sizing:border-box}
-  .kxce-hl{position:absolute;inset:0;color:var(--ce-fg);pointer-events:none;overflow:hidden}
+  .kxce-hl{position:absolute;inset:0;color:var(--ce-fg);pointer-events:none;overflow:hidden;
+    background:transparent;border-radius:0;box-shadow:none;max-height:none;min-height:0}
+  /* the candidate page styles every <pre> (white card, max height) — never here */
   .kxce-ta{position:absolute;inset:0;width:100%;height:100%;resize:none;outline:none;background:transparent;color:transparent;
     caret-color:var(--ce-caret);overflow:auto;-webkit-text-fill-color:transparent}
   .kxce-ta::selection{background:var(--ce-sel);-webkit-text-fill-color:transparent}

@@ -4,7 +4,7 @@
  * submit/approve/reject workflow. */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, BellRing, CalendarDays, CalendarClock, Check, ChevronDown, Clock, FilePlus2, RefreshCw, History, MessageSquare, Plus, Receipt, Save, Send, Upload, X } from "lucide-react";
+import { AlertTriangle, Bell, BellRing, CalendarDays, CalendarClock, Check, ChevronDown, Clock, FilePlus2, RefreshCw, History, MessageSquare, Plus, Receipt, Save, Send, ShieldCheck, Undo2, Upload, X } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
@@ -34,12 +34,26 @@ import { BILLING_UNITS, unitWord } from "../lib/billingUnits";
 import { toDateKey } from "../lib/calendarDates";
 import { usePageTab } from "../lib/pageState";
 import { PoPicker, type PoOption } from "../components/PoPicker";
-import { DialogActions, DialogHero, DialogSection, WhatHappens, useCtrlEnter } from "../components/dialogKit";
+import {
+  TimesheetHero, TsIdentityCell, TsInvoiceCell, TsMiniRail, TsSectionHead, TsStatusPills, TsTabStrip,
+  TS_TOOL_BTN, type TsBilling,
+} from "./timesheets/TimesheetChrome";
+import {
+  SplitAcrossPos, fillToBalances, newSplitRow, rowAmount, splitByQty, splitProblems,
+  type BillingProgress, type SplitRow,
+} from "../components/invoice/SplitAcrossPos";
+import { DialogActions, DialogFailure, DialogHero, DialogSection, ReasonBox, WhatHappens, useCtrlEnter } from "../components/dialogKit";
+import { TimesheetPeriodModal, fmtDay as fmtPeriodDay } from "../components/TimesheetPeriodModal";
+import { WorkMonth, monthName, periodText } from "../components/WorkMonth";
+import { PaymentBreakdownModal, type BreakdownSheet } from "../components/PaymentBreakdownModal";
 
 /** The sheet's invoice as every timesheet payload prints it (B-V2 `services.timesheets.invoice_ref`). */
 type InvoiceRef = {
   id: number; invoice_number: string; payment_status: string;
   kind?: "Proforma" | "Tax"; returned_at?: string | null; returned_reason?: string | null;
+  /** Split across POs (0141): part number, its hours / days, its PO and amounts. */
+  split_no?: number | null; split_qty?: number | null; po_id?: number | null;
+  po_number?: string | null; sub_total?: number | null; grand_total?: number | null;
 };
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
@@ -69,6 +83,9 @@ const wizFooterRow = "mt-6 flex items-center gap-3 border-t border-[color:var(--
 /* ------------------------------------------------------------ types & consts */
 
 type Timesheet = {
+  /** "May 2026" + the window of a cross-month sheet (20 Oct 2026). */
+  month_label?: string | null;
+  period_label?: string | null;
   id: number;
   project_id: number;
   employee_id: number;
@@ -84,6 +101,9 @@ type Timesheet = {
   approved_by: number | null;
   approved_at: string | null;
   file_attachment_url: string | null;
+  /** List rows (20 Oct 2026): the sheet's document and, when split across POs, its parts. */
+  invoice?: InvoiceRef | null;
+  billing?: TsBilling;
 };
 
 type Entry = {
@@ -264,6 +284,9 @@ type InvoicePreview = {
   totals: { sub_total: number };
   linked_invoice: InvoiceRef | null;
   can_generate: boolean;
+  /** Every Proforma / invoice raised on this sheet — several when it is split across POs (0141). */
+  invoices?: InvoiceRef[];
+  billing_progress?: BillingProgress | null;
 };
 
 /** Editable local row (string inputs for hours). */
@@ -287,7 +310,6 @@ type EntryRow = {
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
-const TS_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"];
 const LOCATIONS: { value: string; label: string }[] = [
   { value: "Onsite", label: "On Site" },
   { value: "Remote", label: "Offshore/Remote" },
@@ -542,6 +564,9 @@ type ReportRow = {
   period_start_date?: string | null;
   period_end_date?: string | null;
   timesheet_period?: string | null;
+  /** "May 2026" and, for a cross-month sheet, "21 Apr – 30 May 2026" (20 Oct 2026). */
+  month_label?: string | null;
+  period_label?: string | null;
   date?: string | null;
   created_at?: string | null;
   actual_billable_hours?: number | null;
@@ -631,6 +656,8 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
   // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch every page
   // of the current filters so each customer's section is complete.
   const [view, setView] = useGroupView();
+  /** Status pill counts (20 Oct 2026): over every filter except the status. */
+  const [statusCounts, setStatusCounts] = useState<Record<string, number> | null>(null);
   const load = useCallback(async () => {
     if (tab !== "all") return;
     setLoading(true);
@@ -638,12 +665,22 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
     try {
       const params = { project_id: projectId, employee_id: employeeId, month, year, status };
       if (view === "customer") {
-        setRows(await fetchAllMaster<Timesheet>("/api/timesheets", params));
+        const all = await fetchAllMaster<Timesheet>("/api/timesheets", params);
+        setRows(all);
         setMeta(undefined);
+        // Every page was fetched: with no status chosen the rows ARE the counts;
+        // with one chosen, the pills keep the last full picture.
+        if (!status) {
+          const c: Record<string, number> = {};
+          all.forEach((r) => { c[r.status] = (c[r.status] || 0) + 1; });
+          setStatusCounts(c);
+        }
       } else {
         const res = await crmGet<Timesheet[]>(`/api/timesheets${qs({ ...params, page, limit: 20 })}`);
         setRows(res.data || []);
         setMeta(res.meta);
+        const c = (res.meta as any)?.status_counts;
+        if (c) setStatusCounts(c);
       }
     } catch (e: any) {
       setError(e?.message || "Failed to load timesheets");
@@ -672,19 +709,30 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
     return (id: number) => m.get(id) || `#${id}`;
   }, [employees]);
 
+  /* Redesigned 20 Oct 2026: who + where in one cell, the month, where the
+     sheet stands on its road, the invoice (or the parts of a split one), and
+     the two dates as one timeline. Server-sent names first (31 Aug 2026): the
+     client map came from /api/employees clamped at 100 rows. */
   const columns: Column<Timesheet>[] = [
-    /* Server-sent names first (31 Aug 2026, user bug report): the client map
-       came from /api/employees clamped at 100 rows — with 289 employees,
-       anyone past the first page rendered as "#400". */
-    { key: "project", label: "Project", render: (r) => (
-      <span className="font-semibold">{(r as any).project_name || projectName(r.project_id)}</span>
+    { key: "employee", label: "Employee · project", render: (r) => (
+      <TsIdentityCell employee={(r as any).employee_name || employeeName(r.employee_id)}
+        project={(r as any).project_name || projectName(r.project_id)}
+        customer={view === "customer" ? null : r.customer_name} />
     ) },
-    { key: "employee", label: "Employee",
-      render: (r) => (r as any).employee_name || employeeName(r.employee_id) },
-    { key: "period", label: "Period", render: (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year}` },
-    { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} label={tsStatusLabel(r.status)} /> },
-    { key: "submitted_at", label: "Submitted", render: (r) => fmtDate(r.submitted_at) },
-    { key: "approved_at", label: "Approved", render: (r) => fmtDate(r.approved_at) },
+    { key: "period", label: "Month", render: (r) => <WorkMonth label={r.month_label || `${MONTHS[(r.month || 1) - 1]} ${r.year ?? ""}`} period={r.period_label} /> },
+    { key: "status", label: "Where it stands", render: (r) => (
+      <span className="inline-flex flex-col gap-1">
+        <StatusBadge status={r.status} label={tsStatusLabel(r.status)} />
+        <TsMiniRail status={r.status} invoice={r.invoice} />
+      </span>
+    ) },
+    { key: "invoice", label: "Invoice", render: (r) => <TsInvoiceCell invoice={r.invoice} billing={r.billing} status={r.status} /> },
+    { key: "timeline", label: "Submitted · approved", render: (r) => (
+      <span className="inline-flex flex-col text-xs">
+        <span className="text-secondary">{r.submitted_at ? `Submitted ${fmtDate(r.submitted_at)}` : <span className="text-muted">Not submitted</span>}</span>
+        {r.approved_at && <span className="text-success">Approved {fmtDate(r.approved_at)}</span>}
+      </span>
+    ) },
   ];
 
   const openNew = (p?: {
@@ -716,20 +764,7 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
     <div className="space-y-4">
       {(() => {
         const tabStrip = visibleTabs.length > 1 ? (
-          <div className="flex flex-wrap gap-1.5 rounded-control bg-surface-2 p-1 ring-1 ring-inset ring-subtle">
-            {visibleTabs.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className={`rounded-control px-3 py-1.5 text-sm font-semibold transition-colors ${
-                  tab === t.key ? "bg-brand-600 text-white shadow-sm" : "text-secondary hover:bg-surface-1 hover:text-primary"
-                }`}
-                onClick={() => setTab(t.key)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <TsTabStrip tabs={visibleTabs} active={tab} onChange={(k) => setTab(k as ReportTab)} />
         ) : null;
         if (embedded) {
           return (
@@ -797,6 +832,8 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
       {tab === "all" && (
         <>
           {isStaff && <TimesheetDuePanel showToast={showToast} />}
+          {/* Status as pills with counts (20 Oct 2026) — the status select is gone. */}
+          <TsStatusPills value={status} onChange={(v) => { setStatus(v); setPage(1); }} counts={statusCounts} />
           {error ? (
             <ErrorBox error={error} onRetry={load} />
           ) : view === "customer" ? (
@@ -815,10 +852,6 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
                   {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                 </select>
                 <input type="number" placeholder="Year" className={`${inputCls} !w-28`} value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year" />
-                <select className={`${inputCls} !w-36`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-                  <option value="">All statuses</option>
-                  {TS_STATUSES.map((s) => <option key={s} value={s}>{tsStatusLabel(s)}</option>)}
-                </select>
                 <ViewToggle view={view} onChange={setView} />
                 <span className="ml-auto text-xs text-muted">{rows.length} timesheet{rows.length === 1 ? "" : "s"}</span>
               </div>
@@ -882,10 +915,6 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
                     type="number" placeholder="Year" className={`${inputCls} !w-28`}
                     value={year} onChange={(e) => { setYear(e.target.value); setPage(1); }}
                   />
-                  <select className={`${inputCls} !w-36`} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-                    <option value="">All statuses</option>
-                    {TS_STATUSES.map((s) => <option key={s} value={s}>{tsStatusLabel(s)}</option>)}
-                  </select>
                   <ViewToggle view={view} onChange={setView} />
                 </>
               }
@@ -1688,6 +1717,8 @@ export function TimesheetDetailPage() {
   /** The assignment has no leave rows — the project's policies were never applied. */
   const [leaveSetupMissing, setLeaveSetupMissing] = useState(false);
   const [applyLeaveRow, setApplyLeaveRow] = useState<number | null>(null);
+  /** Change-period dialog (19 Oct 2026: the period may cross months). */
+  const [periodOpen, setPeriodOpen] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<"submit" | "approve" | null>(null);
@@ -2135,20 +2166,13 @@ export function TimesheetDetailPage() {
      stomp on half-typed hours. If edits raced the save, we skip the reload
      and let the next cycle (which is already scheduled by the dirty state)
      pick them up. */
-  const changePeriod = async (start: string | null, end: string | null) => {
-    const startDate = start || (ts.period_start_date || "").slice(0, 10);
-    const endDate = end || (ts.period_end_date || "").slice(0, 10);
-    if (!startDate || !endDate) return;
-    try {
-      await crmPatch(`/api/timesheets/${ts.id}/period`, {
-        start_date: startDate, end_date: endDate,
-      });
-      showToast("Period updated — day grid adjusted");
-      await load();
-    } catch (e: any) {
-      showToast(e?.message || "Failed to update the period", "err");
-      await load(); // snap the inputs back to the server's truth
-    }
+  /** Throws with the server's reason — the dialog shows it and stays open. */
+  const applyPeriod = async (startDate: string, endDate: string) => {
+    await crmPatch(`/api/timesheets/${ts.id}/period`, {
+      start_date: startDate, end_date: endDate,
+    });
+    showToast(`Period is now ${fmtPeriodDay(startDate)} to ${fmtPeriodDay(endDate)} — day grid adjusted`);
+    await load();
   };
 
   const doWorkflow = async (action: "submit" | "approve") => {
@@ -2174,80 +2198,53 @@ export function TimesheetDetailPage() {
 
   return (
     <div className="min-w-0 space-y-5">
-      {/* ------------------------------------------------ header */}
-      <div className="flex flex-wrap items-center gap-3">
-        <CrmLink to="timesheets" className="text-sm font-semibold text-brand-600 hover:underline dark:text-brand-300">
-          Timesheets
-        </CrmLink>
-        <span className="text-muted">/</span>
-        <h1 className="text-display text-xl font-bold text-primary">
-          {MONTHS[(ts.month || 1) - 1]} {ts.year}
-        </h1>
-        <StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />
-      </div>
-
-      {/* ------------------------------------------------ header info card (Tab 9) */}
-      <div className="glass rounded-panel p-4 sm:p-5">
-        <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-          <LabeledValue label="Date" value={fmtDate(ts.created_at)} />
-          <LabeledValue
-            label="Project Title"
-            value={
-              <CrmLink
-                to={`projects/${ts.project_id}`}
-                className={`rounded-control font-semibold text-brand-600 hover:underline dark:text-brand-300 ${focusRing}`}
-              >
+      {/* ------------------------------------------------ identity band (redesigned 20 Oct 2026)
+          Who · which month · where on the road · the month at a glance. The
+          period may cross months (19 Oct 2026); it is changed in a dialog
+          that counts the days added / removed BEFORE anything is deleted. */}
+      {(() => {
+        const lop = dirty ? liveSummary.totalLopDays : Number(summary?.total_loss_of_pay_days ?? liveSummary.totalLopDays ?? 0);
+        const branch = ts.branch_name
+          || (ts.branch_unlinked ? (ts.branch_link_message || "Branch not linked to this customer") : null);
+        return (
+          <TimesheetHero
+            employee={ts.employee_name || employeeName || `Employee #${ts.employee_id}`}
+            employeeCode={ts.employee_code}
+            monthLabel={monthName(ts.year, ts.month) || `${MONTHS[(ts.month || 1) - 1]} ${ts.year}`}
+            periodLabel={ts.period_start_date && ts.period_end_date
+              ? `${fmtPeriodDay(ts.period_start_date.slice(0, 10))} – ${fmtPeriodDay(ts.period_end_date.slice(0, 10))}`
+              : ts.timesheet_period || fmtPeriod(ts.period_start_date, ts.period_end_date)}
+            statusBadge={<StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />}
+            projectLink={
+              <CrmLink to={`projects/${ts.project_id}`} className={`rounded-control font-semibold hover:underline ${focusRing}`}>
                 {ts.project_title || projectName || `#${ts.project_id}`}
               </CrmLink>
             }
+            customer={ts.customer_name}
+            branch={branch}
+            projectType={ts.project_type ? pretty(ts.project_type) : null}
+            status={ts.status}
+            invoice={ts.invoice}
+            billing={(ts as any).billing_progress}
+            onChangePeriod={editable && ts.period_start_date && ts.period_end_date ? () => setPeriodOpen(true) : undefined}
+            facts={[
+              { label: "Present days", value: num(summary?.present_days) },
+              { label: "Hours worked", value: num(dirty ? liveSummary.hours : summary?.total_hours_worked ?? summary?.hours_worked) },
+              { label: "Leave", value: num(dirty ? liveSummary.totalLeaveDays : summary?.total_leave_days ?? liveSummary.totalLeaveDays) },
+              { label: "Loss of pay", value: num(lop), tone: Number(lop || 0) > 0 ? "bad" : undefined },
+              { label: "Billable days", value: num(summary?.total_billable_days), tone: "ok" },
+              { label: "Billable hours", value: num(summary?.total_billable_hours), tone: "ok" },
+            ]}
           />
-          <LabeledValue
-            label="Branch"
-            value={
-              ts.branch_name
-                || (ts.branch_unlinked ? (ts.branch_link_message || "Branch not linked to this customer") : null)
-                || "—"
-            }
-          />
-          <LabeledValue label="Timesheet Period" value={ts.timesheet_period || fmtPeriod(ts.period_start_date, ts.period_end_date)} />
-          <LabeledValue label="Project Employee" value={ts.employee_name || employeeName || `#${ts.employee_id}`} />
-          <LabeledValue label="Project Type" value={pretty(ts.project_type)} />
-          <LabeledValue label="Employee ID" value={ts.employee_code || "—"} />
-          <LabeledValue label="Customer" value={ts.customer_name || "—"} />
-          {/* Editable window (Draft/Rejected): the grid regenerates to match —
-              added days appear, removed days are DELETED with their hours.
-              The Timesheet Period label above always mirrors these two. */}
-          {editable ? (
-            <>
-              <LabeledValue label="Start Date" value={
-                <input
-                  type="date"
-                  className={`${inputCls} !w-40 text-sm`}
-                  value={(ts.period_start_date || "").slice(0, 10)}
-                  min={`${ts.year}-${String(ts.month).padStart(2, "0")}-01`}
-                  max={(ts.period_end_date || "").slice(0, 10) || undefined}
-                  aria-label="Timesheet start date"
-                  onChange={(e) => { if (e.target.value) void changePeriod(e.target.value, null); }}
-                />
-              } />
-              <LabeledValue label="End Date" value={
-                <input
-                  type="date"
-                  className={`${inputCls} !w-40 text-sm`}
-                  value={(ts.period_end_date || "").slice(0, 10)}
-                  min={(ts.period_start_date || "").slice(0, 10) || undefined}
-                  aria-label="Timesheet end date"
-                  onChange={(e) => { if (e.target.value) void changePeriod(null, e.target.value); }}
-                />
-              } />
-            </>
-          ) : (
-            <>
-              <LabeledValue label="Start Date" value={fmtDate(ts.period_start_date)} />
-              <LabeledValue label="End Date" value={fmtDate(ts.period_end_date)} />
-            </>
-          )}
-        </div>
+        );
+      })()}
+
+      {(editable || leaveSetupMissing || (ts.status === "Submitted" && canDecide)) && (
+      <div className="elev-1 rounded-panel p-4 sm:p-5">
+        <TsSectionHead icon={CalendarClock} title={editable ? "Fill the month" : "Review the month"}
+          hint={editable
+            ? `Created ${fmtDate(ts.created_at)} · tools to fill the days quickly; every change autosaves.`
+            : `Created ${fmtDate(ts.created_at)}`} />
         {leaveSetupMissing && (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
             <AlertTriangle size={16} className="shrink-0" aria-hidden />
@@ -2264,14 +2261,13 @@ export function TimesheetDetailPage() {
           </div>
         )}
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
-          <StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />
           {editable && (
             /* Weekend/holiday repair (27 Aug 2026): sheets generated before the
                policy existed show Sat/Sun as working → Absent + LOP. */
             <>
             <button
               type="button"
-              className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
+              className={TS_TOOL_BTN}
               title={`Set every worked day to the customer's working day (${defaultHoursWorked()} h); leave, absent (0 h), week-off and holiday rows are left alone`}
               onClick={() => {
                 const full = Number(defaultHoursWorked() || 0);
@@ -2299,11 +2295,11 @@ export function TimesheetDetailPage() {
                 setDirty(true);
               }}
             >
-              Fill worked days with {defaultHoursWorked()} h
+              <Clock size={13} aria-hidden /> Fill worked days with {defaultHoursWorked()} h
             </button>
             <button
               type="button"
-              className="rounded-control border border-subtle bg-surface-2 px-2.5 py-1 text-xs font-semibold text-secondary transition-colors duration-micro hover:border-strong hover:text-primary"
+              className={TS_TOOL_BTN}
               onClick={async () => {
                 try {
                   const r = await crmPost<{ fixed: number }>(`/api/timesheets/${ts.id}/reclassify-days`);
@@ -2314,16 +2310,16 @@ export function TimesheetDetailPage() {
                 }
               }}
             >
-              Fix week-offs / holidays
+              <CalendarDays size={13} aria-hidden /> Fix week-offs / holidays
             </button>
             <button
               type="button"
               disabled={filling}
-              className="rounded-control border border-brand-600 bg-surface-2 px-2.5 py-1 text-xs font-semibold text-brand-600 transition-colors duration-micro hover:bg-brand-600 hover:text-white disabled:opacity-60 dark:text-brand-300"
+              className={`${TS_TOOL_BTN} !border-brand-400 !text-brand-700 dark:!text-brand-300`}
               title="Upload the customer's timesheet (Excel or PDF) — the days of this month are filled from it"
               onClick={() => fillInputRef.current?.click()}
             >
-              {filling ? "Reading file…" : "Fill from file (Excel / PDF)"}
+              <Upload size={13} aria-hidden /> {filling ? "Reading file…" : "Fill from file (Excel / PDF)"}
             </button>
             <input
               ref={fillInputRef}
@@ -2391,17 +2387,20 @@ export function TimesheetDetailPage() {
           )}
         </div>
       </div>
+      )}
 
       {ts.status === "Rejected" && ts.rejection_reason && (
-        <div className="rounded-card border border-subtle bg-danger-soft px-4 py-3 text-sm text-danger">
-          <span className="font-bold">Rejected:</span> {ts.rejection_reason}
+        <div className="flex items-start gap-3 rounded-card border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" role="alert">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rose-600 text-white" aria-hidden><Undo2 size={15} /></span>
+          <span><span className="block font-bold">Sent back for correction</span>{ts.rejection_reason}</span>
         </div>
       )}
 
       {/* ------------------------------------------------ timesheet details (daily grid) */}
       <div className="elev-1 overflow-hidden rounded-panel">
-        <div className="border-b border-subtle px-4 py-3.5 text-sm font-bold tracking-wide text-primary">
-          Timesheet Details
+        <div className="border-b border-subtle px-4 py-3">
+          <TsSectionHead icon={CalendarDays} title="Day by day"
+            hint={`${entries.length} day${entries.length === 1 ? "" : "s"} in this period${editable ? " · type the hours, apply leave on a row" : ""}`} />
         </div>
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex --
             a horizontally scrollable region must be focusable so keyboard
@@ -2636,11 +2635,9 @@ export function TimesheetDetailPage() {
           scrolling past every day of the period. Acting follows checking. */}
       {editable && (
         <div id="save-submit" className="elev-1 rounded-panel p-4 sm:p-5">
-          <h2 className="text-sm font-bold tracking-wide text-primary">Save &amp; Submit</h2>
-          <p className="mt-1 text-xs text-muted">
-            You have now seen every entry in this period. Save your changes, or submit the
-            timesheet for approval — submitted sheets can no longer be edited.
-          </p>
+          <TsSectionHead icon={Send} title="Save & submit"
+            hint="You have now seen every entry in this period. Save your changes, or submit the timesheet for approval — submitted sheets can no longer be edited." />
+
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
             <StatusBadge status={ts.status} label={tsStatusLabel(ts.status)} />
             <button className={btnPrimary} onClick={saveEntries} disabled={saving || !dirty}>
@@ -2677,11 +2674,10 @@ export function TimesheetDetailPage() {
           approval, so it reads after it. */}
       {ts.status === "Submitted" && canDecide && (
         <div id="approval-decision" className="elev-1 rounded-panel p-4 sm:p-5">
-          <h2 className="text-sm font-bold tracking-wide text-primary">Approval Decision</h2>
-          <p className="mt-1 text-xs text-muted">
-            You have now seen every entry in this timesheet. Approve it to release the period
-            for invoicing, or reject it back to {employeeName || "the employee"} with a reason.
-          </p>
+          <TsSectionHead icon={ShieldCheck} tone="emerald" title="Your decision"
+            hint={<>You have now seen every entry in this timesheet. Approve it to release the period
+              for invoicing, or send it back to {employeeName || "the employee"} with a reason.</>} />
+
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-4">
             {canApprove && (
               <button className={btnPrimary} onClick={() => setConfirm("approve")}>
@@ -2703,7 +2699,8 @@ export function TimesheetDetailPage() {
           an invoice has been generated. */}
       {ts.status === "Approved" && canReject && (
         <div className="elev-1 rounded-panel p-4 sm:p-5">
-          <h2 className="text-sm font-bold tracking-wide text-primary">Approved</h2>
+          <TsSectionHead icon={ShieldCheck} tone="emerald" title="Approved"
+            hint={ts.approved_at ? `Approved ${fmtDateTime12(ts.approved_at)} — the invoice figures were frozen then.` : undefined} />
           {ts.invoice ? (
             /* Invoice exists → the server refuses a plain reject (409). Say so
                instead of offering a button that fails (3 Sep 2026, user
@@ -2750,12 +2747,19 @@ export function TimesheetDetailPage() {
       )}
 
       {/* ------------------------------------------------ invoice details (collapsible) */}
-      <InvoiceDetailsSection timesheetId={ts.id} showToast={showToast} summary={summary} />
+      <InvoiceDetailsSection timesheetId={ts.id} showToast={showToast} summary={summary}
+        sheet={{
+          employee: ts.employee_name || employeeName || null,
+          monthLabel: monthName(ts.year, ts.month),
+          periodLabel: periodText(ts.year, ts.month, ts.period_start_date?.slice(0, 10), ts.period_end_date?.slice(0, 10)),
+          customer: ts.customer_name || null,
+          project: ts.project_title || null,
+        }} />
 
       {/* ------------------------------------------------ summary / calculated fields */}
       <div className="glass rounded-panel p-4 sm:p-5">
-        <h2 className="mb-1 text-sm font-bold tracking-wide text-primary">Summary</h2>
-        <p className="mb-3 text-xs text-muted">Rollup of days, hours, leave, and billables for this period.</p>
+        <TsSectionHead icon={Receipt} tone="amber" title="The month in numbers"
+          hint="Days, hours, leave and what bills for this period — the figures the invoice is built from." />
         {/* Ten tiles, reading order = the story of the month (Aug 2026 request):
             the month → how it split (week off / leave / holiday) → what was
             worked → what bills → comp-off in and out. The old 17-tile wall
@@ -2795,7 +2799,19 @@ export function TimesheetDetailPage() {
                 value={<span className="text-danger">{num(lop)}</span>} />
             ) : null;
           })()}
-          <Stat label="Total Present Days" value={num(summary?.present_days)} />
+          {/* Present = days the employee attended (worked rows; a half day is
+              0.5). Paid week-offs / holidays are BILLED but not attended, so
+              Billable Days can be higher — the hint says why (19 Oct 2026). */}
+          <Stat label="Total Present Days" value={num(summary?.present_days)}
+            hint={(() => {
+              const present = Number(summary?.present_days || 0);
+              const working = Number(summary?.working_days || 0);
+              const billed = Number(summary?.total_billable_days || 0);
+              const parts: string[] = [];
+              if (working > 0) parts.push(`of ${num(working)} working days`);
+              if (billed > present) parts.push(`${num(billed - present)} more billed (paid week-off / holiday)`);
+              return parts.length ? parts.join(" · ") : undefined;
+            })()} />
           <Stat label="Total Hours Worked" value={num(dirty ? liveSummary.hours : summary?.total_hours_worked ?? summary?.hours_worked)} />
           {/* Billable = what the CUSTOMER is billed — the invoice's figure
               (3 Sep 2026, user decision). When the project caps the month
@@ -2900,6 +2916,8 @@ export function TimesheetDetailPage() {
         <RejectModal
           timesheetId={ts.id}
           undoInvoice={isAdmin && ts.invoice ? ts.invoice : null}
+          person={{ name: ts.employee_name || employeeName || `Employee #${ts.employee_id}`,
+            meta: monthName(ts.year, ts.month) || undefined }}
           onClose={() => setShowReject(false)}
           onDone={(msg) => { setShowReject(false); showToast(msg || "Timesheet rejected"); load(); }}
           onError={(m) => showToast(m, "err")}
@@ -2925,6 +2943,17 @@ export function TimesheetDetailPage() {
             });
             setApplyLeaveRow(null);
           }}
+        />
+      )}
+      {periodOpen && ts.period_start_date && ts.period_end_date && (
+        <TimesheetPeriodModal
+          year={ts.year} month={ts.month}
+          start={ts.period_start_date.slice(0, 10)} end={ts.period_end_date.slice(0, 10)}
+          entries={entries.map((e) => ({ entry_date: e.entry_date, hours_worked: Number(e.hours_worked || 0),
+            leave_type: e.leave_type || null }))}
+          employeeName={ts.employee_name || employeeName}
+          onApply={applyPeriod}
+          onClose={() => setPeriodOpen(false)}
         />
       )}
       {toast}
@@ -2979,6 +3008,10 @@ type PoOptionsPayload = {
   invoice_format?: InvoiceFormat | null;
   /** Set when Finance returned this sheet's Proforma: raising again REPLACES it (same number). */
   returned_proforma?: { invoice_number: string; reason: string | null; returned_at: string | null } | null;
+  /** 0141 (20 Oct 2026): how much of this sheet is already on Proformas / invoices. */
+  billing_progress?: BillingProgress | null;
+  /** Admin's switches (Settings ▸ Organisation ▸ Billing). Absent on an older server = today's rules. */
+  split_rules?: { enabled: boolean; max_parts: number; allow_expired_po: boolean } | null;
 };
 
 const UNIT_LABELS: Record<string, string> = {
@@ -3037,6 +3070,10 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   const [format, setFormat] = useState<Required<InvoiceFormat>>(normalizeFormat(null));
   // Round the grand total to the rupee (5 Oct 2026) — Finance can still change it.
   const [roundOff, setRoundOff] = useState(false);
+  /* Toasts render BEHIND this modal, so a failure ("PO balance insufficient")
+     was invisible to the user. The error must live inside the dialog, right
+     under the button that caused it. */
+  const [genError, setGenError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3066,24 +3103,90 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   }, [timesheetId]);
   useEffect(() => { load(); }, [load]);
 
-  const pos = data?.pos || [];
+  const pos = useMemo(() => data?.pos || [], [data]);
   const selected = pos.find((p) => String(p.id) === poId);
   const noPos = !loading && !error && pos.length === 0;
-  const canGenerate = noPos || (!!selected && selected.selectable !== false);
+
+  /* Split across POs (0141, 20 Oct 2026): one sheet, one Proforma per PO. Forced
+     once a part has been raised (the rest can only go on further parts). */
+  const progress = data?.billing_progress ?? null;
+  const rules = data?.split_rules ?? { enabled: true, max_parts: 10, allow_expired_po: true };
+  const partsRaised = progress ? progress.parts.filter((p) => !p.returned_at).length : 0;
+  const partsLeft = Math.max(0, rules.max_parts - partsRaised);
+  const splitForced = !!progress?.split;
+  const splitPossible = rules.enabled && partsLeft > 0
+    && !!progress && progress.remaining != null && progress.remaining > 0.005 && pos.length > 0;
+  /* Why a sheet that already has parts cannot take more (Admin switched the
+     split off, or the cap is reached) — said in the dialog, never a dead button. */
+  const splitBlocked = splitForced && !splitPossible && !!progress && (progress.remaining ?? 0) > 0.005
+    ? (!rules.enabled
+      ? "Splitting a timesheet across POs is switched off. Admin can turn it on in Settings ▸ Organisation ▸ Billing."
+      : partsLeft <= 0
+        ? `This timesheet already has ${partsRaised} parts — the most Admin allows. Admin can raise the limit in Settings ▸ Organisation ▸ Billing.`
+        : "")
+    : "";
+  const [splitOn, setSplitOn] = useState(false);
+  const splitMode = splitPossible && (splitOn || splitForced);
+  const [splitRows, setSplitRows] = useState<SplitRow[]>([]);
+  const byQty = splitByQty(progress?.billing_unit, progress?.rate_split, progress?.rate);
+  // Order for "Fill each PO": the picked PO, then this employee's live POs by
+  // balance, then the customer's other live POs by balance.
+  const preferredIds = useMemo(() => {
+    const live = pos.filter((p) => p.selectable !== false && (p.balance_value == null || p.balance_value > 0));
+    const rank = (p: PoOption) => (p.employee_match ? 0 : 1);
+    const ordered = [...live].sort((a, b) => rank(a) - rank(b) || (b.balance_value ?? 0) - (a.balance_value ?? 0));
+    const first = selected && live.some((p) => p.id === selected.id) ? [selected.id] : [];
+    return [...first, ...ordered.map((p) => p.id).filter((id) => !first.includes(id))];
+  }, [pos, selected]);
+  const startSplit = useCallback(() => {
+    if (!progress || progress.remaining == null) return;
+    const rows = fillToBalances(preferredIds, pos, {
+      remaining: progress.remaining, remainingQty: progress.remaining_qty, rate: progress.rate,
+      byQty, unit: progress.billing_unit,
+    }).slice(0, Math.max(1, partsLeft));
+    setSplitRows(rows.length ? rows : [newSplitRow(preferredIds[0] ?? null)]);
+    setSplitOn(true);
+    setGenError("");
+  }, [progress, preferredIds, pos, byQty, partsLeft]);
+  // A forced split opens with an empty line on the best PO (part now, rest later).
+  useEffect(() => {
+    if (splitForced && splitPossible && splitRows.length === 0) {
+      setSplitRows([newSplitRow(preferredIds[0] ?? null)]);
+    }
+  }, [splitForced, splitPossible, splitRows.length, preferredIds]);
+  const splitIssues = splitMode && progress
+    ? splitProblems(splitRows, pos, { remaining: progress.remaining ?? 0, rate: progress.rate, byQty }) : [];
+  const splitTotal = splitRows.reduce((s, r) => s + rowAmount(r, byQty, progress?.rate ?? null), 0);
+
+  const canGenerate = splitMode
+    ? splitIssues.length === 0
+    : !splitForced && (noPos || (!!selected && selected.selectable !== false));
 
   // Soft cross-check, never a block: a PO tagged to a DIFFERENT employee is
   // usually the expensive mistake here, but shared POs are legitimate.
   const mismatch = selected && selected.employee_id != null && !selected.employee_match;
   const isSuggested = selected && data?.suggested_po_id != null && selected.id === data.suggested_po_id;
 
-  /* Toasts render BEHIND this modal, so a failure ("PO balance insufficient")
-     was invisible to the user. The error must live inside the dialog, right
-     under the button that caused it. */
-  const [genError, setGenError] = useState("");
-
   const generate = async () => {
     setGenerating(true);
     setGenError("");
+    if (splitMode) {
+      try {
+        const splits = splitRows.map((r) => (byQty
+          ? { po_id: r.po_id, quantity: Number(r.qty) }
+          : { po_id: r.po_id, amount: Number(r.amount) }));
+        const res = await crmPost<{ invoices: any[] }>(`/api/timesheets/${timesheetId}/generate-invoice`,
+          { splits, invoice_format: format, round_off: roundOff });
+        showToast(res.message || "Proformas raised");
+        onGenerated();
+        onClose();
+      } catch (e: any) {
+        setGenError(e?.message || "Failed to raise the Proformas");
+      } finally {
+        setGenerating(false);
+      }
+      return;
+    }
     try {
       const li: any = calc?.line_items?.[0];
       const qtyN = Number(qtyStr);
@@ -3169,7 +3272,13 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   const reissue = !!data?.returned_proforma;
   const title = reissue ? "Reissue proforma invoice" : "Raise proforma invoice";
   const month = data ? monthLabel(data.rate.month) : "";
-  const footerHint = !canGenerate
+  const footerHint = splitMode
+    ? (splitIssues.length
+      ? <span className="text-warning">{splitIssues[0]}</span>
+      : <span>{splitRows.length} Proforma{splitRows.length === 1 ? "" : "s"} · {inr(splitTotal)} before GST</span>)
+    : splitForced
+    ? <span className="text-warning">{splitBlocked ? "No more parts can be raised on this timesheet" : "This timesheet is split across POs — raise the rest as another part"}</span>
+    : !canGenerate
     ? <span className="text-warning">Pick the purchase order this invoice draws from</span>
     : balanceAfter != null && balanceAfter < 0
       ? <span className="text-danger">This PO cannot cover the invoice — {inr(Math.abs(balanceAfter))} short</span>
@@ -3182,7 +3291,7 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
       title={title}
       xl
       onClose={() => { if (!generating) onClose(); }}
-      dirty={edited || rateMode !== null}
+      dirty={edited || rateMode !== null || (splitMode && splitRows.some((r) => r.qty || r.amount))}
       hero={
         <DialogHero tone="amber" icon={Receipt} eyebrow="Proforma invoice" title={title}
           subtitle="Confirm the customer's format, the rate this month bills at and the PO it draws from. Finance generates the tax invoice from this Proforma."
@@ -3206,7 +3315,9 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
             </div>
           )}
           <DialogActions tone="amber" icon={FilePlus2}
-            label={reissue ? "Reissue Proforma" : "Raise Proforma Invoice"} busyLabel="Raising…"
+            label={splitMode
+              ? `Raise ${splitRows.length} Proforma${splitRows.length === 1 ? "" : "s"}`
+              : reissue ? "Reissue Proforma" : "Raise Proforma Invoice"} busyLabel="Raising…"
             busy={generating} disabled={!canGenerate} onCancel={onClose} onConfirm={generate} hint={footerHint} />
         </div>
       )}
@@ -3315,9 +3426,30 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
               </DialogSection>
             )}
 
-            <DialogSection n={3} title="Purchase order it draws from" tone="amber" done={canGenerate}
-              hint={noPos ? undefined : "The PO is drawn at conversion by the value before GST. This employee's POs come first."}>
-              {noPos ? (
+            <DialogSection n={3} title={splitMode ? "Purchase orders it draws from — one Proforma each" : "Purchase order it draws from"}
+              tone="amber" done={canGenerate}
+              hint={noPos ? undefined : splitMode
+                ? (byQty
+                  ? "Put the hours / days each PO carries. Leave some for later if the next PO is not in yet."
+                  : "Put the amount (before GST) each PO carries. Leave some for later if the next PO is not in yet.")
+                : "The PO is drawn at conversion by the value before GST. This employee's POs come first."}
+              action={splitPossible && !splitForced ? (
+                <div role="group" aria-label="How many POs" className="inline-flex rounded-full border border-subtle bg-surface-2 p-0.5 text-[11px] font-bold">
+                  <button type="button" aria-pressed={!splitMode} onClick={() => { setSplitOn(false); setGenError(""); }}
+                    className={`rounded-full px-2.5 py-1 ${!splitMode ? "bg-amber-600 text-white" : "text-secondary"}`}>One PO</button>
+                  <button type="button" aria-pressed={splitMode} onClick={() => (splitMode ? undefined : startSplit())}
+                    className={`rounded-full px-2.5 py-1 ${splitMode ? "bg-amber-600 text-white" : "text-secondary"}`}>Split across POs</button>
+                </div>
+              ) : undefined}>
+              {splitMode && progress ? (
+                <SplitAcrossPos rows={splitRows} onChange={(rows) => { setSplitRows(rows); setGenError(""); }}
+                  pos={pos} progress={progress} preferredIds={preferredIds} maxRows={partsLeft} />
+              ) : splitBlocked ? (
+                <div role="alert" className="flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+                  <span>{inr(progress?.remaining)} is still to bill on this timesheet. {splitBlocked}</span>
+                </div>
+              ) : noPos ? (
                 <div className="rounded-card border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                   This customer has no purchase orders — the invoice will be generated without a PO.
                 </div>
@@ -3343,6 +3475,18 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
                     <div className="flex items-start gap-2 rounded-card border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                       <AlertTriangle size={14} className="mt-px shrink-0" aria-hidden />
                       <span>This PO is raised for <b>{selected!.employee_name}</b>, not <b>{data?.timesheet_employee_name || "this timesheet's employee"}</b>. You can still use it (shared POs are fine) — just make sure it's the PO you mean to draw down.</span>
+                    </div>
+                  )}
+                  {selected && balanceAfter != null && balanceAfter < 0 && splitPossible && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                      <span className="flex items-start gap-2">
+                        <AlertTriangle size={14} className="mt-px shrink-0" aria-hidden />
+                        <span>{selected.po_number} covers only <b>{inr(selected.balance_value)}</b> of {inr(liveAmount)}. Bill what it covers on it and the rest on another PO — now or when the next PO comes in.</span>
+                      </span>
+                      <button type="button" onClick={startSplit}
+                        className="inline-flex h-7 items-center rounded-full bg-amber-600 px-3 text-[11px] font-bold text-white hover:bg-amber-700">
+                        Split across POs
+                      </button>
                     </div>
                   )}
                   {selected && (
@@ -3374,7 +3518,41 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
           </div>
 
           <aside className="space-y-3 lg:sticky lg:top-0 lg:self-start">
-            {li0 ? (
+            {splitMode && progress ? (
+              <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
+                <div className="border-b border-subtle bg-surface-2 px-4 py-2.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-muted">This timesheet is billed as</p>
+                  <p className="mt-0.5 text-sm font-semibold text-primary">{li0?.description || "One Proforma per PO"}</p>
+                </div>
+                <div className="space-y-2 p-4 text-xs">
+                  <div className="flex justify-between"><span className="text-secondary">Whole timesheet</span><b className="tabular-nums">{inr(progress.total)}</b></div>
+                  {progress.parts.filter((p) => !p.returned_at).map((p) => (
+                    <div key={p.id} className="flex justify-between text-muted">
+                      <span>Part {p.split_no ?? "—"} · {p.invoice_number}</span>
+                      <span className="tabular-nums">{inr(p.sub_total)}</span>
+                    </div>
+                  ))}
+                  {splitRows.map((r, i) => {
+                    const po = pos.find((p) => p.id === r.po_id);
+                    return (
+                      <div key={r.key} className="flex justify-between font-semibold text-primary">
+                        <span>Part {progress.parts.filter((p) => !p.returned_at).length + i + 1} · {po?.po_number || "pick a PO"}</span>
+                        <span className="tabular-nums">{inr(rowAmount(r, byQty, progress.rate))}</span>
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-baseline justify-between border-t border-subtle pt-2">
+                    <span className="font-semibold text-secondary">Raised now (before GST)</span>
+                    <span className="text-xl font-bold tabular-nums text-primary">{inr(splitTotal)}</span>
+                  </div>
+                  <div className="flex justify-between rounded-control bg-sky-50 px-2.5 py-1.5 font-semibold text-sky-800 dark:bg-sky-950/40 dark:text-sky-300">
+                    <span>Left to bill later</span>
+                    <span className="tabular-nums">{inr(Math.max(0, (progress.remaining ?? 0) - splitTotal))}</span>
+                  </div>
+                  <p className="text-[11px] text-muted">Each part gets its own Proforma, GST and PO; the parts always add back to the figures frozen at approval.</p>
+                </div>
+              </div>
+            ) : li0 ? (
               <div className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised">
                 <div className="border-b border-subtle bg-surface-2 px-4 py-2.5">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-muted">This invoice will be raised as</p>
@@ -3464,11 +3642,13 @@ function PoStat({ label, value, tone }: { label: string; value: React.ReactNode;
 }
 
 function InvoiceDetailsSection({
-  timesheetId, showToast, summary,
+  timesheetId, showToast, summary, sheet,
 }: {
   timesheetId: number;
   showToast: (msg: string, kind?: "ok" | "err") => void;
   summary?: Summary | null;
+  /** Who / which month — the breakdown pop-up's header (20 Oct 2026). */
+  sheet?: BreakdownSheet;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
   // The GM raises the PROFORMA (23 Sep 2026); Finance converts it on the invoice page.
@@ -3551,148 +3731,18 @@ function InvoiceDetailsSection({
 
   return (
     <div className="elev-1 overflow-hidden rounded-panel">
-      {/* Payment breakdown popup — the WHY behind the invoice amount, in the
-          order money people read it: worked → paid → deductions → tax. */}
+      {/* Payment breakdown popup — the WHY behind the invoice amount
+          (redesigned 20 Oct 2026: the sheet · the rate · the bill). */}
       {showBreakdown && (
-        <Modal title="Payment breakdown" onClose={() => setShowBreakdown(false)} medium>
-          {!preview ? (
-            <Spinner label="Loading breakdown…" />
-          ) : (
-            <div className="space-y-4 text-sm">
-              {li && <div className="font-semibold text-primary">{li.description}</div>}
-              {(totals as any)?.figures_drifted && (
-                <p className="rounded-control bg-warning/10 px-2.5 py-2 text-[11px] font-semibold text-warning">
-                  ⚠ Billing policy or calendar changed after this sheet was approved.
-                  A live recompute now gives {inr((totals as any).live_sub_total)};
-                  the figures below were frozen at approval and are what gets billed.
-                </p>
-              )}
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
-                <LabeledValue label="Days worked" value={num(summary?.total_no_of_days_worked ?? summary?.present_days)} />
-                <LabeledValue label="Hours worked" value={num(summary?.total_hours_worked ?? summary?.hours_worked)} />
-                <LabeledValue label="Paid (billable) days" value={num(summary?.total_billable_days)} />
-                <LabeledValue label="Paid (billable) hours" value={num(summary?.total_billable_hours)} />
-                <LabeledValue label="Paid leave days" value={num(li?.leave_billable_days)} />
-                <LabeledValue
-                  label="Loss of Pay days"
-                  value={<span className={Number(li?.loss_of_pay_days || 0) > 0 ? "text-danger font-semibold" : undefined}>
-                    {num(li?.loss_of_pay_days)}
-                  </span>}
-                />
-                {Number(li?.lop_covered_days || 0) > 0 && (
-                  <LabeledValue
-                    label="LOP covered by weekend work"
-                    value={<span className="font-semibold text-success">{num(li.lop_covered_days)}</span>}
-                  />
-                )}
-                <LabeledValue label="Comp-off credited" value={num(summary?.comp_off_earned)} />
-                <LabeledValue label="Comp-off billed (qty)" value={num(li?.comp_off_billable_qty)} />
-                {li?.comp_off_billable_qty != null && Number(li.comp_off_billable_qty) > 0 && (() => {
-                  // Qty is HOURS for Hourly, DAY-fractions for Daily/Monthly.
-                  // Hourly/Daily: rate_per_unit is already per hour / per day.
-                  // Monthly/Yearly: rate_per_unit is the MONTH price — one
-                  // comp-off day is worth the per-day charge, not the month.
-                  const perUnit = (li.billing_unit === "Monthly" || li.billing_unit === "Yearly")
-                    ? Number(li.per_day_charge || 0)
-                    : Number(li.rate_per_unit || 0);
-                  return (
-                    <LabeledValue label="Comp-off amount"
-                      value={inr(Math.round(Number(li.comp_off_billable_qty) * perUnit * 100) / 100)} />
-                  );
-                })()}
-              </div>
-              {/* Rate basis — WHICH rate this project bills in (from the
-                  Project Employee record) and what one day / one hour of this
-                  employee costs in this period, so a manager can sanity-check
-                  the LOP deduction without a calculator. */}
-              {li?.billing_unit && (
-                <div className="rounded-control bg-surface-2 px-3 py-2 text-xs">
-                  <div className="font-semibold text-primary">
-                    Rate basis: {inr(li.rate_per_unit)}
-                    {" / "}
-                    {li.billing_unit === "Yearly" ? "Month (Yearly contract ÷ 12)" : unitWord(li.billing_unit)}
-                    <span className="ml-1 font-normal text-secondary">
-                      — from the employee&apos;s Commercial Details (priced per {unitWord(li.billing_unit).toLowerCase()})
-                    </span>
-                  </div>
-                  <div className="mt-0.5 text-secondary">
-                    {Number(li.working_days_in_period || 0) > 0 && (
-                      <>This period: {num(li.working_days_in_period)} billed days{" · "}</>
-                    )}
-                    {li.per_day_charge != null && <>{inr(li.per_day_charge)} / day</>}
-                    {li.per_day_charge != null && li.per_hour_charge != null && " · "}
-                    {li.per_hour_charge != null && (
-                      <>{inr(li.per_hour_charge)} / hour (at {num(li.hours_per_full_day)} h/day)</>
-                    )}
-                  </div>
-                </div>
-              )}
-              <RateUnitWarning line={li} />
-              <div className="space-y-1.5 border-t border-subtle pt-3">
-                <div className="flex justify-between">
-                  <span className="text-secondary">Qty × Rate</span>
-                  <span>
-                    {num(li?.total_billed_qty)} × {inr(li?.rate_per_unit)}
-                    {li?.billing_unit ? (
-                      <span className="text-secondary">
-                        {" / "}{li.billing_unit === "Yearly" ? "Month" : unitWord(li.billing_unit)}
-                      </span>
-                    ) : null}
-                  </span>
-                </div>
-                {Number(li?.loss_of_pay_days || 0) > 0 && li?.per_day_charge != null && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-secondary">incl. Loss of Pay deduction</span>
-                    <span className="text-danger">
-                      − {inr(Math.round(Number(li.loss_of_pay_days) * Number(li.per_day_charge) * 100) / 100)}
-                      {" "}({num(li.loss_of_pay_days)} day × {inr(li.per_day_charge)})
-                    </span>
-                  </div>
-                )}
-                {/* Monthly only: billed weekend/holiday work is an ADDITION on
-                    top of the flat month — say so, or "Comp-Off Billed 1" reads
-                    like a note while the sub-total looks unchanged. Hourly and
-                    Daily already carry these inside the quantity itself. */}
-                {(li?.billing_unit === "Monthly" || li?.billing_unit === "Yearly")
-                  && Number(li?.comp_off_billable_qty || 0) > 0 && li?.per_day_charge != null && (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-secondary">incl. Comp-off billed (weekend/holiday work)</span>
-                    <span className="text-success">
-                      + {inr(Math.round(Number(li.comp_off_billable_qty) * Number(li.per_day_charge) * 100) / 100)}
-                      {" "}({num(li.comp_off_billable_qty)} day × {inr(li.per_day_charge)})
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-secondary">Sub-total</span>
-                  <span className="font-semibold">{inr(totals.sub_total)}</span>
-                </div>
-                {totals.tax_amount != null ? (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-secondary">
-                        Tax (GST{totals.gst?.intra != null ? (totals.gst.intra ? " — CGST + SGST" : " — IGST") : ""})
-                      </span>
-                      <span>{inr(totals.tax_amount)}</span>
-                    </div>
-                    <div className="flex justify-between border-t border-subtle pt-1.5 text-base">
-                      <span className="font-semibold text-secondary">Grand total</span>
-                      <span className="font-bold text-primary">{inr(totals.grand_total)}</span>
-                    </div>
-                    <p className="text-[11px] text-muted">
-                      Tax is advisory here (computed from the auto-resolved PO/branch);
-                      the binding figure is fixed when the invoice is generated.
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-[11px] text-muted">
-                    Tax not computable yet — no PO or buyer state code on file.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-        </Modal>
+        <PaymentBreakdownModal
+          loading={!preview}
+          line={li}
+          totals={totals}
+          summary={summary}
+          sheet={sheet}
+          warning={<RateUnitWarning line={li} />}
+          onClose={() => setShowBreakdown(false)}
+        />
       )}
       <button
         type="button"
@@ -3786,6 +3836,9 @@ function InvoiceDetailsSection({
                   {preview.line_items[0]?.rate_unit_warning && (
                     <div className="mt-3"><RateUnitWarning line={preview.line_items[0]} /></div>
                   )}
+                  {preview.billing_progress?.split && (
+                    <SplitPartsList progress={preview.billing_progress} invoices={preview.invoices || []} />
+                  )}
                   {canInvoice && (
                     <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
                       {/* Approved but not invoiced: re-freeze against the CURRENT
@@ -3825,7 +3878,9 @@ function InvoiceDetailsSection({
                         onClick={() => setSelectingPo(true)}
                       >
                         <FilePlus2 size={15} />
-                        {preview.linked_invoice?.returned_at ? "Reissue Proforma…" : "Verify & Raise Proforma…"}
+                        {preview.billing_progress?.split
+                          ? "Raise the rest…"
+                          : preview.linked_invoice?.returned_at ? "Reissue Proforma…" : "Verify & Raise Proforma…"}
                       </button>
                     </div>
                   )}
@@ -3843,6 +3898,47 @@ function InvoiceDetailsSection({
           showToast={showToast}
         />
       )}
+    </div>
+  );
+}
+
+/** A timesheet billed on several POs (0141): one line per part — document,
+ * PO, its share, its status — and what is still to bill. */
+function SplitPartsList({ progress, invoices }: { progress: BillingProgress; invoices: InvoiceRef[] }) {
+  const parts = invoices.filter((i) => i.split_no != null).sort((a, b) => (a.split_no ?? 0) - (b.split_no ?? 0));
+  const unit = progress.billing_unit === "Daily" ? "days" : progress.billing_unit === "Hourly" ? "h" : "";
+  const pct = progress.total ? Math.min(100, Math.round((progress.invoiced / progress.total) * 100)) : 0;
+  return (
+    <div className="mt-4 rounded-card border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+          Billed on {parts.length} PO{parts.length === 1 ? "" : "s"}
+        </div>
+        <div className="text-xs text-secondary">
+          {inr(progress.invoiced)} of {inr(progress.total)} billed
+          {(progress.remaining ?? 0) > 0.005 && <> · <b className="text-warning">{inr(progress.remaining)} still to bill</b></>}
+          {progress.fully_billed && <> · <b className="text-success">fully billed</b></>}
+        </div>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-1" aria-hidden>
+        <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-600" style={{ width: `${pct}%` }} />
+      </div>
+      <ul className="mt-3 space-y-1.5">
+        {parts.map((p) => (
+          <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control bg-surface-1 px-3 py-2 text-sm">
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-amber-600 text-[11px] font-bold text-white">{p.split_no}</span>
+            <CrmLink to={`invoices/${p.id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">{p.invoice_number}</CrmLink>
+            <span className="text-xs text-muted">{p.po_number ? `PO ${p.po_number}` : "No PO"}</span>
+            {p.split_qty != null && unit && <span className="text-xs text-secondary">{p.split_qty} {unit}</span>}
+            <span className="ml-auto font-semibold tabular-nums text-primary">{inr(p.sub_total)}</span>
+            {p.kind === "Proforma"
+              ? <span className="rounded-full px-2 py-0.5 text-[11px] font-bold text-white" style={{ background: p.returned_at ? "#9a3412" : PROFORMA_COLOR }}>
+                  {p.returned_at ? "Proforma · returned" : "Proforma"}
+                </span>
+              : <StatusBadge status={p.payment_status} />}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -4040,6 +4136,22 @@ function ReportListFilters({
   );
 }
 
+const REPORT_TH = "border-b border-subtle bg-surface-2/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted";
+
+/** Worked hours · billable days · leave, stacked — one cell instead of four columns. */
+function HoursCell({ r }: { r: ReportRow }) {
+  return (
+    <span className="inline-flex flex-col text-xs leading-relaxed">
+      <span><b className="tabular-nums text-primary">{num(r.total_hours_worked)}</b> <span className="text-muted">h worked</span></span>
+      <span><b className="tabular-nums text-success">{num(r.actual_billable_day)}</b> <span className="text-muted">billable days</span>
+        {r.actual_billable_hours != null && <span className="text-muted"> · {num(r.actual_billable_hours)} h</span>}</span>
+      {(Number(r.total_leave_days || 0) > 0 || Number(r.total_leave_billable_days || 0) > 0) && (
+        <span className="text-muted">Leave {num(r.total_leave_days)}{Number(r.total_leave_billable_days || 0) > 0 ? ` (${num(r.total_leave_billable_days)} billable)` : ""}</span>
+      )}
+    </span>
+  );
+}
+
 function TimesheetDueReport({
   showToast, onAdd,
 }: {
@@ -4093,40 +4205,47 @@ function TimesheetDueReport({
         </div>
       ) : groups.map(([title, items]) => (
         <div key={title} className="elev-1 overflow-hidden rounded-panel">
-          <div className="border-b border-subtle px-4 py-3 text-sm font-bold text-primary">{title}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-2/60 px-4 py-2.5">
+            <span className="flex items-center gap-2 text-sm font-bold text-primary">
+              <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden /> {title}
+            </span>
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              {items.length} due
+            </span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-max text-sm">
               <thead>
-                <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-                  <th className={cell}>Add Timesheet</th>
-                  <th className={cell}>Project Employee</th>
-                  <th className={cell}>Project Type</th>
-                  <th className={cell}>Customer</th>
-                  <th className={cell}>Timesheet Start Date</th>
-                  <th className={cell}>Timesheet End Date</th>
+                <tr className={REPORT_TH}>
+                  <th className={cell}>Employee</th>
+                  <th className={cell}>Period</th>
                   <th className={cell}>Status</th>
+                  <th className={`${cell} text-right`}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((r, i) => (
-                  <tr key={`${r.project_id}-${r.employee_id}-${r.month}-${i}`} className="border-b border-subtle">
+                  <tr key={`${r.project_id}-${r.employee_id}-${r.month}-${i}`} className="row-hover border-b border-subtle last:border-b-0">
                     <td className={cell}>
+                      <TsIdentityCell employee={r.project_employee_name} project={pretty(r.project_type)} customer={r.customer_name} />
+                    </td>
+                    <td className={cell}>
+                      <span className="text-sm font-semibold text-primary">{fmtDate(r.period_start)}</span>
+                      <span className="mx-1 text-muted">→</span>
+                      <span className="text-sm font-semibold text-primary">{fmtDate(r.period_end)}</span>
+                    </td>
+                    <td className={cell}><StatusBadge status={r.status_label || r.status} label={tsStatusLabel(r.status_label || r.status)} /></td>
+                    <td className={`${cell} text-right`}>
                       {r.timesheet_id ? (
-                        <CrmLink to={`timesheets/${r.timesheet_id}`} className={`${btnSecondary} !px-2 !py-1 text-xs`}>
+                        <CrmLink to={`timesheets/${r.timesheet_id}`} className={`${btnSecondary} !px-2.5 !py-1 text-xs`}>
                           Open
                         </CrmLink>
                       ) : (
-                        <button type="button" className={`${btnPrimary} !px-2 !py-1 text-xs`} onClick={() => onAdd(r)}>
-                          Add Timesheet
+                        <button type="button" className={`${btnPrimary} !px-2.5 !py-1 text-xs`} onClick={() => onAdd(r)}>
+                          <Plus size={13} aria-hidden /> Add Timesheet
                         </button>
                       )}
                     </td>
-                    <td className={`${cell} font-semibold text-primary`}>{r.project_employee_name || "—"}</td>
-                    <td className={cell}>{pretty(r.project_type)}</td>
-                    <td className={cell}>{r.customer_name || "—"}</td>
-                    <td className={cell}>{fmtDate(r.period_start)}</td>
-                    <td className={cell}>{fmtDate(r.period_end)}</td>
-                    <td className={cell}><StatusBadge status={r.status_label || r.status} label={tsStatusLabel(r.status_label || r.status)} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -4200,24 +4319,18 @@ function SubmitForApprovalReport({ showToast }: { showToast: (msg: string, kind?
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm">
             <thead>
-              <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-                <th className={cell}>Action</th>
+              <tr className={REPORT_TH}>
+                <th className={cell}>Employee · project</th>
+                <th className={cell}>Month</th>
                 <th className={cell}>Status</th>
-                <th className={cell}>Timesheet Period</th>
-                <th className={cell}>Actual Billable Hours</th>
-                <th className={cell}>Actual Billable Day</th>
-                <th className={cell}>Date</th>
-                <th className={cell}>Project Title</th>
-                <th className={cell}>Project Type</th>
-                <th className={cell}>Total Hours Worked</th>
-                <th className={cell}>Total Leave Billable Days</th>
-                <th className={cell}>Reason for Rejection</th>
+                <th className={cell}>Hours &amp; billing</th>
+                <th className={`${cell} text-right`}>Action</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-muted">
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted">
                     {hasFilters ? "No timesheets match your filters" : "No timesheets pending submission"}
                   </td>
                 </tr>
@@ -4225,13 +4338,30 @@ function SubmitForApprovalReport({ showToast }: { showToast: (msg: string, kind?
               {filtered.map((r) => {
                 const id = r.id ?? r.timesheet_id!;
                 const isRejected = r.status === "Rejected";
+                const reason = r.reason_for_rejection || r.rejection_reason;
                 return (
-                  <tr key={id} className="border-b border-subtle">
+                  <tr key={id} className="row-hover border-b border-subtle last:border-b-0">
                     <td className={cell}>
-                      <div className="flex flex-wrap items-center gap-1.5">
+                      <TsIdentityCell employee={r.project_employee_name} project={r.project_title} customer={r.customer_name} />
+                    </td>
+                    <td className={cell}>
+                      <button type="button" className="text-left" onClick={() => crmNavigate(`timesheets/${id}`)}>
+                        <WorkMonth label={r.month_label || monthName(r.year, r.month) || "—"}
+                          period={r.period_label} />
+                      </button>
+                    </td>
+                    <td className={cell}>
+                      <span className="inline-flex max-w-[18rem] flex-col gap-1">
+                        <StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} />
+                        {isRejected && reason && <span className="text-[11px] leading-snug text-danger">{reason}</span>}
+                      </span>
+                    </td>
+                    <td className={cell}><HoursCell r={r} /></td>
+                    <td className={`${cell} text-right`}>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <button
                           type="button"
-                          className={`${btnSecondary} !px-2 !py-1 text-xs`}
+                          className={`${btnSecondary} !px-2.5 !py-1 text-xs`}
                           onClick={() => crmNavigate(`timesheets/${id}`)}
                           title="Open the timesheet to edit before submitting"
                         >
@@ -4239,32 +4369,14 @@ function SubmitForApprovalReport({ showToast }: { showToast: (msg: string, kind?
                         </button>
                         <button
                           type="button"
-                          className={`${btnPrimary} !px-2 !py-1 text-xs`}
+                          className={`${btnPrimary} !px-2.5 !py-1 text-xs`}
                           disabled={busyId === id}
                           onClick={() => submit(r)}
                         >
-                          {busyId === id ? "…" : isRejected ? "Resubmit" : "Submit for Approval"}
+                          <Send size={13} aria-hidden /> {busyId === id ? "…" : isRejected ? "Resubmit" : "Submit for Approval"}
                         </button>
                       </div>
                     </td>
-                    <td className={cell}><StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} /></td>
-                    <td className={cell}>
-                      <button
-                        type="button"
-                        className="text-left font-semibold text-sky-600 hover:underline dark:text-sky-400"
-                        onClick={() => crmNavigate(`timesheets/${id}`)}
-                      >
-                        {r.timesheet_period || fmtPeriod(r.period_start, r.period_end)}
-                      </button>
-                    </td>
-                    <td className={cell}>{num(r.actual_billable_hours)}</td>
-                    <td className={cell}>{num(r.actual_billable_day)}</td>
-                    <td className={cell}>{fmtDate(r.date || r.created_at)}</td>
-                    <td className={cell}>{r.project_title || "—"}</td>
-                    <td className={cell}>{pretty(r.project_type)}</td>
-                    <td className={cell}>{num(r.total_hours_worked)}</td>
-                    <td className={cell}>{num(r.total_leave_billable_days)}</td>
-                    <td className={cell}>{r.reason_for_rejection || r.rejection_reason || "—"}</td>
                   </tr>
                 );
               })}
@@ -4335,24 +4447,20 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm">
             <thead>
-              <tr className="border-b border-subtle text-left text-xs font-bold uppercase tracking-wide text-muted">
-                <th className={cell}>Actions</th>
-                <th className={cell}>Status</th>
-                <th className={cell}>Date</th>
-                <th className={cell}>Project Type</th>
-                <th className={cell}>Project Employee</th>
-                <th className={cell}>Period</th>
-                <th className={cell}>Total Hours Worked</th>
-                <th className={cell}>Total Leave Billable Days</th>
-                <th className={cell}>Actual Billable Day</th>
-                <th className={cell}>Total Leave Days</th>
+              <tr className={REPORT_TH}>
+                <th className={cell}>Employee · project</th>
+                <th className={cell}>Month</th>
+                <th className={cell}>Where it stands</th>
+                <th className={cell}>Hours &amp; billing</th>
+                <th className={cell}>Invoice</th>
                 <th className={cell}>Attachments</th>
+                <th className={`${cell} sticky right-0 bg-surface-2 text-right shadow-[-8px_0_12px_-10px_rgba(15,23,42,0.35)]`}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-muted">
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted">
                     {hasFilters ? "No timesheets match your filters" : "No timesheets awaiting approval"}
                   </td>
                 </tr>
@@ -4363,7 +4471,10 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
                 const approved = r.status === "Approved";
                 // A Proforma Finance RETURNED is raised again (replaced), so it does not block.
                 const returnedProforma = r.invoice?.kind === "Proforma" && !!r.invoice?.returned_at;
-                const hasInvoice = !!r.invoice && !returnedProforma;
+                // A sheet split across POs with money left can raise the rest (0141).
+                const bp = (r as any).billing_progress as TsBilling;
+                const splitOpen = !!bp?.split && !bp?.fully_billed;
+                const hasInvoice = !!r.invoice && !returnedProforma && !splitOpen;
                 return (
                   <tr
                     key={id}
@@ -4371,11 +4482,30 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
                     onClick={() => crmNavigate(`timesheets/${id}`)}
                     title="Open the full timesheet"
                   >
+                    <td className={cell}>
+                      <TsIdentityCell employee={r.project_employee_name} project={r.project_title || pretty(r.project_type)} customer={r.customer_name} />
+                    </td>
+                    <td className={cell}>
+                      <WorkMonth label={r.month_label || monthName(r.year, r.month) || "—"}
+                        period={r.period_label} />
+                    </td>
+                    <td className={cell}>
+                      <span className="inline-flex flex-col gap-1">
+                        <StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} />
+                        <TsMiniRail status={r.status} invoice={r.invoice} />
+                      </span>
+                    </td>
+                    <td className={cell}><HoursCell r={r} /></td>
+                    <td className={cell}><TsInvoiceCell invoice={r.invoice} billing={(r as any).billing_progress} status={r.status} /></td>
+                    {/* Uploading or removing an attachment is its own intent too. */}
+                    <td className={cell} onClick={(e) => e.stopPropagation()}>
+                      <AttachmentList timesheetId={id} attachments={r.attachments} onChange={load} showToast={showToast} />
+                    </td>
                     {/* stopPropagation: a button in here is its own intent — it
                         must not also open the row behind it. Same rule
                         DataTable applies to its selection checkbox. */}
-                    <td className={cell} onClick={(e) => e.stopPropagation()}>
-                      <div className="flex flex-wrap gap-1">
+                    <td className={`${cell} sticky right-0 bg-surface-1 text-right shadow-[-8px_0_12px_-10px_rgba(15,23,42,0.35)]`} onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap justify-end gap-1">
                         {/* Approve / Reject deliberately do NOT live here. A
                             decision taken off a summary row is a decision taken
                             without reading the timesheet, so the only route to
@@ -4398,23 +4528,10 @@ function TimesheetApprovalsReport({ showToast }: { showToast: (msg: string, kind
                             title="Confirm the invoice format and funding PO, then raise the proforma"
                             onClick={() => setInvoicingId(id)}
                           >
-                            {returnedProforma ? "Reissue Proforma…" : "Raise Proforma…"}
+                            {splitOpen ? "Raise the rest…" : returnedProforma ? "Reissue Proforma…" : "Raise Proforma…"}
                           </button>
                         )}
                       </div>
-                    </td>
-                    <td className={cell}><StatusBadge status={r.status} label={r.status_label || tsStatusLabel(r.status)} /></td>
-                    <td className={cell}>{fmtDate(r.date || r.created_at)}</td>
-                    <td className={cell}>{pretty(r.project_type)}</td>
-                    <td className={cell}>{r.project_employee_name || "—"}</td>
-                    <td className={cell}>{r.timesheet_period || fmtPeriod(r.period_start, r.period_end)}</td>
-                    <td className={cell}>{num(r.total_hours_worked)}</td>
-                    <td className={cell}>{num(r.total_leave_billable_days)}</td>
-                    <td className={cell}>{num(r.actual_billable_day)}</td>
-                    <td className={cell}>{num(r.total_leave_days)}</td>
-                    {/* Uploading or removing an attachment is its own intent too. */}
-                    <td className={cell} onClick={(e) => e.stopPropagation()}>
-                      <AttachmentList timesheetId={id} attachments={r.attachments} onChange={load} showToast={showToast} />
                     </td>
                   </tr>
                 );
@@ -4653,11 +4770,13 @@ function TimesheetDuePanel({ showToast }: { showToast: (msg: string, kind?: "ok"
 }
 
 function RejectModal({
-  timesheetId, undoInvoice, onClose, onDone, onError,
+  timesheetId, undoInvoice, person, onClose, onDone, onError,
 }: {
   timesheetId: number;
   /** Admin/CEO only: the invoice that will be DELETED along with the reject. */
   undoInvoice?: { id: number; invoice_number: string; payment_status: string } | null;
+  /** Whose sheet, which month — the dialog header (20 Oct 2026 redesign). */
+  person?: { name: string; meta?: React.ReactNode } | null;
   onClose: () => void;
   onDone: (msg?: string) => void;
   onError: (msg: string) => void;
@@ -4667,9 +4786,11 @@ function RejectModal({
   const [serverError, setServerError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
+  const short = reason.trim().length < 10;
 
   const submit = async () => {
-    if (reason.trim().length < 10) {
+    if (busy) return;
+    if (short) {
       setError("Rejection reason is mandatory (minimum 10 characters)");
       return;
     }
@@ -4695,23 +4816,36 @@ function RejectModal({
       setBusy(false);
     }
   };
+  useCtrlEnter(() => void submit());
 
   return (
     <Modal
-      title={<span className="sr-only">Reject Timesheet</span>}
-      onClose={onClose}
-      scopeClassName="crm-wizard wiz-noise"
-      bodyClassName="!px-0 !py-0"
+      title={undoInvoice ? "Undo invoice & reject timesheet" : "Reject timesheet"}
+      medium
+      onClose={() => { if (!busy) onClose(); }}
+      dirty={reason.trim().length > 0}
+      hero={
+        <DialogHero tone="rose" icon={undoInvoice ? Undo2 : X}
+          eyebrow={undoInvoice ? "Admin / CEO undo" : "Timesheet decision"}
+          title={undoInvoice ? "Undo the invoice & reject" : "Send this timesheet back"}
+          subtitle={undoInvoice
+            ? `Invoice ${undoInvoice.invoice_number} is deleted and the sheet goes back for correction.`
+            : "It goes back to whoever fills it, with your reason, to correct and resubmit."}
+          person={person}
+          flow={{ steps: ["Submitted", "Rejected", "Fixed & resubmitted"], current: 1 }} />
+      }
+      footer={
+        <DialogActions tone="rose" icon={undoInvoice ? Undo2 : X}
+          label={undoInvoice ? "Undo invoice & reject" : "Reject timesheet"}
+          busyLabel={undoInvoice ? "Undoing…" : "Rejecting…"} busy={busy}
+          disabled={!!undoInvoice && !confirmUndo}
+          onCancel={onClose} onConfirm={() => void submit()}
+          hint={short ? <span className="text-warning">A reason of at least 10 characters is needed</span> : undefined} />
+      }
     >
-      <WizFormShell
-        title={undoInvoice ? "Undo Invoice & Reject Timesheet" : "Reject Timesheet"}
-        subtitle={undoInvoice
-          ? `Admin/CEO undo: invoice ${undoInvoice.invoice_number} is deleted and the sheet goes back to the employee for correction. Provide a clear reason (minimum 10 characters).`
-          : "Provide a clear reason (minimum 10 characters). The employee will be notified."}
-        icon={<X size={20} aria-hidden />}
-      >
+      <div className="space-y-4">
         {undoInvoice && (
-          <div className="mb-4 rounded-card border border-danger/40 bg-danger-soft px-3.5 py-3 text-sm text-secondary">
+          <div className="rounded-card border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm text-secondary dark:border-rose-500/40 dark:bg-rose-950/30">
             <div className="flex items-start gap-2">
               <AlertTriangle size={16} className="mt-0.5 shrink-0 text-danger" />
               <div>
@@ -4728,24 +4862,20 @@ function RejectModal({
             </label>
           </div>
         )}
-        <WizardField label="Rejection reason" required error={error}>
-          <textarea
-            className={`${inputCls} min-h-24`}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Explain why this timesheet is being rejected (min 10 characters)…"
-          />
-        </WizardField>
-        <div className="mt-1 text-xs text-muted">{reason.trim().length}/10 characters minimum</div>
-        <ActionError error={serverError} className="mt-3" />
-        <div className={wizFooterRow}>
-          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={`${btnDanger} ml-auto h-10 rounded-xl px-4`} onClick={submit}
-            disabled={busy || (!!undoInvoice && !confirmUndo)}>
-            {busy ? (undoInvoice ? "Undoing…" : "Rejecting…") : undoInvoice ? "Undo invoice & reject" : "Reject"}
-          </button>
-        </div>
-      </WizFormShell>
+        <ReasonBox id="ts-reject-reason" label="Why is it going back?" value={reason}
+          onChange={(v) => { setReason(v); if (error) setError(""); }} required min={10} tone="rose"
+          placeholder="Explain what has to be corrected (min 10 characters)…" error={error}
+          picks={["Hours do not match the attendance", "Leave not applied on absent days",
+            "Wrong project / month", "Customer-signed sheet missing", "Week-off / holiday marked wrongly"]} />
+        <WhatHappens tone="rose" items={[
+          { icon: Undo2, text: <>The sheet returns to <b>Rejected</b> — it can be edited and submitted again.</> },
+          { icon: Bell, text: <>The employee and whoever submitted it are told, with your reason.</> },
+          { icon: Receipt, text: undoInvoice
+            ? <>The invoice and its PO drawdown are reversed.</>
+            : <>Nothing is billed until it is approved again.</> },
+        ]} />
+        <DialogFailure message={serverError} />
+      </div>
     </Modal>
   );
 }

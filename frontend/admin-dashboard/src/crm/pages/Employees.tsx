@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Briefcase, Building2, CalendarDays, ChevronDown, Download, FileSpreadsheet, FolderOpen, GraduationCap,
-  History, IdCard, LogOut, Mail, MapPin, Pencil, Phone, Plus, Save, Trash2, User, UserCheck, Users, X,
+  History, IdCard, LogOut, Mail, UserX, MapPin, Pencil, Phone, Plus, Save, Trash2, User, UserCheck, Users, X,
   type LucideIcon,
 } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
@@ -39,6 +39,7 @@ import {
   validationError, visibleFields, type EmpCardKey, type EmpDraftValue, type EmpField,
 } from "../lib/employeeFields";
 import { usePageTab, useSessionState } from "../lib/pageState";
+import { DialogActions, DialogFailure, DialogHero, DialogSection, QuickPicks, WhatHappens } from "../components/dialogKit";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -291,11 +292,12 @@ function useDraft<T extends object>(makeSeed: () => T) {
 /** PUT a partial employee payload; toast + reload on success. */
 function useEmployeeSave(employeeId: number | string, onSaved: () => void, showToast: ShowToast) {
   const [busy, setBusy] = useState(false);
-  const save = async (payload: any, okMsg = "Saved"): Promise<boolean> => {
+  /** `okMsg` null = show the server's own message (e.g. "marked Inactive"). */
+  const save = async (payload: any, okMsg: string | null = "Saved"): Promise<boolean> => {
     setBusy(true);
     try {
-      await crmPut(`/api/employees/${employeeId}`, payload);
-      showToast(okMsg);
+      const res = await crmPut(`/api/employees/${employeeId}`, payload);
+      showToast(okMsg ?? (res.message || "Saved"));
       onSaved();
       return true;
     } catch (e: any) {
@@ -996,6 +998,7 @@ export function EmployeeDetailPage() {
   /* Lazy-load flag: the 360° History view mounts (and fetches) only on first
    * open, then stays mounted (hidden) so switching tabs doesn't refetch. */
   const [historyOpened, setHistoryOpened] = useState(false);
+  const [exitOpen, setExitOpen] = useState(false);
   const [toast, showToast] = useToast();
 
   const load = () => {
@@ -1056,8 +1059,19 @@ export function EmployeeDetailPage() {
                     : <span className={pillCls}><Mail size={12} aria-hidden /> {emp.email}</span>
                 )}
                 {emp.phone && <span className={pillCls}><Phone size={12} aria-hidden /> {emp.phone}</span>}
+                {emp.last_working_day && (
+                  <span className={`${pillCls} bg-rose-500/30`} title="Last working day">
+                    <LogOut size={12} aria-hidden /> {emp.is_active ? "Leaving" : "Left"} {fmtDate(emp.last_working_day)}
+                  </span>
+                )}
               </div>
             </div>
+            {canWrite && (emp.is_active || emp.last_working_day) && (
+              <button type="button" onClick={() => setExitOpen(true)}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-control bg-[#fff] px-3.5 py-2 text-sm font-bold text-rose-700 shadow-raised hover:bg-rose-50 ${focusRing}`}>
+                <UserX size={16} aria-hidden /> {emp.last_working_day ? "Change exit date" : "Exit date"}
+              </button>
+            )}
           </div>
         </div>
         <dl className="grid grid-cols-2 border-t border-subtle bg-surface-1 sm:grid-cols-4">
@@ -1098,6 +1112,9 @@ export function EmployeeDetailPage() {
       </header>
 
       {tab === "profile" && <EmployeeProfile {...common} />}
+
+      {exitOpen && <ExitDateModal emp={emp} onClose={() => setExitOpen(false)}
+        onSaved={(msg) => { setExitOpen(false); showToast(msg); load(); }} />}
 
       {historyOpened && (
         <div className={tab === "employee_history" ? undefined : "hidden"}>
@@ -2170,7 +2187,7 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
       date_of_resignation: v.is_resigned ? (v.date_of_resignation || null) : null,
       notice_period_days: v.is_resigned ? (num(v.notice_period_days) ?? null) : null,
       last_working_day: v.is_resigned ? (v.last_working_day || null) : null,
-    }, "Separation details saved");
+    }, null);
     if (ok) d.cancel();
   };
 
@@ -2188,6 +2205,7 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
       onSave={submit}
     >
       {d.editing ? (
+        <div className="space-y-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex items-end gap-2 pb-1.5">
             <Toggle checked={d.draft!.is_resigned} onChange={(v) => d.patch({ is_resigned: v })} label="Is resigned" />
@@ -2222,6 +2240,8 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
             />
           </Field>
         </div>
+        <SeparationStatusHint lwd={d.draft!.is_resigned ? d.draft!.last_working_day : ""} />
+        </div>
       ) : !emp.is_resigned ? (
         <p className="text-sm text-secondary">No resignation recorded — this person is currently employed.</p>
       ) : (
@@ -2230,9 +2250,143 @@ function SeparationSection({ emp, canWrite, onSaved, showToast }: SectionProps) 
           <InfoItem label="Date of resignation">{fmtDate(emp.date_of_resignation)}</InfoItem>
           <InfoItem label="Notice period (days)">{emp.notice_period_days ?? "—"}</InfoItem>
           <InfoItem label="Last working day">{fmtDate(emp.last_working_day)}</InfoItem>
+          {emp.is_active && emp.last_working_day && (
+            <p className="col-span-2 text-xs font-semibold text-amber-700 md:col-span-4 dark:text-amber-300">
+              On notice — becomes Inactive automatically the day after {fmtDate(emp.last_working_day)}.
+            </p>
+          )}
         </div>
       )}
     </SectionCard>
+  );
+}
+
+/** What saving the separation does to the Status (16 Oct 2026, server rule
+ *  `employee_separation`): a past last working day → Inactive now; a future
+ *  one → Active until then, Inactive the day after. */
+/* ------------------------------------------------ Exit date (19 Oct 2026) */
+
+const dayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const addDaysKey = (key: string, n: number) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return dayKey(new Date(y, m - 1, d + n));
+};
+/** Whole days from `a` to `b` (both YYYY-MM-DD, local). */
+export const daysBetweenKeys = (a: string, b: string) => {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  return Math.round((new Date(by, bm - 1, bd).getTime() - new Date(ay, am - 1, ad).getTime()) / 86400000);
+};
+
+/**
+ * HR records the exit in one step from the employee header (user ask, 19 Oct 2026):
+ * the last working day (+ the resignation date). The server does the rest —
+ * `services/employee_separation`: marked resigned at once, Inactive at once when
+ * the day has passed, otherwise Active ("on notice") until the daily job turns
+ * them Inactive the day after the last working day.
+ */
+function ExitDateModal({ emp, onClose, onSaved }: { emp: any; onClose: () => void; onSaved: (msg: string) => void }) {
+  const today = dayKey(new Date());
+  const [resigned, setResigned] = useState<string>(emp.date_of_resignation || today);
+  const [lwd, setLwd] = useState<string>(emp.last_working_day || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const notice = resigned && lwd ? daysBetweenKeys(resigned, lwd) : null;
+  const problem = !lwd ? "Pick the last working day"
+    : resigned && lwd < resigned ? "The last working day cannot be before the resignation date" : null;
+  const past = !!lwd && lwd < today;
+  const endOfMonth = (() => { const d = new Date(); return dayKey(new Date(d.getFullYear(), d.getMonth() + 1, 0)); })();
+  const base = resigned || today;
+  const picks = [
+    { label: "Today", value: today },
+    { label: "End of this month", value: endOfMonth },
+    { label: "30 days notice", value: addDaysKey(base, 30) },
+    { label: "60 days notice", value: addDaysKey(base, 60) },
+    { label: "90 days notice", value: addDaysKey(base, 90) },
+  ];
+
+  const send = async (payload: any) => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await crmPut(`/api/employees/${emp.id}`, payload);
+      onSaved(res.message || "Saved");
+    } catch (e: any) {
+      setErr(e?.message || "Could not save the exit date");
+    } finally { setBusy(false); }
+  };
+  const save = () => {
+    if (problem) return;
+    void send({
+      is_resigned: true,
+      date_of_resignation: resigned || null,
+      last_working_day: lwd,
+      notice_period_days: notice != null && notice >= 0 ? notice : null,
+    });
+  };
+  const clear = () => void send({ is_resigned: false, date_of_resignation: null, last_working_day: null, notice_period_days: null });
+
+  return (
+    <Modal title="Exit date" onClose={onClose} medium dirty={lwd !== (emp.last_working_day || "")}
+      hero={<DialogHero tone="rose" icon={UserX} eyebrow="Employee exit" title="Record the exit date"
+        person={{ name: emp.full_name, meta: [emp.employee_code, emp.designation_name].filter(Boolean).join(" · ") }}
+        flow={{ steps: ["Exit date recorded", "On notice (Active)", "Inactive the day after"], current: 0 }} />}>
+      <div className="space-y-4">
+        <DialogSection n={1} tone="rose" title="Resignation date" optional done={!!resigned}
+          hint="When they handed in their notice — used to work out the notice period.">
+          <input type="date" className={`${inputCls} !w-52`} value={resigned} max={lwd || undefined}
+            onChange={(e) => setResigned(e.target.value)} aria-label="Resignation date" />
+        </DialogSection>
+        <DialogSection n={2} tone="rose" title="Last working day" done={!!lwd && !problem}
+          hint="The last day they work. They become Inactive the next day.">
+          <div className="space-y-3">
+            <input type="date" className={`${inputCls} !w-52`} value={lwd} min={resigned || undefined}
+              onChange={(e) => setLwd(e.target.value)} aria-label="Last working day" />
+            <QuickPicks tone="rose" label="Quick picks for the last working day" options={picks.map((p) => p.label)} active={picks.find((p) => p.value === lwd)?.label}
+              onPick={(label) => { const p = picks.find((x) => x.label === label); if (p) setLwd(p.value); }} />
+            {notice != null && notice >= 0 && (
+              <p className="text-xs font-semibold text-secondary">Notice period: {notice} day{notice === 1 ? "" : "s"}</p>
+            )}
+          </div>
+        </DialogSection>
+        {lwd && !problem && (
+          <WhatHappens tone="rose" items={past ? [
+            { icon: UserX, text: <>The last working day has passed — <b>{emp.full_name}</b> becomes <b>Inactive</b> as soon as you save.</> },
+          ] : [
+            { icon: UserCheck, text: <>Stays <b>Active</b> (on notice) until {fmtDate(lwd)}.</> },
+            { icon: UserX, text: <>Becomes <b>Inactive</b> automatically on {fmtDate(addDaysKey(lwd, 1))} — nothing else to do.</> },
+          ]} />
+        )}
+        <DialogFailure message={err} />
+        {emp.last_working_day && emp.is_active && (
+          <button type="button" className="text-xs font-semibold text-rose-700 underline-offset-2 hover:underline dark:text-rose-300"
+            onClick={clear} disabled={busy}>
+            Remove the exit date (they are staying)
+          </button>
+        )}
+      </div>
+      <div className="mt-4 border-t border-subtle pt-3">
+        <DialogActions onCancel={onClose} busy={busy} tone="rose" icon={UserX}
+          label={past ? "Save & mark Inactive" : "Save exit date"} disabled={!!problem} onConfirm={save}
+          hint={problem || undefined} />
+      </div>
+    </Modal>
+  );
+}
+
+function SeparationStatusHint({ lwd }: { lwd: string }) {
+  if (!lwd) return null;
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const past = lwd < todayKey;
+  return (
+    <p className={`rounded-control px-3 py-2 text-xs font-semibold ${past
+      ? "bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-200"
+      : "bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"}`}>
+      {past
+        ? "The last working day has passed — saving marks this employee Inactive."
+        : `Stays Active until ${fmtDate(lwd)}, then becomes Inactive automatically.`}
+    </p>
   );
 }
 

@@ -23,6 +23,7 @@ import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader
 import { RmgApproveRowButtons } from "../components/RmgApprovalsStrip";
 import { AssignTasButton, InlinePriority, PositionTeamPanel, PriorityPill, TaChip, type TaAssignment } from "../components/PositionTeamPanel";
 import { JdSkillsCardForRequirement } from "../components/JdSkillsCard";
+import { ApplyLinkCard } from "../components/ApplyLinkCard";
 import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -2245,6 +2246,11 @@ export function OpportunityDetailPage() {
               (RMG · Sales · Sales Head · TA · GM by grant) adds a missing JD here. */}
           {opp.requirement_id ? (
             <JdSkillsCardForRequirement requirementId={opp.requirement_id} toast={showToast} />
+          ) : null}
+          {/* Public application link (19 Oct 2026, user ask): TA posts it on Naukri /
+              LinkedIn once RMG approves; applications land here at Sourcing. */}
+          {opp.requirement_id ? (
+            <ApplyLinkCard requirementId={opp.requirement_id} toast={showToast} />
           ) : null}
           {attachments.length > 0 && (
             <CollapsibleCard

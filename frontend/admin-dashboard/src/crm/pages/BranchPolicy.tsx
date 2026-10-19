@@ -24,6 +24,11 @@ import {
 import { BranchRateCardEditor } from "./RateCards";
 import { usePageTab } from "../lib/pageState";
 
+/* Received Amount (16 Oct 2026): the money THIS branch paid, recorded here or
+   from Finance's "Received Amount" page — one store, scoped to the branch. */
+const LazyBranchReceipts = React.lazy(() =>
+  import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
+
 const OBSERVANCE = ["Mandatory", "Optional"];
 const fmtDate = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString() : "—");
 
@@ -261,6 +266,7 @@ export function BranchPolicyPage() {
             : []),
           ...(canSeeTimesheets ? [{ key: "timesheets", label: "Timesheets" }] : []),
           ...(canSeeInvoices ? [{ key: "invoices", label: "Invoices" }] : []),
+          ...(canSeeInvoices ? [{ key: "receipts", label: "Received Amount" }] : []),
           ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
           ...(canSeeEmployees ? [{ key: "employees", label: "Employees Working" }] : []),
           ...(canSeeCtcSlab ? [{ key: "ctc-slab", label: "CTC Slab" }] : []),
@@ -292,6 +298,16 @@ export function BranchPolicyPage() {
       {tab === "invoices" && canSeeInvoices && (
         <div className="rounded-card border border-subtle bg-surface-1 p-4">
           <BranchInvoicesTab projects={data.linked_projects} />
+        </div>
+      )}
+      {tab === "receipts" && canSeeInvoices && (
+        <div className="rounded-card border border-subtle bg-surface-1 p-4">
+          <React.Suspense fallback={<p className="text-sm text-muted">Loading…</p>}>
+            <LazyBranchReceipts scope={{
+              customerId: data.customer_id, customerName: data.customer_name,
+              branchId: data.id, branchName: data.branch_name,
+            }} />
+          </React.Suspense>
         </div>
       )}
       {tab === "pos" && canSeePos && (

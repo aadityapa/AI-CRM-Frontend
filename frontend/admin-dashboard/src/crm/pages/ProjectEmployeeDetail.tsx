@@ -2,7 +2,8 @@
  * Tabs: General | Leave | Holidays | Timesheet | Invoice.
  * API: GET/PUT /api/projects/employees/{pe_id}, leave sub-resources. */
 import React, { useCallback, useEffect, useState } from "react";
-import { CalendarDays, CalendarOff, ExternalLink, Plus, RefreshCw, Save } from "lucide-react";
+import { CalendarDays, CalendarOff, CalendarPlus, ExternalLink, Plus, RefreshCw, Save } from "lucide-react";
+import { DialogHero } from "../components/dialogKit";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
@@ -394,7 +395,10 @@ function PeCarryForwardModal({
   };
 
   return (
-    <Modal title="Add previous-year carry forward" onClose={onClose}>
+    <Modal title="Add previous-year carry forward" onClose={onClose} medium
+      hero={<DialogHero tone="emerald" icon={CalendarPlus} eyebrow="Leave · carry forward"
+        title="Previous-year carry forward"
+        subtitle="Leave the customer carried over from an earlier year for this mapping." />}>
       <form onSubmit={submit} className="space-y-4">
         <p className="text-sm text-muted">
           Leave the customer carried over from a previous year for this mapping. It is added to the
@@ -429,10 +433,11 @@ function PeCarryForwardModal({
           </p>
         )}
         {apiError && <p className="text-sm font-semibold text-danger" role="alert">{apiError}</p>}
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-subtle pt-3">
           <button type="button" className={btnSecondary} onClick={onClose}>Cancel</button>
-          <button type="submit" className={btnPrimary} disabled={busy || !rows.length}>
-            {busy ? "Saving…" : "Save carry forward"}
+          <button type="submit" disabled={busy || !rows.length}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-700 px-4 text-sm font-semibold text-white shadow-md transition-all duration-micro hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
+            <CalendarPlus className="h-4 w-4" aria-hidden /> {busy ? "Saving…" : "Save carry forward"}
           </button>
         </div>
       </form>

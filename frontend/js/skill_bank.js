@@ -63,6 +63,11 @@ function injectStyles() {
     --sb-coding:#34d399;--sb-coding-soft:rgba(52,211,153,.16);--sb-danger:#f87171;--sb-danger-soft:rgba(248,113,113,.16);--sb-warn:#fcd34d;
     --sb-shadow:0 30px 80px rgba(0,0,0,.55);--sb-overlay:rgba(2,6,23,.82)}
   .kxsb-theme *{box-sizing:border-box}
+  .kxsb-ws:focus{outline:none}
+  :where(.kxsb-theme) :is(button,select,input,textarea){width:auto;margin:0;min-height:0;letter-spacing:normal;box-shadow:none;transition:none}
+  :where(.kxsb-theme) button{position:relative;overflow:visible;padding:0;border:0;background:none;color:inherit;font:inherit;text-transform:none}
+  :where(.kxsb-theme) button:hover,:where(.kxsb-theme) button:active{transform:none;filter:none}
+  :where(.kxsb-theme) button::after{content:none;display:none}
   .kxsb-overlay{position:fixed;inset:0;z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px;
     background:radial-gradient(circle at 25% 15%,rgba(37,99,235,.22),transparent 45%),var(--sb-overlay);backdrop-filter:blur(8px)}
   .kxsb-card{width:min(880px,100%);max-height:calc(100vh - 32px);overflow:auto;border-radius:20px;background:var(--sb-card);
@@ -153,7 +158,7 @@ function injectStyles() {
   .kxsb-timebar>i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#2563eb,#4f46e5);transition:width .5s linear}
   .kxsb-timebar.low>i{background:var(--sb-danger)}
   .kxsb-ws-body{flex:1;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:14px;padding:14px;min-height:0}
-  .kxsb-ws-body.pseudo{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .kxsb-ws-body.pseudo{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
   .kxsb-pane{display:flex;flex-direction:column;min-height:0;border-radius:14px;background:var(--sb-card);border:1px solid var(--sb-border);overflow:hidden}
   .kxsb-pane-h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--sb-border);font-size:12px;font-weight:800;
     letter-spacing:.08em;text-transform:uppercase;color:var(--sb-muted)}
@@ -163,7 +168,7 @@ function injectStyles() {
   .kxsb-hint{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--sb-card-2);border:1px dashed var(--sb-border-2);font-size:12.5px;color:var(--sb-muted);line-height:1.5}
   .kxsb-snippet{margin-top:14px}
   .kxsb-opts{display:flex;flex-direction:column;gap:10px}
-  .kxsb-opt{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;border-radius:12px;cursor:pointer;border:1.5px solid var(--sb-border-2);
+  .kxsb-opt{display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:12px 14px;border-radius:12px;cursor:pointer;border:1.5px solid var(--sb-border-2);
     background:var(--sb-card-2);color:var(--sb-fg);font:500 15px/1.45 "JetBrains Mono",Consolas,monospace;text-align:left;transition:border-color .15s,background .15s}
   .kxsb-opt:hover{border-color:var(--sb-pseudo)}
   .kxsb-opt[aria-checked="true"]{border-color:var(--sb-pseudo);background:var(--sb-pseudo-soft)}
@@ -182,25 +187,29 @@ function injectStyles() {
   .kxsb-note.warn{color:var(--sb-warn);font-weight:700}
   .kxsb-ws-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;background:var(--sb-card);border-top:1px solid var(--sb-border)}
   .kxsb-ws-foot .kxsb-btn{height:42px}
-  .kxsb-ws-foot .grow{flex:1;min-width:0}
-  /* camera window */
-  .kxsb-cam{position:absolute;left:24px;bottom:78px;z-index:2;width:196px;border-radius:14px;overflow:hidden;background:#000;
-    border:2px solid var(--sb-card);box-shadow:0 12px 30px rgba(0,0,0,.35)}
-  .kxsb-cam video{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;transform:scaleX(-1)}
-  .kxsb-cam-bar{position:absolute;inset:auto 0 0 0;display:flex;align-items:center;gap:6px;padding:5px 8px;background:linear-gradient(transparent,rgba(0,0,0,.7));
-    color:#fff;font-size:11px;font-weight:700}
-  .kxsb-cam-bar .dot{width:7px;height:7px;border-radius:999px;background:#ef4444;animation:kxsbBlink 1.4s infinite}
-  .kxsb-cam-bar button{margin-left:auto;display:grid;place-items:center;width:22px;height:22px;border-radius:6px;border:0;background:rgba(255,255,255,.18);color:#fff;cursor:pointer}
-  .kxsb-cam-bar button svg{width:13px;height:13px}
-  .kxsb-cam.min{width:auto}
-  .kxsb-cam.min video{display:none}
-  .kxsb-cam.min .kxsb-cam-bar{position:static;background:#0f172a}
-  .kxsb-cam.off{display:none}
-  .kxsb-ws.has-cam .kxsb-left .kxsb-pane-b{padding-bottom:170px}
+  .kxsb-ws-foot .grow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* camera card — docked in a column, never floating over the question (16 Oct 2026) */
+  .kxsb-col{display:flex;flex-direction:column;gap:14px;min-height:0;min-width:0}
+  .kxsb-col>.kxsb-pane{flex:1}
+  .kxsb-camcard{flex:none;display:flex;align-items:stretch;gap:12px;padding:10px;border-radius:14px;background:var(--sb-card);border:1px solid var(--sb-border)}
+  .kxsb-camvid{position:relative;flex:none;width:clamp(150px,15vw,220px);aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#0b1020}
+  .kxsb-camvid video{display:block;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  .kxsb-camvid .wait{position:absolute;inset:0;display:grid;place-items:center;padding:8px;text-align:center;color:#94a3b8;font-size:11.5px;font-weight:600}
+  .kxsb-camvid.live .wait{display:none}
+  .kxsb-camrec{position:absolute;left:8px;top:8px;display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;
+    background:rgba(15,23,42,.72);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em}
+  .kxsb-camrec .dot{width:7px;height:7px;border-radius:999px;background:#ef4444;animation:kxsbBlink 1.4s infinite}
+  .kxsb-caminfo{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:0;font-size:12.5px;color:var(--sb-muted);line-height:1.45}
+  .kxsb-caminfo b{color:var(--sb-fg);font-size:13px}
+  .kxsb-picked{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--sb-fg-2)}
+  .kxsb-picked i{font-style:normal;display:grid;place-items:center;width:24px;height:24px;border-radius:999px;background:var(--sb-pseudo);color:#fff;font-size:12px;font-weight:800}
+  .kxsb-opts.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kxsb-ws .kxsb-snippet .kxce{font-size:14px}
   @keyframes kxsbBlink{50%{opacity:.25}}
-  @media (prefers-reduced-motion:reduce){.kxsb-cam-bar .dot{animation:none}.kxsb-seg{transition:none}}
-  @media (max-width:980px){.kxsb-ws-body,.kxsb-ws-body.pseudo{grid-template-columns:1fr;overflow:auto}.kxsb-pane{min-height:320px}
-    .kxsb-ws-strip{order:3;flex-basis:100%}.kxsb-cam{width:132px;bottom:76px}}
+  @media (prefers-reduced-motion:reduce){.kxsb-camrec .dot{animation:none}.kxsb-seg{transition:none}}
+  @media (max-width:980px){.kxsb-ws-body,.kxsb-ws-body.pseudo{grid-template-columns:1fr;overflow:auto}.kxsb-pane{min-height:300px}
+    .kxsb-ws-strip{order:3;flex-basis:100%}.kxsb-opts.two{grid-template-columns:1fr}}
+  @media (max-height:760px){.kxsb-camvid{width:clamp(120px,12vw,160px)}.kxsb-ws-head{padding:8px 14px}.kxsb-ws-foot{padding:8px 14px}}
   `;
   const el = document.createElement("style");
   el.id = STYLE_ID;
@@ -538,6 +547,7 @@ export function isTypedQuestionOpen() {
 export function closeTypedQuestion() {
   if (!_ws) return;
   window.clearInterval(_ws.timer);
+  window.clearInterval(_ws.camTimer);
   if (_ws.video) {
     // Only detach — the stream belongs to the proctoring feed and keeps running.
     try { _ws.video.srcObject = null; } catch { /* ignore */ }
@@ -552,35 +562,48 @@ export function typedAnswerSnapshot() {
   return _ws.getAnswer();
 }
 
-/** The camera window: the proctoring feed's own stream, shown small while typing. */
-function cameraWindow(getStream) {
-  let stream = null;
-  try { stream = typeof getStream === "function" ? getStream() : null; } catch { stream = null; }
+/**
+ * The camera card (16 Oct 2026): the proctoring feed's own stream, docked in a
+ * column of the workspace — never floating over the question, never
+ * minimisable. When the feed is not ready yet (it opens a moment after the
+ * interview starts) the card keeps trying every second until it is.
+ */
+function cameraCard(getStream) {
   const video = h("video", { autoplay: true, playsinline: true, muted: true, "aria-label": "Your camera" });
   video.muted = true;
-  const minBtn = h("button", { type: "button", "aria-label": "Minimise camera", title: "Minimise camera", html: ICONS.min });
-  const box = h("div", { class: "kxsb-cam" }, [
-    video,
-    h("div", { class: "kxsb-cam-bar" }, [h("span", { class: "dot", "aria-hidden": "true" }), "You · recording", minBtn]),
+  const wait = h("div", { class: "wait", text: "Starting your camera…" });
+  const frame = h("div", { class: "kxsb-camvid" }, [
+    video, wait,
+    h("span", { class: "kxsb-camrec" }, [h("span", { class: "dot", "aria-hidden": "true" }), "REC"]),
   ]);
-  minBtn.addEventListener("click", () => {
-    const min = box.classList.toggle("min");
-    minBtn.innerHTML = min ? ICONS.cam : ICONS.min;
-    minBtn.setAttribute("aria-label", min ? "Show camera" : "Minimise camera");
-    minBtn.title = minBtn.getAttribute("aria-label");
-  });
-  if (stream) {
+  const card = h("div", { class: "kxsb-camcard", role: "group", "aria-label": "Your camera" }, [
+    frame,
+    h("div", { class: "kxsb-caminfo" }, [
+      h("b", { text: "You are on camera" }),
+      h("span", { text: "Keep your face in the frame. Looking down at the keyboard is fine on this question." }),
+    ]),
+  ]);
+  let attached = null;
+  const attach = () => {
+    let stream = null;
+    try { stream = typeof getStream === "function" ? getStream() : null; } catch { stream = null; }
+    if (!stream || stream === attached) return !!attached;
     try {
       video.srcObject = stream;
       const p = video.play();
       if (p && typeof p.catch === "function") p.catch(() => {});
+      attached = stream;
+      frame.classList.add("live");
     } catch {
-      box.classList.add("off");
+      attached = null;
     }
-  } else {
-    box.classList.add("off");
-  }
-  return { box, video, live: !!stream };
+    return !!attached;
+  };
+  attach();
+  const timer = window.setInterval(() => {
+    if (attach() && video.readyState >= 2) window.clearInterval(timer);
+  }, 1000);
+  return { card, video, timer };
 }
 
 /**
@@ -613,18 +636,23 @@ export function presentTypedQuestion(data, handlers = {}) {
   const index = Number(data.index) || 0;
   const map = Array.isArray(data.question_map) ? data.question_map : [];
 
+  const picked = h("span", { class: "kxsb-picked", "aria-live": "polite" });
   if (kind === "pseudo") {
     const opts = (data.options || []).map((label, i) => h("button", {
       class: "kxsb-opt", type: "button", role: "radio", "aria-checked": "false",
       onclick: () => {
         choice = i;
         opts.forEach((o, j) => o.setAttribute("aria-checked", j === i ? "true" : "false"));
+        picked.replaceChildren("Selected", h("i", { text: LETTERS[i] }));
         submitBtn.disabled = false;
       },
     }, [h("span", { class: "kxsb-letter", text: LETTERS[i] }), h("span", { text: String(label) })]));
+    // Short options (numbers, one-word answers) sit two to a row so all four
+    // are visible at once; anything longer keeps one per row.
+    const short = opts.length >= 4 && (data.options || []).every((o) => String(o).length <= 28);
     right = h("section", { class: "kxsb-pane" }, [
-      h("div", { class: "kxsb-pane-h" }, [h("span", { text: "Choose one option" })]),
-      h("div", { class: "kxsb-pane-b" }, [h("div", { class: "kxsb-opts", role: "radiogroup", "aria-label": "Options" }, opts), note]),
+      h("div", { class: "kxsb-pane-h" }, [h("span", { class: "grow", text: "Choose one option" }), picked]),
+      h("div", { class: "kxsb-pane-b" }, [h("div", { class: `kxsb-opts${short ? " two" : ""}`, role: "radiogroup", "aria-label": "Options" }, opts), note]),
     ]);
     submitBtn.disabled = true;
     const codeLang = data.language && data.language !== "any" ? data.language : "pseudo";
@@ -634,7 +662,7 @@ export function presentTypedQuestion(data, handlers = {}) {
       h("div", { class: "kxsb-pane-b" }, [
         h("div", { class: "kxsb-q", text: String(data.question || "") }),
         data.code ? h("div", { class: "kxsb-snippet" }, [renderCodeBlock(String(data.code), codeLang)]) : null,
-        h("div", { class: "kxsb-hint", text: "Trace the code line by line, then pick the option that matches. Only one option is fully right." }),
+        h("div", { class: "kxsb-hint", text: "Trace the code line by line, then pick the option on the right that matches. Only one option is fully right." }),
       ]),
     ]);
   } else {
@@ -697,7 +725,12 @@ export function presentTypedQuestion(data, handlers = {}) {
     ]);
   }
 
-  const cam = cameraWindow(handlers.getCameraStream);
+  const cam = cameraCard(handlers.getCameraStream);
+  // Pseudo-code: the code gets the wide left pane, options + camera the right.
+  // Coding: the problem + camera on the left, the editor gets the wide right.
+  const columns = kind === "pseudo"
+    ? [left, h("div", { class: "kxsb-col" }, [right, cam.card])]
+    : [h("div", { class: "kxsb-col" }, [left, cam.card]), right];
   const head = h("header", { class: "kxsb-ws-head" }, [
     h("div", { class: "kxsb-ws-title" }, [
       h("span", { class: `kxsb-kbadge ${kind}` }, [icon(KIND_LOOK[kind].icon)]),
@@ -714,15 +747,14 @@ export function presentTypedQuestion(data, handlers = {}) {
   ]);
 
   const el = h("div", {
-    class: `kxsb-ws kxsb-theme${cam.live ? " has-cam" : ""}`, role: "dialog", "aria-modal": "true",
+    class: "kxsb-ws kxsb-theme", role: "dialog", "aria-modal": "true",
     "aria-label": kind === "pseudo" ? "Pseudo-code question" : "Coding question",
   }, [
     head,
     limit ? timeBar : null,
-    h("div", { class: `kxsb-ws-body ${kind}` }, [left, right]),
-    cam.box,
+    h("div", { class: `kxsb-ws-body ${kind}` }, columns),
     h("footer", { class: "kxsb-ws-foot" }, [
-      h("div", { class: "grow kxsb-note", text: "This question is read on screen — there is no voice. Stay in full screen and keep your face in the camera." }),
+      h("div", { class: "grow kxsb-note", text: "Read on screen — no voice. Stay in full screen." }),
       skipBtn, submitBtn,
     ]),
   ]);
@@ -770,7 +802,10 @@ export function presentTypedQuestion(data, handlers = {}) {
       }, 500)
     : 0;
 
-  _ws = { el, timer, data, getAnswer, done: false, video: cam.video };
+  _ws = { el, timer, data, getAnswer, done: false, video: cam.video, camTimer: cam.timer };
   document.body.appendChild(el);
-  window.setTimeout(() => (editor ? editor.focus() : right.querySelector(".kxsb-opt")?.focus()), 50);
+  // Coding: straight into the editor. Pseudo-code: focus the panel itself — a
+  // focus ring on option A read as "A is already selected".
+  el.tabIndex = -1;
+  window.setTimeout(() => (editor ? editor.focus() : el.focus({ preventScroll: true })), 50);
 }
