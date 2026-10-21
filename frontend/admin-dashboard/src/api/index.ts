@@ -212,6 +212,37 @@ export type RescoreState = {
 };
 
 /** Re-score a finished interview with the current scoring rules (runs in the background). */
+/** Ten L2 questions (21 Oct 2026): GET reads the saved set, POST writes it once
+ *  (GPT-5.5, from the position's skills + the weak L1 answers); `regenerate`
+ *  writes it again on purpose. */
+export type L2Question = {
+  number: number;
+  skill: string | null;
+  question: string;
+  why: string | null;
+  listen_for: string | null;
+  difficulty: "basic" | "intermediate" | "advanced" | null;
+};
+export type L2QuestionSet = {
+  questions: L2Question[];
+  model?: string;
+  generated_at_ist?: string;
+  generated_by?: string | null;
+};
+
+export async function l2Questions(
+  candidateId: string, interviewId: string, opts: { generate?: boolean; regenerate?: boolean } = {},
+): Promise<L2QuestionSet | null> {
+  const base = `/hr/candidates/${encodeURIComponent(candidateId)}/interviews/${encodeURIComponent(interviewId)}/l2-questions`;
+  const res = await authFetch(opts.generate ? `${base}${opts.regenerate ? "?regenerate=true" : ""}` : base,
+    { method: opts.generate ? "POST" : "GET" });
+  let data: any = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok || data?.error) throw new Error(String(data?.error || data?.detail || `Request failed (${res.status})`));
+  if (opts.generate) invalidateApiCache();
+  return (data?.l2_questions as L2QuestionSet) || null;
+}
+
 export async function rescoreInterview(candidateId: string, interviewId: string, poll = false): Promise<RescoreState> {
   const path = `/hr/candidates/${encodeURIComponent(candidateId)}/interviews/${encodeURIComponent(interviewId)}/rescore`;
   const res = await authFetch(path, { method: poll ? "GET" : "POST" });

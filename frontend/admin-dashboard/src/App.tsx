@@ -1,4 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazyRetry } from "./lib/lazyRetry";
+import { PageErrorBoundary } from "./components/PageErrorBoundary";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Briefcase, Database, LayoutTemplate, Sigma, Users, Terminal, Shield } from "lucide-react";
@@ -19,21 +21,21 @@ import {
 } from "./lib/rbac";
 import type { CandidateReportReturnTarget } from "./pages/CandidateReportPage";
 
-const HrDashboard = lazy(() => import("./pages/HrDashboard").then((m) => ({ default: m.HrDashboard })));
-const TemplatesPage = lazy(() => import("./pages/Templates").then((m) => ({ default: m.TemplatesPage })));
-const CandidatesPage = lazy(() => import("./pages/Candidates").then((m) => ({ default: m.CandidatesPage })));
-const AtsPage = lazy(() => import("./pages/ATS").then((m) => ({ default: m.AtsPage })));
-const TemplateFormPage = lazy(() => import("./pages/TemplateForm").then((m) => ({ default: m.TemplateFormPage })));
-const CandidateInterviewsPage = lazy(() =>
+const HrDashboard = lazyRetry(() => import("./pages/HrDashboard").then((m) => ({ default: m.HrDashboard })));
+const TemplatesPage = lazyRetry(() => import("./pages/Templates").then((m) => ({ default: m.TemplatesPage })));
+const CandidatesPage = lazyRetry(() => import("./pages/Candidates").then((m) => ({ default: m.CandidatesPage })));
+const AtsPage = lazyRetry(() => import("./pages/ATS").then((m) => ({ default: m.AtsPage })));
+const TemplateFormPage = lazyRetry(() => import("./pages/TemplateForm").then((m) => ({ default: m.TemplateFormPage })));
+const CandidateInterviewsPage = lazyRetry(() =>
   import("./pages/CandidateInterviews").then((m) => ({ default: m.CandidateInterviewsPage })),
 );
-const CandidateReportPage = lazy(() => import("./pages/CandidateReportPage").then((m) => ({ default: m.CandidateReportPage })));
-const AiCostsPage = lazy(() => import("./pages/InterviewCosts").then((m) => ({ default: m.AiCostsPage })));
-const IntegrityLogsPage = lazy(() => import("./pages/IntegrityLogs").then((m) => ({ default: m.IntegrityLogsPage })));
-const UpcomingInterviewsPage = lazy(() => import("./pages/UpcomingInterviews").then((m) => ({ default: m.UpcomingInterviewsPage })));
-const QuestionBankPage = lazy(() => import("./pages/QuestionBank").then((m) => ({ default: m.QuestionBankPage })));
-const CrmApp = lazy(() => import("./crm/CrmApp"));
-const HrSetupPage = lazy(() => import("./pages/HrSetup").then((m) => ({ default: m.HrSetupPage })));
+const CandidateReportPage = lazyRetry(() => import("./pages/CandidateReportPage").then((m) => ({ default: m.CandidateReportPage })));
+const AiCostsPage = lazyRetry(() => import("./pages/InterviewCosts").then((m) => ({ default: m.AiCostsPage })));
+const IntegrityLogsPage = lazyRetry(() => import("./pages/IntegrityLogs").then((m) => ({ default: m.IntegrityLogsPage })));
+const UpcomingInterviewsPage = lazyRetry(() => import("./pages/UpcomingInterviews").then((m) => ({ default: m.UpcomingInterviewsPage })));
+const QuestionBankPage = lazyRetry(() => import("./pages/QuestionBank").then((m) => ({ default: m.QuestionBankPage })));
+const CrmApp = lazyRetry(() => import("./crm/CrmApp"));
+const HrSetupPage = lazyRetry(() => import("./pages/HrSetup").then((m) => ({ default: m.HrSetupPage })));
 
 type View = InterviewView;
 
@@ -452,6 +454,7 @@ export default function App() {
         navMotion={navMotion}
       />
 
+      <PageErrorBoundary resetKey={String(surfaceKey)}>
       <Suspense fallback={<PageFallback />}>
         <AnimatePresence mode="wait">
           <motion.div
@@ -523,6 +526,7 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </Suspense>
+      </PageErrorBoundary>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   ArrowLeft, ArrowRight, Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
 } from "lucide-react";
 import { APP_NAME } from "../lib/brand";
+import { PageErrorBoundary } from "../components/PageErrorBoundary";
 import { crmGet, crmPost, CrmApiError } from "./api";
 import { CrmLink, CrmRouter, crmNavigate, isPushNavigation, readCrmPath } from "./routerHooks";
 import { CRM_ROUTES } from "./routes";
@@ -950,6 +951,9 @@ export default function CrmApp() {
     // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
     // login (Admin / CEO included) reaches received amounts from the customer branch page.
     if (n.path === "received-amounts") return me.roles.includes("Finance");
+    // E-invoices (21 Oct 2026): Finance + every Sales rung + Admin / CEO, and a
+    // templated login only while its template opens Invoices (the server gate).
+    if (n.path === "e-invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (
@@ -1131,6 +1135,7 @@ export default function CrmApp() {
           </AnimatePresence>
 
           <main ref={mainRef} className="min-w-0 overflow-x-hidden p-3 sm:p-4 xl:p-5 md:min-h-0 md:flex-1 md:overflow-y-auto">
+            <PageErrorBoundary resetKey={path}>
             <Suspense fallback={<Spinner />}>
               <motion.div
                 key={path}
@@ -1141,6 +1146,7 @@ export default function CrmApp() {
                 <CrmRouter routes={CRM_ROUTES} fallback={<ErrorBox error={`Page not found: ${path}`} />} />
               </motion.div>
             </Suspense>
+            </PageErrorBoundary>
           </main>
         </div>
       </div>

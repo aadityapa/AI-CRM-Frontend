@@ -10,7 +10,7 @@ import { PageHeader } from "../components/PageHeader";
 import { authFetch } from "../../api/client";
 import { qs, crmGet } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { crmTabVisibleFromMe } from "../useAccess";
+import { crmTabVisibleFromMe, useSubTabs } from "../useAccess";
 import { FinanceReportsPage } from "./FinanceReports";
 import { RevenueReport } from "./reports/RevenueReport";
 import { RecruiterProductivity } from "./reports/RecruiterProductivity";
@@ -165,13 +165,26 @@ export function CrmReportsPage() {
   // 19 Oct 2026: Finance works the money reports, the Sales family reads them.
   const financialRoleOk = useHasRole("Finance", "Sales", "Sales_Head");
   const canSetTargets = useHasRole("Finance");
-  const showFinancial = financialRoleOk || crmTabVisibleFromMe(me, "finance-reports", financialRoleOk, false);
-  // Revenue: Finance + the Sales family by ROLE (Admin / CEO implicit) — the
-  // server gate is reports.FINANCE_VIEW; no template widens it.
-  const showRevenue = useHasRole("Finance", "Sales", "Sales_Head");
-  const tabs = [...TABS, ...(showFinancial ? [FINANCIAL_TAB] : []), ...(showRevenue ? [REVENUE_TAB] : [])];
-  // A deep link to a tab this user cannot see falls back to the first tab.
-  const tab: TabKey = tabs.some((t) => t.key === requestedTab) ? requestedTab : "opportunities";
+  // Each report is a SUB-TAB an Access Template / custom role can switch on or
+  // off (22 Oct 2026, user ask: "Finance only Financial Reports + Revenue").
+  // Without a template rule the role rules below decide, as before; a template
+  // that ticks Revenue / Financial opens them even for a non-Finance role (the
+  // server's REVENUE_READ / LEDGER_READ honour the same tick).
+  const sub = useSubTabs("reports");
+  const financialDefault = financialRoleOk || crmTabVisibleFromMe(me, "finance-reports", financialRoleOk, false);
+  const showFinancial = sub.allowed("financial", financialDefault);
+  // Revenue: Finance + the Sales family by ROLE (Admin / CEO implicit).
+  const revenueRoleOk = useHasRole("Finance", "Sales", "Sales_Head");
+  const showRevenue = sub.allowed("revenue", revenueRoleOk);
+  const tabs = [
+    ...TABS.filter((t) => sub.allowed(t.key)),
+    ...(showFinancial ? [FINANCIAL_TAB] : []),
+    ...(showRevenue ? [REVENUE_TAB] : []),
+  ];
+  // A deep link to a tab this user cannot see falls back to the first visible tab.
+  const tab: TabKey = tabs.some((t) => t.key === requestedTab)
+    ? requestedTab : ((tabs[0]?.key as TabKey) || "opportunities");
+  const noReports = tabs.length === 0;
 
   // Per-tab filters (+ customer and a date window shared by both tables, 7 Oct 2026)
   const [oppTeam, setOppTeam] = useState("");
@@ -184,7 +197,7 @@ export function CrmReportsPage() {
   const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
   const [summary, setSummary] = useState<OppSummary | ProfileSummary | null>(null);
   useEffect(() => {
-    crmGet<{ id: number; name: string }[]>("/api/customers/names")
+    crmGet<{ id: number; name: string }[]>("/api/customers/names?status=Active")
       .then((r) => setCustomers(r.data || []))
       .catch(() => setCustomers([]));
   }, []);
@@ -202,7 +215,7 @@ export function CrmReportsPage() {
 
   useEffect(() => {
     // Hosted tabs (Financial, Revenue) fetch their own data.
-    if (HOSTED_TABS.has(tab)) return;
+    if (HOSTED_TABS.has(tab) || noReports) return;
     let alive = true;
     setLoading(true);
     setError("");
@@ -222,7 +235,7 @@ export function CrmReportsPage() {
     return () => {
       alive = false;
     };
-  }, [url, tick]);
+  }, [url, tick, noReports]);
 
   const exportCsv = async () => {
     setExporting(true);
@@ -388,7 +401,7 @@ export function CrmReportsPage() {
           })}
         </div>
       </PageHeader>
-      {(!HOSTED_TABS.has(tab) || tab === "productivity") && (
+      {!noReports && (!HOSTED_TABS.has(tab) || tab === "productivity") && (
         <div className="flex flex-wrap items-center gap-2 px-1">
           <h2 className="text-sm font-bold text-primary">{activeLabel}</h2>
           <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-secondary ring-1 ring-inset ring-subtle">
@@ -396,10 +409,15 @@ export function CrmReportsPage() {
           </span>
         </div>
       )}
-      {tiles && !loading && !error && (
+      {!noReports && tiles && !loading && !error && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{tiles}</div>
       )}
-      {tab === "revenue" ? (
+      {noReports ? (
+        <div className="rounded-card border border-subtle bg-surface-1 p-8 text-center text-sm text-muted">
+          No report is switched on for your login. Ask Admin / CEO to tick the reports you need
+          in Access Control.
+        </div>
+      ) : tab === "revenue" ? (
         showRevenue && <RevenueReport canSetTargets={canSetTargets} />
       ) : tab === "productivity" ? (
         <RecruiterProductivity />
@@ -416,7 +434,7 @@ export function CrmReportsPage() {
           emptyMessage="No rows match the current filters"
         />
       )}
-      {!HOSTED_TABS.has(tab) && !loading && !error && (
+      {!noReports && !HOSTED_TABS.has(tab) && !loading && !error && (
         <div className="text-xs text-muted tabular-nums">{rows.length} row{rows.length === 1 ? "" : "s"}</div>
       )}
       {toast}

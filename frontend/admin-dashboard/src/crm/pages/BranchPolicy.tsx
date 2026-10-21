@@ -3,6 +3,7 @@
  * Billing Properties · Billable Leave Policy.
  * API: GET /api/customers/branches/{id}/policy  (+ branch PUT, holiday-years, holidays, leave policies)
  * Tokens only — Linear-meets-Stripe. */
+import { lazyRetry } from "../../lib/lazyRetry";
 import React, { useCallback, useEffect, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronRight, Lock, LockOpen, Pencil, Plus, Power, Save } from "lucide-react";
 import { crmDelete, crmGet, crmPost, crmPut, crmPatch } from "../api";
@@ -16,7 +17,7 @@ import {
   btnPrimary, btnSecondary, focusRing, inputCls, useToast,
 } from "../components/ui";
 import { useHasRole } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useSubTabs } from "../useAccess";
 import {
   BranchEmployeesTab, BranchInvoicesTab, BranchOpportunitiesTab, BranchPosTab,
   BranchProjectsTab, BranchTimesheetsTab,
@@ -26,7 +27,7 @@ import { usePageTab } from "../lib/pageState";
 
 /* Received Amount (16 Oct 2026): the money THIS branch paid, recorded here or
    from Finance's "Received Amount" page — one store, scoped to the branch. */
-const LazyBranchReceipts = React.lazy(() =>
+const LazyBranchReceipts = lazyRetry(() =>
   import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
 
 const OBSERVANCE = ["Mandatory", "Optional"];
@@ -103,7 +104,7 @@ export function BranchPolicyPage() {
   const [form, setForm] = useState<Partial<BranchPolicy>>({});
   const [saving, setSaving] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
-  const [tab, setTab] = usePageTab<string>("tab", "policy");
+  const [rawTab, setTab] = usePageTab<string>("tab", "policy");
 
   // Branch hub tabs (Aug 2026): everything under this customer's branch —
   // Projects / Timesheets / Invoices / POs / Employees. Gating mirrors the
@@ -129,6 +130,14 @@ export function BranchPolicyPage() {
   const oppRole = useHasRole("Sales", "Sales_Head", "RMG", "TA");
   const canSeeOpps = useCanAct("opportunities", "view", oppRole);
   const canCreateOpps = useCanAct("opportunities", "create", useHasRole("Sales", "Sales_Head"));
+  // Each branch tab is a sub-tab a template / custom role can switch off (22 Oct 2026).
+  const sub = useSubTabs("branch-policy");
+  const branchTabKeys = ([
+    ["policy", true], ["opportunities", canSeeOpps], ["projects", canSeeProjects],
+    ["timesheets", canSeeTimesheets], ["invoices", canSeeInvoices], ["receipts", canSeeInvoices],
+    ["pos", canSeePos], ["employees", canSeeEmployees], ["ctc-slab", canSeeCtcSlab],
+  ] as [string, boolean][]).filter(([k, ok]) => ok && sub.allowed(k)).map(([k]) => k);
+  const tab = branchTabKeys.includes(rawTab) ? rawTab : (branchTabKeys[0] || "");
 
   const load = useCallback(async () => {
     try {
@@ -270,7 +279,7 @@ export function BranchPolicyPage() {
           ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
           ...(canSeeEmployees ? [{ key: "employees", label: "Employees Working" }] : []),
           ...(canSeeCtcSlab ? [{ key: "ctc-slab", label: "CTC Slab" }] : []),
-        ]}
+        ].filter((t) => branchTabKeys.includes(t.key))}
         active={tab}
         onChange={setTab}
       />

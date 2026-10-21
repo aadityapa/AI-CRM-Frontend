@@ -21,7 +21,8 @@ export type ConversationConfig = {
   voiceMode: VoiceMode;
 };
 
-export const MAX_FOLLOWUPS_CAP = 5;
+export const MAX_FOLLOWUPS_CAP = 20;
+const FOLLOWUP_PICKS = [2, 5, 10, 15, 20];
 
 export const CONVERSATION_OFF: ConversationConfig = {
   followups: false,
@@ -205,18 +206,42 @@ export function ConversationSettings({
               on={value.followups}
               onChange={(v) => set({ followups: v })}
             >
-              <label className="flex items-center gap-2 text-xs font-semibold text-secondary">
-                Most follow-ups per interview
-                <select
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-secondary">
+                <label htmlFor="conv-max-followups">Most follow-ups per interview</label>
+                <input
+                  id="conv-max-followups"
+                  type="number"
+                  min={0}
+                  max={MAX_FOLLOWUPS_CAP}
+                  step={1}
+                  inputMode="numeric"
                   value={value.maxFollowups}
-                  onChange={(e) => set({ maxFollowups: Number(e.target.value) })}
-                  className="h-8 rounded-control border border-subtle bg-surface-1 px-2 text-xs text-primary"
-                >
-                  {Array.from({ length: MAX_FOLLOWUPS_CAP }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                  onChange={(e) => {
+                    const n = Math.round(Number(e.target.value));
+                    set({ maxFollowups: Number.isFinite(n) ? Math.max(0, Math.min(MAX_FOLLOWUPS_CAP, n)) : 0 });
+                  }}
+                  className="h-8 w-20 rounded-control border border-subtle bg-surface-1 px-2 text-xs text-primary"
+                />
+                <span className="flex flex-wrap gap-1">
+                  {FOLLOWUP_PICKS.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => set({ maxFollowups: n })}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                        value.maxFollowups === n
+                          ? "border-indigo-500 bg-indigo-600 text-white"
+                          : "border-subtle bg-surface-1 text-secondary hover:bg-surface-2"
+                      }`}
+                    >
+                      {n}
+                    </button>
                   ))}
-                </select>
-              </label>
+                </span>
+                <span className="w-full text-[11px] font-normal text-muted">
+                  Any number from 0 to {MAX_FOLLOWUPS_CAP}. Each follow-up adds about 2 minutes; on a time-limited interview the clock still ends it.
+                </span>
+              </div>
             </Row>
             <Row
               icon={<Ear size={18} />}

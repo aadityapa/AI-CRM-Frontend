@@ -9,7 +9,7 @@ import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { crmTabVisibleFromMe, useCanAct, useCanApprove } from "../useAccess";
+import { crmTabVisibleFromMe, useCanAct, useCanApprove, useSubTabs } from "../useAccess";
 import { PayrollPage } from "./Payroll";
 import { MyLeavePage } from "./MyLeave";
 import { LeaveApplicationsPage } from "./LeaveApplications";
@@ -39,11 +39,12 @@ import {
   TS_TOOL_BTN, type TsBilling,
 } from "./timesheets/TimesheetChrome";
 import {
-  SplitAcrossPos, fillToBalances, newSplitRow, rowAmount, splitByQty, splitProblems,
+  SplitAcrossPos, dateProblems, fillByDates, fillToBalances, fmtShort, newSplitRow, partAmount,
+  splitByQty, splitProblems, type SplitBy, type SplitDays,
   type BillingProgress, type SplitRow,
 } from "../components/invoice/SplitAcrossPos";
 import { DialogActions, DialogFailure, DialogHero, DialogSection, ReasonBox, WhatHappens, useCtrlEnter } from "../components/dialogKit";
-import { TimesheetPeriodModal, fmtDay as fmtPeriodDay } from "../components/TimesheetPeriodModal";
+import { TimesheetPeriodModal, fmtDay as fmtPeriodDay, type ApplyPeriodOptions } from "../components/TimesheetPeriodModal";
 import { WorkMonth, monthName, periodText } from "../components/WorkMonth";
 import { PaymentBreakdownModal, type BreakdownSheet } from "../components/PaymentBreakdownModal";
 
@@ -54,6 +55,8 @@ type InvoiceRef = {
   /** Split across POs (0141): part number, its hours / days, its PO and amounts. */
   split_no?: number | null; split_qty?: number | null; po_id?: number | null;
   po_number?: string | null; sub_total?: number | null; grand_total?: number | null;
+  /** 0142 — the days a part bills when the sheet was split by dates. */
+  split_start?: string | null; split_end?: string | null;
 };
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
@@ -631,6 +634,7 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
   const canManage = useCanAct("timesheets", "edit", useHasRole("HR", "Finance", "RMG", "Sales", "Sales_Head"));
   // Force delete (also removes the linked invoice) — Sales/Sales_Head/RMG + Admin/CEO.
   const canForceDelete = useCanAct("timesheets", "create", useHasRole("Sales", "Sales_Head", "RMG", "Admin", "CEO"));
+  const tsSub = useSubTabs("timesheets");
   const [tab, setTab] = usePageTab<ReportTab>("tab",
     isStaff ? "due" : isApprover ? "approvals" : tsRoleOk ? "all" : "myleave");
   const [rows, setRows] = useState<Timesheet[]>([]);
@@ -747,9 +751,11 @@ export function TimesheetsListPage({ embedded = false }: { embedded?: boolean } 
     if (t.key === "payroll") return showPayroll;
     if (t.key === "myleave") return showMyLeave;
     if (t.key === "leaveApps") return showLeaveApps;
-    if (t.key === "all") return tsRoleOk;
-    if (t.key === "approvals") return tsRoleOk && (isStaff || isApprover);
-    return tsRoleOk && isStaff; // due / submission
+    // The four timesheet lists are sub-tabs a template can switch off or on
+    // (22 Oct 2026); Payroll / My Leave / Leave Applications have their own tabs.
+    if (t.key === "all") return tsSub.allowed("all", tsRoleOk);
+    if (t.key === "approvals") return tsSub.allowed("approvals", tsRoleOk && (isStaff || isApprover));
+    return tsSub.allowed(t.key, tsRoleOk && isStaff); // due / submission
   });
   // If the current tab is not visible for this user (e.g. an Access Template
   // hides it), snap to the first tab they CAN see instead of a blank page.
@@ -2167,11 +2173,13 @@ export function TimesheetDetailPage() {
      and let the next cycle (which is already scheduled by the dirty state)
      pick them up. */
   /** Throws with the server's reason — the dialog shows it and stays open. */
-  const applyPeriod = async (startDate: string, endDate: string) => {
-    await crmPatch(`/api/timesheets/${ts.id}/period`, {
+  const applyPeriod = async (startDate: string, endDate: string, opts?: ApplyPeriodOptions) => {
+    const res = await crmPatch(`/api/timesheets/${ts.id}/period`, {
       start_date: startDate, end_date: endDate,
+      adjust_neighbours: !!opts?.adjust_neighbours,
+      hand_over_removed: !!opts?.hand_over_removed,
     });
-    showToast(`Period is now ${fmtPeriodDay(startDate)} to ${fmtPeriodDay(endDate)} — day grid adjusted`);
+    showToast(res.message || `Period is now ${fmtPeriodDay(startDate)} to ${fmtPeriodDay(endDate)} — day grid adjusted`);
     await load();
   };
 
@@ -2339,6 +2347,7 @@ export function TimesheetDetailPage() {
                   const res = await crmUpload<TsImportResult>(
                     `/api/timesheets/bulk-import${qs({
                       project_id: ts.project_id, employee_id: ts.employee_id, year: ts.year, month: ts.month,
+                      timesheet_id: ts.id,
                     })}`,
                     file,
                   );
@@ -2947,6 +2956,7 @@ export function TimesheetDetailPage() {
       )}
       {periodOpen && ts.period_start_date && ts.period_end_date && (
         <TimesheetPeriodModal
+          timesheetId={ts.id}
           year={ts.year} month={ts.month}
           start={ts.period_start_date.slice(0, 10)} end={ts.period_end_date.slice(0, 10)}
           entries={entries.map((e) => ({ entry_date: e.entry_date, hours_worked: Number(e.hours_worked || 0),
@@ -3012,6 +3022,8 @@ type PoOptionsPayload = {
   billing_progress?: BillingProgress | null;
   /** Admin's switches (Settings ▸ Organisation ▸ Billing). Absent on an older server = today's rules. */
   split_rules?: { enabled: boolean; max_parts: number; allow_expired_po: boolean } | null;
+  /** 0142 — the sheet's days + weights for splitting by dates. */
+  split_days?: SplitDays | null;
 };
 
 const UNIT_LABELS: Record<string, string> = {
@@ -3129,6 +3141,16 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   const splitMode = splitPossible && (splitOn || splitForced);
   const [splitRows, setSplitRows] = useState<SplitRow[]>([]);
   const byQty = splitByQty(progress?.billing_unit, progress?.rate_split, progress?.rate);
+  /* 0142 — split BY DATES (the default when the server sends the sheet's days)
+     or by hours / amount. A sheet already split one way carries on that way. */
+  const splitDays = data?.split_days ?? null;
+  const liveParts = progress ? progress.parts.filter((p) => !p.returned_at && p.split_no != null) : [];
+  const lockedBy: SplitBy | null = liveParts.length
+    ? (liveParts.some((p) => p.split_start) ? "dates" : "amount") : null;
+  const [splitByChoice, setSplitBy] = useState<SplitBy>("dates");
+  const splitBy: SplitBy = lockedBy ?? (splitDays ? splitByChoice : "amount");
+  const splitByLocked = lockedBy != null;
+  const sheetTotal = progress?.total ?? progress?.remaining ?? 0;
   // Order for "Fill each PO": the picked PO, then this employee's live POs by
   // balance, then the customer's other live POs by balance.
   const preferredIds = useMemo(() => {
@@ -3138,25 +3160,37 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
     const first = selected && live.some((p) => p.id === selected.id) ? [selected.id] : [];
     return [...first, ...ordered.map((p) => p.id).filter((id) => !first.includes(id))];
   }, [pos, selected]);
-  const startSplit = useCallback(() => {
+  /** Pre-fill the lines: by dates, each PO pays for as many days as its balance
+   * covers (1–29 Mar on PO A, the rest on PO B); otherwise hours / amount. */
+  const restartSplit = useCallback((by: SplitBy) => {
     if (!progress || progress.remaining == null) return;
-    const rows = fillToBalances(preferredIds, pos, {
-      remaining: progress.remaining, remainingQty: progress.remaining_qty, rate: progress.rate,
-      byQty, unit: progress.billing_unit,
-    }).slice(0, Math.max(1, partsLeft));
+    const rows = (by === "dates" && splitDays
+      ? fillByDates(preferredIds, pos, splitDays, sheetTotal)
+      : fillToBalances(preferredIds, pos, {
+        remaining: progress.remaining, remainingQty: progress.remaining_qty, rate: progress.rate,
+        byQty, unit: progress.billing_unit,
+      })).slice(0, Math.max(1, partsLeft));
     setSplitRows(rows.length ? rows : [newSplitRow(preferredIds[0] ?? null)]);
+  }, [progress, preferredIds, pos, byQty, partsLeft, splitDays, sheetTotal]);
+  const startSplit = useCallback(() => {
+    restartSplit(splitBy);
     setSplitOn(true);
     setGenError("");
-  }, [progress, preferredIds, pos, byQty, partsLeft]);
-  // A forced split opens with an empty line on the best PO (part now, rest later).
+  }, [restartSplit, splitBy]);
+  // A forced split opens on the next free days / an empty line (part now, rest later).
   useEffect(() => {
     if (splitForced && splitPossible && splitRows.length === 0) {
-      setSplitRows([newSplitRow(preferredIds[0] ?? null)]);
+      if (splitBy === "dates" && splitDays) restartSplit("dates");
+      else setSplitRows([newSplitRow(preferredIds[0] ?? null)]);
     }
-  }, [splitForced, splitPossible, splitRows.length, preferredIds]);
+  }, [splitForced, splitPossible, splitRows.length, preferredIds, splitBy, splitDays, restartSplit]);
   const splitIssues = splitMode && progress
-    ? splitProblems(splitRows, pos, { remaining: progress.remaining ?? 0, rate: progress.rate, byQty }) : [];
-  const splitTotal = splitRows.reduce((s, r) => s + rowAmount(r, byQty, progress?.rate ?? null), 0);
+    ? (splitBy === "dates" && splitDays
+      ? dateProblems(splitRows, pos, splitDays, sheetTotal)
+      : splitProblems(splitRows, pos, { remaining: progress.remaining ?? 0, rate: progress.rate, byQty }))
+    : [];
+  const splitTotal = splitRows.reduce((s, r) =>
+    s + partAmount(r, splitBy, byQty, progress?.rate ?? null, splitDays, sheetTotal), 0);
 
   const canGenerate = splitMode
     ? splitIssues.length === 0
@@ -3172,9 +3206,11 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
     setGenError("");
     if (splitMode) {
       try {
-        const splits = splitRows.map((r) => (byQty
-          ? { po_id: r.po_id, quantity: Number(r.qty) }
-          : { po_id: r.po_id, amount: Number(r.amount) }));
+        const splits = splitRows.map((r) => (splitBy === "dates"
+          ? { po_id: r.po_id, start_date: r.start, end_date: r.end }
+          : byQty
+            ? { po_id: r.po_id, quantity: Number(r.qty) }
+            : { po_id: r.po_id, amount: Number(r.amount) }));
         const res = await crmPost<{ invoices: any[] }>(`/api/timesheets/${timesheetId}/generate-invoice`,
           { splits, invoice_format: format, round_off: roundOff });
         showToast(res.message || "Proformas raised");
@@ -3291,7 +3327,7 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
       title={title}
       xl
       onClose={() => { if (!generating) onClose(); }}
-      dirty={edited || rateMode !== null || (splitMode && splitRows.some((r) => r.qty || r.amount))}
+      dirty={edited || rateMode !== null || (splitMode && splitRows.some((r) => r.qty || r.amount || r.start || r.end))}
       hero={
         <DialogHero tone="amber" icon={Receipt} eyebrow="Proforma invoice" title={title}
           subtitle="Confirm the customer's format, the rate this month bills at and the PO it draws from. Finance generates the tax invoice from this Proforma."
@@ -3429,21 +3465,37 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
             <DialogSection n={3} title={splitMode ? "Purchase orders it draws from — one Proforma each" : "Purchase order it draws from"}
               tone="amber" done={canGenerate}
               hint={noPos ? undefined : splitMode
-                ? (byQty
-                  ? "Put the hours / days each PO carries. Leave some for later if the next PO is not in yet."
-                  : "Put the amount (before GST) each PO carries. Leave some for later if the next PO is not in yet.")
-                : "The PO is drawn at conversion by the value before GST. This employee's POs come first."}
-              action={splitPossible && !splitForced ? (
-                <div role="group" aria-label="How many POs" className="inline-flex rounded-full border border-subtle bg-surface-2 p-0.5 text-[11px] font-bold">
-                  <button type="button" aria-pressed={!splitMode} onClick={() => { setSplitOn(false); setGenError(""); }}
-                    className={`rounded-full px-2.5 py-1 ${!splitMode ? "bg-amber-600 text-white" : "text-secondary"}`}>One PO</button>
-                  <button type="button" aria-pressed={splitMode} onClick={() => (splitMode ? undefined : startSplit())}
-                    className={`rounded-full px-2.5 py-1 ${splitMode ? "bg-amber-600 text-white" : "text-secondary"}`}>Split across POs</button>
+                ? (splitBy === "dates"
+                  ? "Give each PO the days it pays for — e.g. 1–29 on the first PO, 30–31 on the next. Leave days for later if the next PO is not in yet."
+                  : byQty
+                    ? "Put the hours / days each PO carries. Leave some for later if the next PO is not in yet."
+                    : "Put the amount (before GST) each PO carries. Leave some for later if the next PO is not in yet.")
+                : "The PO is drawn at conversion by the value before GST. This employee's POs come first."}>
+              {splitPossible && !splitForced && (
+                /* The choice is a pair of cards at the top of the step — not a
+                   small toggle in the corner, which users missed after the
+                   20 Oct deploy. */
+                <div role="group" aria-label="One PO or several" className="mb-3 grid gap-2 sm:grid-cols-2">
+                  {([
+                    { on: !splitMode, title: "One invoice on one PO", sub: "The whole period on a single purchase order",
+                      act: () => { setSplitOn(false); setGenError(""); } },
+                    { on: splitMode, title: "Split across POs", sub: "A PO ran out mid-month? 1–29 on one PO, 30–31 on another — one invoice each",
+                      act: () => (splitMode ? undefined : startSplit()) },
+                  ]).map((c) => (
+                    <button key={c.title} type="button" aria-pressed={c.on} onClick={c.act}
+                      className={`rounded-card border-2 px-3 py-2.5 text-left transition-colors ${c.on
+                        ? "border-amber-500 bg-amber-50 dark:bg-amber-950/30" : "border-subtle bg-surface-1 hover:bg-surface-2"}`}>
+                      <span className="block text-sm font-bold text-primary">{c.title}</span>
+                      <span className="block text-[11px] text-muted">{c.sub}</span>
+                    </button>
+                  ))}
                 </div>
-              ) : undefined}>
+              )}
               {splitMode && progress ? (
                 <SplitAcrossPos rows={splitRows} onChange={(rows) => { setSplitRows(rows); setGenError(""); }}
-                  pos={pos} progress={progress} preferredIds={preferredIds} maxRows={partsLeft} />
+                  pos={pos} progress={progress} preferredIds={preferredIds} maxRows={partsLeft}
+                  splitBy={splitBy} splitDays={splitDays} splitByLocked={splitByLocked}
+                  onSplitByChange={(by) => { setSplitBy(by); setGenError(""); restartSplit(by); }} />
               ) : splitBlocked ? (
                 <div role="alert" className="flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
@@ -3528,7 +3580,8 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
                   <div className="flex justify-between"><span className="text-secondary">Whole timesheet</span><b className="tabular-nums">{inr(progress.total)}</b></div>
                   {progress.parts.filter((p) => !p.returned_at).map((p) => (
                     <div key={p.id} className="flex justify-between text-muted">
-                      <span>Part {p.split_no ?? "—"} · {p.invoice_number}</span>
+                      <span>Part {p.split_no ?? "—"} · {p.invoice_number}
+                        {p.split_start && p.split_end ? ` · ${fmtShort(p.split_start)} – ${fmtShort(p.split_end)}` : ""}</span>
                       <span className="tabular-nums">{inr(p.sub_total)}</span>
                     </div>
                   ))}
@@ -3536,8 +3589,9 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
                     const po = pos.find((p) => p.id === r.po_id);
                     return (
                       <div key={r.key} className="flex justify-between font-semibold text-primary">
-                        <span>Part {progress.parts.filter((p) => !p.returned_at).length + i + 1} · {po?.po_number || "pick a PO"}</span>
-                        <span className="tabular-nums">{inr(rowAmount(r, byQty, progress.rate))}</span>
+                        <span>Part {progress.parts.filter((p) => !p.returned_at).length + i + 1} · {po?.po_number || "pick a PO"}
+                          {splitBy === "dates" && r.start && r.end ? ` · ${fmtShort(r.start)} – ${fmtShort(r.end)}` : ""}</span>
+                        <span className="tabular-nums">{inr(partAmount(r, splitBy, byQty, progress.rate, splitDays, progress.total ?? 0))}</span>
                       </div>
                     );
                   })}
@@ -3929,7 +3983,9 @@ function SplitPartsList({ progress, invoices }: { progress: BillingProgress; inv
             <span className="grid h-6 w-6 place-items-center rounded-full bg-amber-600 text-[11px] font-bold text-white">{p.split_no}</span>
             <CrmLink to={`invoices/${p.id}`} className="font-semibold text-brand-600 hover:underline dark:text-brand-300">{p.invoice_number}</CrmLink>
             <span className="text-xs text-muted">{p.po_number ? `PO ${p.po_number}` : "No PO"}</span>
-            {p.split_qty != null && unit && <span className="text-xs text-secondary">{p.split_qty} {unit}</span>}
+            {p.split_start && p.split_end
+              ? <span className="text-xs font-semibold text-secondary">{fmtShort(p.split_start)} – {fmtShort(p.split_end)}</span>
+              : p.split_qty != null && unit && <span className="text-xs text-secondary">{p.split_qty} {unit}</span>}
             <span className="ml-auto font-semibold tabular-nums text-primary">{inr(p.sub_total)}</span>
             {p.kind === "Proforma"
               ? <span className="rounded-full px-2 py-0.5 text-[11px] font-bold text-white" style={{ background: p.returned_at ? "#9a3412" : PROFORMA_COLOR }}>

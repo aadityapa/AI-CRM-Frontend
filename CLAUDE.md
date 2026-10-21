@@ -2421,6 +2421,46 @@ while still Active. One `PUT /api/employees/{id}` `{is_resigned, date_of_resigna
 notice_period_days}` → `services/employee_separation.apply_separation` + the daily `employee_separations` job; the toast is
 the server's message. tsc green, eslint clean.
 
+**22 Oct 2026 — Received Amount: open a receipt, map it to invoices later, edit, unmap (`crm/pages/receipts/
+ReceiptWorkbench.test.ts` 3; server half in B-V2 `CLAUDE.md`):** reported with a screenshot — Finance records every credit
+first ("— (on account)") and could not map invoices afterwards; clicking a row "did nothing" (it toggled a panel rendered
+BELOW the whole grouped list). Shared types / helpers moved to **`crm/pages/receipts/receiptShared.tsx`** (`Receipt`,
+`InvoiceOption`, `BranchOption`, `BranchScope`, `PAYMENT_MODES`, `inr`, `fmtDate`, `daysLate`, `isoDay`, `pillCls`,
+`ProofChip`, `ReceiptProofRow`; `CustomerReceipts.tsx` re-exports `daysLate` / `BranchScope`). New
+**`crm/pages/receipts/ReceiptWorkbench.tsx`**: `ReceiptDetailModal` (xl, opens on row click — hero with amount, date,
+mode · reference, proof + "on account / fully mapped" chips; four stat tiles Received · Applied · TDS · On account and a
+split bar; an amber "₹x is not on any invoice yet — Map invoices" callout; the invoices table with **Unmap** per row
+(ConfirmModal → `DELETE …/allocations/{invoice}`); notes; proof row; footer Delete receipt · Close · Edit details · Map
+invoices), `MapInvoicesModal` (xl, emerald: branch picker when the receipt has none, the customer's open invoices with
+search + month, tick → TDS asked (`TdsDeductionModal`), an editable amount per invoice pre-filled oldest-first by PURE
+`mapPlan(available, ids, due, typed)` (twin of the server's `plan_mapping`), "Fill oldest first", locked invoices with
+their `payment_block`, "still due after this" per row, an aside On account → goes on N invoices · TDS · left on account;
+`POST …/allocate`), `EditReceiptModal` (medium, sky: amount with "₹x on invoices · ₹y on account after saving" and a block
+under the applied amount, date, mode pills, reference, branch select, notes; only changed → Save; `PUT …/{id}`). The list:
+row click opens the workbench (`openReceipt`), row actions are Map (when on account) · Edit · Delete
+(`rowButtons`, both views), and the amber "Unallocated" chip is a **Map ₹x** button for Finance. The updated receipt from
+each call replaces the open one; a list reload keeps it in step. Verified: tsc green, eslint 0 errors, vitest 3/3, harness
+renders (`/tmp/fs/src/__story/rcpt.tsx`, `?w=detail|mapped|map|edit&dark=1`) with no console errors.
+
+**22 Oct 2026 (later) — active customers in every picker, ledger links, sub-tab ticks in Access Control
+(`crm/components/SubTabPicker.test.ts` 2; server half in B-V2 `CLAUDE.md`):** (1) Customer FILTER dropdowns now ask
+`/api/customers/names?status=Active` too — Customer ledger, Received Amount list, E-invoices, Reports, Opportunities,
+Project Employees, Projects, Invoices list (`useActiveCustomers(customerFilter)` keeps a chosen inactive one). Name
+maps (`useNameMap`, `useCustomerNames`, Projects' `customerName`) keep the bare call. (2) **Customer ledger**
+(`FinanceReports.tsx`): type chips, the reference of an Invoice line is a link, other lines name their invoice as a
+link, and an **Open invoice** button on every line (`CrmLink` — Ctrl+click opens a new tab). (3) **Sub-tabs**:
+`useAccess` — `subTabChoice(access, roles, tab, sub)` ("show" · "hide" · "default", the server's rule),
+`subTabVisible(…, roleDefault)` and **`useSubTabs(tab)` → `{choice, allowed(key, roleDefault?)}`**. Pages filter their
+tabs and fall back to the first visible one: Reports (each report; Revenue / Financial take the role rule as default,
+a tick widens; "No report is switched on" when none), Financial Reports, Customer detail, Branch page, Opportunity
+detail (each tab its own key now — applied · suggested · projects · pes — a template that hid the shared legacy key
+still hides them), Candidate detail, Project detail, PE detail, Employee detail, Timesheets (due · submission ·
+approvals · all), Invoices list, Talent Pool modes; Requirements / Profiles already used `subTabVisible`.
+**`TabPermissionMatrix.tsx`** exports `SubTabPicker` + PURE `subTabState` / `toggleSubTab` / `resetSubTabs`: under every
+GRANTED tab with sub-tabs, a tick list ("following the role" until one is unticked, then "only the N ticked"; "Back to
+role defaults" drops the entries). Access Templates show it in each tab row; Access Control ▸ Roles pass
+`fieldValue` / `onFieldChange` so a custom role (GM, Sales Manager …) gets the same ticks, saved in its `field_access`.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -3262,3 +3302,111 @@ shows in the dialog. Also exports `isoDay` (local, never UTC), `daysBetween`, `c
 `applyPeriod` replaces `changePeriod`. Verified: tsc green, eslint 0 errors, vitest 4 + TimesheetApprovals 18, `vite build`
 green.
 
+
+**20 Oct 2026 — Change period knows the sheets either side; Fill from file fills THIS sheet
+(`TimesheetPeriodModal.test.ts` now 9; server half in B-V2 `CLAUDE.md`):** `TimesheetPeriodModal` takes `timesheetId`
+and reads `GET /api/timesheets/{id}/period-options` (an older server → the dialog still works). The neighbouring sheets
+show as chips (amber when locked). Quick picks are Calendar month · 21st → 20th · **20th → 19th** (was 20th → 20th, which
+overlapped itself) with their real dates, clamped to `free_start` / `free_end` (a note says why). PURE `neighbourEffect`
+(mirror of the server): before joining / after leaving → blocker with a one-click "Start on …"; a LOCKED neighbour →
+blocker + fix; an OPEN neighbour → sky notice "August 2026 (Draft) gives N days — they move here with their hours" and
+`adjust_neighbours: true`; removed days next to an open sheet → a ticked "Give the N removed days to October 2026 — it will
+run …" (`hand_over_removed`), and the Days removed tile says nothing is deleted. `onApply(start, end, opts)`;
+`Timesheets.applyPeriod` posts the flags and toasts the server's message. **Fill from file** sends `timesheet_id: ts.id`, so a
+21st–20th sheet's file fills every day of its period.
+
+**21 Oct 2026 — Raise Proforma: split across POs BY DATES, and a choice you cannot miss
+(`SplitAcrossPos.test.ts` now 5; server half + migration 0142 in B-V2 `CLAUDE.md`):** reported — "1–29 March on one PO,
+30–31 March on another PO, one invoice each — I did not see this after the deploy". `PoSelectModal` step 3 now opens with two
+cards, **One invoice on one PO** / **Split across POs** (the small corner toggle is gone). In split mode a **Split by** switch:
+**Dates** (default whenever po-options sends `split_days`) or Hours / amount; a sheet already split one way is locked to it.
+`SplitAcrossPos` by dates: each line = PO + From / To (`<input type="date">` inside the sheet window), the amount and "N days
+· X billable days/hours" live, PO balance after; **Fill dates from each PO's balance** (`fillByDates` PURE: the first PO from
+the first free day for as many days as its balance pays, the next from the day after, the last to the end); **Add another
+PO** starts the day after the last line; a **day strip** colours every day by the part that bills it (grey = on a part
+already raised, faded = nothing billable). PURE mirrors of the server: `dateRangeAmount`, `rangeWeight`, `freeDays`,
+`dateProblems`, `partAmount`, `addDays`, `fmtShort`. The POST sends `{po_id, start_date, end_date}` per line. The aside and
+the sheet's `SplitPartsList` print each part's dates. Verified: tsc green, vitest SplitAcrossPos 5 + TimesheetApprovals 18,
+harness render (fill 1–7 Sep on a nearly-used PO, the rest on the next) with no console errors.
+
+**21 Oct 2026 (later) — "Address on this invoice" card + customer Activity Log tab (server half + migration 0143 in
+B-V2 `CLAUDE.md`):** reported: a customer's address changed and every invoice already generated showed the new one.
+(1) **`crm/components/invoice/InvoiceAddressCard.tsx`**, mounted on the invoice page (`Finance.tsx` InvoiceDetailPage,
+under the journey, Proforma and Tax): the buyer (name · address · GSTIN · PAN) and ship-to the invoice KEEPS, "Kept from
+the day it was raised · <time>" (or converted / backfill / corrected), an amber "The customer's address has changed since —
+this invoice keeps the address it was issued with" with the new address, and a green "Corrected by … — reason" line.
+**Correct address** (Finance / Admin / CEO, `useHasRole("Finance")`) opens a sky dialog-kit pop-up: quick fills "Use the
+address on PO …" / "Use the customer's current address", buyer fields, ship-to ("Same as the buyer" switch), a checklist of
+the EARLIER invoices printing the same address (tick all / none), reason ≥ 10 with picks, an IRN warning, and "Save on N
+invoices" → `PUT /api/invoices/{id}/parties`. PURE `addressLine`, `correctionProblems` (exported). The printed invoice
+needs no client change — the server sends the frozen buyer / shipping. (2) **`crm/components/CustomerActivityLog.tsx`**
+— customer page tab **Activity Log** (last, every reader; lazy): kind chips with counts (Everything · Account ·
+Opportunities · Positions · Candidates · POs · Timesheets · Invoices · Payments, from `meta.kinds` / `counts`), search
+(debounced), From / To, a day-grouped timeline (icon per kind, action words, the record as a `CrmLink`, the actor, "Show N
+changes" → Field · Was (struck) · Now table; address changes in amber), Load more. PURE `actionWords`, `fieldWords`,
+`groupByDay`. Harness `/tmp/fs/src/__story/addr.tsx` (`?w=card|log&dark=1`; screenshots via python playwright with
+`LD_LIBRARY_PATH=/tmp/libroot/usr/lib/x86_64-linux-gnu` and files served by `page.route`). tsc green, eslint clean,
+`vite build` green, rendered with no console errors.
+
+**21 Oct 2026 (later still) — "Open e-invoice" works, PDF / Word download icons, who did each Finance step (server half +
+migration 0144 in B-V2 `CLAUDE.md`):** (1) ⚠️ **Why "Open e-invoice" showed nothing**: `openEInvoice` (`Finance.tsx`) opened a
+blank tab and pointed it at a `blob:` URL of the PDF. A blob document inherits the opener's CSP (`default-src 'self'`), so
+Chrome's PDF viewer was refused and the tab stayed empty, although the network tab showed a 200. It now opens the invoice's
+own signed, inline URL — `inv.share.einvoice_pdf_url` (`/api/public/invoices/{token}/einvoice/pdf`, the page the QR opens) —
+with a synchronous `window.open(url, "_blank", "noopener")`, so no popup blocker either. The blob path stays only as the
+fallback for a payload without `share`. (2) **`InvoiceJourney.tsx`** step 3 gains small **PDF** / **Word** download buttons
+(`FileGlyph` — drawn icons, not brand logos) → `onDownloadEInvoice(kind)` → `downloadFile(/api/invoices/{id}/einvoice.pdf|docx)`.
+(3) **Names**: `ActorLine` ("Generated by … · time", "Recorded by …", "Payment recorded by …" / "Last of N payments recorded
+by …") on steps 1, 3 and 4 from the server's `issued`, `einvoice.recorded_by_name` and each payment's `recorded_by_name`; the
+TDS line says "booked by …"; the payments table gains a **Recorded by** column. PURE `latestPayment` (exported). Tests
+`InvoiceJourney.test.ts` (2). tsc green, eslint clean, `vite build` green, the journey rendered with no console errors.
+
+**22 Oct 2026 — the e-invoice is the tax invoice sheet + an e-Invoice band; text no longer drops in html2canvas PDFs
+(`crm/components/invoice/EInvoiceBand.test.ts` 2; server half in B-V2 `CLAUDE.md`):** (1) **`EInvoiceBand.tsx`** — light
+blue box under the header: "e-Invoice", IRN · Ack No. · Ack Date (PURE `einvoiceDate` → DD/MM/YYYY) and the server's
+`share.einvoice_qr_svg`. `TaxInvoiceDocument` takes `einvoice` and draws it when `canShowEInvoice(data)` (Tax + IRN;
+`InvoiceData.einvoice` is mapped from the payload, sent to Finance / Admin / CEO only). `InvoicePage` reads `?einvoice=1`
+(in `CRM_FILTER_KEYS`): band on, files `EInvoice_…` (`fileStem(data, id, einvoice)`), Word from `/einvoice.docx`.
+`Finance.tsx`: **Open e-invoice** opens `invoices/{id}/tax-invoice?einvoice=1` in a new tab (the old public server PDF
+had a different layout); the **PDF** icon renders the same sheet OFF SCREEN (`EInvoiceCapture`, modules loaded on demand,
+wrapper `data-capture-wrap` that `exportTaxInvoicePdf`'s onclone moves to 0,0) and captures it; Word icon unchanged.
+⚠️ The `--inv-*` palette was defined on `.shell` only — a sheet mounted without the page shell rendered with no navy
+headers; it is now on `.shell, .page`. `exportTaxInvoicePdf` waits for the sheet's images first. (2) ⚠️ **Why text sat
+low in every html2canvas PDF** ("Buyer Details" touching the bottom of its bar): html2canvas 1.4.1 measures font
+baselines in the LIVE document with a 1×1 probe `<img>`, and Tailwind preflight makes images `display:block`, so the
+probe drops a line and every text line is drawn too low. **`utils/pdf/html2canvasTextFix.ts` →
+`withHtml2CanvasTextFix(run)`** adds `body > div > img[width="1"][height="1"]:not([class]) { display: inline !important }`
+for the capture only; used by `exportTaxInvoicePdf` and `exportElementToPdf` (every html2canvas export). Verified in
+headless Chromium: before = the reported picture, after = centred; off-screen e-invoice PDF = one page with the band.
+**Later the same day — ONE QR on the e-invoice:** the Declaration's "Scan to view this invoice" QR is left out while the
+e-Invoice band shows (`Declaration hideQr`, set by `TaxInvoiceDocument` from `showBand`) — the same rule the server PDF / Word
+already followed. The ordinary tax invoice keeps its QR.
+
+**21 Oct 2026 (night) — after-deploy page failures, E-invoices, AI report v3 + PDF, dashboards (server half in B-V2
+`CLAUDE.md`; `EInvoiceRegister.test.ts` 3, `utils/pdf/exportElementToPdf.test.ts` 4):** (1) ⚠️ **Opportunities /
+Candidate Profiles failing after a deploy** = a tab opened before it asks for chunk names the new build deleted.
+`lib/lazyRetry.ts` — `lazyRetry` (drop-in for `React.lazy`, used by `App.tsx`, `crm/routes.ts` and every lazy import):
+retry once, then reload ONCE (sessionStorage `karnex.chunkReloadAt`, 60 s guard); `installPreloadErrorReload()` (main.tsx)
+handles `vite:preloadError`. `components/PageErrorBoundary.tsx` wraps the CRM `<main>` (reset by path) and the platform
+views (reset by view): a failed page shows "A new version … Reload" or the error text, never a blank shell. **Every new
+lazy import must use `lazyRetry`.** (2) **E-invoices** — `crm/components/invoice/EInvoiceRegister.tsx`: Invoices ▸
+**E-invoice** tab (Finance · Sales · Sales Head · Admin) and the sidebar page **E-invoices** (route `e-invoices`, nav roles
+Admin · Finance · Sales · Sales_Head, shown only with the Invoices grant). Tiles, filters (search · customer → branch ·
+work month · employee · payment · IRN date range), table (IRN copy · Ack · recorded by), Open / PDF (opens the sheet with
+`?einvoice=1&pdf=1`) / Word, CSV. (3) **Template ▸ Two-way conversation**: follow-ups are a number box 0–20 with quick
+picks. (4) **AI report**: `utils/managerDashboardView` — the Strength Summary / Improvement cards are the POSITION's skills
+(`analysis.position_skills`); the hard-coded CAN / UDS / Troubleshooting themes and CAN follow-ups are gone (that was the
+"wrong skills"). A saved analysis below `SW_POSITION_VERSION` (3) is re-fetched. `components/candidate-report/
+L2QuestionsCard.tsx` under Strengths & Weaknesses: **Suggest L2 questions** (10, GPT-5.5, saved), Copy all, Write again.
+(5) ⚠️ **Black PDF**: one canvas for the whole report passed the browser's canvas limit and an empty canvas as JPEG is
+black. `utils/pdf/exportElementToPdf.ts` now captures each `[data-pdf-block]` separately (`captureScale` ≤ 14 000 px,
+`packBlocks` never splits a block that fits), paints every slice white first, and draws header / footer / "Page N of M".
+`components/pdf/InterviewPdfTemplate.tsx` redesigned on blocks: cover (score ring, verdict, facts, four scores) · verdict
+· Position skill check · Strengths | To probe · AI skill estimates · one block per question · L2 questions (else
+guidance) · final recommendation. (6) **Joined chip** now lists joiners of closed deals (server). (7) **HR Dashboard**
+(`pages/HrDashboard.tsx`) redesigned: PageHeader, six tiles, 8-week interview bars, pipeline + score distribution,
+"Waiting for your decision", upcoming, insights; `Promise.allSettled` — one failing call shows its own error + Retry
+(it used to blank the whole page with "Internal server error"). ⚠️ `Panel` is `h-full`: inside a stretched grid column
+add `!h-auto`. (8) **Interview Templates** (`pages/Templates.tsx`) redesigned: cards banded by question source (We write /
+AI writes / list / bank), experience · length · follow-ups, skills, Edit / HR Setup / Delete (ConfirmModal); search,
+customer, source, sort; PURE `questionSource`, `lengthText`, `filterTemplates`.

@@ -1,6 +1,7 @@
 /** CRM sidebar / command-palette nav entries (shared, no CrmApp side effects). */
 import type { ComponentType } from "react";
 import {
+  BadgeCheck,
   Briefcase,
   Building2,
   CalendarClock,
@@ -73,6 +74,8 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "holidays", label: "Holidays", icon: CalendarOff, roles: ["Admin", "HR"] },
   { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
   { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
+  // Every e-invoice (IRN recorded) for Finance and every Sales rung (21 Oct 2026).
+  { path: "e-invoices", label: "E-invoices", icon: BadgeCheck, roles: ["Admin", "Finance", "Sales", "Sales_Head"] },
   // Every customer branch's received amounts in one place (16 Oct 2026).
   { path: "received-amounts", label: "Received Amount", icon: Wallet, roles: ["Finance"] },
   // Financial Reports lives INSIDE Reports (Reports → Financial Reports tab)

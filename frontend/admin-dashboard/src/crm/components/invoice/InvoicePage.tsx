@@ -8,6 +8,7 @@ import { AmountWords } from "./AmountWords";
 import { BankDetails as BankDetailsBlock } from "./BankDetails";
 import { BuyerCard, ShippingCard } from "./BuyerCard";
 import { Declaration } from "./Declaration";
+import { EInvoiceBand } from "./EInvoiceBand";
 import { exportTaxInvoicePdf } from "./exportTaxInvoicePdf";
 import { GSTSummary, TotalsPanel } from "./GSTSummary";
 import { InvoiceFooter } from "./InvoiceFooter";
@@ -17,23 +18,37 @@ import type { InvoiceData } from "./types";
 import { mapApiInvoiceToData } from "./utils";
 import styles from "./taxInvoice.module.css";
 
-/** Download file name stem: `ProformaInvoice_PI-2026-003` / `TaxInvoice_INV-2026-041`. */
-function fileStem(data: InvoiceData, id: string | number): string {
+/** Download file name stem: `ProformaInvoice_PI-2026-003` / `TaxInvoice_INV-2026-041`
+    / `EInvoice_INV-2026-041`. */
+export function fileStem(data: InvoiceData, id: string | number, einvoice = false): string {
   const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
+  if (einvoice) return `EInvoice_${safe}`;
   return `${data.kind === "Proforma" ? "ProformaInvoice" : "TaxInvoice"}_${safe}`;
 }
 
-/** Presentational A4 tax invoice document (white print surface). */
+/** True when the sheet can print as an e-invoice (a tax invoice with its IRN). */
+export function canShowEInvoice(data: InvoiceData): boolean {
+  return data.kind !== "Proforma" && !!data.einvoice?.irn;
+}
+
+/** Presentational A4 tax invoice document (white print surface). With
+    `einvoice` the same sheet carries the e-Invoice band under the header. */
 export function TaxInvoiceDocument({
   data,
   sheetRef,
+  einvoice = false,
 }: {
   data: InvoiceData;
   sheetRef?: React.Ref<HTMLDivElement>;
+  einvoice?: boolean;
 }) {
+  const showBand = einvoice && canShowEInvoice(data) && !!data.einvoice;
   return (
     <div className={styles.page} ref={sheetRef} data-invoice-sheet="1">
       <InvoiceHeader data={data} />
+      {showBand && data.einvoice ? (
+        <EInvoiceBand ids={data.einvoice} share={data.share} />
+      ) : null}
       <div className={styles.cardsRow}>
         <BuyerCard party={data.buyer} />
         <ShippingCard party={data.shipping} />
@@ -47,7 +62,7 @@ export function TaxInvoiceDocument({
       <AmountWords grandTotal={data.gst.grand_total} taxAmount={data.gst.total_gst} />
       <div className={styles.bottomRow}>
         <BankDetailsBlock bank={data.bank} />
-        <Declaration seller={data.seller} share={data.share} />
+        <Declaration seller={data.seller} share={data.share} hideQr={showBand} />
       </div>
       <InvoiceFooter seller={data.seller} />
     </div>
@@ -62,6 +77,10 @@ export function InvoicePage() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [docxBusy, setDocxBusy] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // e-invoice view (22 Oct 2026): `?einvoice=1` prints the e-Invoice band on
+  // the same sheet; the downloads become EInvoice_… files.
+  const [wantsEInvoice] = useState(() => new URLSearchParams(window.location.search).get("einvoice") === "1");
+  const einvoice = wantsEInvoice && !!data && canShowEInvoice(data);
 
   // Word export (11 Sep 2026): server-built .docx with the same sections and
   // figures as this sheet, so Finance can edit wording without touching numbers.
@@ -69,12 +88,12 @@ export function InvoicePage() {
     if (!data) return;
     setDocxBusy(true);
     try {
-      const res = await authFetch(`/api/invoices/${id}/tax-invoice.docx`);
+      const res = await authFetch(`/api/invoices/${id}/${einvoice ? "einvoice" : "tax-invoice"}.docx`);
       if (!res.ok) throw new Error(`Word export failed (${res.status})`);
       const blob = await res.blob();
       const cd = res.headers.get("Content-Disposition") || "";
       const m = /filename="?([^"]+)"?/i.exec(cd);
-      const name = m?.[1] || `${fileStem(data, id)}.docx`;
+      const name = m?.[1] || `${fileStem(data, id, einvoice)}.docx`;
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
@@ -106,7 +125,7 @@ export function InvoicePage() {
     if (!sheetRef.current || !data) return;
     setPdfBusy(true);
     try {
-      await exportTaxInvoicePdf(sheetRef.current, `${fileStem(data, id)}.pdf`);
+      await exportTaxInvoicePdf(sheetRef.current, `${fileStem(data, id, einvoice)}.pdf`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to download PDF";
       setError(msg);
@@ -168,10 +187,15 @@ export function InvoicePage() {
           <FileText size={15} aria-hidden />
           {docxBusy ? "Preparing Word…" : "Download Word"}
         </button>
+        {einvoice ? (
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#173b7a" }}>e-Invoice · IRN registered</span>
+        ) : wantsEInvoice ? (
+          <span style={{ fontSize: 12, color: "#b45309" }}>No IRN on this invoice yet — showing the tax invoice.</span>
+        ) : null}
         {error ? <span style={{ color: "#b91c1c", fontSize: 12 }}>{error}</span> : null}
       </div>
       <div className={styles.pageWrap}>
-        <TaxInvoiceDocument data={data} sheetRef={sheetRef} />
+        <TaxInvoiceDocument data={data} sheetRef={sheetRef} einvoice={einvoice} />
       </div>
     </div>
   );

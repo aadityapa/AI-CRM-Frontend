@@ -17,12 +17,90 @@ import { inputCls } from "./ui";
 
 export type RegistryTab = {
   key: string; label: string; fields?: { key: string; label: string }[];
+  /** The page's sub-tabs (22 Oct 2026) — `tab:<key>` entries of the field map. */
+  subtabs?: { key: string; label: string }[];
   /** "Interview Platform" | "CRM" (server, 7 Oct 2026). */
   group?: string;
   /** Interview Platform tabs: the roles that open it by default. */
   default_roles?: string[];
 };
 export type GrantMap = Record<string, string>;
+export type FieldGrantMap = Record<string, Record<string, string>>;
+
+/** PURE (22 Oct 2026) — is this sub-tab ticked, and is the tab's list chosen
+ *  explicitly? Mirror of B-V2 `access_registry.subtab_choice`: once any
+ *  sub-tab is "view", only "view" ones show; otherwise only "hidden" hides. */
+export function subTabState(map: Record<string, string> | undefined, key: string): { checked: boolean; picked: boolean } {
+  const entries = Object.entries(map || {}).filter(([k]) => k.startsWith("tab:"));
+  const shown = (m?: string) => m === "view" || m === "edit";
+  const picked = entries.some(([, m]) => shown(m));
+  const mode = (map || {})[key];
+  return { picked, checked: picked ? shown(mode) : mode !== "hidden" };
+}
+
+/** PURE — tick / untick one sub-tab: the tab's list becomes explicit ("view"
+ *  for every ticked one, "hidden" for the rest); other fields are kept. */
+export function toggleSubTab(
+  map: Record<string, string> | undefined, subtabs: { key: string }[], key: string,
+): Record<string, string> {
+  const next: Record<string, string> = { ...(map || {}) };
+  for (const st of subtabs) {
+    const on = st.key === key ? !subTabState(map, st.key).checked : subTabState(map, st.key).checked;
+    next[st.key] = on ? "view" : "hidden";
+  }
+  return next;
+}
+
+/** PURE — back to the role defaults: drop every `tab:*` entry. */
+export function resetSubTabs(map: Record<string, string> | undefined): Record<string, string> {
+  return Object.fromEntries(Object.entries(map || {}).filter(([k]) => !k.startsWith("tab:")));
+}
+
+/** Tick list of a tab's sub-tabs (22 Oct 2026, user ask: "give access to each
+ *  sub-tab"). Used by Access Templates and Access Control ▸ Roles. */
+export function SubTabPicker({
+  subtabs, value, onChange,
+}: {
+  subtabs: { key: string; label: string }[];
+  value: Record<string, string> | undefined;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  if (!subtabs.length) return null;
+  const picked = subTabState(value, subtabs[0].key).picked;
+  const shownCount = subtabs.filter((st) => subTabState(value, st.key).checked).length;
+  return (
+    <div className="mt-1.5 rounded-control border border-dashed border-subtle bg-surface-2 px-2.5 py-2">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+          Sub-tabs · {picked ? `only the ${shownCount} ticked` : "following the role"}
+        </span>
+        {picked ? (
+          <button type="button" className="text-[11px] font-semibold text-brand-600 hover:underline dark:text-brand-300"
+            onClick={() => onChange(resetSubTabs(value))}>
+            Back to role defaults
+          </button>
+        ) : (
+          <span className="text-[11px] text-muted">Untick one to choose them yourself</span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {subtabs.map((st) => {
+          const on = subTabState(value, st.key).checked;
+          return (
+            <label key={st.key}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-pill border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                on ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-900/30 dark:text-brand-200"
+                  : "border-subtle bg-surface-1 text-muted line-through"}`}>
+              <input type="checkbox" className="h-3.5 w-3.5 accent-brand-600" checked={on}
+                onChange={() => onChange(toggleSubTab(value, subtabs, st.key))} />
+              {st.label}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export const TAB_MODULES: Record<string, string> = {
   dashboard: "General", calendar: "General", reports: "General",
@@ -87,10 +165,15 @@ export function TabPermissionMatrix({
   tabs,
   value,
   onChange,
+  fieldValue,
+  onFieldChange,
 }: {
   tabs: RegistryTab[];
   value: GrantMap;
   onChange: (next: GrantMap) => void;
+  /** Field / sub-tab grants (22 Oct 2026) — with these, a granted tab shows its sub-tab ticks. */
+  fieldValue?: FieldGrantMap;
+  onFieldChange?: (next: FieldGrantMap) => void;
 }) {
   const [search, setSearch] = useState("");
   const q = search.trim().toLowerCase();
@@ -126,7 +209,8 @@ export function TabPermissionMatrix({
         {MODULE_ORDER.map((mod) => {
           const modTabs = tabs
             .filter((t) => moduleOf(t) === mod)
-            .filter((t) => !q || t.label.toLowerCase().includes(q) || t.key.includes(q));
+            .filter((t) => !q || t.label.toLowerCase().includes(q) || t.key.includes(q)
+              || (t.subtabs || []).some((st) => st.label.toLowerCase().includes(q)));
           if (!modTabs.length) return null;
           const inMod = modTabs.filter((t) => value[t.key]).length;
           const keys = modTabs.map((t) => t.key);
@@ -146,9 +230,22 @@ export function TabPermissionMatrix({
               {mod === IV_MODULE && <p className="border-b border-subtle px-3 py-1.5 text-[11px] text-muted">{IV_MODULE_HINT}</p>}
               <div className="divide-y divide-subtle">
                 {modTabs.map((tab) => (
-                  <div key={tab.key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                    <span className="text-sm font-medium text-primary">{tab.label}</span>
-                    <ModeSegments value={value[tab.key] || ""} onChange={(m) => setMode(tab.key, m)} />
+                  <div key={tab.key} className="px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-primary">
+                        {tab.label}
+                        {tab.subtabs?.length ? <span className="ml-1.5 text-[11px] font-normal text-muted">{tab.subtabs.length} sub-tabs</span> : null}
+                      </span>
+                      <ModeSegments value={value[tab.key] || ""} onChange={(m) => setMode(tab.key, m)} />
+                    </div>
+                    {onFieldChange && value[tab.key] && tab.subtabs?.length ? (
+                      <SubTabPicker subtabs={tab.subtabs} value={fieldValue?.[tab.key]}
+                        onChange={(m) => {
+                          const next = { ...(fieldValue || {}) };
+                          if (Object.keys(m).length) next[tab.key] = m; else delete next[tab.key];
+                          onFieldChange(next);
+                        }} />
+                    ) : null}
                   </div>
                 ))}
               </div>

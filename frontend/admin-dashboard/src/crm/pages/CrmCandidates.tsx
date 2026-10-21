@@ -14,7 +14,7 @@ import type { Meta } from "../api";
 import { ApplyToOpportunityModal } from "../components/ApplyToOpportunityModal";
 import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
-import { useCanAct, useCrmAccess } from "../useAccess";
+import { useCanAct, useCrmAccess, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { DataTable } from "../components/DataTable";
@@ -1447,6 +1447,7 @@ export function CandidateDetailPage() {
   const [data, setData] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = usePageTab<string>("tab", "personal");
+  const pageSub = useSubTabs("candidates");   // sub-tabs a template can switch off (22 Oct 2026)
   const [showEdit, setShowEdit] = useState(false);
   const [eduModal, setEduModal] = useState<{ open: boolean; item?: Education }>({ open: false });
   const [expModal, setExpModal] = useState<{ open: boolean; item?: Experience }>({ open: false });
@@ -1537,6 +1538,8 @@ export function CandidateDetailPage() {
     { key: "outreach", label: "Outreach", icon: MessageCircle },
     { key: "emails", label: "Emails", icon: Mail },
   ];
+  const detailTabsShown = detailTabs.filter((t) => pageSub.allowed(t.key));
+  const shownTab = detailTabsShown.some((t) => t.key === tab) ? tab : (detailTabsShown[0]?.key || "");
 
   return (
     <div className="space-y-5">
@@ -1695,8 +1698,8 @@ export function CandidateDetailPage() {
         {/* Tab strip with icons (same keys, same ?tab= deep links). */}
         <div className="overflow-x-auto border-t border-subtle px-2 sm:px-4">
           <div className="flex min-w-max gap-1" role="tablist" aria-label="Candidate sections">
-            {detailTabs.map((t) => {
-              const active = tab === t.key;
+            {detailTabsShown.map((t) => {
+              const active = shownTab === t.key;
               return (
                 <button
                   key={t.key}
@@ -1723,7 +1726,7 @@ export function CandidateDetailPage() {
         </div>
       </div>
 
-      {tab === "personal" && (
+      {shownTab === "personal" && (
         <PersonalInfoGrid
           c={data}
           action={canWrite ? (
@@ -1734,7 +1737,7 @@ export function CandidateDetailPage() {
         />
       )}
 
-      {tab === "education" && (
+      {shownTab === "education" && (
         <SectionCard
           icon={GraduationCap}
           accent="from-violet-500 to-indigo-600"
@@ -1767,7 +1770,7 @@ export function CandidateDetailPage() {
         </SectionCard>
       )}
 
-      {tab === "experience" && (
+      {shownTab === "experience" && (
         <SectionCard
           icon={Building2}
           accent="from-sky-500 to-brand-600"
@@ -1800,7 +1803,7 @@ export function CandidateDetailPage() {
         </SectionCard>
       )}
 
-      {tab === "skills" && (
+      {shownTab === "skills" && (
         <SectionCard
           icon={Sparkles}
           accent="from-amber-500 to-rose-500"
@@ -1829,7 +1832,7 @@ export function CandidateDetailPage() {
         </SectionCard>
       )}
 
-      {tab === "profiles" && (
+      {shownTab === "profiles" && (
         <SectionCard
           icon={Briefcase}
           accent="from-indigo-500 to-violet-600"
@@ -1880,20 +1883,20 @@ export function CandidateDetailPage() {
         </SectionCard>
       )}
 
-      {tab === "resumes" && (
+      {shownTab === "resumes" && (
         <ResumeLibraryTab candidateId={data.id} canWrite={canWrite} notify={showToast} onChanged={load} />
       )}
-      {tab === "matching" && (
+      {shownTab === "matching" && (
         <MatchingPositionsTab candidateId={data.id} isTa={isTa} notify={showToast} onApplied={load}
           candidateName={candName(data)} />
       )}
-      {tab === "outreach" && (
+      {shownTab === "outreach" && (
         <SectionCard icon={MessageCircle} accent="from-teal-500 to-emerald-600" title="Outreach"
           subtitle="Calls, emails and messages logged by the team">
           <OutreachTab candidateId={data.id} showToast={showToast} />
         </SectionCard>
       )}
-      {tab === "emails" && (
+      {shownTab === "emails" && (
         <SectionCard icon={Mail} accent="from-sky-500 to-indigo-600" title="Emails"
           subtitle="Every email the system sent to this candidate">
           <EmailsTab candidateId={data.id} />

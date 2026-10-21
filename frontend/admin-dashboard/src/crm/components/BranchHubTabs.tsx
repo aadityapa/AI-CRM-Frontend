@@ -14,6 +14,7 @@
  *  - Purchase Orders load customer-wide and filter client-side on
  *    billing_branch_id / delivery_branch_id when the payload carries them.
  */
+import { lazyRetry } from "../../lib/lazyRetry";
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { crmGet, qs } from "../api";
@@ -23,7 +24,7 @@ import { EmptyState, ErrorBox, Field, Spinner, StatusBadge, btnPrimary, inputCls
 import { WorkMonth } from "./WorkMonth";
 
 /** Lazy so the branch page never pulls the 1,900-line wizard into its bundle. */
-const LazyNewOpportunityForm = React.lazy(() =>
+const LazyNewOpportunityForm = lazyRetry(() =>
   import("../pages/opportunity/NewOpportunityForm")
     .then((m) => ({ default: m.NewOpportunityForm })));
 

@@ -34,13 +34,13 @@
  * API: routers/crm/customer_receipts.py.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Clock, FileImage, Lock, MapPin, Paperclip, Pencil, Percent, Plus, Trash2, Upload, Wallet, X } from "lucide-react";
+import { Check, Clock, FileImage, Link2, Lock, MapPin, Pencil, Percent, Plus, Trash2, Upload, Wallet, X } from "lucide-react";
 import {
   DEFAULT_SECTIONS, TdsChip, TdsDeductionModal, TdsDetailModal, netDue,
   type TdsChoice, type TdsInfo, type TdsSection,
 } from "../components/invoice/TdsDeduction";
 import { DialogActions, DialogFailure, DialogHero, DialogSection } from "../components/dialogKit";
-import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs } from "../api";
+import { crmDelete, crmGet, crmPost, crmUpload, qs } from "../api";
 import { fileViewHref } from "./FileView";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -53,76 +53,21 @@ import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { CrmLink } from "../routerHooks";
 import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import {
-  ConfirmModal, ErrorBox, Modal, StatusBadge, btnPrimary, inputCls, useToast,
+  ConfirmModal, ErrorBox, Modal, btnPrimary, inputCls, useToast,
 } from "../components/ui";
+import {
+  PAYMENT_MODES, ProofChip, daysLate, fmtDate, inr, isoDay, pillCls,
+  type BranchOption, type BranchScope, type InvoiceOption, type Receipt,
+} from "./receipts/receiptShared";
+import { ReceiptDetailModal } from "./receipts/ReceiptWorkbench";
 
-type Allocation = {
-  payment_id: number | null; invoice_id: number; amount: number;
-  /** 16 Oct 2026 — the TDS the customer withheld on this invoice. */
-  tds?: TdsInfo | null; tds_booked_here?: boolean;
-  invoice_number?: string; employee_name?: string | null; project_name?: string | null;
-  balance_amount?: number; payment_status?: string;
-  /** 16 Oct 2026 — the month the invoice bills and its branch. */
-  month_label?: string | null; branch_name?: string | null;
-};
-type Receipt = {
-  id: number; customer_id: number; customer_name?: string | null;
-  /** The paying branch (16 Oct 2026); null = before that / no branch. */
-  branch_id?: number | null; branch_name?: string | null;
-  received_date: string; amount: number; payment_mode?: string | null;
-  reference_number?: string | null; notes?: string | null;
-  unallocated_amount: number; allocated_amount: number; created_at?: string | null;
-  /** TDS withheld on the invoices of this receipt, and what is still pending from the client. */
-  tds_total?: number; tds_pending?: number;
-  /** Proof of the credit (19 Oct 2026) — screenshot / remittance advice. */
-  proof_url?: string | null; proof_name?: string | null;
-  allocations: Allocation[];
-};
-type InvoiceOption = {
-  id: number; invoice_number: string; invoice_date: string | null; project_name?: string | null;
-  employee_name?: string | null; grand_total: number; paid_amount: number; balance_amount: number;
-  payment_status: string;
-  /** 16 Oct 2026 — the TDS base (value before GST), GST, and any TDS already on record. */
-  sub_total: number; tax_amount: number; tds_deducted?: number; tds?: TdsInfo | null;
-  /** 8 Oct 2026 — why money cannot go on it yet (customer approval / IRN); null = open. */
-  payment_block?: string | null;
-  /** 16 Oct 2026 — the branch it belongs to and the month it bills. */
-  branch_id?: number | null; branch_name?: string | null;
-  month?: string | null; month_label?: string | null; due_date?: string | null;
-};
-type BranchOption = { id: number; name: string; invoices: number; balance: number };
-/** The branch page's scope — the list and the Add dialog are locked to it.
- *  Without `branchId` (the customer page's tab, 19 Oct 2026) it is the whole
- *  customer: every branch listed, the branch picked in the Add dialog. */
-export type BranchScope = { customerId: number; customerName?: string | null; branchId?: number | null; branchName?: string | null };
+export { daysLate };
+export type { BranchScope };
+
 
 /** One group per (customer, branch) in the grouped view — a stable number key. */
 const groupKey = (r: { customer_id: number; branch_id?: number | null }) => r.customer_id * 100000 + (r.branch_id || 0);
 
-const PAYMENT_MODES = ["NEFT", "RTGS", "IMPS", "UPI", "Cheque", "Cash", "Wire", "Other"];
-const inr = (v: number | null | undefined) =>
-  v == null ? "—" : `₹${Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—");
-/** Days an open invoice is past its due date (0 when not yet due). PURE. */
-export function daysLate(due: string | null | undefined, today: Date = new Date()): number {
-  if (!due) return 0;
-  const d = new Date(`${due.slice(0, 10)}T00:00:00`);
-  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.max(0, Math.round((t.getTime() - d.getTime()) / 86400000));
-}
-
-/** "Proof" chip — opens the stored file in the CRM's file viewer. */
-function ProofChip({ url, name }: { url: string; name?: string | null }) {
-  const href = fileViewHref(url, name || "Payment proof");
-  if (!href) return null;
-  return (
-    <a href={href} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
-      title={name || "Proof of payment"}
-      className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800 ring-1 ring-inset ring-sky-200 hover:underline dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800">
-      <Paperclip size={11} aria-hidden /> Proof
-    </a>
-  );
-}
 
 export function CustomerReceiptsPage({ scope, standalone = false }: {
   /** Set on the branch page: only that branch, Add locked to it. */
@@ -145,7 +90,9 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
   const [showAdd, setShowAdd] = useState(false);
   const [removing, setRemoving] = useState<Receipt | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  // The receipt open in the workbench (22 Oct 2026) — row click, or a row button
+  // that opens straight into Map invoices / Edit details.
+  const [detail, setDetail] = useState<{ receipt: Receipt; start?: "map" | "edit" | null } | null>(null);
   // "TDS pending from client" pop-up (16 Oct 2026).
   const [tdsOpen, setTdsOpen] = useState<{ tds: TdsInfo; invoiceNumber?: string | null } | null>(null);
   const canMarkTds = useCanAct("tds", "edit", useHasRole("Finance"));
@@ -155,7 +102,7 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
     return () => window.clearTimeout(t);
   }, [search]);
   useEffect(() => {
-    crmGet<any[]>("/api/customers/names")
+    crmGet<any[]>("/api/customers/names?status=Active")
       .then((r) => setCustomers((r.data || []).map((c: any) => ({ value: String(c.id), label: String(c.name) }))
         .sort((a: any, b: any) => a.label.localeCompare(b.label))))
       .catch(() => {});
@@ -196,6 +143,15 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
     }
   }, [page, debounced, sort, colFilters, view, scopeCustomer, scopeBranch]);
   useEffect(() => { load(); }, [load]);
+  // Keep the open receipt in step with the list after a reload.
+  useEffect(() => {
+    setDetail((d) => {
+      if (!d) return d;
+      const fresh = rows.find((x) => x.id === d.receipt.id);
+      return fresh ? { ...d, receipt: fresh, start: null } : d;
+    });
+  }, [rows]);
+  const openReceipt = (r: Receipt, start: "map" | "edit" | null = null) => setDetail({ receipt: r, start });
 
   const columns: Column<Receipt>[] = useMemo(() => { const all: Column<Receipt>[] = [
     { key: "received_date", label: "Received", sortable: true, render: (r) => fmtDate(r.received_date),
@@ -243,12 +199,18 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
             )}
           </span>
         ))}
-        {r.unallocated_amount > 0 && (
+        {r.unallocated_amount > 0 && (canEdit ? (
+          <button type="button" onClick={() => openReceipt(r, "map")}
+            className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm hover:bg-amber-600"
+            title="Received but not applied to any invoice — map it to the invoices it pays">
+            <Link2 size={11} aria-hidden /> Map {inr(r.unallocated_amount)}
+          </button>
+        ) : (
           <span className="inline-flex items-center rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning"
             title="Received but not applied to any invoice">
             Unallocated {inr(r.unallocated_amount)}
           </span>
-        )}
+        ))}
       </div>
     ) },
     { key: "notes", label: "Notes", render: (r) => (
@@ -256,8 +218,30 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
     ) },
   ];
     return all.filter((c) => !scope || (c.key !== "customer_name" && (c.key !== "branch_name" || !scope.branchId)));
-  }, [customers, scope]);
+  }, [customers, scope, canEdit]);
 
+  const iconBtn = "inline-flex items-center justify-center rounded-control p-1.5 transition-colors";
+  const rowButtons = (r: Receipt) => (
+    <span className="inline-flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+      {r.unallocated_amount > 0 && (
+        <button type="button" className={`${iconBtn} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30`}
+          title={`Map the ${inr(r.unallocated_amount)} on account to invoices`} aria-label="Map invoices"
+          onClick={() => openReceipt(r, "map")}>
+          <Link2 size={15} />
+        </button>
+      )}
+      <button type="button" className={`${iconBtn} text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/30`}
+        title="Edit date, amount, mode, reference, branch or notes" aria-label="Edit receipt"
+        onClick={() => openReceipt(r, "edit")}>
+        <Pencil size={15} />
+      </button>
+      <button type="button" className={`${iconBtn} text-muted hover:bg-danger-soft hover:!text-danger`}
+        title="Remove this receipt and restore the invoice balances" aria-label="Delete receipt"
+        onClick={() => setRemoving(r)}>
+        <Trash2 size={15} />
+      </button>
+    </span>
+  );
   const totalShown = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
   const tdsPendingShown = rows.reduce((a, r) => a + Number(r.tds_pending || 0), 0);
   const tdsLink = tdsPendingShown > 0 ? (
@@ -336,17 +320,10 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
                 <span>Unallocated <span className="font-semibold text-primary tnum">{inr(rs.reduce((a, r) => a + Number(r.unallocated_amount || 0), 0))}</span></span>
               </>
             )}
-            onRowClick={(r) => setExpanded((cur) => (cur === r.id ? null : r.id))}
+            onRowClick={(r) => openReceipt(r)}
             rowKey={(r) => r.id}
             empty={<div className="rounded-card border border-subtle bg-surface-1 p-6 text-sm text-muted">No amounts received yet — Finance records the first one with “Add received amount”.</div>}
-            rowActions={canEdit ? (r) => (
-              <button type="button"
-                className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-danger-soft hover:!text-danger"
-                title="Remove this receipt and restore the invoice balances"
-                onClick={() => setRemoving(r)}>
-                <Trash2 size={15} />
-              </button>
-            ) : undefined}
+            rowActions={canEdit ? (r) => rowButtons(r) : undefined}
           />
         </div>
       ) : (
@@ -365,7 +342,7 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
             setColFilters((prev) => { const n = { ...prev }; if (v) n[key] = v; else delete n[key]; return n; });
             setPage(1);
           }}
-          onRowClick={(r) => setExpanded((cur) => (cur === r.id ? null : r.id))}
+          onRowClick={(r) => openReceipt(r)}
           headerRight={meta ? (
             <span className="whitespace-nowrap text-xs font-medium text-muted">
               {meta.total} receipt{meta.total === 1 ? "" : "s"}, page {meta.page}/{Math.max(1, meta.pages || 1)}
@@ -373,54 +350,25 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           ) : undefined}
           filters={scope ? undefined : <ViewToggle view={view} onChange={setView} />}
           emptyMessage="No amounts received yet — Finance records the first one with “Add received amount”."
-          rowActions={canEdit ? (r) => (
-            <button type="button"
-              className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-danger-soft hover:!text-danger"
-              title="Remove this receipt and restore the invoice balances"
-              onClick={(e) => { e.stopPropagation(); setRemoving(r); }}>
-              <Trash2 size={15} />
-            </button>
-          ) : undefined}
+          rowActions={canEdit ? (r) => rowButtons(r) : undefined}
         />
       )}
-      {expanded != null && (() => {
-        const r = rows.find((x) => x.id === expanded);
-        if (!r) return null;
-        return (
-          <div className="rounded-card border border-subtle bg-surface-1 p-4 text-sm">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="font-bold text-primary">Receipt #{r.id} — {r.customer_name}{r.branch_name ? ` (${r.branch_name})` : ""} · {inr(r.amount)} on {fmtDate(r.received_date)}</span>
-              <button className="text-xs text-sky-600 hover:underline" onClick={() => setExpanded(null)}>Close</button>
-            </div>
-            {r.allocations.length === 0 ? (
-              <p className="text-muted">Not applied to any invoice (held on account).</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead><tr className="text-left text-xs uppercase text-muted">
-                  <th className="py-1">Invoice</th><th>Month</th><th>Employee</th><th>Project</th><th className="text-right">Cash applied</th><th>TDS</th><th className="text-right">Balance now</th><th>Status</th>
-                </tr></thead>
-                <tbody>
-                  {r.allocations.map((a) => (
-                    <tr key={a.invoice_id} className="border-t border-subtle">
-                      <td className="py-1.5"><CrmLink to={`invoices/${a.invoice_id}`} className="font-semibold text-sky-600 hover:underline">{a.invoice_number || `#${a.invoice_id}`}</CrmLink></td>
-                      <td>{a.month_label || "—"}</td>
-                      <td>{a.employee_name || "—"}</td>
-                      <td>{a.project_name || "—"}</td>
-                      <td className="text-right tabular-nums">{inr(a.amount)}</td>
-                      <td>{a.tds ? <TdsChip tds={a.tds} onClick={() => setTdsOpen({ tds: a.tds as TdsInfo, invoiceNumber: a.invoice_number })} /> : <span className="text-muted">—</span>}</td>
-                      <td className="text-right tabular-nums">{inr(a.balance_amount)}</td>
-                      <td>{a.payment_status ? <StatusBadge status={a.payment_status} /> : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {r.notes && <p className="mt-2 whitespace-pre-wrap text-secondary">{r.notes}</p>}
-            <ReceiptProofRow receipt={r} canEdit={canEdit}
-              onSaved={(msg) => { showToast(msg); load(); }} onError={(m) => showToast(m, "err")} />
-          </div>
-        );
-      })()}
+      {detail && (
+        <ReceiptDetailModal
+          receipt={detail.receipt}
+          startWith={detail.start}
+          canEdit={canEdit}
+          onClose={() => setDetail(null)}
+          onChanged={(msg, updated) => {
+            showToast(msg);
+            if (updated) setDetail({ receipt: updated, start: null });
+            load();
+          }}
+          onDelete={(r) => { setDetail(null); setRemoving(r); }}
+          onTds={(tds, invoiceNumber) => setTdsOpen({ tds, invoiceNumber })}
+          toast={(m, kind) => showToast(m, kind)}
+        />
+      )}
       {showAdd && (
         <AddReceiptModal
           customers={customers}
@@ -459,14 +407,6 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
       )}
     </div>
   );
-}
-
-/** "2026-10-08" for today minus `daysBack`, in local time. PURE. */
-function isoDay(daysBack = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysBack);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /**
@@ -976,57 +916,6 @@ function ProofPicker({ proof, busy, onPick, onClear }: {
   );
 }
 
-/** In the expanded receipt: the proof, and attach / replace / remove it later. */
-function ReceiptProofRow({ receipt, canEdit, onSaved, onError }: {
-  receipt: Receipt; canEdit: boolean; onSaved: (msg: string) => void; onError: (msg: string) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const save = async (url: string | null, name: string | null) => {
-    setBusy(true);
-    try {
-      const res = await crmPut(`/api/customer-receipts/${receipt.id}/proof`, { proof_url: url, proof_name: name });
-      onSaved(res.message || "Proof saved");
-    } catch (e: any) {
-      onError(e?.message || "Could not save the proof");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const pick = async (file: File) => {
-    setBusy(true);
-    try {
-      const up = await crmUpload<{ url: string; name: string }>("/api/customer-receipts/proof", file);
-      await save(up.data.url, up.data.name || file.name);
-    } catch (e: any) {
-      onError(e?.message || "Could not upload the proof");
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-subtle pt-3 text-xs">
-      <span className="font-semibold text-secondary">Proof of payment:</span>
-      {receipt.proof_url ? <><ProofChip url={receipt.proof_url} name={receipt.proof_name} />
-        <span className="text-muted">{receipt.proof_name}</span></> : <span className="text-muted">none attached</span>}
-      {canEdit && (
-        <>
-          <button type="button" disabled={busy} className="font-semibold text-sky-600 hover:underline"
-            onClick={() => inputRef.current?.click()}>{receipt.proof_url ? "Replace" : "Attach proof"}</button>
-          {receipt.proof_url && (
-            <button type="button" disabled={busy} className="font-semibold text-rose-600 hover:underline"
-              onClick={() => void save(null, null)}>Remove</button>
-          )}
-          <input ref={inputRef} type="file" className="hidden" accept="image/*,.pdf,.xls,.xlsx,.csv,.doc,.docx,.txt"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void pick(f); e.target.value = ""; }} />
-        </>
-      )}
-    </div>
-  );
-}
-
-const pillCls = (on: boolean) => `rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${on
-  ? "border-emerald-500 bg-emerald-600 text-white shadow-raised"
-  : "border-subtle bg-surface-1 text-secondary hover:border-emerald-300 hover:text-primary"}`;
 
 /** The "Received Amount" sidebar page — every branch, grouped Customer ▸ Branch. */
 export function ReceivedAmountsPage() {

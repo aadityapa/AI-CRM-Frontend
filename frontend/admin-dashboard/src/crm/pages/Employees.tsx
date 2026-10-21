@@ -15,7 +15,7 @@ import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, crmUpload, qs, type Meta } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { useHasRole } from "../CrmApp";
-import { useCanAct, useCrmAccess } from "../useAccess";
+import { useCanAct, useCrmAccess, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -995,6 +995,9 @@ export function EmployeeDetailPage() {
   const [emp, setEmp] = useState<any | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = usePageTab<string>("tab", "profile", DETAIL_TABS.map((t) => t.key));
+  const pageSub = useSubTabs("employees");   // sub-tabs a template can switch off (22 Oct 2026)
+  const DETAIL_TABS_SHOWN = DETAIL_TABS.filter((t) => pageSub.allowed(t.key));
+  const shownTab = DETAIL_TABS_SHOWN.some((t) => t.key === tab) ? tab : (DETAIL_TABS_SHOWN[0]?.key || "");
   /* Lazy-load flag: the 360° History view mounts (and fetches) only on first
    * open, then stays mounted (hidden) so switching tabs doesn't refetch. */
   const [historyOpened, setHistoryOpened] = useState(false);
@@ -1084,8 +1087,8 @@ export function EmployeeDetailPage() {
         </dl>
         <div className="border-t border-subtle px-3 py-2 sm:px-4">
           <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Employee sections">
-            {DETAIL_TABS.map((t) => {
-              const on = tab === t.key;
+            {DETAIL_TABS_SHOWN.map((t) => {
+              const on = shownTab === t.key;
               const Icon = DETAIL_TAB_ICONS[t.key] || User;
               return (
                 <button
@@ -1111,18 +1114,18 @@ export function EmployeeDetailPage() {
         </div>
       </header>
 
-      {tab === "profile" && <EmployeeProfile {...common} />}
+      {shownTab === "profile" && <EmployeeProfile {...common} />}
 
       {exitOpen && <ExitDateModal emp={emp} onClose={() => setExitOpen(false)}
         onSaved={(msg) => { setExitOpen(false); showToast(msg); load(); }} />}
 
       {historyOpened && (
-        <div className={tab === "employee_history" ? undefined : "hidden"}>
+        <div className={shownTab === "employee_history" ? undefined : "hidden"}>
           <EmployeeHistoryTab employeeId={Number(id)} />
         </div>
       )}
 
-      {tab === "history" && <ProjectHistoryTab employeeId={Number(id)} />}
+      {shownTab === "history" && <ProjectHistoryTab employeeId={Number(id)} />}
 
       {toast}
     </div>

@@ -1,7 +1,10 @@
 /* Tax Invoice — white print document isolated from app dark theme.
    Colors: Primary #173B7A · Secondary #F59E0B · Border #D9E2EC · Text #1F2937 · Light #F8FAFC */
 
-.shell {
+/* The sheet carries its own palette too, so it renders the same when it is
+   mounted outside the page shell (the e-invoice PDF capture, 22 Oct 2026). */
+.shell,
+.page {
   --inv-primary: #173b7a;
   --inv-secondary: #f59e0b;
   --inv-bg: #ffffff;
@@ -217,9 +220,66 @@
   gap: 6px;
   background: var(--inv-primary);
   color: #fff;
-  padding: 6px 10px;
+  padding: 0 10px;
+  height: 28px;
+  line-height: 28px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.cardHead svg {
+  flex-shrink: 0;
+}
+
+/* e-Invoice band (22 Oct 2026) — under the header of the e-invoice only. */
+.einvBand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #bfd3ee;
+  border-radius: var(--inv-radius);
+  background: #f5f9ff;
+  padding: 8px 12px;
+}
+
+.einvMain {
+  min-width: 0;
+  flex: 1;
+}
+
+.einvTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--inv-text);
+  line-height: 18px;
+  margin-bottom: 2px;
+}
+
+.einvRow {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.einvKey {
+  width: 64px;
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #5a6b86;
+}
+
+.einvVal {
+  color: #5a6b86;
+  word-break: break-all;
+}
+
+.einvQr {
+  width: 76px;
+  height: 76px;
+  flex-shrink: 0;
+  display: block;
 }
 
 .cardBody {

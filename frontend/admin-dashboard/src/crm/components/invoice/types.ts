@@ -164,6 +164,15 @@ export interface InvoiceData {
   gst: GSTBreakup;
   /** "Scan to view" (3 Sep 2026): the public signed link and its QR image. */
   share?: ShareLinks | null;
+  /** The e-invoice band (22 Oct 2026) — sent to Finance / Admin / CEO only,
+      once the IRN is recorded. */
+  einvoice?: EInvoiceIds | null;
+}
+
+export interface EInvoiceIds {
+  irn?: string | null;
+  ack_number?: string | null;
+  ack_date?: string | null;
 }
 
 export interface ShareLinks {
@@ -175,4 +184,8 @@ export interface ShareLinks {
   qr_target: string;
   /** data:image/svg+xml;base64,… rendered server-side. */
   qr_svg?: string | null;
+  /** The public e-invoice page and its QR (only once the IRN exists). */
+  einvoice_url?: string | null;
+  einvoice_pdf_url?: string | null;
+  einvoice_qr_svg?: string | null;
 }

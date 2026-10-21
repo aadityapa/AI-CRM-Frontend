@@ -2,7 +2,8 @@
  * linked candidate profiles, server-validated stage transitions and activity log.
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * one primary action per screen, right-aligned numerics in tables. */
-import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { lazyRetry } from "../../lib/lazyRetry";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   Briefcase,
   AlertTriangle, Building2, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, GraduationCap, Mail, MapPin,
@@ -13,7 +14,7 @@ import { fetchAllMaster } from "../lib/fetchAllMaster";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { CRM_NAV } from "../nav";
-import { useCanAct, useCanApprove, useCrmAccess } from "../useAccess";
+import { useCanAct, useCanApprove, useCrmAccess, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { displayEmail, realEmail } from "../lib/candidateEmail";
 import { fmtDateShort } from "../../lib/datetime";
@@ -297,7 +298,7 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   };
   const [customerOpts, setCustomerOpts] = useState<{ value: string; label: string }[]>([]);
   useEffect(() => {
-    crmGet<any[]>("/api/customers/names")
+    crmGet<any[]>("/api/customers/names?status=Active")
       .then((r) => setCustomerOpts((r.data || [])
         .map((c: any) => ({ value: String(c.id), label: String(c.name) }))
         .sort((a: any, b: any) => a.label.localeCompare(b.label))))
@@ -876,7 +877,7 @@ function BasisCard({ basis }: { basis: SuggestionBasis | null }) {
  * the WHY spelled out per candidate, and one-click Apply. */
 /* Loaded on demand — Requirements.tsx imports this module too, so a static
    import would tie the two route chunks together. */
-const RequirementResumesTab = lazy(() => import("./Requirements").then((m) => ({ default: m.ResumesTab })));
+const RequirementResumesTab = lazyRetry(() => import("./Requirements").then((m) => ({ default: m.ResumesTab })));
 
 /** RMG / GM's "Applied Candidates" on the opportunity page (29 Sep 2026): the
  *  requirement's own list — stage, status, rounds and the screener's buttons. */
@@ -1835,6 +1836,7 @@ export function OpportunityDetailPage() {
   const canWrite = useCanAct("opportunities", "edit", canWriteRole);
   /* Sub-tab access (25 Aug 2026): templates hide detail tabs. */
   const oppAcc = useCrmAccess("opportunities");
+  const oppSub = useSubTabs("opportunities");
   const canArchive = useHasRole("Sales_Head");
   // An approval button (25 Sep 2026): `me.approvals` — the template's / role's
   // Approvals, else the Sales Head role — the same answer as the server gate.
@@ -2023,6 +2025,35 @@ export function OpportunityDetailPage() {
     ["Updated", fmtDate(opp.updated_at)],
   ];
 
+  const oppTabs = ([
+          /* Sub-tab access (25 Aug 2026): templates hide these via the
+             `tab:<key>` field entries on the opportunities tab. */
+          { key: "details", label: "Opportunity Details", gate: "tab:details" },
+          /* RMG / GM see who applied, with stage · status · rounds and their
+             own buttons — the requirement's Applied Candidates list, in place
+             (29 Sep 2026). Sourcing tabs stay TA's / Sales'. */
+          ...(screenerOnly && opp.requirement_id
+            ? [{ key: "applied", label: "Applied Candidates", count: profileMeta?.total, gate: "tab:applied", legacy: "tab:details" }]
+            : []),
+          ...(screenerOnly ? [] : [
+            { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
+            { key: "suggested", label: "Suggested Candidates", gate: "tab:suggested", legacy: "tab:applicants" },
+          ]),
+          { key: "skills", label: "Skill Evaluation Details", count: skills.length, gate: "tab:skill-eval" },
+          { key: "activity", label: "Activity Log", gate: "tab:activity" },
+          { key: "projects", label: "Projects", gate: "tab:projects", legacy: "tab:details" },
+          { key: "pes", label: "Project Employees", gate: "tab:pes", legacy: "tab:details" },
+        ] as { key: string; label: string; count?: number; gate: string; legacy?: string }[])
+          /* Each tab is its own sub-tab since 22 Oct 2026; a template saved before
+             that hid the tab it used to share ("legacy") still hides it. */
+          .filter((t) => {
+            const c = oppSub.choice(t.gate);
+            if (c !== "default") return c === "show";
+            return !t.legacy || oppAcc.subTabVisible(t.legacy);
+          })
+          .map(({ gate: _g, legacy: _l, ...t }) => t);
+  const activeTab = oppTabs.some((t) => t.key === tab) ? tab : (oppTabs[0]?.key || "");
+
   return (
     <div className="space-y-6">
       <button
@@ -2186,30 +2217,12 @@ export function OpportunityDetailPage() {
           was sold (Opportunity Details), who applied (Applicants), what to
           test for (Skill Evaluation), and what happened (Activity Log). */}
       <Tabs
-        tabs={[
-          /* Sub-tab access (25 Aug 2026): templates hide these via the
-             `tab:<key>` field entries on the opportunities tab. */
-          { key: "details", label: "Opportunity Details", gate: "tab:details" },
-          /* RMG / GM see who applied, with stage · status · rounds and their
-             own buttons — the requirement's Applied Candidates list, in place
-             (29 Sep 2026). Sourcing tabs stay TA's / Sales'. */
-          ...(screenerOnly && opp.requirement_id
-            ? [{ key: "applied", label: "Applied Candidates", count: profileMeta?.total, gate: "tab:details" }]
-            : []),
-          ...(screenerOnly ? [] : [
-            { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
-            { key: "suggested", label: "Suggested Candidates", gate: "tab:applicants" },
-          ]),
-          { key: "skills", label: "Skill Evaluation Details", count: skills.length, gate: "tab:skill-eval" },
-          { key: "activity", label: "Activity Log", gate: "tab:activity" },
-          { key: "projects", label: "Projects", gate: "tab:details" },
-          { key: "pes", label: "Project Employees", gate: "tab:details" },
-        ].filter((t) => oppAcc.subTabVisible(t.gate)).map(({ gate: _g, ...t }) => t)}
-        active={tab}
+        tabs={oppTabs}
+        active={activeTab}
         onChange={setTab}
       />
 
-      {tab === "details" && (
+      {activeTab === "details" && (
         <div className="space-y-6">
           {/* Same collapsed-headline treatment as every block below it —
               the whole tab is now a uniform stack of expandable cards. */}
@@ -2278,11 +2291,11 @@ export function OpportunityDetailPage() {
         </div>
       )}
 
-      {tab === "applied" && screenerOnly && opp.requirement_id ? (
+      {activeTab === "applied" && screenerOnly && opp.requirement_id ? (
         <ScreenerAppliedTab requirementId={opp.requirement_id} toast={showToast} onChanged={loadProfiles} />
       ) : null}
 
-      {tab === "suggested" && (
+      {activeTab === "suggested" && (
         <SuggestedCandidatesTab
           oppId={Number(id)}
           canApply={canApplyHere}
@@ -2291,7 +2304,7 @@ export function OpportunityDetailPage() {
         />
       )}
 
-      {tab === "skills" && (
+      {activeTab === "skills" && (
       <div className={cardCls}>
         <div className="fx-hairline-b mb-4 flex flex-wrap items-center justify-between gap-2 pb-3">
           <h2 className="text-base font-bold text-primary">Skill Evaluation Details</h2>
@@ -2324,7 +2337,7 @@ export function OpportunityDetailPage() {
       </div>
       )}
 
-      {tab === "applicants" && (
+      {activeTab === "applicants" && (
         <ApplicantsBoard rows={profiles as ApplicantRow[]} meta={profileMeta as any}
           search={profileSearch} onSearch={(q) => { setProfileSearch(q); setProfilePage(1); }}
           page={profilePage} onPage={setProfilePage}
@@ -2333,14 +2346,14 @@ export function OpportunityDetailPage() {
           onChanged={() => void loadProfiles()} toast={(m, k) => showToast(m, k)} />
       )}
 
-      {tab === "activity" && (
+      {activeTab === "activity" && (
       <div className={cardCls}>
         <h2 className="fx-hairline-b mb-4 pb-3 text-base font-bold text-primary">Activity Log</h2>
         <Timeline entries={[...log].reverse()} />
       </div>
       )}
 
-      {tab === "projects" && (
+      {activeTab === "projects" && (
         <div className={cardCls}>
           <p className="mb-3 text-xs text-muted">
             Projects born from this opportunity — open one for its Project Employees
@@ -2364,7 +2377,7 @@ export function OpportunityDetailPage() {
         </div>
       )}
 
-      {tab === "pes" && (
+      {activeTab === "pes" && (
         <div className={cardCls}>
           <ProjectEmployeesScopedTab
             base={`/api/projects/all-employees?opportunity_id=${id}`}

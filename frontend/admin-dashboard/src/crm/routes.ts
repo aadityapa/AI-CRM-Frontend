@@ -1,64 +1,66 @@
 /** CRM route table — pattern → lazily-loaded page component. */
-import { lazy } from "react";
+
+import { lazyRetry } from "../lib/lazyRetry";
 import type { CrmRoute } from "./router";
 
-const CrmDashboardPage = lazy(() => import("./pages/CrmDashboard").then((m) => ({ default: m.CrmDashboardPage })));
-const CustomersListPage = lazy(() => import("./pages/Customers").then((m) => ({ default: m.CustomersListPage })));
-const CustomerDetailPage = lazy(() => import("./pages/Customers").then((m) => ({ default: m.CustomerDetailPage })));
-const OpportunitiesWorkspace = lazy(() => import("./pages/OpportunitiesWorkspace").then((m) => ({ default: m.OpportunitiesWorkspace })));
-const RequirementsListRedirect = lazy(() => import("./pages/OpportunitiesWorkspace").then((m) => ({ default: m.RequirementsListRedirect })));
-const OpportunityDetailPage = lazy(() => import("./pages/Opportunities").then((m) => ({ default: m.OpportunityDetailPage })));
-const RequirementDetailPage = lazy(() => import("./pages/Requirements").then((m) => ({ default: m.RequirementDetailPage })));
-const CandidatesListPage = lazy(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidatesListPage })));
-const CandidateDetailPage = lazy(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidateDetailPage })));
-const ProfilesListPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfilesListPage })));
-const ProfileDetailPage = lazy(() => import("./pages/Profiles").then((m) => ({ default: m.ProfileDetailPage })));
-const ActivityLogPage = lazy(() => import("./pages/ActivityLog").then((m) => ({ default: m.ActivityLogPage })));
-const EmailCenterPage = lazy(() => import("./pages/EmailCenter").then((m) => ({ default: m.EmailCenterPage })));
-const FileViewPage = lazy(() => import("./pages/FileView").then((m) => ({ default: m.FileViewPage })));
-const CalendarPage = lazy(() => import("./pages/Calendar"));
-const ProjectsListPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsListPage })));
-const ProjectDetailPage = lazy(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetailPage })));
-const ProjectEmployeesPage = lazy(() => import("./pages/ProjectEmployees").then((m) => ({ default: m.ProjectEmployeesPage })));
-const ProjectEmployeeDetailPage = lazy(() => import("./pages/ProjectEmployeeDetail").then((m) => ({ default: m.ProjectEmployeeDetailPage })));
-const MyLeavePage = lazy(() => import("./pages/MyLeave").then((m) => ({ default: m.MyLeavePage })));
-const BranchPolicyPage = lazy(() => import("./pages/BranchPolicy").then((m) => ({ default: m.BranchPolicyPage })));
-const LeaveApplicationsPage = lazy(() => import("./pages/LeaveApplications").then((m) => ({ default: m.LeaveApplicationsPage })));
-const HolidaysPage = lazy(() => import("./pages/Holidays").then((m) => ({ default: m.HolidaysPage })));
-const TimesheetsListPage = lazy(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetsListPage })));
-const TimesheetDetailPage = lazy(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetDetailPage })));
-const TalentPoolPage = lazy(() => import("./pages/TalentPool").then((m) => ({ default: m.TalentPoolPage })));
-const ReceivedAmountsPage = lazy(() => import("./pages/CustomerReceipts").then((m) => ({ default: m.ReceivedAmountsPage })));
-const PurchaseOrdersPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
-const PODetailPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.PODetailPage })));
-const InvoicesPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.InvoicesPage })));
-const InvoiceDetailPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.InvoiceDetailPage })));
-const TaxInvoiceGeneratorPage = lazy(() =>
+const CrmDashboardPage = lazyRetry(() => import("./pages/CrmDashboard").then((m) => ({ default: m.CrmDashboardPage })));
+const CustomersListPage = lazyRetry(() => import("./pages/Customers").then((m) => ({ default: m.CustomersListPage })));
+const CustomerDetailPage = lazyRetry(() => import("./pages/Customers").then((m) => ({ default: m.CustomerDetailPage })));
+const OpportunitiesWorkspace = lazyRetry(() => import("./pages/OpportunitiesWorkspace").then((m) => ({ default: m.OpportunitiesWorkspace })));
+const RequirementsListRedirect = lazyRetry(() => import("./pages/OpportunitiesWorkspace").then((m) => ({ default: m.RequirementsListRedirect })));
+const OpportunityDetailPage = lazyRetry(() => import("./pages/Opportunities").then((m) => ({ default: m.OpportunityDetailPage })));
+const RequirementDetailPage = lazyRetry(() => import("./pages/Requirements").then((m) => ({ default: m.RequirementDetailPage })));
+const CandidatesListPage = lazyRetry(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidatesListPage })));
+const CandidateDetailPage = lazyRetry(() => import("./pages/CrmCandidates").then((m) => ({ default: m.CandidateDetailPage })));
+const ProfilesListPage = lazyRetry(() => import("./pages/Profiles").then((m) => ({ default: m.ProfilesListPage })));
+const ProfileDetailPage = lazyRetry(() => import("./pages/Profiles").then((m) => ({ default: m.ProfileDetailPage })));
+const ActivityLogPage = lazyRetry(() => import("./pages/ActivityLog").then((m) => ({ default: m.ActivityLogPage })));
+const EmailCenterPage = lazyRetry(() => import("./pages/EmailCenter").then((m) => ({ default: m.EmailCenterPage })));
+const FileViewPage = lazyRetry(() => import("./pages/FileView").then((m) => ({ default: m.FileViewPage })));
+const CalendarPage = lazyRetry(() => import("./pages/Calendar"));
+const ProjectsListPage = lazyRetry(() => import("./pages/Projects").then((m) => ({ default: m.ProjectsListPage })));
+const ProjectDetailPage = lazyRetry(() => import("./pages/Projects").then((m) => ({ default: m.ProjectDetailPage })));
+const ProjectEmployeesPage = lazyRetry(() => import("./pages/ProjectEmployees").then((m) => ({ default: m.ProjectEmployeesPage })));
+const ProjectEmployeeDetailPage = lazyRetry(() => import("./pages/ProjectEmployeeDetail").then((m) => ({ default: m.ProjectEmployeeDetailPage })));
+const MyLeavePage = lazyRetry(() => import("./pages/MyLeave").then((m) => ({ default: m.MyLeavePage })));
+const BranchPolicyPage = lazyRetry(() => import("./pages/BranchPolicy").then((m) => ({ default: m.BranchPolicyPage })));
+const LeaveApplicationsPage = lazyRetry(() => import("./pages/LeaveApplications").then((m) => ({ default: m.LeaveApplicationsPage })));
+const HolidaysPage = lazyRetry(() => import("./pages/Holidays").then((m) => ({ default: m.HolidaysPage })));
+const TimesheetsListPage = lazyRetry(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetsListPage })));
+const TimesheetDetailPage = lazyRetry(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetDetailPage })));
+const TalentPoolPage = lazyRetry(() => import("./pages/TalentPool").then((m) => ({ default: m.TalentPoolPage })));
+const EInvoicesPage = lazyRetry(() => import("./components/invoice/EInvoiceRegister").then((m) => ({ default: m.EInvoicesPage })));
+const ReceivedAmountsPage = lazyRetry(() => import("./pages/CustomerReceipts").then((m) => ({ default: m.ReceivedAmountsPage })));
+const PurchaseOrdersPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
+const PODetailPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.PODetailPage })));
+const InvoicesPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.InvoicesPage })));
+const InvoiceDetailPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.InvoiceDetailPage })));
+const TaxInvoiceGeneratorPage = lazyRetry(() =>
   import("./pages/TaxInvoiceGenerator").then((m) => ({ default: m.TaxInvoiceGeneratorPage })),
 );
-const InvoiceTaxInvoicePage = lazy(() =>
+const InvoiceTaxInvoicePage = lazyRetry(() =>
   import("./components/invoice/InvoicePage").then((m) => ({ default: m.InvoicePage })),
 );
-const TdsPage = lazy(() => import("./pages/Finance").then((m) => ({ default: m.TdsPage })));
-const PayrollPage = lazy(() =>
+const TdsPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.TdsPage })));
+const PayrollPage = lazyRetry(() =>
   import("./pages/Payroll").then((m) => ({ default: m.PayrollPage })),
 );
-const FinanceReportsPage = lazy(() =>
+const FinanceReportsPage = lazyRetry(() =>
   import("./pages/FinanceReports").then((m) => ({ default: m.FinanceReportsPage })),
 );
-const EmployeesListPage = lazy(() => import("./pages/Employees").then((m) => ({ default: m.EmployeesListPage })));
-const EmployeeDetailPage = lazy(() => import("./pages/Employees").then((m) => ({ default: m.EmployeeDetailPage })));
-const UsersAdminPage = lazy(() => import("./pages/UsersAdmin").then((m) => ({ default: m.UsersAdminPage })));
-const AccessTemplatesPage = lazy(() => import("./pages/AccessTemplates").then((m) => ({ default: m.AccessTemplatesPage })));
-const CrmSettingsPage = lazy(() => import("./pages/CrmSettings").then((m) => ({ default: m.CrmSettingsPage })));
-const SupportTicketsPage = lazy(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketsPage })));
-const SupportTicketDetailPage = lazy(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketDetailPage })));
-const CrmReportsPage = lazy(() => import("./pages/CrmReports").then((m) => ({ default: m.CrmReportsPage })));
-const TemplateRequestsPage = lazy(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
-const ProfilePage = lazy(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
-const ScreeningDeskPage = lazy(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
-const MyInterviewsPage = lazy(() => import("./pages/MyInterviews").then((m) => ({ default: m.MyInterviewsPage })));
-const MyTasksPage = lazy(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
+const EmployeesListPage = lazyRetry(() => import("./pages/Employees").then((m) => ({ default: m.EmployeesListPage })));
+const EmployeeDetailPage = lazyRetry(() => import("./pages/Employees").then((m) => ({ default: m.EmployeeDetailPage })));
+const UsersAdminPage = lazyRetry(() => import("./pages/UsersAdmin").then((m) => ({ default: m.UsersAdminPage })));
+const AccessTemplatesPage = lazyRetry(() => import("./pages/AccessTemplates").then((m) => ({ default: m.AccessTemplatesPage })));
+const CrmSettingsPage = lazyRetry(() => import("./pages/CrmSettings").then((m) => ({ default: m.CrmSettingsPage })));
+const SupportTicketsPage = lazyRetry(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketsPage })));
+const SupportTicketDetailPage = lazyRetry(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketDetailPage })));
+const CrmReportsPage = lazyRetry(() => import("./pages/CrmReports").then((m) => ({ default: m.CrmReportsPage })));
+const TemplateRequestsPage = lazyRetry(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
+const ProfilePage = lazyRetry(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
+const ScreeningDeskPage = lazyRetry(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
+const MyInterviewsPage = lazyRetry(() => import("./pages/MyInterviews").then((m) => ({ default: m.MyInterviewsPage })));
+const MyTasksPage = lazyRetry(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
 
 export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "", element: CrmDashboardPage },
@@ -98,6 +100,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "pos/:id", element: PODetailPage },
   { pattern: "invoices", element: InvoicesPage },
   { pattern: "received-amounts", element: ReceivedAmountsPage },
+  { pattern: "e-invoices", element: EInvoicesPage },
   { pattern: "invoices/tax-generator", element: TaxInvoiceGeneratorPage },
   { pattern: "invoices/:id/tax-invoice", element: InvoiceTaxInvoicePage },
   { pattern: "invoices/:id", element: InvoiceDetailPage },

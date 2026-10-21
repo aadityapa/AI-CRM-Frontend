@@ -1,5 +1,6 @@
 import type { CandidateInterviewSummary, InterviewRecord } from "../../types";
-import type { StrengthsWeaknessesAnalysis } from "../../types/strengthsWeaknesses";
+import type { PositionSkillEvidence, StrengthsWeaknessesAnalysis } from "../../types/strengthsWeaknesses";
+import type { L2Question } from "../../api";
 import {
   buildManagerDashboardView,
   type ManagerDashboardView,
@@ -38,6 +39,11 @@ export type InterviewPdfData = {
   turns: EnrichedTurn[];
   nextInterviewFocusAreas: string[];
   managerDashboard: ManagerDashboardView | null;
+  /** The position's skills and what the answers showed (21 Oct 2026). */
+  positionSkills: PositionSkillEvidence[];
+  caveats: string[];
+  /** Saved L2 questions, when a reviewer asked for them. */
+  l2Questions: L2Question[];
 };
 
 function normalizeScore(raw: unknown, fallback = 0): number {
@@ -222,6 +228,12 @@ export function buildInterviewPdfData(
   );
   const finalGaps = mergedGaps.length > 0 ? mergedGaps : strengthLines(gaps as string[]);
 
+  // Grounded on the position's skills (server v3): those lists win.
+  const grounded = analysis?.position_skills?.length ? analysis : null;
+  const groundedStrengths = grounded ? strengthLines(grounded.overall_strengths || []) : [];
+  const groundedGaps = grounded ? strengthLines(grounded.overall_weaknesses || []) : [];
+  const l2 = (report.l2_questions as { questions?: L2Question[] } | undefined)?.questions;
+
   const turns = enrichedTurnsFromRecord(record);
   const finalLabel = mapRecommendationLabel(overall, modelRecommendation);
 
@@ -252,11 +264,18 @@ export function buildInterviewPdfData(
       modelRecommendation,
     ),
     overallFeedback,
-    strengths: finalStrengths.length ? finalStrengths : ["No significant strengths identified in aggregate review."],
-    improvementAreas: finalGaps.length ? finalGaps : ["No specific improvement areas recorded."],
+    strengths: groundedStrengths.length
+      ? groundedStrengths
+      : finalStrengths.length ? finalStrengths : ["No significant strengths identified in aggregate review."],
+    improvementAreas: groundedGaps.length
+      ? groundedGaps
+      : finalGaps.length ? finalGaps : ["No specific improvement areas recorded."],
     skillBreakdown: interview.skill_breakdown || [],
     turns,
     nextInterviewFocusAreas: collectFocusAreas(turns, finalGaps, managerDashboard),
     managerDashboard,
+    positionSkills: grounded?.position_skills || [],
+    caveats: grounded?.position_caveats || [],
+    l2Questions: Array.isArray(l2) ? l2 : [],
   };
 }

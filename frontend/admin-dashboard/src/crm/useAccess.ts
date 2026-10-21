@@ -150,21 +150,55 @@ export function canViewField(
   return tabMode(access, tab) != null;
 }
 
-/** Sub-tab visibility (25 Aug 2026): hidden ONLY when the template explicitly
- * says "hidden". A template that never mentions the tab (or the sub-tab) must
- * not erase anything — page reachability is decided by roles, and the first
- * cut of this check (canViewField) blanked every detail tab for templated
- * users whose template predated the sub-tab entries (seen live). */
+/** What a template / custom role says about ONE sub-tab (22 Oct 2026) —
+ * the mirror of B-V2 `access_registry.subtab_choice`:
+ *   * "show"    — Admin/CEO, or the template lists this sub-tab as View
+ *                 (once any sub-tab of a tab is set to View, the template
+ *                 decides that tab's sub-tabs ALONE);
+ *   * "hide"    — explicitly Hidden, or left out of a configured list;
+ *   * "default" — the template says nothing: the page's own role rule decides.
+ * Untemplated logins always get "default". `sub` may be "tab:x" or "x". */
+export type SubTabChoice = "show" | "hide" | "default";
+
+export function subTabChoice(
+  access: EffectiveAccess | undefined,
+  roles: string[],
+  tab: string,
+  sub: string,
+): SubTabChoice {
+  if (isSuperAdmin(roles) || access?.full) return "show";
+  if (!access || access.visible_tabs == null) return "default";
+  const bare = bareTabKey(tab);
+  const map = access.fields?.[bare] ?? access.fields?.[`crm:${bare}`] ?? {};
+  const key = sub.startsWith("tab:") ? sub : `tab:${sub}`;
+  const shown = (m: unknown) => m === "view" || m === "edit";
+  const entries = Object.entries(map).filter(([k]) => k.startsWith("tab:"));
+  if (entries.some(([, m]) => shown(m))) return shown(map[key]) ? "show" : "hide";
+  return map[key] === "hidden" ? "hide" : "default";
+}
+
+/** Is this sub-tab visible? `roleDefault` is what the page would show without
+ * a template rule (the role / other-tab condition it always used). */
 export function subTabVisible(
   access: EffectiveAccess | undefined,
   roles: string[],
   tab: string,
   field: string,
+  roleDefault = true,
 ): boolean {
-  if (isSuperAdmin(roles) || access?.full || access?.visible_tabs == null) return true;
-  const bare = bareTabKey(tab);
-  const fmode = access?.fields?.[bare]?.[field] ?? access?.fields?.[`crm:${bare}`]?.[field];
-  return fmode !== "hidden";
+  const c = subTabChoice(access, roles, tab, field);
+  return c === "show" || (c === "default" && roleDefault);
+}
+
+/** Hook form: `const sub = useSubTabs("reports"); sub.allowed("revenue", roleOk)`.
+ *  `allowed(key)` with no role default = visible unless the template hides it. */
+export function useSubTabs(tabPath: string) {
+  const me = useMe();
+  return useMemo(() => ({
+    choice: (key: string) => subTabChoice(me.access, me.roles, tabPath, key),
+    allowed: (key: string, roleDefault = true) =>
+      subTabVisible(me.access, me.roles, tabPath, key, roleDefault),
+  }), [me, tabPath]);
 }
 
 export function canEditField(
@@ -197,7 +231,7 @@ export function useCrmAccess(tabPath: string) {
         tabMode(me.access, tab) === "view",
       canEditField: (field: string) => canEditField(me.access, me.roles, tab, field),
       canViewField: (field: string) => canViewField(me.access, me.roles, tab, field),
-      subTabVisible: (field: string) => subTabVisible(me.access, me.roles, tab, field),
+      subTabVisible: (field: string, roleDefault = true) => subTabVisible(me.access, me.roles, tab, field, roleDefault),
     }),
     [me, tab],
   );

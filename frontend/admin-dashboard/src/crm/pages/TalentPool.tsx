@@ -20,6 +20,7 @@ import {
 
 import { crmGet, crmPost, qs } from "../api";
 import { useHasRole } from "../CrmApp";
+import { useSubTabs } from "../useAccess";
 import { CrmLink } from "../router";
 import { Modal, Spinner, ErrorBox, useToast } from "../components/ui";
 import { PageHeader, StagePills, HERO_BTN } from "../components/PageHeader";
@@ -242,7 +243,11 @@ type Mode = (typeof MODES)[number]["key"];
 
 export function TalentPoolPage() {
   const [toast, showToast] = useToast();
-  const [mode, setMode] = usePageTab<Mode>("tab", "search", ["search", "position", "retention"]);
+  const [rawMode, setMode] = usePageTab<Mode>("tab", "search", ["search", "position", "retention"]);
+  // The three modes are sub-tabs a template / custom role can switch off (22 Oct 2026).
+  const poolSub = useSubTabs("talent-pool");
+  const shownModes = MODES.filter((m) => poolSub.allowed(m.key));
+  const mode: Mode = shownModes.some((m) => m.key === rawMode) ? rawMode : (shownModes[0]?.key || "search");
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaErr, setMetaErr] = useState("");
   const [names, setNames] = useState(false);
@@ -269,7 +274,7 @@ export function TalentPoolPage() {
           <button type="button" className={HERO_BTN} onClick={loadMeta}><RotateCcw size={14} aria-hidden /> Refresh</button>
         </>}
       >
-        <StagePills tabs={MODES.map((m) => ({ key: m.key, label: m.key === "retention" && meta?.retention?.counts?.expiring
+        <StagePills tabs={shownModes.map((m) => ({ key: m.key, label: m.key === "retention" && meta?.retention?.counts?.expiring
           ? `${m.label} · ${meta.retention.counts.expiring} leaving` : m.label }))}
           active={mode} onChange={(k) => setMode(k as Mode)} label="Talent Pool mode" />
       </PageHeader>

@@ -10,7 +10,7 @@
  * (and the Sales Manager) read; Admin / CEO everything. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, ChevronDown, ChevronRight, FileDown, Info, LineChart, RefreshCw, Search,
+  AlertTriangle, ChevronDown, ChevronRight, ExternalLink, FileDown, Info, LineChart, RefreshCw, Search,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
 import { crmGet, qs } from "../api";
@@ -22,6 +22,7 @@ import {
   inrCompact, pct, periodMeta, shiftMonthKey, thisMonthKey, type PeriodKind,
 } from "../components/controlTower";
 import { usePageTab } from "../lib/pageState";
+import { useSubTabs } from "../useAccess";
 import { CrmLink } from "../routerHooks";
 
 /** Full rupees with paise — for ledgers, where every paisa has to reconcile. */
@@ -590,6 +591,16 @@ function ReceivablesTab() {
 type LedgerEntry = {
   date: string; type: string; ref: string; note: string;
   debit?: number | null; credit?: number | null; balance: number;
+  /** Every line opens its invoice (22 Oct 2026). */
+  invoice_id?: number | null; invoice_number?: string | null;
+  receipt_id?: number | null; credit_note_id?: number | null;
+};
+
+const LEDGER_TYPE_TONE: Record<string, string> = {
+  Invoice: "bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+  Payment: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  TDS: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+  "Credit Note": "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
 };
 type LedgerData = {
   customer_id: number; customer_name: string;
@@ -608,7 +619,7 @@ function CustomerLedgerTab() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    crmGet<{ id: number; name: string }[]>("/api/customers/names")
+    crmGet<{ id: number; name: string }[]>("/api/customers/names?status=Active")
       .then((r) => setCustomers(r.data || []))
       .catch((e) => setError(e?.message || "Could not load the customer list"));
   }, []);
@@ -688,25 +699,52 @@ function CustomerLedgerTab() {
                 <th className="px-3 py-2 text-right">Debit</th>
                 <th className="px-3 py-2 text-right">Credit</th>
                 <th className="px-3 py-2 text-right">Balance</th>
+                <th className="px-3 py-2"><span className="sr-only">Open</span></th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-subtle bg-surface-2 font-semibold">
                 <td className="px-3 py-2" colSpan={6}>Opening balance</td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.opening_balance)}</td>
+                <td />
               </tr>
               {data.entries.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted">No activity in this period</td></tr>
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted">No activity in this period</td></tr>
               )}
               {data.entries.map((e, i) => (
                 <tr key={i} className="border-b border-subtle hover:bg-surface-2">
                   <td className="px-3 py-2 whitespace-nowrap">{e.date}</td>
-                  <td className="px-3 py-2">{e.type}</td>
-                  <td className="px-3 py-2">{e.ref || "—"}</td>
-                  <td className="px-3 py-2 text-muted">{e.note}</td>
+                  <td className="px-3 py-2">
+                    <span className={`inline-flex rounded-pill px-2 py-0.5 text-[11px] font-semibold ${LEDGER_TYPE_TONE[e.type] || "bg-surface-2 text-secondary"}`}>
+                      {e.type}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {e.invoice_id && e.type === "Invoice" ? (
+                      <CrmLink to={`invoices/${e.invoice_id}`} className="font-semibold text-brand-600 hover:underline">
+                        {e.ref || e.invoice_number}
+                      </CrmLink>
+                    ) : (e.ref || "—")}
+                  </td>
+                  <td className="px-3 py-2 text-muted">
+                    {e.note}
+                    {e.invoice_id && e.type !== "Invoice" && e.invoice_number && (
+                      <> · <CrmLink to={`invoices/${e.invoice_id}`} className="font-medium text-brand-600 hover:underline">
+                        {e.invoice_number}
+                      </CrmLink></>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">{e.debit != null ? inr2(e.debit) : ""}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{e.credit != null ? inr2(e.credit) : ""}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{inr2(e.balance)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {e.invoice_id ? (
+                      <CrmLink to={`invoices/${e.invoice_id}`} title={`Open invoice ${e.invoice_number || ""} (Ctrl+click: new tab)`}
+                        className="inline-flex items-center gap-1 rounded-control border border-subtle px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/30">
+                        <ExternalLink size={12} /> Open invoice
+                      </CrmLink>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
               <tr className="bg-surface-2 font-bold">
@@ -714,6 +752,7 @@ function CustomerLedgerTab() {
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.totals.debit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.totals.credit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.closing_balance)}</td>
+                <td />
               </tr>
             </tbody>
           </table>
@@ -736,9 +775,14 @@ const SUBTITLE = "Profit by customer, project and employee · who owes us and ho
 /** `embedded` — rendered inside Reports ▸ Financial Reports. The host page
  *  owns `?tab=` (its own tabs), so this one keeps its tab in `?ftab=`. */
 export function FinanceReportsPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const [tab, setTab] = usePageTab<string>(embedded ? "ftab" : "tab", "profit", FIN_TAB_KEYS);
+  // Each tab is a sub-tab a template / custom role can switch off (22 Oct 2026).
+  const sub = useSubTabs("finance-reports");
+  const visible = FIN_TABS.filter((t) => sub.allowed(t.key));
+  const keys = visible.length ? visible.map((t) => t.key) : FIN_TAB_KEYS;
+  const [rawTab, setTab] = usePageTab<string>(embedded ? "ftab" : "tab", keys[0], keys);
+  const tab = keys.includes(rawTab) ? rawTab : keys[0];
   const [toast] = useToast();
-  const tabs = <Tabs tabs={FIN_TABS} active={tab} onChange={setTab} />;
+  const tabs = <Tabs tabs={visible} active={tab} onChange={setTab} />;
   return (
     <div>
       {embedded ? (
@@ -753,7 +797,9 @@ export function FinanceReportsPage({ embedded = false }: { embedded?: boolean } 
           </PageHeader>
         </div>
       )}
-      {tab === "profit" ? <ProfitTab /> : tab === "receivables" ? <ReceivablesTab /> : <CustomerLedgerTab />}
+      {!visible.length ? (
+        <EmptyState message="No financial report is switched on for your login — ask Admin / CEO in Access Control." />
+      ) : tab === "profit" ? <ProfitTab /> : tab === "receivables" ? <ReceivablesTab /> : <CustomerLedgerTab />}
       {toast}
     </div>
   );

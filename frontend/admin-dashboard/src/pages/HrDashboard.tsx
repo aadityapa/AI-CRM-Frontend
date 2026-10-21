@@ -1,18 +1,18 @@
 import {
-  Activity,
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
   ChevronLeft,
   ChevronRight,
-  ClipboardCheck,
   ClipboardList,
   Plus,
   Sparkles,
   Trash2,
-  Users,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../crm/components/PageHeader";
+import { FilteredBars, Panel, StepBars, Tile } from "../crm/components/controlTower";
 import type { ReactNode } from "react";
 import type { Candidate, Interview, InterviewStatus } from "../types";
 import { deleteCandidate, getDashboardData, getSchedules, type InterviewSchedule } from "../api";
@@ -21,7 +21,6 @@ import { normalizeScore, weightedCandidateScore } from "../utils/scoreUtils";
 import { AnimatedNumber } from "../crm/components/motion3d";
 import {
   btnDanger,
-  btnPrimary,
   btnSecondary,
   EmptyState,
   focusRing,
@@ -756,6 +755,84 @@ export function AIInsightsCard({ candidates }: { candidates: Candidate[] }) {
   );
 }
 
+/** Interview weeks for the trend chart: the last `n` Monday-start weeks (PURE). */
+export function weekBuckets(candidates: Candidate[], n = 8, now = new Date()): {
+  label: string; completed: number; pending: number; avg: number;
+}[] {
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const starts = Array.from({ length: n }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(d.getDate() - (n - 1 - i) * 7);
+    return d.getTime();
+  });
+  const rows = starts.map((t) => ({
+    label: new Date(t).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+    completed: 0, pending: 0, sum: 0, scored: 0,
+  }));
+  const end = starts[starts.length - 1] + 7 * 86_400_000;
+  for (const c of candidates || []) {
+    for (const iv of c.interviews || []) {
+      const t = safeParseDate(iv.date);
+      if (!t || t < starts[0] || t >= end) continue;
+      const idx = Math.min(n - 1, Math.floor((t - starts[0]) / (7 * 86_400_000)));
+      const row = rows[idx];
+      if (isCompletedStatus(iv.status) || String(iv.status || "").toLowerCase().includes("hold")) row.completed += 1;
+      else row.pending += 1;
+      const sc = normalizeScore(iv.score);
+      if (sc > 0) { row.sum += sc; row.scored += 1; }
+    }
+  }
+  return rows.map((r) => ({ label: r.label, completed: r.completed, pending: r.pending,
+    avg: r.scored ? Math.round(r.sum / r.scored) : 0 }));
+}
+
+/** Completed interviews waiting for HR's call, newest first (PURE). */
+export function awaitingDecision(candidates: Candidate[], limit = 6) {
+  const out: { candidate: Candidate; interview: Interview; score: number; ts: number }[] = [];
+  for (const c of candidates || []) {
+    if (c.hr_decision) continue;
+    const latest = latestInterview(c);
+    if (!latest) continue;
+    const st = String(latest.status || "").toLowerCase();
+    if (!st.includes("pending")) continue;
+    const score = normalizeScore(latest.score);
+    if (score <= 0) continue;                       // not finished / not scored yet
+    out.push({ candidate: c, interview: latest, score, ts: safeParseDate(latest.date) });
+  }
+  return out.sort((a, b) => b.ts - a.ts).slice(0, limit);
+}
+
+function scoreTone(v: number): string {
+  if (v >= 75) return "text-success";
+  if (v >= 55) return "text-brand-600 dark:text-brand-300";
+  if (v >= 40) return "text-warning";
+  return "text-danger";
+}
+
+function PanelError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-danger/40 bg-danger-soft p-4 text-sm text-danger">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <span>{message}</span>
+      </div>
+      <button type="button" onClick={onRetry} className={btnSecondary}>Retry</button>
+    </div>
+  );
+}
+
+/** Readable words for a failed request — never a bare "Internal server error". */
+function friendly(e: unknown, what: string): string {
+  const raw = String((e as Error)?.message || e || "").trim();
+  if (/internal server error|\b500\b/i.test(raw)) {
+    return `The server could not load ${what} just now. Retry — if it keeps failing, the server log names the cause.`;
+  }
+  if (/failed to fetch|network/i.test(raw)) return `No connection to the server while loading ${what}. Check the network and retry.`;
+  return raw ? `${what[0].toUpperCase()}${what.slice(1)} could not load: ${raw}` : `${what} could not load.`;
+}
+
 export function HrDashboard({
   onCreateTemplate,
   onInviteCandidate,
@@ -770,194 +847,211 @@ export function HrDashboard({
   onViewAllUpcoming?: () => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [candError, setCandError] = useState("");
+  const [schedError, setSchedError] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [schedules, setSchedules] = useState<InterviewSchedule[]>([]);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
-  const refresh = async () => {
-    const [dash, sch] = await Promise.all([getDashboardData(200), getSchedules()]);
-    setCandidates(dash.candidates);
-    setSchedules(sch);
+  /* 21 Oct 2026 (user report: the whole page read 0 with "Internal server
+     error"): the two calls are independent — one failing no longer blanks the
+     other, and each panel says what failed with a Retry. */
+  const load = async () => {
+    setLoading(true);
+    const [dash, sch] = await Promise.allSettled([getDashboardData(200), getSchedules()]);
+    if (dash.status === "fulfilled") { setCandidates(dash.value.candidates || []); setCandError(""); }
+    else setCandError(friendly(dash.reason, "candidates and interviews"));
+    if (sch.status === "fulfilled") { setSchedules(sch.value || []); setSchedError(""); }
+    else setSchedError(friendly(sch.reason, "scheduled interviews"));
+    setLoadedAt(new Date());
+    setLoading(false);
   };
 
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        setLoading(true);
-        setError("");
-        const [dash, sch] = await Promise.all([getDashboardData(200), getSchedules()]);
-        if (!alive) return;
-        setCandidates(dash.candidates);
-        setSchedules(sch);
-      } catch (e: any) {
-        if (!alive) return;
-        setError(String(e?.message || e));
-      } finally {
-        /* no `return` in finally (no-unsafe-finally): it would swallow any
-           pending exception/return — guard the state update instead. */
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const derived = useMemo(() => {
     const list = candidates || [];
     const allInterviews = list.flatMap((c) => c.interviews || []);
     const active = allInterviews.filter((i) => String(i.status || "").toLowerCase().includes("pending")).length;
-    const completed = allInterviews.filter((i) => isCompletedStatus(i.status)).length;
-    const avgScore = completed
-      ? Math.round(
-          allInterviews
-            .filter((i) => isCompletedStatus(i.status))
-            .map((i) => normalizeScore(i.score))
-            .reduce((a, b) => a + b, 0) / Math.max(1, completed)
-        )
-      : 0;
+    const completedList = allInterviews.filter((i) => isCompletedStatus(i.status));
+    const completed = completedList.length;
+    const scored = allInterviews.map((i) => normalizeScore(i.score)).filter((v) => v > 0);
+    const avgScore = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : 0;
+    const selected = allInterviews.filter((i) => String(i.status || "").toLowerCase().includes("selected")).length;
+    const rejected = allInterviews.filter((i) => String(i.status || "").toLowerCase().includes("rejected")).length;
+    const onHold = allInterviews.filter((i) => String(i.status || "").toLowerCase().includes("hold")).length;
+    const decided = selected + rejected;
+    const hireRate = decided ? Math.round((selected / decided) * 100) : 0;
+
+    const weekStart = Date.now() - 7 * 86_400_000;
+    const thisWeek = allInterviews.filter((i) => safeParseDate(i.date) >= weekStart).length;
 
     const applied = list.filter((c) => !(c.interviews || []).length).length;
     const screening = list.filter((c) => {
       const latest = latestInterview(c);
       return !!latest && String(latest.status || "").toLowerCase().includes("pending");
     }).length;
-    const interview = active;
-    const evaluation = completed;
     const hired = list.filter((c) => {
       if (c.hr_decision === "shortlist") return true;
       const latest = latestInterview(c);
       return !!latest && String(latest.status || "").toLowerCase().includes("selected");
     }).length;
-    const totalPipeline = Math.max(1, applied + screening + evaluation + hired + interview);
-
+    const totalPipeline = Math.max(1, applied + screening + completed + hired + active);
     const pipeline = [
-      { name: "Applied", count: applied, color: "slate" as const, percent: Math.round((applied / totalPipeline) * 100) },
-      { name: "Screening", count: screening, color: "amber" as const, percent: Math.round((screening / totalPipeline) * 100) },
-      { name: "Interview", count: interview, color: "indigo" as const, percent: Math.round((interview / totalPipeline) * 100) },
-      { name: "Evaluation", count: evaluation, color: "violet" as const, percent: Math.round((evaluation / totalPipeline) * 100) },
-      { name: "Hired", count: hired, color: "emerald" as const, percent: Math.round((hired / totalPipeline) * 100) },
-    ];
+      { name: "Applied", count: applied, color: "slate" as const },
+      { name: "Screening", count: screening, color: "amber" as const },
+      { name: "Interview", count: active, color: "indigo" as const },
+      { name: "Evaluation", count: completed, color: "violet" as const },
+      { name: "Hired", count: hired, color: "emerald" as const },
+    ].map((p) => ({ ...p, percent: Math.round((p.count / totalPipeline) * 100) }));
 
-    const stats = [
-      {
-        title: "Total Candidates",
-        value: String(list.length),
-        icon: <Users className="h-5 w-5" />,
-        trend: { direction: "flat" as const, label: "Live" },
-        subtext: "from database",
-      },
-      {
-        title: "Active Interviews",
-        value: String(active),
-        icon: <Activity className="h-5 w-5" />,
-        trend: { direction: active ? ("up" as const) : ("flat" as const), label: active ? "In progress" : "None" },
-        subtext: "pending review",
-      },
-      {
-        title: "Completed Interviews",
-        value: String(completed),
-        icon: <ClipboardCheck className="h-5 w-5" />,
-        trend: { direction: "flat" as const, label: "Live" },
-        subtext: "evaluated",
-      },
-      {
-        title: "Avg Interview Score",
-        value: avgScore ? `${avgScore}%` : "—",
-        icon: <BarChart3 className="h-5 w-5" />,
-        trend: { direction: "flat" as const, label: "Live" },
-        subtext: "completed only",
-      },
+    const scoreBands = [
+      { label: "75–100", value: scored.filter((v) => v >= 75).length, cls: "bg-emerald-500" },
+      { label: "55–74", value: scored.filter((v) => v >= 55 && v < 75).length, cls: "bg-brand-500" },
+      { label: "40–54", value: scored.filter((v) => v >= 40 && v < 55).length, cls: "bg-amber-500" },
+      { label: "Under 40", value: scored.filter((v) => v < 40).length, cls: "bg-rose-500" },
     ];
-
-    return { stats, pipeline };
+    return { list, active, completed, avgScore, selected, rejected, onHold, hireRate, thisWeek, pipeline, scoreBands,
+      weeks: weekBuckets(list), waiting: awaitingDecision(list) };
   }, [candidates]);
 
+  const upcoming48 = useMemo(() => {
+    const now = Date.now();
+    return (schedules || []).filter((s) => {
+      const t = safeParseDate(s.scheduled_at_local || "");
+      return t >= now && t <= now + 48 * 3_600_000;
+    }).length;
+  }, [schedules]);
+
+  const num = (v: number) => (loading ? "…" : v.toLocaleString("en-IN"));
+
   return (
-    <div className="mx-auto w-full max-w-screen-2xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* Header — ONE dominant primary action: Invite Candidate */}
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-display text-2xl font-bold tracking-tight text-primary">HR Dashboard</h1>
-          <p className="mt-1 text-sm text-muted">Monitor hiring pipeline and AI interview performance</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={onCreateTemplate} className={btnSecondary}>
-            <Plus className="h-4 w-4" />
-            Create Template
-          </button>
-          <button onClick={onInviteCandidate} className={btnPrimary}>
-            <ClipboardList className="h-4 w-4" />
-            Invite Candidate
-          </button>
-        </div>
+    <div className="mx-auto w-full max-w-screen-2xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <PageHeader
+        icon={BarChart3}
+        accent="brand"
+        eyebrow="Interview Platform"
+        title="AI interview dashboard"
+        subtitle="Every AI interview — who is waiting for your decision, how candidates score, and what is coming up."
+        stats={[
+          { label: "candidates", value: loading ? "…" : derived.list.length },
+          { label: "this week", value: loading ? "…" : derived.thisWeek },
+          { label: "next 48 h", value: loading ? "…" : upcoming48 },
+        ]}
+        actions={
+          <>
+            <button type="button" onClick={() => void load()} className={HERO_BTN} title="Refresh">
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden /> Refresh
+            </button>
+            <button type="button" onClick={onCreateTemplate} className={HERO_BTN}>
+              <Plus className="h-4 w-4" aria-hidden /> Create template
+            </button>
+            <button type="button" onClick={onInviteCandidate} className={HERO_BTN_SOLID}>
+              <ClipboardList className="h-4 w-4" aria-hidden /> Invite candidate
+            </button>
+          </>
+        }
+      />
+
+      {candError ? <PanelError message={candError} onRetry={() => void load()} /> : null}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Tile label="Candidates" value={num(derived.list.length)} sub="with an AI interview record" tone="brand" />
+        <Tile label="Awaiting review" value={num(derived.active)} sub="interviews pending a decision" tone="warning" />
+        <Tile label="Decided" value={num(derived.completed)} sub={`${derived.selected} selected · ${derived.rejected} rejected`} tone="neutral" />
+        <Tile label="Average score" value={loading ? "…" : derived.avgScore ? `${derived.avgScore}%` : "—"} sub="across scored interviews" tone="brand" />
+        <Tile label="Selection rate" value={loading ? "…" : derived.selected + derived.rejected ? `${derived.hireRate}%` : "—"} sub="selected of decided" tone="success" />
+        <Tile label="On hold" value={num(derived.onHold)} sub="parked by a recruiter" tone="danger" />
       </div>
 
-      {/* Stats */}
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {derived.stats.map((s) => (
-          <DashboardStatsCard
-            key={s.title}
-            title={s.title}
-            value={s.value}
-            icon={s.icon}
-            trend={s.trend}
-            subtext={s.subtext}
-            loading={loading}
-          />
-        ))}
-      </div>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <div className="space-y-6 xl:col-span-8">
+          <Panel className="!h-auto" title="Interviews over the last 8 weeks" hint="Decided vs still pending, by the week the interview ran">
+            {loading ? <Skeleton className="h-60 w-full" /> : (
+              <FilteredBars
+                data={derived.weeks}
+                series={[
+                  { key: "completed", label: "Decided / on hold", color: "#10b981", stackId: "a" },
+                  { key: "pending", label: "Pending review", color: "#f59e0b", stackId: "a" },
+                  { key: "avg", label: "Average score %", color: "#6366f1", defaultOff: true },
+                ]}
+                height={250}
+                stacked
+              />
+            )}
+          </Panel>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="space-y-6 lg:col-span-8">
-          {/* Pipeline */}
-          <div className={`p-5 ${cardCls}`}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-bold text-primary">Hiring pipeline</div>
-                <div className="mt-0.5 text-xs text-muted">Stage distribution and throughput</div>
-              </div>
-              <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">
-                <span className="h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden />
-                {loading ? "Syncing…" : "Live from database"}
-              </div>
-            </div>
-      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-              {derived.pipeline.map((p) => (
-                <PipelineStageCard key={p.name} name={p.name} count={p.count} color={p.color} percent={p.percent} />
-              ))}
-            </div>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <Panel title="Hiring pipeline" hint="Where every candidate stands">
+              <StepBars
+                steps={derived.pipeline.map((p) => ({
+                  label: p.name, value: p.count,
+                  cls: p.color === "amber" ? "bg-amber-500" : p.color === "indigo" ? "bg-brand-500"
+                    : p.color === "violet" ? "bg-purple-500" : p.color === "emerald" ? "bg-emerald-500" : "bg-slate-400",
+                  extra: <span className="ml-1 text-muted">· {p.percent}%</span>,
+                }))}
+              />
+            </Panel>
+            <Panel title="Score distribution" hint="Overall AI score of every scored interview">
+              <StepBars steps={derived.scoreBands} />
+            </Panel>
           </div>
 
-          {/* Recent candidates table */}
-          {error ? (
-            <div className="rounded-card border border-subtle bg-danger-soft p-6 text-danger">
-              <div className="font-bold">Dashboard error</div>
-              <div className="mt-2 text-sm">{error}</div>
-            </div>
-          ) : (
-            <RecentCandidatesTable
-              candidates={candidates}
-              onOpenInvite={() => {
-                onInviteCandidate();
-              }}
-              onViewCandidateReport={onViewCandidateReport}
-              onViewAll={onViewAllCandidates}
-              onRefresh={async () => {
-                try {
-                  await refresh();
-                } catch (e: any) {
-                  setError(String(e?.message || e));
-                }
-              }}
-            />
-          )}
+          <RecentCandidatesTable
+            candidates={candidates}
+            onOpenInvite={() => { onInviteCandidate(); }}
+            onViewCandidateReport={onViewCandidateReport}
+            onViewAll={onViewAllCandidates}
+            onRefresh={load}
+          />
         </div>
 
-        <div className="space-y-6 lg:col-span-4">
-          <UpcomingInterviewCard schedules={schedules} onViewAll={onViewAllUpcoming} />
+        <div className="space-y-6 xl:col-span-4">
+          <Panel
+            className="!h-auto"
+            title="Waiting for your decision"
+            hint="Finished AI interviews nobody has selected, rejected or parked yet"
+            action={derived.waiting.length ? (
+              <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-bold text-warning">{derived.waiting.length}</span>
+            ) : undefined}
+          >
+            {loading ? <Skeleton className="h-40 w-full" /> : !derived.waiting.length ? (
+              <EmptyState message="Nothing waiting — every finished interview has a decision." />
+            ) : (
+              <ul className="space-y-2">
+                {derived.waiting.map(({ candidate, interview, score }) => (
+                  <li key={`${candidate.id}-${interview.id}`}>
+                    <button
+                      type="button"
+                      onClick={() => onViewCandidateReport(candidate.id, interview.id)}
+                      className={`flex w-full items-center gap-3 rounded-card border border-subtle bg-surface-1 p-3 text-left transition-colors duration-micro hover:bg-surface-2 ${focusRing}`}
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-purple-600 text-xs font-bold text-white">
+                        {initials(candidate.name)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-primary">{candidate.name}</span>
+                        <span className="block truncate text-xs text-muted">
+                          {interview.templateTitle || candidate.role || "AI interview"} · {fmtDateLabel(interview.date)}
+                        </span>
+                      </span>
+                      <span className={`text-lg font-bold tabular-nums ${scoreTone(score)}`}>{score}%</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+          {schedError ? <PanelError message={schedError} onRetry={() => void load()} /> : (
+            <UpcomingInterviewCard schedules={schedules} onViewAll={onViewAllUpcoming} />
+          )}
           <AIInsightsCard candidates={candidates} />
+          {loadedAt ? (
+            <p className="text-right text-[11px] text-muted">Updated {loadedAt.toLocaleTimeString("en-IN")}</p>
+          ) : null}
         </div>
       </div>
     </div>

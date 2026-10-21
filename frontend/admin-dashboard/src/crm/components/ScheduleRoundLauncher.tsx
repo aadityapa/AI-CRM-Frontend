@@ -11,12 +11,13 @@
  *   L1_Interview · L2_F2F → `ScheduleManualRoundModal` (the one Technical L1 /
  *                          L2 booking dialog every screen uses)
  */
-import { lazy, Suspense } from "react";
+import { lazyRetry } from "../../lib/lazyRetry";
+import { Suspense } from "react";
 import { ScheduleManualRoundModal } from "./ScheduleManualRoundModal";
 import { ScheduleAiInterviewModal } from "./ScheduleAiInterviewModal";
 import { Modal, Spinner } from "./ui";
 
-const InterviewRoundModal = lazy(() =>
+const InterviewRoundModal = lazyRetry(() =>
   import("../pages/Profiles").then((m) => ({ default: m.InterviewRoundModal })));
 
 const TECH_ROUND: Record<string, "L1" | "L2"> = { L1_Interview: "L1", L2_F2F: "L2" };

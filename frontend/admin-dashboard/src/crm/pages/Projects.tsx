@@ -1,12 +1,13 @@
 /** Projects — list (status tabs) + detail (Overview, Team, Timesheet,
  * PO & Invoices, Communication Matrix) incl. one-click "Create PO". */
+import { lazyRetry } from "../../lib/lazyRetry";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { FolderKanban, Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
 import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
@@ -139,15 +140,15 @@ const numOrUndef = (s: string) => (s.trim() === "" ? undefined : Number(s));
    project-related — the projects themselves, their employees, timesheets,
    purchase orders and invoices — lives behind one entry. Embeds are lazy so
    the chunks stay split and no import cycles form. */
-const LazyProjectEmployees = React.lazy(() =>
+const LazyProjectEmployees = lazyRetry(() =>
   import("./ProjectEmployees").then((m) => ({ default: m.ProjectEmployeesPage })));
-const LazyTimesheets = React.lazy(() =>
+const LazyTimesheets = lazyRetry(() =>
   import("./Timesheets").then((m) => ({ default: m.TimesheetsListPage })));
-const LazyTimesheetImport = React.lazy(() =>
+const LazyTimesheetImport = lazyRetry(() =>
   import("./Timesheets").then((m) => ({ default: m.TimesheetImportModal })));
-const LazyPurchaseOrders = React.lazy(() =>
+const LazyPurchaseOrders = lazyRetry(() =>
   import("./Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
-const LazyInvoices = React.lazy(() =>
+const LazyInvoices = lazyRetry(() =>
   import("./Finance").then((m) => ({ default: m.InvoicesPage })));
 
 /* ================================================================ LIST PAGE */
@@ -211,7 +212,7 @@ export function ProjectsListPage() {
     customer: customerFilter ? { value: customerFilter } : {},
   }), [colFilters, search, customerFilter]);
   useEffect(() => {
-    crmGet<any[]>("/api/customers/names")
+    crmGet<any[]>("/api/customers/names?status=Active")
       .then((r) => setCustomerOpts((r.data || []).map((c: any) => ({ id: c.id, name: c.name }))
         .sort((a: any, b: any) => a.name.localeCompare(b.name))))
       .catch(() => {});
@@ -475,6 +476,10 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = usePageTab<string>("tab", "overview");
+  // Each project tab is a sub-tab a template / custom role can switch off (22 Oct 2026).
+  const pageSub = useSubTabs("projects");
+  const projTabKeys = ["overview", "team", "timesheets", "finance", "comm"].filter((k) => pageSub.allowed(k));
+  const shownTab = projTabKeys.includes(tab) ? tab : (projTabKeys[0] || "");
   const [toast, showToast] = useToast();
 
   const load = useCallback(async () => {
@@ -524,15 +529,15 @@ export function ProjectDetailPage() {
           { key: "timesheets", label: "Timesheet" },
           { key: "finance", label: "PO & Invoices" },
           { key: "comm", label: "Communication Matrix", count: project.communication_matrix?.length },
-        ]}
-        active={tab}
+        ].filter((t) => projTabKeys.includes(t.key))}
+        active={shownTab}
         onChange={setTab}
       />
-      {tab === "overview" && <OverviewTab project={project} reload={load} showToast={showToast} />}
-      {tab === "team" && <TeamTab project={project} reload={load} showToast={showToast} />}
-      {tab === "comm" && <CommMatrixTab project={project} reload={load} showToast={showToast} />}
-      {tab === "timesheets" && <ProjectTimesheetsTab project={project} />}
-      {tab === "finance" && <FinanceTab project={project} />}
+      {shownTab === "overview" && <OverviewTab project={project} reload={load} showToast={showToast} />}
+      {shownTab === "team" && <TeamTab project={project} reload={load} showToast={showToast} />}
+      {shownTab === "comm" && <CommMatrixTab project={project} reload={load} showToast={showToast} />}
+      {shownTab === "timesheets" && <ProjectTimesheetsTab project={project} />}
+      {shownTab === "finance" && <FinanceTab project={project} />}
       {toast}
     </div>
   );

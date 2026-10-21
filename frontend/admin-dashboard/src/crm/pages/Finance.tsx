@@ -1,6 +1,6 @@
 /** Finance module pages: Purchase Orders (list/detail), Invoices (list/detail), TDS register.
  * Writes: Finance (Admin implicit). Reads also Sales_Head. */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
   IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search, Undo2,
@@ -11,8 +11,8 @@ import { DecisionDialog } from "../components/dialogKit";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
 import { authFetch } from "../../api/client";
 import { useHasRole, useMe } from "../CrmApp";
-import { useCanAct, useCanApprove } from "../useAccess";
-import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
+import { useCanAct, useCanApprove, useSubTabs } from "../useAccess";
+import { CrmLink, crmNavigate, crmUrl, useCrmParams } from "../routerHooks";
 import { DataTable, type Column } from "../components/DataTable";
 import { CustomerGroupedList, ViewToggle, useGroupView } from "../components/CustomerGroupedList";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -34,9 +34,11 @@ import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
 } from "../components/invoice/ProformaActions";
 import { InvoiceJourney } from "../components/invoice/InvoiceJourney";
+import { InvoiceAddressCard } from "../components/invoice/InvoiceAddressCard";
 import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
+import { EInvoiceRegister } from "../components/invoice/EInvoiceRegister";
 /* ---------------------------------------------------------------- helpers */
 
 /** "Proforma" / "Returned to GM" chip — orange, the document's own colour. */
@@ -2076,10 +2078,13 @@ const PROFORMA_TAB = "Proforma";
  *  Sales Manager's "send & confirm" queue and Finance's "add the IRN" queue. */
 const AWAITING_CUSTOMER_TAB = "Awaiting_Customer";
 const CUSTOMER_APPROVED_TAB = "Customer_Approved";
+/** Every tax invoice with its IRN (21 Oct 2026) — Finance + Sales + Admin / CEO. */
+const EINVOICE_TAB = "EInvoice";
 const INVOICE_TABS = [
   { key: PROFORMA_TAB, label: "Proforma" },
   { key: AWAITING_CUSTOMER_TAB, label: "Awaiting customer" },
   { key: CUSTOMER_APPROVED_TAB, label: "Customer approved" },
+  { key: EINVOICE_TAB, label: "E-invoice" },
   { key: "Unpaid", label: "Unpaid" },
   { key: "Partially_Paid", label: "Partially Paid" },
   { key: "Paid", label: "Paid" },
@@ -2112,9 +2117,18 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Finance");
   const canWrite = useCanAct("invoices", "edit", canWriteRole);
+  /* The E-invoice tab is for Finance + every Sales rung + Admin / CEO (the server's rule). */
+  const canSeeEInvoices = useHasRole("Finance", "Sales", "Sales_Head");
+  /* Each list is a sub-tab a template / custom role can switch off (22 Oct 2026);
+     E-invoice still needs the role rule above on top. */
+  const invSub = useSubTabs("invoices");
+  const invoiceTabs = INVOICE_TABS.filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key));
+  const invTabKeys = invoiceTabs.map((x) => x.key);
   /* `?tab=Proforma` deep link (28 Sep 2026: the work desk's "Proformas to
      convert" queue lands here); an unknown value falls back to Unpaid. */
-  const [tab, setTab] = usePageTab<string>("tab", "Unpaid", INVOICE_TABS.map((x) => x.key));
+  const [rawInvTab, setTab] = usePageTab<string>("tab", invTabKeys.includes("Unpaid") ? "Unpaid" : (invTabKeys[0] || "Unpaid"), invTabKeys);
+  const tab = invTabKeys.includes(rawInvTab) || !invTabKeys.length ? rawInvTab : invTabKeys[0];
+  const einvoiceTab = tab === EINVOICE_TAB;
   const [search, setSearch] = useSessionState("inv.search", "");
   const [page, setPage] = useSessionState("inv.page", 1);
   const [rows, setRows] = useState<any[]>([]);
@@ -2147,11 +2161,16 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const [monthFilter, setMonthFilter] = useState("");
   const [branchChoices, setBranchChoices] = useState<{ id: number; name: string }[]>([]);
   const customerNames = useNameMap("/api/customers/names");
+  // Filter lists ACTIVE customers only (22 Oct 2026); the name map above still
+  // resolves an inactive customer printed on an older invoice.
+  const activeCustomerOpts = useActiveCustomers(customerFilter);
   // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch the whole
   // status tab so every customer's section is complete.
   const [view, setView] = useGroupView();
 
   useEffect(() => {
+    // The E-invoice tab loads its own register (EInvoiceRegister).
+    if (tab === EINVOICE_TAB) { setLoading(false); return undefined; }
     let alive = true;
     setLoading(true);
     const t = window.setTimeout(() => {
@@ -2228,7 +2247,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
               </button>
             )}
           </div>
-          <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+          <Tabs tabs={invoiceTabs} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
         </>
       ) : (
         <PageHeader
@@ -2253,11 +2272,12 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
             </>
           }
         >
-          <Tabs tabs={INVOICE_TABS} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
+          <Tabs tabs={invoiceTabs} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
         </PageHeader>
       )}
-      {error && <ErrorBox error={error} />}
-      {view === "customer" ? (
+      {einvoiceTab ? <EInvoiceRegister /> : null}
+      {!einvoiceTab && error && <ErrorBox error={error} />}
+      {einvoiceTab ? null : view === "customer" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice number or employee…"
@@ -2321,8 +2341,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
               value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}
               title="Filter by customer">
               <option value="">All customers</option>
-              {Object.entries(customerNames).sort((a, b) => a[1].localeCompare(b[1]))
-                .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              {activeCustomerOpts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
               value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
@@ -2914,6 +2933,14 @@ function InvoiceRevisionsCard({ invoiceId, meId, refreshKey, onChanged, notify }
   );
 }
 
+/** What the off-screen e-invoice capture renders (loaded on demand). */
+type EInvoiceCapture = {
+  Doc: typeof import("../components/invoice/InvoicePage").TaxInvoiceDocument;
+  data: import("../components/invoice/types").InvoiceData;
+  fileName: string;
+  exportPdf: typeof import("../components/invoice/exportTaxInvoicePdf").exportTaxInvoicePdf;
+};
+
 export function InvoiceDetailPage() {
   const { id } = useCrmParams();
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
@@ -2939,7 +2966,13 @@ export function InvoiceDetailPage() {
     return false;
   });
   const [docxBusy, setDocxBusy] = useState(false);
-  const [einvBusy, setEinvBusy] = useState(false);
+  const einvBusy = false; // the e-invoice opens synchronously in a new tab (22 Oct 2026)
+  const [einvDownload, setEinvDownload] = useState<"pdf" | "docx" | null>(null);
+  // The e-invoice PDF (22 Oct 2026) is the SAME sheet as the tax invoice with
+  // the e-Invoice band, captured off screen — loaded on demand so the PDF
+  // libraries stay out of this page's bundle.
+  const [einvCapture, setEinvCapture] = useState<EInvoiceCapture | null>(null);
+  const captureRef = useRef<HTMLDivElement>(null);
   const [revKey, setRevKey] = useState(0);
   // Proforma → Tax (23 Sep 2026): Finance converts / returns / corrects.
   // Convert + Return are an APPROVAL button (`invoice.convert_proforma`) —
@@ -2960,6 +2993,28 @@ export function InvoiceDetailPage() {
       .catch((e) => setError(e?.message || "Failed to load invoice"));
   };
   useEffect(load, [id]);
+
+  // Once the off-screen e-invoice sheet has painted, capture it and clean up.
+  useEffect(() => {
+    if (!einvCapture) return;
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        if (!captureRef.current) throw new Error("The e-invoice sheet did not render.");
+        await einvCapture.exportPdf(captureRef.current, einvCapture.fileName);
+        if (!cancelled) showToast("E-invoice (PDF) downloaded");
+      } catch (e: any) {
+        if (!cancelled) showToast(e?.message || "Could not download the e-invoice", "err");
+      } finally {
+        if (!cancelled) {
+          setEinvCapture(null);
+          setEinvDownload(null);
+        }
+      }
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [einvCapture]);
 
   if (error) return <ErrorBox error={error} onRetry={load} />;
   if (!inv) return <Spinner label="Loading invoice…" />;
@@ -3055,24 +3110,42 @@ export function InvoiceDetailPage() {
   // The e-invoice (8 Oct 2026): the tax invoice with its IRN · Ack No. · Ack
   // Date band and a QR to the public e-invoice page — opened in a new tab.
   const einvoiceReady = !isProforma && !!inv.einvoice?.irn;
-  const openEInvoice = async () => {
-    const tab = window.open("", "_blank");
-    setEinvBusy(true);
-    try {
-      const res = await authFetch(`/api/invoices/${id}/einvoice.pdf`);
-      if (!res.ok) {
-        let msg = `E-invoice failed (${res.status})`;
-        try { msg = (await res.json())?.detail || msg; } catch { /* not JSON */ }
-        throw new Error(msg);
+  const openEInvoice = () => {
+    // 22 Oct 2026 (user ask): the e-invoice is the SAME sheet as the tax
+    // invoice, with the e-Invoice band (IRN · Ack No. · Ack Date + QR) added.
+    // Open that sheet in a new tab; its toolbar prints / downloads it.
+    const w = window.open(crmUrl(`invoices/${id}/tax-invoice?einvoice=1`), "_blank", "noopener");
+    if (!w) showToast("Allow pop-ups for this site to open the e-invoice", "err");
+  };
+
+  // Download the e-invoice as PDF or Word. The PDF is the on-screen sheet
+  // (same as "Tax Invoice (PDF)") with the band; Word is the server export.
+  const downloadEInvoice = async (kind: "pdf" | "docx") => {
+    setEinvDownload(kind);
+    if (kind === "pdf") {
+      try {
+        const [page, pdf, utils] = await Promise.all([
+          import("../components/invoice/InvoicePage"),
+          import("../components/invoice/exportTaxInvoicePdf"),
+          import("../components/invoice/utils"),
+        ]);
+        const data = utils.mapApiInvoiceToData(inv);
+        setEinvCapture({ Doc: page.TaxInvoiceDocument, data, exportPdf: pdf.exportTaxInvoicePdf,
+          fileName: `${page.fileStem(data, id, true)}.pdf` });
+      } catch (e: any) {
+        showToast(e?.message || "Could not prepare the e-invoice", "err");
+        setEinvDownload(null);
       }
-      const href = URL.createObjectURL(await res.blob());
-      if (tab) tab.location.href = href; else window.open(href, "_blank");
-      window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+      return;
+    }
+    try {
+      await downloadFile(`/api/invoices/${id}/einvoice.docx`, `EInvoice_${inv.invoice_number || id}.docx`,
+        "E-invoice Word");
+      showToast("E-invoice (Word) downloaded");
     } catch (e: any) {
-      tab?.close();
-      showToast(e?.message || "Could not open the e-invoice", "err");
+      showToast(e?.message || "Could not download the e-invoice", "err");
     } finally {
-      setEinvBusy(false);
+      setEinvDownload(null);
     }
   };
 
@@ -3082,6 +3155,7 @@ export function InvoiceDetailPage() {
     { key: "payment_mode", label: "Mode", render: (r) => r.payment_mode || "—" },
     { key: "reference_number", label: "Reference", render: (r) => r.reference_number || "—" },
     { key: "notes", label: "Notes", render: (r) => r.notes || "—" },
+    { key: "recorded_by_name", label: "Recorded by", render: (r) => r.recorded_by_name || "—" },
   ];
 
   return (
@@ -3193,8 +3267,14 @@ export function InvoiceDetailPage() {
         <InvoiceJourney inv={inv} canWrite={canWrite}
           onPay={() => setShowPayment(true)} onTds={() => setShowTds(true)}
           onOpenEInvoice={() => void openEInvoice()} einvoiceBusy={einvBusy}
+          onDownloadEInvoice={(k) => void downloadEInvoice(k)} downloadBusy={einvDownload}
           onChanged={load} notify={(m, k) => showToast(m, k)} />
       )}
+
+      {/* The buyer / shipping address this invoice keeps (21 Oct 2026, 0143) —
+          a later change to the customer's address never rewrites it. */}
+      <InvoiceAddressCard invoiceId={inv.id} canCorrect={canWriteRole}
+        onChanged={load} notify={showToast} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
         <Card title={`${docLabel} details`} hero>
@@ -3330,6 +3410,14 @@ export function InvoiceDetailPage() {
           onClose={() => setShowTds(false)}
           onChanged={(msg) => { setShowTds(false); showToast(msg); load(); }}
         />
+      )}
+      {einvCapture && (
+        // Off screen, never seen: the e-invoice sheet for the PDF icon. The
+        // capture moves it on screen inside html2canvas's clone only.
+        <div data-capture-wrap="1" aria-hidden
+          style={{ position: "fixed", left: -12000, top: 0, width: 794, pointerEvents: "none" }}>
+          <einvCapture.Doc data={einvCapture.data} sheetRef={captureRef} einvoice />
+        </div>
       )}
       {toast}
     </div>

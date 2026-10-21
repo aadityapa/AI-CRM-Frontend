@@ -200,9 +200,21 @@ export function StrengthsWeaknessesPanel({
         </div>
       </section>
 
+      {analysis?.position_caveats?.length ? (
+        <div className="rounded-card border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+          {analysis.position_caveats.map((c, i) => <p key={i}>{c}</p>)}
+        </div>
+      ) : null}
+
       {/* SECTION 2 — Strength Summary */}
       <section>
-        <SectionHeader icon={TrendingUp} title="Strength Summary" subtitle="Skill areas where the candidate performed well" />
+        <SectionHeader
+          icon={TrendingUp}
+          title="Strength Summary"
+          subtitle={analysis?.position_skills?.length
+            ? "The position's skills the answers showed well"
+            : "From the answers the AI scored best (this report predates the position-skill check)"}
+        />
         <div className="grid sm:grid-cols-2 gap-3">
           {strengthCards.map((card) => (
             <SkillCardView key={card.id} card={card} />
@@ -212,7 +224,13 @@ export function StrengthsWeaknessesPanel({
 
       {/* SECTION 3 — Improvement Areas */}
       <section>
-        <SectionHeader icon={TrendingDown} title="Improvement Areas" subtitle="Topics to probe in the next round" />
+        <SectionHeader
+          icon={TrendingDown}
+          title="Improvement Areas"
+          subtitle={analysis?.position_skills?.length
+            ? "Position skills answered weakly or never asked — probe them in the next round"
+            : "Topics to probe in the next round"}
+        />
         <div className="grid sm:grid-cols-2 gap-3">
           {improvementCards.map((card) => (
             <SkillCardView key={card.id} card={card} />

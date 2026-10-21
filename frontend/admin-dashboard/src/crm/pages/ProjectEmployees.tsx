@@ -657,7 +657,7 @@ export function ProjectEmployeesPage({ embedded = false }: { embedded?: boolean 
 
   useEffect(() => {
     crmGet<any[]>("/api/projects?limit=200").then((r) => setProjects((r.data || []).map((p) => ({ id: p.id, name: p.name })))).catch(() => {});
-    crmGet<any[]>("/api/customers/names").then((r) => setCustomers((r.data || []).map((c) => ({ id: c.id, name: c.name })))).catch(() => {});
+    crmGet<any[]>("/api/customers/names?status=Active").then((r) => setCustomers((r.data || []).map((c) => ({ id: c.id, name: c.name })))).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {

@@ -20,7 +20,7 @@ const box: CSSProperties = {
   border: "1px solid #e2e8f0",
 };
 
-export function InterviewPdfQuestionBlock({ turn }: { turn: EnrichedTurn }) {
+export function InterviewPdfQuestionBlock({ turn, bare = false }: { turn: EnrichedTurn; bare?: boolean }) {
   const professional = turnHasProfessionalAssessment(turn);
   const rating =
     turn.overallRating != null
@@ -32,7 +32,7 @@ export function InterviewPdfQuestionBlock({ turn }: { turn: EnrichedTurn }) {
 
   return (
     <div
-      style={{
+      style={bare ? { paddingBottom: 12 } : {
         borderBottom: "1px solid #e2e8f0",
         paddingBottom: 18,
         marginBottom: 18,

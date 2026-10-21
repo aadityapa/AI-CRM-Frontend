@@ -3,6 +3,7 @@ import { getCandidateInterviewDetail, getCandidateStrengthsWeaknesses } from "..
 import { InterviewPdfTemplate } from "../../components/pdf/InterviewPdfTemplate";
 import type { CandidateInterviewHistory, CandidateInterviewSummary, InterviewRecord } from "../../types";
 import type { StrengthsWeaknessesAnalysis } from "../../types/strengthsWeaknesses";
+import { SW_POSITION_VERSION } from "../../types/strengthsWeaknesses";
 import { buildInterviewPdfData } from "./buildInterviewPdfData";
 import { exportElementToPdf } from "./exportElementToPdf";
 import { interviewReportFilename } from "./filename";
@@ -46,7 +47,7 @@ async function loadStrengthsWeaknesses(
 ): Promise<StrengthsWeaknessesAnalysis | null> {
   const report = record?.report as Record<string, unknown> | undefined;
   const embedded = report?.strengths_weaknesses_analysis as StrengthsWeaknessesAnalysis | undefined;
-  if (embedded?.complete && embedded.questions?.length) return embedded;
+  if (embedded?.complete && embedded.questions?.length && Number(embedded.version || 0) >= SW_POSITION_VERSION) return embedded;
   try {
     const res = await getCandidateStrengthsWeaknesses(candidateId, interviewId);
     return (res?.analysis as StrengthsWeaknessesAnalysis) || null;
@@ -90,7 +91,11 @@ export async function generateInterviewPdf(
     const el = inner.firstElementChild as HTMLElement | null;
     if (!el) throw new Error("PDF template failed to render.");
     const when = pdfData.interviewDate;
-    await exportElementToPdf(el, interviewReportFilename(ctx.candidate.name, when));
+    await exportElementToPdf(el, interviewReportFilename(ctx.candidate.name, when), {
+      headerLeft: `Karnex Orbit - AI interview report - ${pdfData.candidateName}`.slice(0, 90),
+      headerRight: pdfData.role ? pdfData.role.slice(0, 60) : "",
+      footerLeft: `Confidential - ${pdfData.interviewDate}`,
+    });
   } finally {
     root.unmount();
     document.body.removeChild(host);

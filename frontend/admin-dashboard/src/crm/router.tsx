@@ -14,7 +14,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
  * the page that reads it, so carrying it onto the next page would land the
  * reader on an arbitrary tab (or none) after following any other link. */
 const CRM_FILTER_KEYS = [
-  "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus",
+  "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus", "einvoice",
   // page-state params (crm/lib/pageState.ts) — each belongs to one page only
   "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab",
   // Interview Platform report params — meaningless inside the CRM; a copied link

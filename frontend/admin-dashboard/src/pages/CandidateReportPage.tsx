@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazyRetry } from "../lib/lazyRetry";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowLeft,
@@ -46,12 +47,15 @@ import {
   problemSolvingScore,
   safeText,
 } from "../utils/reportExtract";
-const SkillBarChart = lazy(() =>
+const SkillBarChart = lazyRetry(() =>
   import("../components/candidate-report/ReportCharts").then((m) => ({ default: m.SkillBarChart })),
 );
 import { StrengthsWeaknessesPanel } from "../components/candidate-report/StrengthsWeaknessesPanel";
 import { ProfessionalAssessmentSections } from "../components/candidate-report/ProfessionalAssessmentSections";
 import type { StrengthsWeaknessesAnalysis } from "../types/strengthsWeaknesses";
+import { SW_POSITION_VERSION } from "../types/strengthsWeaknesses";
+import { L2QuestionsCard } from "../components/candidate-report/L2QuestionsCard";
+import type { L2QuestionSet } from "../api";
 import { DeleteInterviewRecordModal } from "../components/DeleteInterviewRecordModal";
 import { RecordingViewer } from "../components/interview-recording/RecordingViewer";
 import {
@@ -334,7 +338,9 @@ export function CandidateReportPage({
     const sw = (record?.report as Record<string, unknown> | undefined)?.strengths_weaknesses_analysis;
     if (!sw || typeof sw !== "object") return null;
     const o = sw as StrengthsWeaknessesAnalysis;
-    return o.complete ? o : null;
+    // v3 (21 Oct 2026) reads the report against the position's skills; an older
+    // saved analysis is re-built by the server on the next fetch.
+    return o.complete && Number(o.version || 0) >= SW_POSITION_VERSION ? o : null;
   }, [record]);
 
   const focusInterviewDetail = useCallback((interviewId: string, tab: "breakdown" | "strengths") => {
@@ -1359,6 +1365,15 @@ export function CandidateReportPage({
                 busy={swBusy || recordBusy}
                 error={swError}
               />
+              {selectedInterviewId && record?.report ? (
+                <div className="mt-8">
+                  <L2QuestionsCard
+                    candidateId={history?.candidate?.id || candidateId}
+                    interviewId={String(selectedInterviewId)}
+                    initial={((record.report as Record<string, unknown>).l2_questions as L2QuestionSet | undefined) || null}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : (
           <div className="divide-y divide-subtle">

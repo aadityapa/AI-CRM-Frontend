@@ -14,10 +14,12 @@ import {
 } from "../components/ui";
 import { useHasRole } from "../CrmApp";
 import { ApprovalGrants, ApprovalGrantsHeading, impliedButtons, type ApprovalDef } from "../components/ApprovalGrants";
-import { IV_MODULE, IV_MODULE_HINT, MODULE_ORDER, moduleOf } from "../components/TabPermissionMatrix";
+import { IV_MODULE, IV_MODULE_HINT, MODULE_ORDER, SubTabPicker, moduleOf } from "../components/TabPermissionMatrix";
 
 type RegField = { key: string; label: string };
-type RegTab = { key: string; label: string; fields: RegField[]; group?: string; default_roles?: string[] };
+type RegTab = { key: string; label: string; fields: RegField[]; group?: string; default_roles?: string[];
+  /** The page's sub-tabs (22 Oct 2026) — ticked per template, stored as `tab:*` field entries. */
+  subtabs?: RegField[] };
 /** `role_tags` = built-in operational roles + every ACTIVE custom role (GM,
  *  Sales Manager, …) — the server's list, so a new custom role appears here
  *  without a frontend change. `approvals` = the approval-button catalogue. */
@@ -467,7 +469,7 @@ export function AccessTemplatesPage() {
             </DialogSection>
 
             <DialogSection n={2} tone="brand" title="Tabs & fields" done={tabCount > 0}
-              hint="Pick a mode per tab; open a tab to lock single fields or hide a sub-tab."
+              hint="Pick a mode per tab, tick the sub-tabs it opens, and open a tab to lock single fields."
               action={<input className={`${inputCls} !h-8 !w-48 !py-1 text-xs`} placeholder="Find a tab or field…"
                 value={tabSearch} onChange={(e) => setTabSearch(e.target.value)} aria-label="Find a tab or field" />}>
               <div className="space-y-3">
@@ -476,7 +478,8 @@ export function AccessTemplatesPage() {
                   const modTabs = tabs.filter((t) => moduleOf(t) === mod)
                     .filter((t) => !mq
                       || t.label.toLowerCase().includes(mq)
-                      || t.fields.some((f) => f.label.toLowerCase().includes(mq)));
+                      || t.fields.some((f) => f.label.toLowerCase().includes(mq))
+                      || (t.subtabs || []).some((f) => f.label.toLowerCase().includes(mq)));
                   if (!modTabs.length) return null;
                   const grantedInMod = modTabs.filter((t) => form.tabAccess[t.key]).length;
                   return (
@@ -537,6 +540,16 @@ export function AccessTemplatesPage() {
                                 </button>
                                 <ModeSegments value={tabMode} onChange={(m) => setTabMode(tab.key, m)} />
                               </div>
+                              {tabMode && tab.subtabs?.length ? (
+                                <div className="px-3 pb-2">
+                                  <SubTabPicker subtabs={tab.subtabs} value={form.fieldAccess[tab.key]}
+                                    onChange={(m) => setForm((f) => {
+                                      const fieldAccess = { ...f.fieldAccess };
+                                      if (Object.keys(m).length) fieldAccess[tab.key] = m; else delete fieldAccess[tab.key];
+                                      return { ...f, fieldAccess };
+                                    })} />
+                                </div>
+                              ) : null}
                               {open && tab.fields.length > 0 && (
                                 <div className="bg-surface-2 px-6 py-2">
                                   <p className="mb-1.5 text-[11px] text-muted">

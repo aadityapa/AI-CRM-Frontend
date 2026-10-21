@@ -16,7 +16,8 @@
  * One component renders the buttons (`SalesItemActions`), one opens the dialog
  * (`SalesActionLauncher`) — My Tasks mounts both.
  */
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazyRetry } from "../../lib/lazyRetry";
+import { Suspense, type ReactNode } from "react";
 import { BadgeCheck, CalendarCheck2, IndianRupee, MessageSquareReply, Send, Undo2, X } from "lucide-react";
 
 import { FLOW_BTN } from "./flowButtons";
@@ -28,7 +29,7 @@ import { BACKWARD_MOVES, stageActions, type StageAction } from "./StageActions";
 import { Modal, Spinner } from "./ui";
 import { CrmLink } from "../router";
 
-const TransitionModal = lazy(() =>
+const TransitionModal = lazyRetry(() =>
   import("../pages/Profiles").then((m) => ({ default: m.TransitionModal })));
 
 /** The fields a Sales desk item adds to the common item shape. */

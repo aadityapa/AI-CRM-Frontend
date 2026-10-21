@@ -12,7 +12,17 @@ const DEFAULT_DECLARATION =
   "represents the price actually charged and there is no flow of additional consideration " +
   "directly or indirectly from the Service Recipient.";
 
-export function Declaration({ seller, share }: { seller: SellerDetails; share?: ShareLinks | null }) {
+export function Declaration({
+  seller,
+  share,
+  hideQr = false,
+}: {
+  seller: SellerDetails;
+  share?: ShareLinks | null;
+  /** e-invoice (22 Oct 2026): the e-Invoice band carries the one QR, so the
+      "Scan to view" code here is left out — two codes on one sheet confused readers. */
+  hideQr?: boolean;
+}) {
   const sealSrc = (seller.seal_url || "").trim() || DEFAULT_SEAL;
 
   return (
@@ -28,7 +38,7 @@ export function Declaration({ seller, share }: { seller: SellerDetails; share?: 
         {/* "Scan to view this invoice" (3 Sep 2026): the server renders the QR
             for its public, signed link — the same code lands on the on-screen
             sheet, the html2canvas PDF and the server PDF. */}
-        {share?.qr_svg && (
+        {!hideQr && share?.qr_svg && (
           <a
             className={styles.qrBlock}
             href={share.qr_target}

@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import { ThemeProvider } from "./theme/ThemeProvider";
+import { installPreloadErrorReload } from "./lib/lazyRetry";
+
+// A tab opened before a deploy asks for chunks that no longer exist — reload once.
+installPreloadErrorReload();
 
 window.addEventListener("storage", (e: StorageEvent) => {
   if ((e.key === "authToken" || e.key === "authUser") && e.oldValue && !e.newValue) {

@@ -6,7 +6,7 @@ import { CalendarDays, CalendarOff, CalendarPlus, ExternalLink, Plus, RefreshCw,
 import { DialogHero } from "../components/dialogKit";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import { useHasRole } from "../CrmApp";
-import { useCanAct } from "../useAccess";
+import { useCanAct, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { RateHistory } from "./ProjectEmployees";
@@ -892,6 +892,9 @@ export function ProjectEmployeeDetailPage() {
   const [pe, setPe] = useState<PeDetail | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = usePageTab<string>("tab", "general");
+  const pageSub = useSubTabs("project-employees");   // sub-tabs a template can switch off (22 Oct 2026)
+  const PE_TABS_SHOWN = PE_TABS.filter((t) => pageSub.allowed(t.key));
+  const shownTab = PE_TABS_SHOWN.some((t) => t.key === tab) ? tab : (PE_TABS_SHOWN[0]?.key || "");
   const [saving, setSaving] = useState(false);
   const [syncingLeave, setSyncingLeave] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -1163,9 +1166,9 @@ export function ProjectEmployeeDetailPage() {
         )}
       </div>
 
-      <Tabs tabs={PE_TABS} active={tab} onChange={setTab} />
+      <Tabs tabs={PE_TABS_SHOWN} active={shownTab} onChange={setTab} />
 
-      {tab === "general" && (
+      {shownTab === "general" && (
         <div className="space-y-4 rounded-card border border-subtle bg-surface-1 p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <InfoItem label="Employee">{pe.employee_name || "—"}</InfoItem>
@@ -1234,7 +1237,7 @@ export function ProjectEmployeeDetailPage() {
         </div>
       )}
 
-      {tab === "leave" && (
+      {shownTab === "leave" && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted">
@@ -1362,7 +1365,7 @@ export function ProjectEmployeeDetailPage() {
         </div>
       )}
 
-      {tab === "holidays" && (
+      {shownTab === "holidays" && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3 rounded-card border border-subtle bg-surface-1 p-4">
             <div>
@@ -1401,7 +1404,7 @@ export function ProjectEmployeeDetailPage() {
         </div>
       )}
 
-      {tab === "timesheets" && (
+      {shownTab === "timesheets" && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted">
@@ -1425,7 +1428,7 @@ export function ProjectEmployeeDetailPage() {
         </div>
       )}
 
-      {tab === "invoice" && (
+      {shownTab === "invoice" && (
         <InvoiceTab peId={pe.id} projectId={pe.project_id} />
       )}
 

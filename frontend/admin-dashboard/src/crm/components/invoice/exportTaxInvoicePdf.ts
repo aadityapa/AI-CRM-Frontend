@@ -1,5 +1,18 @@
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { withHtml2CanvasTextFix } from "../../../utils/pdf/html2canvasTextFix";
+
+/** Wait until every <img> inside `el` has loaded (QR codes, logo, seal). */
+async function imagesReady(el: HTMLElement, timeoutMs = 5000): Promise<void> {
+  const imgs = Array.from(el.querySelectorAll("img"));
+  await Promise.race([
+    Promise.all(imgs.map((img) => (img.complete ? Promise.resolve() : new Promise<void>((resolve) => {
+      img.addEventListener("load", () => resolve(), { once: true });
+      img.addEventListener("error", () => resolve(), { once: true });
+    })))),
+    new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs)),
+  ]);
+}
 
 /** Capture the A4 tax-invoice sheet into a single-page PDF (margin 0). */
 export async function exportTaxInvoicePdf(
@@ -9,13 +22,14 @@ export async function exportTaxInvoicePdf(
   if (!element?.isConnected) {
     throw new Error("PDF source element is not attached to the document.");
   }
+  await imagesReady(element);
 
   // The sheet is 210mm (~794px) wide; passing that as windowWidth made the
   // cloned document match the `max-width: 900px` MOBILE media query, so the
   // PDF came out with every row stacked (11 Sep 2026, user report). Capture
   // with a desktop-sized viewport and the sheet pinned to its A4 width.
   const A4_PX = 794;
-  const canvas = await html2canvas(element, {
+  const canvas = await withHtml2CanvasTextFix(() => html2canvas(element, {
     scale: 2,
     useCORS: true,
     allowTaint: true,
@@ -26,6 +40,12 @@ export async function exportTaxInvoicePdf(
     windowHeight: Math.max(element.scrollHeight, 1123),
     imageTimeout: 20_000,
     onclone: (doc) => {
+      // A sheet rendered off screen for a one-click download (the e-invoice
+      // PDF icon) is brought on screen in the clone so its bounds are real.
+      doc.querySelectorAll<HTMLElement>("[data-capture-wrap]").forEach((w) => {
+        w.style.left = "0";
+        w.style.top = "0";
+      });
       const sheet = doc.querySelector("[data-invoice-sheet]") as HTMLElement | null;
       if (sheet) {
         sheet.style.width = `${A4_PX}px`;
@@ -35,7 +55,7 @@ export async function exportTaxInvoicePdf(
         sheet.style.boxShadow = "none";
       }
     },
-  });
+  }));
 
   const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();

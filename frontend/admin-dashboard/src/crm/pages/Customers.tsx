@@ -2,6 +2,7 @@
  * billing policy) / Default Billing Policy / Contacts / Documents tabs.
  * Branch management (formerly the standalone Customer Branches page) lives in
  * the Branches tab. Writes restricted to Sales, Sales_Head, Admin. */
+import { lazyRetry } from "../../lib/lazyRetry";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Banknote, Building2, Eye, Lock, MapPin, Pencil, Plus, Power, Search, SlidersHorizontal, Trash2, Upload, Wallet } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
@@ -9,7 +10,7 @@ import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
 import { crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole } from "../CrmApp";
-import { useCanAct, useCrmAccess } from "../useAccess";
+import { useCanAct, useCrmAccess, useSubTabs } from "../useAccess";
 import { CrmBreadcrumb } from "../components/CrmBreadcrumb";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
@@ -21,9 +22,11 @@ import { EditBranchWizard } from "../components/BranchWizardModal";
 import { BranchRateCardEditor } from "./RateCards";
 /* Received Amount (19 Oct 2026, user ask): every amount this customer paid,
    with its proof — the same store as the branch page and Finance's page. */
-const LazyCustomerReceipts = React.lazy(() =>
+const LazyCustomerReceipts = lazyRetry(() =>
   import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
-const LazyNewOpportunityForm = React.lazy(() =>
+const LazyCustomerActivityLog = lazyRetry(() =>
+  import("../components/CustomerActivityLog").then((m) => ({ default: m.CustomerActivityLog })));
+const LazyNewOpportunityForm = lazyRetry(() =>
   import("./opportunity/NewOpportunityForm").then((m) => ({ default: m.NewOpportunityForm })));
 import { SearchableSelect, optionsFromStrings } from "../components/SearchableSelect";
 import {
@@ -1973,8 +1976,30 @@ export function CustomerDetailPage() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = usePageTab<string>("tab", "branches");
+  const [rawTab, setTab] = usePageTab<string>("tab", "branches");
   const [showEdit, setShowEdit] = useState(false);
+  // Every tab is a sub-tab a template / custom role can switch off (22 Oct 2026);
+  // the hub tabs still need their own page's grant on top.
+  const sub = useSubTabs("customers");
+  const custTabs = [
+    { key: "branches", label: "Branches" },
+    { key: "billing", label: "Default Billing Policy" },
+    { key: "contacts", label: "Contacts" },
+    { key: "documents", label: "Documents" },
+    { key: "holidays", label: "Holidays" },
+    ...(canSeeOpps ? [{ key: "opportunities", label: "Opportunities" }] : []),
+    ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
+    ...(canSeeInvoices ? [{ key: "invoices", label: "Invoices" }] : []),
+    // Projects + Project Employees sit AFTER Invoices (14 Aug 2026).
+    ...(canSeeProjects ? [{ key: "projects", label: "Projects" }] : []),
+    ...(canSeePEs ? [{ key: "project-employees", label: "Project Employees" }] : []),
+    // Received Amount after Project Employees (19 Oct 2026) — the money
+    // tabs follow the Invoices grant (Finance works it, Sales reads it).
+    ...(canSeeInvoices ? [{ key: "receipts", label: "Received Amount" }] : []),
+    // Everything that happened with this customer, from the start (21 Oct 2026).
+    { key: "activity", label: "Activity Log" },
+  ].filter((t) => sub.allowed(t.key));
+  const tab = custTabs.some((t) => t.key === rawTab) ? rawTab : (custTabs[0]?.key || "");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2015,22 +2040,7 @@ export function CustomerDetailPage() {
         ) : undefined}
       >
       <Tabs
-        tabs={[
-          { key: "branches", label: "Branches" },
-          { key: "billing", label: "Default Billing Policy" },
-          { key: "contacts", label: "Contacts" },
-          { key: "documents", label: "Documents" },
-          { key: "holidays", label: "Holidays" },
-          ...(canSeeOpps ? [{ key: "opportunities", label: "Opportunities" }] : []),
-          ...(canSeePos ? [{ key: "pos", label: "Purchase Orders" }] : []),
-          ...(canSeeInvoices ? [{ key: "invoices", label: "Invoices" }] : []),
-          // Projects + Project Employees sit AFTER Invoices (14 Aug 2026).
-          ...(canSeeProjects ? [{ key: "projects", label: "Projects" }] : []),
-          ...(canSeePEs ? [{ key: "project-employees", label: "Project Employees" }] : []),
-          // Received Amount after Project Employees (19 Oct 2026) — the money
-          // tabs follow the Invoices grant (Finance works it, Sales reads it).
-          ...(canSeeInvoices ? [{ key: "receipts", label: "Received Amount" }] : []),
-        ]}
+        tabs={custTabs}
         active={tab}
         onChange={setTab}
       />
@@ -2061,6 +2071,11 @@ export function CustomerDetailPage() {
         {tab === "receipts" && canSeeInvoices && (
           <React.Suspense fallback={<Spinner label="Loading received amounts…" />}>
             <LazyCustomerReceipts scope={{ customerId, customerName: customer.name }} />
+          </React.Suspense>
+        )}
+        {tab === "activity" && (
+          <React.Suspense fallback={<Spinner label="Loading the activity log…" />}>
+            <LazyCustomerActivityLog customerId={customerId} />
           </React.Suspense>
         )}
       </div>

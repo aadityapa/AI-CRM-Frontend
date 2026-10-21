@@ -21,7 +21,7 @@ import {
 import { DialogHero, DialogSection } from "../components/dialogKit";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
-import { TabPermissionMatrix, type GrantMap, type RegistryTab } from "../components/TabPermissionMatrix";
+import { TabPermissionMatrix, type FieldGrantMap, type GrantMap, type RegistryTab } from "../components/TabPermissionMatrix";
 import { ApprovalGrants, ApprovalGrantsHeading, type ApprovalDef } from "../components/ApprovalGrants";
 import { ResetPasswordModal } from "../components/ResetPasswordModal";
 import { Avatar } from "../components/Avatar";
@@ -339,13 +339,16 @@ function RoleEditorModal({
   const [department, setDepartment] = useState(role?.department || initialDepartment || "other");
   const [isActive, setIsActive] = useState(role?.is_active ?? true);
   const [grants, setGrants] = useState<GrantMap>(role?.tab_access || {});
+  // Sub-tab ticks (22 Oct 2026) live in the role's field map as `tab:*` entries.
+  const [fieldGrants, setFieldGrants] = useState<FieldGrantMap>(role?.field_access || {});
   const [actions, setActions] = useState<string[]>(role?.action_access || []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const granted = Object.keys(grants).filter((k) => grants[k]).length;
   const dirty = name !== (role?.name || "") || description !== (role?.description || "")
     || department !== (role?.department || initialDepartment || "other") || isActive !== (role?.is_active ?? true)
-    || JSON.stringify(grants) !== JSON.stringify(role?.tab_access || {}) || JSON.stringify(actions) !== JSON.stringify(role?.action_access || []);
+    || JSON.stringify(grants) !== JSON.stringify(role?.tab_access || {}) || JSON.stringify(actions) !== JSON.stringify(role?.action_access || [])
+    || JSON.stringify(fieldGrants) !== JSON.stringify(role?.field_access || {});
 
   const save = async () => {
     setBusy(true);
@@ -354,6 +357,8 @@ function RoleEditorModal({
       const body = {
         name: name.trim(), description: description.trim(), is_active: isActive, department,
         tab_access: grants, action_access: actions,
+        // Only the granted tabs keep their sub-tab ticks.
+        field_access: Object.fromEntries(Object.entries(fieldGrants).filter(([k]) => grants[k])),
       };
       const res = role
         ? await crmPut(`/api/roles/${role.id}`, body)
@@ -414,7 +419,8 @@ function RoleEditorModal({
         </DialogSection>
         <DialogSection n={2} tone="indigo" title="Tabs the role opens" done={granted > 0}
           hint="View · Edit · Create per tab. Interview Platform tabs: once one is ticked the role decides the whole platform.">
-          <TabPermissionMatrix tabs={registry} value={grants} onChange={setGrants} />
+          <TabPermissionMatrix tabs={registry} value={grants} onChange={setGrants}
+            fieldValue={fieldGrants} onFieldChange={setFieldGrants} />
           {granted === 0 && <p className="mt-2 text-xs text-warning">Grant at least one tab — a role with nothing granted cannot open anything.</p>}
         </DialogSection>
         {approvals.length > 0 && (
