@@ -259,7 +259,7 @@ export function BulkVerifyModal({ queue, onClose, notify }: {
             Resume — {isHeld ? heldForm.candidate_name || item.name : item.name}
           </div>
           {resume?.resume_file_url ? (
-            <FilePreviewPane url={resume.resume_file_url} title={item.name} />
+            <FilePreviewPane url={resume.resume_file_url} title={item.name} downloadName={item.name} />
           ) : loading ? (
             <Spinner label="Loading resume…" />
           ) : (

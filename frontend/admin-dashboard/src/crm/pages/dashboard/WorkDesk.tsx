@@ -44,6 +44,7 @@ import { ICON_BTN, STATE_CHIP, type StateTone } from "../../components/controlTo
 import { FLOW_BTN } from "../../components/flowButtons";
 import { SalesSlotsButton } from "../../components/CustomerSlots";
 import { InterviewRoundsModal } from "../../components/InterviewRoundsModal";
+import { HmDecisionButton } from "../../components/HiringManagerPanels";
 import {
   SalesActionLauncher, SalesItemActions, TermsLine, isSalesTab,
   TERMS_WAITING_PREFIX, type SalesAct, type SalesDeskItem,
@@ -112,6 +113,11 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; accent: string }> = {
   feedback: { icon: ClipboardCheck, accent: "from-amber-500 to-orange-600" },
   // The panel member's own rounds (7 Oct 2026) — open My Interviews.
   panel_feedback: { icon: ClipboardCheck, accent: "from-violet-500 to-purple-700" },
+  // The Hiring Manager (22 Oct 2026): their decisions + their positions.
+  hm_jd: { icon: FileClock, accent: "from-emerald-500 to-teal-600" },
+  hm_review: { icon: UserSearch, accent: "from-emerald-500 to-green-700" },
+  hm_signoff: { icon: BadgeCheck, accent: "from-teal-500 to-cyan-700" },
+  hm_positions: { icon: Building2, accent: "from-sky-500 to-blue-700" },
   panel_upcoming: { icon: CalendarClock, accent: "from-sky-500 to-indigo-600" },
   ta_pending: { icon: ListTodo, accent: "from-violet-500 to-fuchsia-600" },
   schedule_customer: { icon: Building2, accent: "from-sky-500 to-blue-600" },
@@ -126,6 +132,13 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; accent: string }> = {
   // Customer approval + IRN (6 Oct 2026): Finance's "add the IRN" queue, the
   // Sales Manager / Sales Head's "confirm with customer" queue — both link to the invoice.
   fin_customer_approved: { icon: BadgeCheck, accent: "from-indigo-500 to-blue-600" },
+  // 23 Oct 2026: the rest of Finance's day, in the order the money moves.
+  fin_awaiting_customer: { icon: Hourglass, accent: "from-slate-500 to-indigo-600" },
+  fin_payment_pending: { icon: WalletCards, accent: "from-rose-500 to-orange-600" },
+  /* 24 Oct 2026: part received, balance still due from the customer. */
+  fin_partially_paid: { icon: WalletCards, accent: "from-amber-500 to-rose-600" },
+  fin_tds_pending: { icon: Receipt, accent: "from-amber-500 to-yellow-600" },
+  fin_receipts: { icon: Building2, accent: "from-teal-500 to-cyan-600" },
   inv_confirm: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_submit: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_response: { icon: Hourglass, accent: "from-cyan-500 to-sky-600" },
@@ -200,8 +213,13 @@ const TONE: Record<DeskItem["tone"], StateTone> = { ok: "ok", warn: "warn", bad:
 /** The Dashboard needs the first 50 per tab; My Tasks asks for every item so
  *  its filters work on the whole list (`?full=true`). */
 function useWorkDesk(full = false) {
-  return useDeskData<Desk>(full ? "/api/dashboard/desk?full=true" : "/api/dashboard/desk");
+  // 23 Oct 2026: live — a Proforma the GM raises reaches Finance's tile within
+  // a minute (sooner when this browser raised it: `announceDeskChange`).
+  return useDeskData<Desk>(full ? "/api/dashboard/desk?full=true" : "/api/dashboard/desk",
+                           { live: DESK_LIVE_MS });
 }
+/** How often an open desk re-reads itself while visible. */
+const DESK_LIVE_MS = 60_000;
 
 function waitingCount(tabs: DeskTab[]): number {
   return tabs.reduce((n, t) => n + (INFO_TABS.has(t.key) || t.info ? 0 : t.count), 0);
@@ -431,7 +449,7 @@ export function MyTasksPage() {
             ) : null}
           </div>
           {active.items.length > 0 && (
-            <TaskFilterBar items={active.items} filter={filter} shown={shownItems.length}
+            <TaskFilterBar items={active.items} filter={filter} shown={shownItems.length} tabKey={active.key}
               onChange={(f) => setFilters((all) => ({ ...all, [active.key]: f }))} />
           )}
           {active.key === "inv_confirm" && shownItems.length > 0 && (
@@ -549,6 +567,13 @@ export function MyTasksPage() {
                           <ExternalLink size={13} aria-hidden /> Join
                         </a>
                       )}
+                      {it.path && <CrmLink to={it.path} className={FLOW_BTN.view}>Open</CrmLink>}
+                    </span>
+                  ) : (active.key === "hm_review" || active.key === "hm_signoff") && it.profile_id != null ? (
+                    <span className="flex flex-wrap items-center gap-2">
+                      {/* The Hiring Manager decides right here (22 Oct 2026). */}
+                      <HmDecisionButton compact profileId={it.profile_id as number} candidateName={it.title}
+                        kind={active.key === "hm_review" ? "review" : "signoff"} toast={showToast} onDone={retry} />
                       {it.path && <CrmLink to={it.path} className={FLOW_BTN.view}>Open</CrmLink>}
                     </span>
                   ) : isSalesTab(active.key) ? (

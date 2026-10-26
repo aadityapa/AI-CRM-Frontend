@@ -10,6 +10,7 @@ import {
   ArrowLeft, ArrowRight, Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
 } from "lucide-react";
 import { APP_NAME } from "../lib/brand";
+import { HISTORY_EVENT, canGoBack, canGoForward } from "../lib/appHistory";
 import { PageErrorBoundary } from "../components/PageErrorBoundary";
 import { crmGet, crmPost, CrmApiError } from "./api";
 import { CrmLink, CrmRouter, crmNavigate, isPushNavigation, readCrmPath } from "./routerHooks";
@@ -88,6 +89,10 @@ export type Me = {
   /** The candidate stages this login sees (13 Oct 2026, Access Control ▸ Roles);
    *  null = every stage. The stage chips show only these. */
   candidate_stages?: string[] | null;
+  /** A Hiring Manager who sees ONLY the positions assigned to them (22 Oct 2026). */
+  hiring_manager_scoped?: boolean;
+  /** Holds the Hiring Manager role at all (23 Oct 2026) — scoped or not. */
+  is_hiring_manager?: boolean;
 };
 
 const BUILT_IN_ROLES = ["CEO", "Admin", "Sales_Head", "Sales", "RMG", "TA", "HR", "Finance"];
@@ -201,15 +206,22 @@ const BELL_FOCUS_GAP_MS = 15_000;
  *  Where the Navigation API exists the buttons also know when there is nowhere
  *  to go; elsewhere they stay enabled and simply do nothing at the ends. */
 function HistoryButtons() {
-  const nav = (window as unknown as { navigation?: { canGoBack?: boolean; canGoForward?: boolean } }).navigation;
+  // 23 Oct 2026: the app's OWN history position (`lib/appHistory`) — Back stops
+  // at the page this tab entered the app on (it used to leave for the login /
+  // the previous site), Forward knows its end in every browser, and a click
+  // that re-opens the page on screen no longer adds a dead entry.
   const [, rerender] = useState(0);
   useEffect(() => {
     const bump = () => rerender((n) => n + 1);
     window.addEventListener("popstate", bump);
-    return () => window.removeEventListener("popstate", bump);
+    window.addEventListener(HISTORY_EVENT, bump);
+    return () => {
+      window.removeEventListener("popstate", bump);
+      window.removeEventListener(HISTORY_EVENT, bump);
+    };
   }, []);
-  const canBack = nav?.canGoBack ?? true;
-  const canForward = nav?.canGoForward ?? true;
+  const canBack = canGoBack();
+  const canForward = canGoForward();
   const cls = "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-subtle bg-surface-1 text-primary shadow-e1 transition-colors duration-base ease-smooth hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40";
   return (
     <span className="crm-print-hide inline-flex items-center gap-1" role="group" aria-label="History">

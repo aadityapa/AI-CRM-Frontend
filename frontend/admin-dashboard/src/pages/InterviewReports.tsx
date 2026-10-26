@@ -18,6 +18,7 @@ import type { Candidate, Interview } from "../types";
 import { deleteInterviewRecord, getDashboardData } from "../api";
 import { DeleteInterviewRecordModal } from "../components/DeleteInterviewRecordModal";
 import { PageHeader, HERO_BTN, StagePills } from "../crm/components/PageHeader";
+import { onlyActiveNames, useActiveCustomerList } from "../crm/lib/activeCustomers";
 
 type Row = Interview & {
   candidateId: string;
@@ -163,9 +164,12 @@ export function InterviewReportsPage({
   const rows = useMemo(() => flattenInterviews(candidates), [candidates]);
   const withVerdict = useMemo(() => rows.map((r) => ({ r, v: verdictOf(r) })), [rows]);
 
+  const activeCustomers = useActiveCustomerList();   // the dropdown lists ACTIVE customers (23 Oct 2026)
   const customers = useMemo(
-    () => [...new Set(rows.map((r) => (r.customerName || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [rows],
+    () => onlyActiveNames(
+      [...new Set(rows.map((r) => (r.customerName || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+      activeCustomers, customer),
+    [rows, activeCustomers, customer],
   );
   const positions = useMemo(() => {
     const scoped = customer ? rows.filter((r) => (r.customerName || "") === customer) : rows;

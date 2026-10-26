@@ -220,9 +220,11 @@ const FILTER_WORDS: Partial<Record<keyof Filters, Record<string, string>>> = {
   budget: { over: "Over budget", within: "Within budget", unknown: "Budget / CTC not known" },
   priority: { High: "High priority", Medium: "Medium priority", Low: "Low priority" },
   waiting_min: { "3": "Waiting 3+ days", "7": "Waiting 7+ days", "14": "Waiting 14+ days", "30": "Waiting 30+ days" },
-  notice: { "15": "Notice ≤ 15 days", "30": "Notice ≤ 30 days", "60": "Notice ≤ 60 days", "90": "Notice > 60 days",
-            unknown: "Notice not recorded" },
-  ai_result: { passed: "AI L1 passed", failed: "AI L1 failed", pending: "AI L1 pending", none: "No AI L1" },
+  // 27 Oct 2026: the chips say the same band as the dropdown ("16–30", not "≤ 30").
+  notice: { serving: "Serving notice / LWD given", "15": "Notice 0–15 days", "30": "Notice 16–30 days",
+            "60": "Notice 31–60 days", "90": "Notice > 60 days", unknown: "Notice not recorded" },
+  ai_result: { passed: "AI L1 passed", failed: "AI L1 failed", on_hold: "AI L1 on hold",
+               not_attempted: "AI L1 not attempted", pending: "AI L1 pending", none: "No AI L1" },
   l1_result: { hire: "L1: hire", no_hire: "L1: no hire", awaiting: "L1 awaiting verdict", none: "No manual L1" },
 };
 const FILTER_NAMES: Partial<Record<keyof Filters, string>> = {
@@ -737,6 +739,8 @@ function Desk() {
                   <option value="">Any</option>
                   <option value="passed">Passed</option>
                   <option value="failed">Failed</option>
+                  <option value="on_hold">On hold</option>
+                  <option value="not_attempted">Not attempted (TA reschedules)</option>
                   <option value="pending">Scheduled / not finished</option>
                   <option value="none">No AI L1</option>
                 </select>
@@ -761,6 +765,7 @@ function Desk() {
               <FilterField label="Notice period">
                 <select className={`${CONTROL} w-full`} value={filters.notice} onChange={(e) => setFilter("notice", e.target.value)}>
                   <option value="">Any notice</option>
+                  <option value="serving">Already serving / LWD given</option>
                   <option value="15">Immediate – 15 days</option>
                   <option value="30">16 – 30 days</option>
                   <option value="60">31 – 60 days</option>
@@ -1392,7 +1397,7 @@ function DetailPane({ row, positionSkills, position, onPositionChanged, roundRes
         </div>
         <div className="p-3">
           {row.resume_url
-            ? <FilePreviewPane url={row.resume_url} title={`${row.candidate_name} — resume`} />
+            ? <FilePreviewPane url={row.resume_url} title={`${row.candidate_name} — resume`} downloadName={row.candidate_name} />
             : <p className="p-6 text-center text-sm text-muted">No resume or CV on file.</p>}
         </div>
       </div>

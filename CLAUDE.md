@@ -2461,6 +2461,45 @@ GRANTED tab with sub-tabs, a tick list ("following the role" until one is untick
 role defaults" drops the entries). Access Templates show it in each tab row; Access Control ▸ Roles pass
 `fieldValue` / `onFieldChange` so a custom role (GM, Sales Manager …) gets the same ticks, saved in its `field_access`.
 
+**22 Oct 2026 (night) — the Hiring Manager screens (`crm/components/HiringManagerPanels.test.ts` 1; server half +
+migration 0145 in B-V2 `CLAUDE.md`):** **`crm/components/HiringManagerPanels.tsx`** — `HmJdReviewBanner` (a position at
+`Pending_HM_Review`: Confirm JD → `hm-approve`, Request changes → `hm-request-changes`, both `DecisionDialog`s; others
+read "Waiting for <names>"), `HmJdReviewBannerFor({requirementId})` (self-fetching, opportunity page), `HmCandidateGate`
+(profile page card: Review before the customer · Sign-off before the Sales Head, status / who / when / note, buttons when
+due), `HmDecisionButton` (Approve / Reject, posts `hm-review` / `hm-signoff`), PURE `isHmOf(me, hms)`. Who may press =
+`useCanApprove("requirement.hm_approve" | "profile.hm_review" | "profile.hm_signoff")` AND `isHmOf` — the server checks
+both. **`PositionTeamPanel.tsx`** generalised: `TeamKind = "ta" | "hm"`, `fetchTeam(id, kind)` (`fetchTaAssignments`
+kept), `TaPicker kind`, `AssignTasButton kind="hm"` ("Assign HM" chip), `HmLine` ("HM: names" under a list row's title);
+the panel adds a Hiring Manager row (chips, "You", Assign / Change Hiring Manager) and lets the position's HM set the
+priority (`meta.is_mine`). Mounted: opportunity page (banner above the team panel), requirement page (banner; HM sets
+priority / hold — `isHmHere`; an HM-scoped login gets no Applied Candidates / Interview History / Suggested tabs),
+both list pages (HM chip in Actions, `HmLine`), `JdSkillsModal` approve mode step 5 "Hiring Manager" (`hm_user_ids`; the
+"When you approve" line says it waits for the HM), profile page (`HmCandidateGate`), `ApplicantsBoard` rows (status
+`hm_review` / `hm_signoff`), My Tasks (`hm_jd` · `hm_review` · `hm_signoff` · `hm_positions` in `TAB_LOOK`, in-place
+decisions). `Me.hiring_manager_scoped` → `CrmDashboard` shows the work desk alone; `SKIP_ONLY_ROLES` += "Hiring Manager".
+`Pending_HM_Review`: YELLOW + "Awaiting Hiring Manager" (`ui.tsx`), `statusHelp`, Sales' Pending Approval tab,
+`ApplyLinkCard` PRE_APPROVAL, the All-status filter. `ApprovalAction` gains the three HM actions.
+
+**26 Oct 2026 — Invoices: a Status filter on every tab + More filters (server half in B-V2 `CLAUDE.md`):**
+`crm/components/invoice/InvoiceListFilters.tsx` — `StatusFilterPills` (All + the statuses the open tab can hold, counts
+from `meta.status_counts`, single choice, reset on tab change), `InvoiceStatusChip` (the Status cell now prints the
+server's `status_key` / `status_label`: With Finance · Returned to GM · Overdue "· N d late" · Due in 7 days · Not yet
+due · Paid · TDS pending · Paid · settled; the old badges are the fallback), `MoreFiltersToggle` / `MoreFiltersPanel`
+(Employee · Purchase order — choices from `meta.filter_options` of the open tab — invoice date from/to, due date
+from/to, grand total min/max; PURE `moreFilterQuery`, `moreFilterCount`, `rangeProblem` — a backwards range is shown,
+never sent). `Finance.InvoicesPage`: the counts request now also sends the tab's `stage` + `with_status_counts`; the
+More filters live in `useSessionState("inv.more")` and narrow the list AND the tab counts. tsc green, eslint 0 errors.
+
+**27 Oct 2026 — dashboard filter audit (`crm/pages/dashboard/taskFilters.test.ts` 4; server half in B-V2
+`CLAUDE.md`):** My Tasks' Status filter reads the server's `status` first (`itemStatus`), and `statusOf(chip)` folds
+every number into its word ("Waiting 4 days" → Waiting, "Issued 3 d ago" → Issued, "Ends in 12 d" → Ending soon,
+a bare count → nothing) — the filter used to offer one option per number, or fold different stages into "Unpaid".
+`facetOptions(items, customer, showDone)` ignores hidden ticked items; picking a customer drops a project / employee /
+branch of another customer; the section grouping is named for what it is (`sectionGroupLabel(tabKey)`: By
+salesperson · By step · By type · By position · By area · By customer). Screening Desk: notice chips say the band
+("Notice 16–30 days"), new options Serving notice / LWD given, AI L1 on hold, AI L1 not attempted. CEO Finance tab:
+with a customer / project scope the target tile reads "company-wide — clear the customer filter" (`Targets.scoped`).
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -3410,3 +3449,194 @@ guidance) · final recommendation. (6) **Joined chip** now lists joiners of clos
 add `!h-auto`. (8) **Interview Templates** (`pages/Templates.tsx`) redesigned: cards banded by question source (We write /
 AI writes / list / bank), experience · length · follow-ups, skills, Edit / HR Setup / Delete (ConfirmModal); search,
 customer, source, sort; PURE `questionSource`, `lengthText`, `filterTemplates`.
+
+**23 Oct 2026 — HM dashboard, Sales invoice summary, resume download names + zoom, Admin correction, the AI L1 reject
+(`crm/oct23.test.ts` 5; server half in B-V2 `CLAUDE.md`):** (1) **`crm/pages/dashboard/HiringManagerDashboard.tsx`**
+(`GET /api/dashboard/hiring-manager`): header + refresh, a "not on any position yet" notice, six `Tile`s, "Waiting for your
+decision" (JD · review · sign-off chips, each opening the record), "My interviews" (feedback due + upcoming with Join),
+position cards (label, priority, waiting chip, customer · band · mode, `StatusBadge`, filled bar, stage chips in
+`STAGE_TONE`, TA team), "Candidates by stage" `FilteredBars`, "Latest moves"; PURE `waitedFor`, `liveStages`.
+`CrmDashboard`: `isHm` = `me.is_hiring_manager` (or the role name) → work desk + this dashboard; the other sections are
+skipped when the login has nothing else; a panel-only HM no longer gets `PanelDashboard` instead. (2) **Reports ▸ Invoice
+Summary** (`crm/pages/reports/InvoiceSummaryReport.tsx`, tab key `invoice_summary`, `HOSTED_TABS`, shown to Finance / Sales /
+Sales Head / Sales Manager or a template tick): month picker, Invoice date / Work month toggle, active-customer select
+(`useSessionState("reports.invoiceSummary")`), four tiles, one card per customer — the customer's table (Sr · Invoice Number
+· Invoice Date · Invoice Amount · Tax Amount · Total Amount · Description) + Total row; **Copy table** puts HTML (inline
+borders, Calibri — pastes as a table in Outlook / Gmail) AND tab-separated text on the clipboard (`summaryTableHtml`,
+`summaryTsv`, `rupees` "₹ 2,26,400.00", `ddmmyyyy`); CSV export through `authFetch`. (3) **Files**: `FilePreviewPane` /
+`FileLink` / `FilePreviewModal` take `downloadName` — PURE `downloadFileName(base, ext)` → "Ravi Kumar.pdf" — passed with the
+candidate's name on every resume link (candidate page, profile, profile list, Applied Candidates, Applicants board, ATS
+breakdown, Screening Desk, My Interviews, Employees CV, resume library, bulk verify, Suggested Candidates, `file-view`) and
+"<name> - Notice period proof" for the resignation certificate. PDFs and images get **zoom − / % / +** (`ZOOM_STEPS`
+50–300 %, `nextZoom`; the PDF renders at up to 3× so zoomed text stays sharp; the box scrolls). (4)
+**`crm/components/AdminCorrectionModal.tsx`** (Admin / CEO via `useHasRole()`): "Admin correction" bar on the profile header
+and a **Correct** button on every Applied Candidates row — stage select with "Undo the last move" and the last moves
+(each "Put back at …"), RMG screening (leave / not sent / Pending / Shortlisted / Rejected), clear the AI L1 decision,
+restore from Archive, reason ≥ 10 with picks, "This will …" list (PURE `correctionSummary`); a wrong ROUND verdict is fixed
+by editing the round (a changed "No Hire" reopens by itself). (5) **AI L1 reject**: `AiL1Decision` gains `reject` (rose
+`DecisionDialog`, reason required); on Applied Candidates a FINISHED AI L1's **Reject** now posts it (the candidacy closes →
+TA gets Archive / Re-apply); before it finishes the screening Reject stays. A TA row at RMG Review after a Selected / Passed
+AI L1 (no L2 asked yet) shows the chip "AI L1 selected — with RMG / GM".
+
+**23 Oct 2026 (later) — report-page decisions work and say what happened, team / positions buttons for RMG / GM only,
+active customers in every dropdown (`crm/oct23later.test.ts` 3; server half + migration 0146 in B-V2 `CLAUDE.md`):**
+(1) **`CandidateReportPage.persistHrDecision`** posts with the HEALED key (`history.candidate.id`, not the URL's `cid` —
+a resume email answered 404 and the buttons looked dead) plus the interview on screen (`setHrCandidateDecision(cid,
+decision, interviewId)`), re-reads history with `iid`, and shows **`components/candidate-report/DecisionOutcomeBanner.tsx`**
+from the server's `crm` block (title by decision, "before → after" stage chip, "Archive available to TA" when closed, the
+server's message + next steps, dismissible). A refusal toast now stays 8 s and says "Could not save the decision: …"; the
+three buttons' tooltips say what each does. (2) **`useAccess.ApprovalAction`** += `requirement.positions.request`,
+`requirement.team.assign`. The Assign TAs / Assign HM chips on both lists (`Opportunities.tsx`, `Requirements.tsx`) follow
+`useCanApprove("requirement.team.assign")` (was the priority right); `PositionTeamPanel` still follows `meta.can_assign`,
+and its priority control keeps its own rule (`canAssign || isHm || RMG / Sales Head || screener`). `PositionsPanel`
+already follows `meta.can_request`. (3) **Active customers**: `activeCustomers.load` drops any row whose `status` is not
+Active from an active list; new PURE **`onlyActiveNames(names, active, selected)`** + **`useActiveCustomerList()`** narrow
+the name-built dropdowns of Interview Reports, Integrity Logs and Interview Templates (the chosen value stays; with no
+active list — loading / no CRM access — nothing is removed); the TA requirement list's customer filter uses
+`useActiveCustomers(customerFilter)` (the full map stays for row names); Holidays reads `fetchActiveCustomers()` instead of
+the Customers-tab-gated `/api/customers` (an HR login got an empty picker). Invoice Summary already used
+`useActiveCustomers`. Name LOOKUPS (`useNameMap`, `useCustomerNames`, Projects' map) stay on the bare call.
+
+**23 Oct 2026 (finance round) — live desks, app-owned Back / Forward, Finance tiles, receipt branches
+(`lib/appHistory.test.ts` 2; server half + migration 0147 in B-V2 `CLAUDE.md`):**
+- **Real-time queues.** `crm/api.ts` fires `announceDeskChange()` after every successful non-GET request (except desk
+  ticks, table preferences and notifications). It is a window event `DESK_CHANGED_EVENT`, plus a localStorage key for
+  other tabs.
+  - `useDeskData(url, {live})` re-reads QUIETLY — no spinner; a failed re-read keeps the screen. It runs every `live`
+    ms while visible, on focus / visibility (at most every 15 s) and on that event.
+  - The work desk and My Tasks use `live: 60_000`; the Billing Tracker polls the same way. A Proforma the GM raises
+    reaches Finance's "Proformas to convert" within a minute, at once in the same browser.
+  - `announceDeskChange` is exported from `crm/api.ts` (re-exported by `DeskWidgets`, to avoid an import cycle).
+- **Back / Forward** (`lib/appHistory.ts`): every in-app push goes through `pushAppHistory(url)`, which stamps
+  `history.state.appIdx` and keeps the furthest index in sessionStorage (`app.hist.max`). Pushing the address already
+  on screen is a REPLACE, so Back never "does nothing".
+  - `initAppHistory()` runs at module load in `App.tsx`.
+  - `canGoBack()` = `appIdx > 0`, so Back stops at the page the tab entered the app on. It used to leave for the login
+    page / the previous site. `canGoForward()` works in every browser.
+  - Wired into `crmNavigate`, `pageState.writeParam` (push), `useProfileFilters`, `App.pushNav`, `TemplateRequests`,
+    `AskAiPanel`. `HistoryButtons` re-renders on popstate and on `HISTORY_EVENT` (pushState fires no event). The
+    ErrorBox "← Go back" shows only when `canGoBack()`.
+  - ⚠️ **Never `replaceState(null|{}, …)`** — it drops `appIdx`, and Back reads as "start of the app". Finance,
+    Holidays, Projects and ProjectEmployees were changed to keep `window.history.state`. **Never call
+    `history.pushState` directly** — use `pushAppHistory`.
+- **Finance desk tiles** (`WorkDesk.TAB_LOOK`): `fin_awaiting_customer`, `fin_payment_pending`, `fin_tds_pending`,
+  `fin_receipts`. "Customer approved invoices" now reads **Pending e-invoices** (server label).
+- **Received Amount** (`CustomerReceipts.tsx`):
+  - The flat list's Branch cell is an amber **Set branch** chip when blank.
+  - Grouped view: a "No branch on record" group gets a strip with **Set branch** (`CustomerGroupedList` new prop
+    `groupActions(rows)`, rendered under the header, outside the toggle button).
+  - Both open `AssignBranchModal`: the branches come from `invoice-options` meta, and it posts
+    `POST /api/customer-receipts/assign-branch`.
+  - `?receipt=<id>` (the "Receipts to map" desk item; `receipt` is in `CRM_FILTER_KEYS`) opens that receipt in the
+    workbench: Map invoices when money is on account, else Edit.
+  - The Add dialog already asks for the branch; the server now refuses a missing one when the customer has branches.
+- **Settings ▸ Organisation ▸ Billing ▸ "Data starts from (work month)"** (`billing.data_start_month`, YYYY-MM). Lists,
+  queues and timesheet creation start there. The Projects ▸ Timesheets coverage no longer shows Due months before it or
+  after a project's / person's last working day (server).
+
+**24 Oct 2026 — Opportunities list: Sourcing team column + one Actions cell (UI only, no server change;
+`crm/components/OpportunityRowParts.test.tsx` 7):** user ask — redesign the list with "more focus on the Actions
+tab"; Assign TA / HM stays RMG / GM only, everyone else just sees the team. **`crm/components/OpportunityRowParts.tsx`**:
+- `TeamCell` — the new **Sourcing team** column: TAs and Hiring Managers as avatars (max 3 + "+N"). With
+  `canAssign` (= `useCanApprove("requirement.team.assign")`, RMG / GM by default) each role group is a button and an
+  empty role is an amber "+" slot; without it the cell is read-only and an empty role prints "—". A deal with no
+  position yet reads "After approval".
+- `FilledCell` — "2 of 5 filled" + bar + "3 open" (+ the amber "Change" chip while a headcount change waits).
+- `OppRowActions` — ONE main button (the compact RMG Approve / Reject pair when the position awaits RMG · **Assign
+  TAs** when nobody sources it and you may assign · **Apply**), Edit (`canWrite` + `onEdit`), and **`RowMenu`** (⋯):
+  Team (Assign / Change TAs, Assign / Change Hiring Manager — assigners only, hint = who), Position (Apply a
+  candidate when it is not the main button, Open in new tab — `openPath`), and Delete at the bottom in red
+  (`canWrite`; same `DELETE /api/opportunities/{id}` + `ConfirmModal` as `RowActions`). The menu is portalled with
+  fixed coordinates (never clipped by the table), opens upward near the bottom, follows a scroll, closes on Esc /
+  outside click / resize, arrow keys move between items.
+- `PositionTeamPanel.useAssignTeam({requirementId, label, kind, onChanged, toast})` → `{start, busy, modal}` is now
+  the ONE assign flow (`AssignTasButton` uses it too); the server's `meta.can_assign` still decides.
+Pages: `Opportunities.tsx` `OpportunitiesListPage` — the TA chips / `HmLine` under the title and the Budget column
+are gone (budget sits in the title's meta line), `PositionsCell` → `FilledCell`, Status and Target date merged into
+"Status · target", Sourcing team column before Actions, header stats add "need a TA" / "need an HM" (page rows with a
+position). `Requirements.tsx` `RequirementsListPage` (TA / RMG list) gets the same `TeamCell` + `OppRowActions`
+(`canWrite={false}`, Apply only while the requirement is in sourcing, Open in new tab → `requirements/{id}`).
+`RmgApproveRowButtons` compact = h-8, label "Approve". Every right is the flag the list used before.
+
+**24 Oct 2026 — screen share on the Device Check: right instruction, the reason in the tile, reported to the server
+(`app.js?v=53`; server half in B-V2 `CLAUDE.md`):** a candidate could not share her screen. ⚠️ `device_test.js
+_resetGate` replaced the tile's correct HTML text with the pre-11-Oct wording "choose **this tab**" — but
+`screen_share.js` accepts only the ENTIRE screen and hides this tab from Chrome's picker
+(`selfBrowserSurface: "exclude"`), so a candidate following the words could not succeed. The reset text now says
+"choose “Entire screen” and press Share". Every failure now writes its reason + what to do INSIDE the screen tile
+(exported PURE `screenShareFailureHelp(result)`: cancelled / blocked (incl. company policy, Mac Screen Recording
+permission), shared a tab or window, NotReadableError, NotFoundError, interrupted, other), in rose with
+`white-space: pre-line` (`index.html` rule scoped to `[data-test="screen"][data-status="error"]`); the bottom
+status line is unchanged. `_reportScreenShare` POSTs every result (ok or not, with an attempt count) to
+`/candidate/invite/{token}/device-check` — fire-and-forget, `keepalive`, never throws — so the Integrity timeline
+shows "Screen share failed (device check)" with the reason. The entire-screen rule itself is unchanged.
+
+**24 Oct 2026 — invoice tabs by stage, Partially paid tiles, likely matches, per-day round off
+(`crm/lib/invoiceStages.test.ts` 3; server half + migration 0148 in B-V2 `CLAUDE.md`):** screenshot report — an
+invoice waiting for the customer's approval also sat under Unpaid. (1) **`crm/lib/invoiceStages.ts`** —
+`INVOICE_STAGE_TABS` (Proforma · Awaiting customer · **Pending e-invoice** (key `Customer_Approved`, kept for old
+`?tab=` links) · Unpaid · **Partially paid** · Paid · E-invoice register), each with its server `stage` and a one-line
+hint; `invoiceTabParams(tab)` → `{stage}`; `stageTabLabel(tab, counts)`. `Finance.tsx` `InvoicesPage` sends `stage=`
+(never `payment_status` / `customer_approved` any more), prints each tab's count from a second request
+(`with_stage_counts=true&limit=1`, same customer / project / branch / month / search filters) and the hint under the
+strip — every invoice is in exactly one tab. (2) My Tasks / Dashboard: `TAB_LOOK` `fin_partially_paid` ("Partially
+paid — balance due", WalletCards); "Unpaid — record payment" no longer holds partly paid invoices. Billing Tracker
+`STAGE_LOOK` `partially_paid` ("Balance due"). (3) **Receipts**: `ReceiptWorkbench` exports PURE `isPartlyPaid`,
+`isLikelyMatch` (balance within ₹1 of the payment), `orderByLikelyMatch`; the Map invoices modal and Add received amount
+list the likely match FIRST with a green "Likely match" chip, show "Partly paid · ₹x still due" and include invoices
+with "no branch on record" under any branch. The second payment advice with no invoice number: save on account → open
+it → Map invoices → the likely one is on top. (4) **`ProformaActions.RoundPerDayToggle`** + PURE `roundPerDay(line)`
+(twin of the server's `round_per_day`): in Raise Proforma (`Timesheets.PoSelectModal`, one PO, no Qty / Rate edit) a
+checkbox under the sub-total — "Round the per-day amount to the rupee: ₹3,870.97 → ₹3,871 × 18 days = ₹69,678";
+shown only for a part month on a Monthly / Yearly rate; the sub-total and PO-after figures follow it; the POST carries
+`round_per_day: true`.
+
+**24 Oct 2026 (later) — Finance filters on the Dashboard (`pages/dashboard/billingTrackerFilters.test.ts` 3; server
+half in B-V2 `CLAUDE.md`):** (1) **Billing Tracker** (`BillingTracker.tsx`): the main row gains a **days-late** select
+(Any days late · Not yet due · 1–30 · 31–60 · 61–90 · 90+) and a **More filters (n)** toggle (opens by itself when a
+saved filter is on) → a panel: Branch (incl. "No branch on record (N)") · Project (scoped to the chosen customer;
+changing the customer clears branch + project) · Employee · Purchase order (incl. "No PO") · Sales owner · Date range
+(Invoiced / Due + From / To) · Amount at least ₹ (debounced) · Waiting at this stage (Any · 3+ · 7+ · 15+ · 30+ days) ·
+Quick switches (Overdue only · TDS pending from client · Split across POs · No branch on record). Every filter that is
+on shows as a removable chip; the red "N overdue" header pill is now a button (Overdue only) with the overdue amount.
+Rows show branch, Sales owner, PO number, the split part / "Rest to bill" amount, "TDS ₹x pending", "N d late" and
+"N d at this stage" (amber from 7). **`billingTrackerFilters.ts`** (PURE): `TrackerFilters`, `EMPTY_FILTERS`,
+`withDefaults` (a session filter saved before today gets the new keys), `trackerQuery`, `moreFilterCount`,
+`activeChips`, `FLAG_LABELS`, `LATE_LABELS`. (2) **Finance tab** (`CeoDashboard.tsx`): a Customer → Project scope row
+under the header on the Finance tab (`components/ScopeFilterBar.tsx` — the Revenue report's `FilterBar`, moved so both
+pages share it; billed / quiet accounts grouped, inactive labelled); the scope is sent only for the Finance tab and the
+last options are kept so the pickers do not blink. Verified: tsc green, eslint 0 errors, vitest billingTrackerFilters 3 +
+CeoDashboard 4.
+
+**24 Oct 2026 (night) — Raise Proforma shows the server's amount (server half in B-V2 `CLAUDE.md`):** `Timesheets.tsx`
+`PoSelectModal`: `liveAmount` is qty × rate only when the GM EDITED Qty / Rate; untouched it is the line's `amount`. A part
+month now bills days × per-day (₹2,51,613.00), which the 4-dp qty × monthly rate (0.9677 × ₹2,60,000 = ₹2,51,602) does not
+reproduce. The printed sheet needs no change — its Qty column comes from the server's breakdown (billed days when the Leave
+column is hidden). tsc green, vitest TimesheetApprovals 18.
+
+**26 Oct 2026 — Returned Proformas on the Dashboard, reopen to correct, Billing Tracker for the Sales Manager / Head
+(`crm/pages/dashboard/ReturnedProformasPanel.test.ts` 2; server half in B-V2 `CLAUDE.md`):** (1)
+**`crm/pages/dashboard/ReturnedProformasPanel.tsx`** — `GET /api/dashboard/returned-proformas`, mounted in
+`CrmDashboard.tsx` right under the work desk for Finance · Sales family · RMG · `timesheet.approve` /
+`timesheet.generate_invoice` / `profile.rmg_screening` approvers (the GM); renders nothing on a 403 and a one-line "nothing
+returned" strip when empty. Rose header with the count, whose-move chips (`STEP_LOOK`: Check & correct · Being corrected ·
+GM to approve · GM to raise again · No timesheet) with server counts, search + customer + work-month filters
+(`useSessionState("dash.returnedPi")`), one row per returned Proforma: work month + period + "returned N days ago"
+(`agoText`), employee · customer · project, PI no. + amount + part + PO, Finance's reason as a quote with who / when, and
+**Reopen to correct** (`DecisionDialog`, exported `REOPEN_SPEC`, optional note → `POST
+/api/timesheets/{id}/reopen-for-correction`) on `to_correct` rows when `meta.can_reopen`, plus Open timesheet / Correct &
+submit / Raise Proforma again. Live like the desk (60 s while visible + `DESK_CHANGED_EVENT`). (2) **Timesheet page**
+(`Timesheets.tsx`): an Approved sheet whose `invoice` is a returned Proforma shows a rose "Finance returned Proforma …"
+banner with the reason and the same **Reopen to correct** dialog (Sales family / RMG / `timesheet.reject` / screener; the
+server decides). (3) **Billing Tracker** (`BillingTracker.tsx`): **Invoices issued** chip (`stage=invoiced`, every generated
+tax invoice, newest first) after All, and **Download CSV** in the header (`authFetch` blob of the same query +
+`format=csv` — every filtered row, not one page). `CrmDashboard.showBilling` = Finance · Sales Head · `me.sees_team` (the
+Sales Manager), so their Dashboard gets the Finance + Billing Tracker tabs.
+
+**26 Oct 2026 — Correct address can move the invoice to another branch (server half in B-V2 `CLAUDE.md`):**
+`InvoiceAddressCard.tsx` — `PartyForm` gains `branch_id` / `branch_name`, `InvoiceParties` gains `branches` /
+`po_billing_branch`; PURE `partyFromBranch(b)`. The Correct address dialog opens with **"Bill this invoice to a branch"**
+— one chip per customer branch (primary / "on the PO" marked) that fills the buyer AND ship-to with that branch's name,
+branch line, address, GSTIN and PAN; an amber note when the picked branch is not the PO's (new invoices on the PO would
+still print the old branch — change the PO too). The form gains a **Branch line** field (printed under the name; blank =
+none) and `PartyBlock` shows it. tsc green. **Later:** the amber note became a ticked-by-default checkbox **"Also move PO … to <branch>"** (`move_po_to_branch` in the PUT) — new invoices on that PO then print the branch too.

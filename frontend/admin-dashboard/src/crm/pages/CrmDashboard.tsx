@@ -17,7 +17,10 @@ import {
 import type { PeriodKind, StateTone } from "../components/controlTower";
 import { WorkDesk } from "./dashboard/WorkDesk";
 import { PanelDashboard } from "./dashboard/PanelDashboard";
+import { HiringManagerDashboard } from "./dashboard/HiringManagerDashboard";
 import { PoExpiryPanel } from "./dashboard/PoExpiryPanel";
+import { ReturnedProformasPanel } from "./dashboard/ReturnedProformasPanel";
+import { useCanApprove } from "../useAccess";
 import { HiringControlTower, useShowsHiringTower } from "./dashboard/HiringControlTower";
 import { CeoDashboard, PeopleTab } from "./dashboard/CeoDashboard";
 import type { CeoPayload, PeopleData } from "./dashboard/CeoDashboard";
@@ -757,8 +760,15 @@ export function CrmDashboardPage() {
   const canSetTargets = useHasRole("Finance");
   const showBench = useHasRole("RMG", "Sales_Head");
   // The Billing Tracker (20 Oct 2026) is a tab of the company view, after
-  // People — Finance, Admin and CEO (server: role_required("Finance")).
-  const showBilling = useHasRole("Finance");
+  // People — Finance, Admin and CEO; 26 Oct 2026 the Sales Manager and the
+  // Sales Head too (server: `dashboards.billing_reader`, by role).
+  const showBilling = useHasRole("Finance", "Sales_Head") || Boolean(me.sees_team);
+  // Proformas Finance returned (26 Oct 2026): the Sales family, RMG / GM and
+  // Finance see which month came back and why (server: `returned_proformas.may_see`).
+  const canRaise = useCanApprove("timesheet.generate_invoice");
+  const canApproveSheets = useCanApprove("timesheet.approve");
+  const screener = useCanApprove("profile.rmg_screening");
+  const showReturned = useHasRole("Finance", "Sales", "Sales_Head", "RMG") || canRaise || canApproveSheets || screener;
   // The Sales → TA control tower (23 Sep 2026): every desk except a pure
   // HR / Finance login reads the same positions, onboardings and pace.
   const showHiringTower = useShowsHiringTower();
@@ -766,7 +776,18 @@ export function CrmDashboardPage() {
   // today's interviews, feedback owed, the next week, recent verdicts — and
   // nothing else: no work-desk tiles, no hiring tower, no Start-here card.
   const panelOnly = isPanelOnlyLogin(me);
-  const nothing = !panelOnly && !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking && !showHr;
+  // A Hiring Manager (22 Oct 2026) sees only their positions: their desk tiles
+  // (JD to confirm · candidates to review · sign-offs · positions · interviews)
+  // and none of the company-wide panels.
+  const hmOnly = Boolean(me.hiring_manager_scoped);
+  // 23 Oct 2026 (user report — "his Dashboard reads nothing to show"): every
+  // login holding the Hiring Manager role gets the HM dashboard, scoped or not;
+  // a role name check covers a server that predates `is_hiring_manager`.
+  const isHm = Boolean(me.is_hiring_manager || hmOnly
+    || [...(me.display_roles || []), ...me.roles].some((r) => String(r).toLowerCase() === "hiring manager"));
+  // No other role's sections: an HM-only login gets its own dashboard alone.
+  const nothingElse = !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showHr;
+  const nothing = !panelOnly && !isHm && !showExecutive && !showRequirements && !showRmg && !showTa && !showFinance && !showTaTracking && !showHr;
 
   // CEO outranks Admin on the chip — a CEO login usually carries both roles.
   // …and a custom role (Sales Manager, GM) is named as itself, never as the
@@ -793,22 +814,24 @@ export function CrmDashboardPage() {
       {/* The login's daily tasks as tabs (28 Sep 2026) — feedback due, rounds
           to schedule, candidates awaiting a call, screening, upcoming, queues.
           The server picks the tabs; every role gets its own set. */}
-      {panelOnly ? <PanelDashboard /> : <WorkDesk />}
+      {panelOnly && !isHm ? <PanelDashboard /> : <WorkDesk />}
+      {isHm && !isAdmin && <HiringManagerDashboard />}
       {/* Admin / CEO (28 Sep 2026): the company view and nothing else — Finance
           (revenue) is the first tab, so it is the first thing on the page.
           Its Sales tab IS the hiring control tower. The desk widgets (Today
           strip · My work · Coming up · Quick actions · Team) were removed from
           EVERY role's dashboard the same day at the user's request; the
           server endpoints behind them still serve the bell links. */}
-      {panelOnly ? null : isAdmin ? (
+      {panelOnly || hmOnly || (isHm && nothingElse) ? null : isAdmin ? (
         <>
           <CeoDashboard />
           <StartHereCard />
         </>
       ) : (
         <>
+          {showReturned && <ReturnedProformasPanel />}
           <StartHereCard />
-          {showCompanyFinance && <CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets} />}
+          {showCompanyFinance &&<CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets} />}
           {showHiringTower && <HiringControlTower />}
           {showPoExpiry && <PoExpiryPanel />}
           {showBench && <BenchCard />}

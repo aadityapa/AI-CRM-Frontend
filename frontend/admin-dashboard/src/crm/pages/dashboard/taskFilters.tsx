@@ -11,6 +11,7 @@
  *   `facetOptions(items)`    what each control can offer (only real values)
  *   `filterItems(items, f)`  the items a filter keeps
  *   `statusOf(chip)`         a chip without its day counts ("12 days overdue" → "Overdue")
+ *   `itemStatus(item)`       the server's `status` word, else `statusOf(chip)` (27 Oct 2026)
  * A control appears only when it can actually narrow the list (≥ 2 values), so a
  * short tab shows the search box alone and no control ever offers one choice.
  */
@@ -40,6 +41,10 @@ export type FilterableItem = {
   round_kind?: string | null;
   /** Ticked "done" by this login on My Tasks (8 Oct 2026) — hidden unless shown. */
   done?: boolean;
+  /** The server's own status word for the item (27 Oct 2026) — the Status filter
+   *  reads it before the chip, so "Overdue" / "Awaiting customer" / "With Finance"
+   *  never merge with a chip's day counts. */
+  status?: string | null;
 };
 
 export type GroupBy = "section" | "employee" | "branch";
@@ -77,11 +82,28 @@ export function monthLabel(key: string): string {
   return `${MONTHS[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
 }
 
-/** The chip as a status: day counts and trailing details dropped. */
+/** The chip as a status: day counts and trailing details dropped (27 Oct 2026:
+ *  every "N days …" chip collapses to its words, so the Status filter offers
+ *  "Waiting" once, not "Waiting 3 days", "Waiting 4 days", …). */
 export function statusOf(chip: string | null | undefined): string {
   const head = (chip || "").split(" · ")[0].trim();
-  if (/^\d+\s+days?\s+overdue$/i.test(head)) return "Overdue";
-  return head;
+  if (/^[\d.,%\s]+$/.test(head)) return ""; // a bare count is not a status
+  if (/^\d+\s+d(ays?)?\s+overdue$/i.test(head) || /\boverdue\b/i.test(head)) return "Overdue";
+  if (/^\d+\s+d(ays?)?\s+late$/i.test(head)) return "Overdue";
+  if (/^issued\b/i.test(head)) return "Issued";
+  if (/^waiting\b/i.test(head)) return "Waiting";
+  if (/^part billed\b/i.test(head)) return "Part billed";
+  if (/^ends in\b/i.test(head) || /^ends today$/i.test(head)) return "Ending soon";
+  if (/^expired\b/i.test(head)) return "Expired";
+  if (/^in\s+\d+\s+days?$/i.test(head) || /^today$/i.test(head) || /^tomorrow$/i.test(head)) return "Coming up";
+  if (/^due in\b/i.test(head) || /^due soon$/i.test(head)) return "Due soon";
+  if (/^\d+\s+d(ays?)?\s+waiting$/i.test(head)) return "Waiting";
+  return head.replace(/\s+\d+\s+d(ays?)?(\s+ago)?$/i, "").trim();
+}
+
+/** An item's status for the filter: the server's word first, else its chip. */
+export function itemStatus(i: Pick<FilterableItem, "status" | "chip">): string {
+  return (i.status && i.status.trim()) || statusOf(i.chip);
 }
 
 const PRIORITY: Record<Exclude<TaskFilter["priority"], "">, (t: FilterableItem["tone"]) => boolean> = {
@@ -110,10 +132,13 @@ export type FacetOptions = {
   priorities: boolean;
 };
 
-/** What each control can offer. Projects follow the chosen customer. */
-export function facetOptions(items: FilterableItem[], customer = ""): FacetOptions {
+/** What each control can offer. Projects, employees and branches follow the
+ *  chosen customer. 27 Oct 2026: ticked items that are hidden offer nothing —
+ *  a filter value that would list only hidden items was a dead choice. */
+export function facetOptions(allItems: FilterableItem[], customer = "", showDone = false): FacetOptions {
+  const items = showDone ? allItems : allItems.filter((i) => !i.done);
   const scoped = customer ? items.filter((i) => i.customer === customer) : items;
-  const statuses = distinct(items.map((i) => statusOf(i.chip))).sort(byName);
+  const statuses = distinct(items.map(itemStatus)).sort(byName);
   const tones = new Set(items.map((i) => i.tone));
   return {
     customers: distinct(items.map((i) => i.customer)).sort(byName),
@@ -140,7 +165,7 @@ export function filterItems<T extends FilterableItem>(items: T[], f: TaskFilter)
     if (f.branch && i.branch !== f.branch) return false;
     if (f.activity && i.activity !== f.activity) return false;
     if (f.round && i.round_kind !== f.round) return false;
-    if (f.status && statusOf(i.chip) !== f.status) return false;
+    if (f.status && itemStatus(i) !== f.status) return false;
     if (f.priority && !PRIORITY[f.priority](i.tone)) return false;
     if (words.length) {
       const hay = [i.title, i.subtitle, i.chip, i.section, i.customer, i.project, i.employee, i.branch,
@@ -164,14 +189,27 @@ export function groupKeyOf(item: { section?: string | null; employee?: string | 
   return item.section ?? null;
 }
 
+/** What the "section" grouping is called on each tab (27 Oct 2026: it said "By
+ *  customer" even where the server's sections are salespeople, steps or positions). */
+export function sectionGroupLabel(tabKey?: string): string {
+  if (!tabKey) return "By customer";
+  if (tabKey.startsWith("team_")) return "By salesperson";
+  if (tabKey === "sales_terms") return "By step";
+  if (tabKey === "head_lost") return "By type";
+  if (tabKey === "ta_pending") return "By position";
+  if (tabKey === "head_stuck") return "By area";
+  return "By customer";
+}
+
 /** The bar under a My Tasks tab header. */
-export function TaskFilterBar({ items, filter, onChange, shown }: {
+export function TaskFilterBar({ items, filter, onChange, shown, tabKey }: {
   items: FilterableItem[];
   filter: TaskFilter;
   onChange: (f: TaskFilter) => void;
   shown: number;
+  tabKey?: string;
 }) {
-  const opts = facetOptions(items, filter.customer);
+  const opts = facetOptions(items, filter.customer, filter.done === "show");
   const ticked = items.filter((i) => i.done).length;
   const set = (patch: Partial<TaskFilter>) => onChange({ ...filter, ...patch });
   const select = (label: string, value: string, options: [string, string][], onPick: (v: string) => void,
@@ -190,7 +228,13 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
           placeholder="Search name, customer, project, number…" className={`${CONTROL} w-full pl-8`} />
       </label>
       {opts.customers.length > 1 && select("Customer", filter.customer, opts.customers.map((c) => [c, c]),
-        (v) => set({ customer: v, project: v && filter.project && !items.some((i) => i.customer === v && i.project === filter.project) ? "" : filter.project }),
+        // 27 Oct 2026: a project / employee / branch of another customer is dropped —
+        // the old pick kept it and the list went empty with no visible reason.
+        (v) => {
+          const keeps = (k: "project" | "employee" | "branch") =>
+            !v || !filter[k] || items.some((i) => i.customer === v && i[k] === filter[k]) ? filter[k] : "";
+          set({ customer: v, project: keeps("project"), employee: keeps("employee"), branch: keeps("branch") });
+        },
         "All customers")}
       {opts.projects.length > 1 && select("Project", filter.project, opts.projects.map((p) => [p, p]),
         (v) => set({ project: v }), "All projects")}
@@ -215,7 +259,7 @@ export function TaskFilterBar({ items, filter, onChange, shown }: {
             <button key={g} type="button" aria-pressed={filter.groupBy === g} onClick={() => set({ groupBy: g })}
               className={`rounded-control px-2.5 py-1 text-xs font-semibold transition-colors duration-micro ${
                 filter.groupBy === g ? "bg-surface-0 text-primary shadow-raised" : "text-secondary hover:text-primary"}`}>
-              {g === "section" ? "By customer" : g === "branch" ? "By branch" : "By employee"}
+              {g === "section" ? sectionGroupLabel(tabKey) : g === "branch" ? "By branch" : "By employee"}
             </button>
           ))}
         </div>

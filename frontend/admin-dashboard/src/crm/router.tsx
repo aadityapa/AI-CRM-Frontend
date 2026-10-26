@@ -7,6 +7,8 @@
  * search params — never part of `p` — so matchRoute keeps working. */
 import React, { createContext, useContext, useEffect, useState } from "react";
 
+import { pushAppHistory } from "../lib/appHistory";
+
 /** Per-page keys that may be set via `crmNavigate("page?…")`. Cleared on every
  * navigation so stale filters do not leak across CRM pages.
  *
@@ -16,7 +18,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 const CRM_FILTER_KEYS = [
   "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus", "einvoice",
   // page-state params (crm/lib/pageState.ts) — each belongs to one page only
-  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab",
+  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab", "receipt",
   // Interview Platform report params — meaningless inside the CRM; a copied link
   // carried a stale candidate id back into App.readInitialView on reload.
   "cid", "iid", "ret",
@@ -68,7 +70,9 @@ export function isPushNavigation(): boolean {
 }
 
 export function crmNavigate(path: string): void {
-  window.history.pushState({}, "", crmUrl(path));
+  // 23 Oct 2026: through the app history (a numbered entry; the same address
+  // twice is a replace, so Back never "does nothing" once).
+  pushAppHistory(crmUrl(path));
   pushNavigationInFlight = true;
   try {
     window.dispatchEvent(new PopStateEvent("popstate"));

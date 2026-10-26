@@ -1426,7 +1426,8 @@ function EmployeeProfile({ emp, canWrite, onSaved, showToast }: SectionProps) {
   const cv = (
     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-subtle pt-3">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">CV</span>
-      {emp.cv_url ? <FileLink url={emp.cv_url} label="View CV" /> : <span className="text-sm text-muted">Not uploaded</span>}
+      {emp.cv_url ? <FileLink url={emp.cv_url} label="View CV"
+        downloadName={[emp.first_name, emp.last_name].filter(Boolean).join(" ")} /> : <span className="text-sm text-muted">Not uploaded</span>}
       {canWrite && (
         <FileUploadButton path={`/api/employees/${emp.id}/cv`} label={emp.cv_url ? "Replace CV" : "Upload CV"}
           accept=".pdf,.doc,.docx" onDone={() => { showToast("CV uploaded"); onSaved(); }}

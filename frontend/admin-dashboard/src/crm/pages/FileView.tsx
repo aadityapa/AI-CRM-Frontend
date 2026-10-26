@@ -51,7 +51,8 @@ export function FileViewPage() {
         <FileText size={18} aria-hidden /> {name}
       </h1>
       <div className="rounded-card border border-subtle bg-surface-1 p-3 shadow-raised">
-        <FilePreviewPane url={path} title={name} />
+        {/* "Ravi Kumar — resume" downloads as "Ravi Kumar.pdf" (23 Oct 2026). */}
+        <FilePreviewPane url={path} title={name} downloadName={name.replace(/\s+(?:[—–-]\s+)?(resume|cv)$/i, "")} />
       </div>
     </div>
   );

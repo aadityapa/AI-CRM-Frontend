@@ -10,6 +10,10 @@ import { SessionKeeper } from "./components/SessionKeeper";
 import { ForcePasswordChange } from "./components/ForcePasswordChange";
 import { useSpotlight } from "./crm/components/motion3d";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
+import { initAppHistory, pushAppHistory } from "./lib/appHistory";
+
+// 23 Oct 2026: number this tab's first entry so Back never leaves the app.
+initAppHistory();
 import { navButtonMotion, pageSurfaceMotion, routeSurfaceKey } from "./lib/motionPresets";
 import {
   canAccessInterviewView,
@@ -117,7 +121,7 @@ function pushNav(view: View, candidateId: string, extras: NavExtras = {}) {
     }
     const qs = params.toString();
     const url = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
-    window.history.pushState({}, "", url);
+    pushAppHistory(url);
   } catch (_) {}
 }
 

@@ -39,6 +39,12 @@ import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInf
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
 import { EInvoiceRegister } from "../components/invoice/EInvoiceRegister";
+import { EINVOICE_TAB_KEY, INVOICE_STAGE_TABS, invoiceTabParams } from "../lib/invoiceStages";
+import {
+  EMPTY_MORE_FILTERS, InvoiceStatusChip, MoreFiltersPanel, MoreFiltersToggle, StatusFilterPills,
+  moreFilterCount, moreFilterQuery, rangeProblem,
+  type FilterOption, type InvoiceMoreFilters, type StatusCount,
+} from "../components/invoice/InvoiceListFilters";
 /* ---------------------------------------------------------------- helpers */
 
 /** "Proforma" / "Returned to GM" chip — orange, the document's own colour. */
@@ -379,7 +385,7 @@ export function PurchaseOrdersPage({ embedded = false }: { embedded?: boolean } 
     if (sp.get("create") === "1") {
       setEditPoId(null); setShowNew(true);
       sp.delete("create");
-      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}?${sp.toString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2072,30 +2078,12 @@ function RenewPoModal({
  * INVOICES — list
  * =================================================================== */
 
-/** "Proforma" is Finance's review queue (kind filter); the rest are TAX invoices by payment status. */
-const PROFORMA_TAB = "Proforma";
-/** Tax invoices by customer approval (6 Oct 2026; server `customer_approved=`): the
- *  Sales Manager's "send & confirm" queue and Finance's "add the IRN" queue. */
-const AWAITING_CUSTOMER_TAB = "Awaiting_Customer";
-const CUSTOMER_APPROVED_TAB = "Customer_Approved";
 /** Every tax invoice with its IRN (21 Oct 2026) — Finance + Sales + Admin / CEO. */
-const EINVOICE_TAB = "EInvoice";
-const INVOICE_TABS = [
-  { key: PROFORMA_TAB, label: "Proforma" },
-  { key: AWAITING_CUSTOMER_TAB, label: "Awaiting customer" },
-  { key: CUSTOMER_APPROVED_TAB, label: "Customer approved" },
-  { key: EINVOICE_TAB, label: "E-invoice" },
-  { key: "Unpaid", label: "Unpaid" },
-  { key: "Partially_Paid", label: "Partially Paid" },
-  { key: "Paid", label: "Paid" },
-];
-
-function invoiceTabParams(tab: string): Record<string, string | boolean> {
-  if (tab === PROFORMA_TAB) return { kind: "Proforma" };
-  if (tab === AWAITING_CUSTOMER_TAB) return { kind: "Tax", customer_approved: false };
-  if (tab === CUSTOMER_APPROVED_TAB) return { kind: "Tax", customer_approved: true };
-  return { payment_status: tab, kind: "Tax" };
-}
+const EINVOICE_TAB = EINVOICE_TAB_KEY;
+/* 24 Oct 2026: ONE tab per stage — Proforma · Awaiting customer · Pending
+   e-invoice · Unpaid · Partially paid · Paid (+ the E-invoice register).
+   See crm/lib/invoiceStages.ts. */
+const INVOICE_TABS = INVOICE_STAGE_TABS;
 
 /** Customer approval + (Finance / Admin / CEO only) IRN state of a list row. */
 function ApprovalChip({ r }: { r: any }) {
@@ -2122,7 +2110,11 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   /* Each list is a sub-tab a template / custom role can switch off (22 Oct 2026);
      E-invoice still needs the role rule above on top. */
   const invSub = useSubTabs("invoices");
-  const invoiceTabs = INVOICE_TABS.filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key));
+  /* Each tab carries its count (server `meta.stage_counts`, same filters). */
+  const [stageCounts, setStageCounts] = useState<Record<string, number> | null>(null);
+  const invoiceTabs = INVOICE_TABS
+    .filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key))
+    .map((x) => ({ key: x.key, label: x.label, count: x.stage && stageCounts ? stageCounts[x.stage] ?? 0 : undefined }));
   const invTabKeys = invoiceTabs.map((x) => x.key);
   /* `?tab=Proforma` deep link (28 Sep 2026: the work desk's "Proformas to
      convert" queue lands here); an unknown value falls back to Unpaid. */
@@ -2144,7 +2136,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     if (sp.get("create") === "1") {
       setShowNew(true);
       sp.delete("create");
-      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}?${sp.toString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2160,6 +2152,17 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const [branchFilter, setBranchFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
   const [branchChoices, setBranchChoices] = useState<{ id: number; name: string }[]>([]);
+  /* Status column filter + More filters (26 Oct 2026, user ask). The status is
+     per tab (each tab holds its own statuses), so it resets on a tab change. */
+  const [statusFilter, setStatusFilter] = useState("");
+  const [statusCounts, setStatusCounts] = useState<StatusCount[] | null>(null);
+  const [more, setMore] = useSessionState<InvoiceMoreFilters>("inv.more", EMPTY_MORE_FILTERS);
+  const [moreOpen, setMoreOpen] = useState(() => moreFilterCount(more) > 0);
+  const [moreOptions, setMoreOptions] = useState<{ employees: FilterOption[]; pos: FilterOption[] }>({ employees: [], pos: [] });
+  const moreKey = JSON.stringify(more);
+  /* A backwards range is said in the panel, never sent (the list would read empty). */
+  const moreQuery = rangeProblem(more) ? {} : moreFilterQuery(more);
+  const typing = !!(search || more.amountMin || more.amountMax);
   const customerNames = useNameMap("/api/customers/names");
   // Filter lists ACTIVE customers only (22 Oct 2026); the name map above still
   // resolves an inactive customer printed on an older invoice.
@@ -2181,6 +2184,8 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         project_id: projectFilter || undefined,
         branch_id: branchFilter || undefined,
         month: monthFilter || undefined,
+        status: statusFilter || undefined,
+        ...moreQuery,
       };
       const req = view === "customer"
         ? fetchAllMaster<any>("/api/invoices", params).then((all) => ({ data: all, meta: undefined }))
@@ -2194,10 +2199,37 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         })
         .catch((e) => { if (alive) setError(e?.message || "Failed to load invoices"); })
         .finally(() => { if (alive) setLoading(false); });
-    }, search ? 300 : 0);
+    }, typing ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
-  }, [tab, search, page, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, view]);
-  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter, branchFilter, monthFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `moreKey` stands for `more`
+  }, [tab, search, page, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, view, statusFilter, moreKey]);
+  /* The counts on the tabs: one tiny request (limit 1) with the same filters,
+     whichever tab is open. A failure just leaves the tabs without numbers. */
+  useEffect(() => {
+    let alive = true;
+    const t = window.setTimeout(() => {
+      crmGet<any[]>(`/api/invoices${qs({
+        search, customer_id: customerFilter || undefined, project_id: projectFilter || undefined,
+        branch_id: branchFilter || undefined, month: monthFilter || undefined,
+        ...moreQuery,
+        /* The open tab's Status choices + counts and the More filters pickers ride along. */
+        ...(tab === EINVOICE_TAB ? {} : { ...invoiceTabParams(tab), with_status_counts: true }),
+        with_stage_counts: true, limit: 1,
+      })}`)
+        .then((r) => {
+          if (!alive) return;
+          const m = (r.meta as any) || {};
+          setStageCounts((m.stage_counts as Record<string, number>) || null);
+          setStatusCounts((m.status_counts as StatusCount[]) || null);
+          if (m.filter_options) setMoreOptions(m.filter_options);
+        })
+        .catch(() => { if (alive) { setStageCounts(null); setStatusCounts(null); } });
+    }, typing ? 300 : 0);
+    return () => { alive = false; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `moreKey` stands for `more`
+  }, [tab, search, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, moreKey]);
+  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter, branchFilter, monthFilter, statusFilter, moreKey]);
+  useChangeEffect(() => { setStatusFilter(""); }, [tab]);
   useChangeEffect(() => { setBranchFilter(""); setBranchChoices([]); }, [customerFilter]);
   const extraFilters = (
     <>
@@ -2227,11 +2259,28 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     { key: "paid_amount", label: "Paid", render: (r) => inr(r.paid_amount) },
     { key: "balance_amount", label: "Balance", render: (r) => inr(r.balance_amount) },
     { key: "payment_status", label: "Status",
-      render: (r) => r.kind === "Proforma"
-        ? <ProformaKindBadge returned={!!r.returned_at} />
-        : <StatusBadge status={r.payment_status} /> },
+      render: (r) => r.status_key
+        ? <InvoiceStatusChip statusKey={r.status_key} label={r.status_label} daysLate={r.days_late} />
+        : r.kind === "Proforma"
+          ? <ProformaKindBadge returned={!!r.returned_at} />
+          : <StatusBadge status={r.payment_status} /> },
     { key: "customer_approval", label: "Customer / IRN", render: (r) => <ApprovalChip r={r} /> },
   ];
+
+  const moreCount = moreFilterCount(more);
+  const statusAndMore = einvoiceTab ? null : (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusFilterPills counts={statusCounts} value={statusFilter} onChange={setStatusFilter} />
+        <div className="ml-auto">
+          <MoreFiltersToggle open={moreOpen} count={moreCount} onToggle={() => setMoreOpen((o) => !o)} />
+        </div>
+      </div>
+      {moreOpen && (
+        <MoreFiltersPanel value={more} onChange={setMore} employees={moreOptions.employees} pos={moreOptions.pos} />
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -2275,7 +2324,11 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           <Tabs tabs={invoiceTabs} active={tab} onChange={(k) => { setTab(k); setPage(1); }} />
         </PageHeader>
       )}
+      {INVOICE_TABS.find((x) => x.key === tab)?.hint && (
+        <p className="text-xs text-muted">{INVOICE_TABS.find((x) => x.key === tab)?.hint}</p>
+      )}
       {einvoiceTab ? <EInvoiceRegister /> : null}
+      {statusAndMore}
       {!einvoiceTab && error && <ErrorBox error={error} />}
       {einvoiceTab ? null : view === "customer" ? (
         <div className="space-y-3">

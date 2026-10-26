@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, PauseCircle, Pencil, PlayCircle, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, StepForward, Trash2, UserPlus, Users, UsersRound, Wallet, X,
+  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, PauseCircle, Pencil, PlayCircle, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, StepForward, Trash2, UserPlus, Users, UsersRound, Wallet, Wrench, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
@@ -30,10 +30,12 @@ import {
   SalesHeadDecisionModal, SubmitForApprovalModal, type SalesHeadDecision,
 } from "../components/OfferApprovalGate";
 import { AiL1DecisionModal, ChooseAiL1Modal, GoManualModal, type AiL1Decision } from "../components/InterviewRouteChoice";
+import { AdminCorrectionModal } from "../components/AdminCorrectionModal";
 import { ScheduleAiInterviewModal, type RescheduleSeed } from "../components/ScheduleAiInterviewModal";
 import { useAiTemplateGate } from "../components/AiTemplateGate";
 import { useCanOpenAiReport } from "../components/AiInterviewOverview";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
+import { useActiveCustomers } from "../lib/activeCustomers";
 import type { Meta } from "../api";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
 import { useHasRole, useMe } from "../CrmApp";
@@ -74,7 +76,9 @@ import { SalesSlotsButton } from "../components/CustomerSlots";
 import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import { TeachingEmpty } from "../components/TeachingEmpty";
 import { PositionsPanel, type PositionRequest } from "../components/PositionsPanel";
-import { AssignTasButton, InlinePriority, PositionTeamPanel, PriorityPill, TaChip, type TaAssignment } from "../components/PositionTeamPanel";
+import { HmJdReviewBanner } from "../components/HiringManagerPanels";
+import { InlinePriority, PositionTeamPanel, PriorityPill, type TaAssignment } from "../components/PositionTeamPanel";
+import { OppRowActions, TeamCell } from "../components/OpportunityRowParts";
 // Same DB-scan component the opportunity page uses — one implementation, so
 // TA and Sales always see identical matching logic (18 Aug 2026).
 import { CollapsibleCard, SuggestedCandidatesTab } from "./Opportunities";
@@ -537,6 +541,7 @@ type Req = {
   rmg_jd_attachments?: JdAttachment[];
   /** TAs assigned to source it (1 Oct 2026, `components/PositionTeamPanel`). */
   assigned_tas?: TaAssignment[];
+  hiring_managers?: TaAssignment[];
 };
 
 type ResumeRow = {
@@ -807,7 +812,7 @@ const TA_FILTER_STATUSES = [
 /** Every requirement status, for the All-tab filter (RMG / Sales_Head). */
 const ALL_REQ_STATUSES = [
   "Draft", "Pending_Sales_Head_Approval", "Sales_Head_Rejected",
-  "Pending_Engineering_Review", "Engineering_Rejected", "Open_For_Sourcing",
+  "Pending_Engineering_Review", "Engineering_Rejected", "Pending_HM_Review", "Open_For_Sourcing",
   "Posted_On_Portals", "In_Progress", "On_Hold", "Fulfilled", "Closed", "Cancelled",
 ];
 const WORK_MODES = ["Remote", "Onsite", "Hybrid"];
@@ -1696,12 +1701,14 @@ export function RequirementsListPage() {
   const screens = useCanApprove("profile.rmg_screening");
   const prioRole = useHasRole("RMG", "Sales_Head");   // both hooks always run — never `a || useX()`
   const canSetPriority = screens || prioRole;
+  // Change TAs / Assign HM (23 Oct 2026): RMG / GM by default, Admin-editable.
+  const canAssignTeam = useCanApprove("requirement.team.assign");
   const tabs = useMemo<TabDef[]>(() => {
     const t: TabDef[] = [];
     if (roles.includes("Sales")) {
       t.push(
         { key: "draft", label: "Draft", statuses: ["Draft"] },
-        { key: "pending", label: "Pending Approval", statuses: ["Pending_Sales_Head_Approval", "Pending_Engineering_Review"] },
+        { key: "pending", label: "Pending Approval", statuses: ["Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Pending_HM_Review"] },
         { key: "rejected", label: "Rejected", statuses: ["Sales_Head_Rejected", "Engineering_Rejected"] },
         { key: "active", label: "Active", statuses: SOURCING_STATUSES },
         { key: "closed", label: "Closed", statuses: TERMINAL_STATUSES },
@@ -1732,6 +1739,9 @@ export function RequirementsListPage() {
   const [statusFilter, setStatusFilter] = useState("");
   /* List filters (25 Aug 2026): server-side — the list is paginated. */
   const [customerFilter, setCustomerFilter] = useState("");
+  // The customer filter lists ACTIVE customers (23 Oct 2026 rule; the chosen
+  // one stays even if it was made inactive). Row names still use the full map.
+  const customerFilterOpts = useActiveCustomers(customerFilter || null);
   const [priorityFilter, setPriorityFilter] = useState("");
   /* "Assigned to me" (1 Oct 2026): only the positions RMG / GM assigned to
      this TA. Off by default — every TA still sees every sourcing position. */
@@ -1811,11 +1821,6 @@ export function RequirementsListPage() {
               </span>
             )}
           </div>
-          {(r.assigned_tas?.length ?? 0) > 0 && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1" title="TAs assigned to source this position">
-              {(r.assigned_tas || []).map((a) => <TaChip key={a.id} a={a} />)}
-            </div>
-          )}
         </div>
       ) },
     {
@@ -1873,6 +1878,15 @@ export function RequirementsListPage() {
           </div>
         );
       } },
+    /* Sourcing team (24 Oct 2026) — the same cell as the pipeline list: clickable
+       for a team assigner (RMG / GM), read-only for everyone else. */
+    { key: "team", label: "Sourcing team",
+      render: (r) => (
+        <TeamCell requirementId={r.id} label={reqLabel(r)} tas={r.assigned_tas} hms={r.hiring_managers}
+          canAssign={canAssignTeam} toast={toast}
+          onTas={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))}
+          onHms={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, hiring_managers: rows } : x)))} />
+      ) },
   ];
   /* Header copy + figures (29 Sep 2026 redesign) — all from state already
      loaded; the counts describe the open tab / this page, nothing is fetched. */
@@ -1954,29 +1968,25 @@ export function RequirementsListPage() {
           onPage={setPage}
           onRowClick={(r) => crmNavigate(`requirements/${r.id}`)} rowHref={(r: any) => `requirements/${r.id}`}
           rowActionsLabel="Actions"
-          rowActions={(canApply || canSetPriority) ? (r) => (
-            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              {canSetPriority && (
-                <AssignTasButton requirementId={r.id} label={reqLabel(r)} assigned={r.assigned_tas} toast={toast}
-                  onChanged={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))} />
-              )}
-              {!canApply ? null : SOURCING_STATUSES.includes(r.status) ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:!text-indigo-600"
-                  title="Apply a candidate to this opportunity"
-                  aria-label={`Apply a candidate to ${r.title}`}
-                  onClick={(e) => { e.stopPropagation(); setApplyTo(r); }}
-                >
-                  <UserPlus size={15} />
-                </button>
-              ) : (
-                <span className="inline-flex p-1.5 text-muted/40" title="Applications open once the requirement is in sourcing">
-                  <UserPlus size={15} />
-                </span>
-              )}
-            </span>
-          ) : undefined}
+          rowActions={(r) => (
+            <OppRowActions
+              id={r.id}
+              label={reqLabel(r)}
+              title={r.title}
+              requirementId={r.id}
+              tas={r.assigned_tas}
+              hms={r.hiring_managers}
+              openPath={`requirements/${r.id}`}
+              canAssignTeam={canAssignTeam}
+              canApply={canApply && SOURCING_STATUSES.includes(r.status)}
+              canWrite={false}
+              onApply={() => setApplyTo(r)}
+              onTas={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))}
+              onHms={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, hiring_managers: rows } : x)))}
+              onDeleted={() => void load()}
+              toast={toast}
+            />
+          )}
           emptyMessage={
             taMode && tab === "ta-active" && !statusFilter && !dq
               ? "Nothing live to source right now — work appears here once RMG approves it. "
@@ -2003,9 +2013,7 @@ export function RequirementsListPage() {
               <select className={`${inputCls} !w-52`} value={customerFilter}
                 onChange={(e) => setCustomerFilter(e.target.value)} title="Filter by customer">
                 <option value="">All customers</option>
-                {Object.entries(customers)
-                  .sort((a, b) => a[1].localeCompare(b[1]))
-                  .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                {customerFilterOpts.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
               </select>
               <select className={`${inputCls} !w-40`} value={priorityFilter}
                 onChange={(e) => setPriorityFilter(e.target.value)} title="Filter by priority">
@@ -2893,6 +2901,9 @@ export function ResumesTab({
   const [manualRow, setManualRow] = useState<ResumeRow | null>(null);   // → GoManualModal
   /* After a finished AI L1 — proceed / hold / release (7 Oct 2026). */
   const [aiAfterRow, setAiAfterRow] = useState<{ row: ResumeRow; profileId: number; decision: AiL1Decision } | null>(null);
+  // Admin / CEO correct a wrong call from the row (23 Oct 2026).
+  const isAdminLogin = useHasRole();
+  const [correctRow, setCorrectRow] = useState<{ row: ResumeRow; profileId: number } | null>(null);
 
   /* L2 feedback (28 Aug 2026, user request): RMG records the round's outcome
      right from the row. Saves onto the L2 InterviewEvent — the same record
@@ -3138,7 +3149,7 @@ export function ResumesTab({
               </div>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <FileLink url={r.resume_file_url} label="Resume" />
+              <FileLink url={r.resume_file_url} label="Resume" downloadName={r.candidate_name} />
               {hasInvite && (
                 <button
                   type="button"
@@ -3475,6 +3486,12 @@ export function ResumesTab({
                   <ExternalLink size={13} /> View profile
                 </button>
               )}
+              {isAdminLogin && profileId != null && (
+                <button className={FLOW_BTN.neutral} onClick={() => setCorrectRow({ row: r, profileId })}
+                  title="Admin: put a wrong stage, screening or AI decision right">
+                  <Wrench size={13} /> Correct
+                </button>
+              )}
               {/* Manual Archive (30 Sep 2026, user rule): nobody is moved to
                   Archive on their own — RMG / GM press it once the candidate
                   is rejected / withdrawn, and Restore brings them back. */}
@@ -3752,6 +3769,12 @@ export function ResumesTab({
                 <ExternalLink size={13} /> View profile
               </button>
             )}
+            {isAdminLogin && profileId != null && (
+              <button className={FLOW_BTN.neutral} onClick={() => setCorrectRow({ row: r, profileId })}
+                title="Admin: put a wrong stage, screening or AI decision right">
+                <Wrench size={13} /> Correct
+              </button>
+            )}
             {/* The interview ROUTE (28 Sep 2026, user flow): after the shortlist
                 RMG / GM choose — AI L1 or Manual L1 — and TA is told which to
                 schedule. The choice is open until one is taken. */}
@@ -3842,14 +3865,27 @@ export function ResumesTab({
                       <PauseCircle size={13} /> Put on hold
                     </button>
                   )}
+                  {/* A finished AI L1 is rejected ON the interview (23 Oct 2026):
+                      the candidacy closes as RMG Rejected and TA's row offers
+                      Archive. Before it finishes, the screening Reject stays. */}
                   <button className={FLOW_BTN.danger} disabled={busy}
-                    onClick={() => setScreenRow({ row: r, profileId, kind: "reject" })}
-                    title="Reject the candidate at RMG screening — the reason is logged and TA is told">
+                    onClick={() => finished ? open("reject") : setScreenRow({ row: r, profileId, kind: "reject" })}
+                    title={finished
+                      ? "Reject on the AI L1 — the candidacy closes and TA can archive the row"
+                      : "Reject the candidate at RMG screening — the reason is logged and TA is told"}>
                     <X size={13} /> Reject
                   </button>
                 </>
               );
             })()}
+            {/* TA after the AI L1 was SELECTED (23 Oct 2026): the candidate is
+                with RMG / GM in RMG Review — say what comes next, so TA does not
+                read the row as stuck. The L2 booking button below appears once
+                RMG asks for it. */}
+            {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && !r.l2_requested
+              && !r.l2_scheduled && (r.ai_effective_result === "Selected" || r.ai_effective_result === "Passed")
+              && doneChip("AI L1 selected — with RMG / GM",
+                "RMG / GM now request the Technical L2 or submit the candidate to Sales. You book the L2 once they ask.")}
             {/* TA schedules the rounds RMG asked for. The manual L1 comes
                 first; the L2 button is the one that already existed. */}
             {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null
@@ -4512,6 +4548,14 @@ export function ResumesTab({
           aiResult={aiAfterRow.row.ai_effective_result || aiAfterRow.row.ai_interview_result || null}
           onClose={() => setAiAfterRow(null)}
           onDone={(msg) => { setAiAfterRow(null); toast(msg); load(); }}
+        />
+      )}
+      {correctRow && (
+        <AdminCorrectionModal
+          profileId={correctRow.profileId}
+          candidateName={correctRow.row.candidate_name}
+          onClose={() => setCorrectRow(null)}
+          onDone={(msg) => { setCorrectRow(null); toast(msg); load(); }}
         />
       )}
       {manualRow?.profile_id && (
@@ -5363,9 +5407,12 @@ export function RequirementDetailPage() {
   const sourcesOrSells = useHasRole("TA", "Sales", "Sales_Head");
   const screenerOnly = screensCandidates && !sourcesOrSells;
   const showApplicantsTab = !(hasTaRole && !hasOtherWorkRole) && !screenerOnly;
-  const showSuggestedTab = !screenerOnly;
+  /* A Hiring Manager (22 Oct 2026) reviews candidates from Applicants — the
+     sourcing workbench (Applied Candidates, Interview History, Suggested) is TA / RMG's. */
+  const hmOnly = Boolean(me.hiring_manager_scoped);
+  const showSuggestedTab = !screenerOnly && !hmOnly;
   const visibleTabKeys = ["details", ...(showPostings ? ["postings"] : []),
-    ...(canSeeResumes || screenerOnly ? ["resumes", "slots"] : []),
+    ...((canSeeResumes || screenerOnly) && !hmOnly ? ["resumes", "slots"] : []),
     ...(showApplicantsTab ? ["applicants"] : []),
     ...(showSuggestedTab ? ["suggested"] : []), "activity"].filter((k) => reqAcc.subTabVisible(`tab:${k}`));
   useEffect(() => {
@@ -5489,7 +5536,10 @@ export function RequirementDetailPage() {
      it here; the server's JD_EDIT_ROLES is the same list. */
   const canEditJdSkills = !TERMINAL_STATUSES.includes(req.status) && (isAdmin || jdEditGrant || jdScreener);
   /* RMG sourcing controls (25 Aug 2026): Hold / Resume / Reject + priority. */
-  const canHoldControl = isRMG || isSalesHead;
+  /* The position's Hiring Manager (22 Oct 2026) sets priority / hold on it too
+     (server: `crm_deps.hm_or`). */
+  const isHmHere = Boolean(req.hiring_managers?.some((h) => h.user_id === me.id));
+  const canHoldControl = isRMG || isSalesHead || isHmHere;
   const canHold = canHoldControl && SOURCING_STATUSES.includes(req.status);
   const canResume = canHoldControl && req.status === "On_Hold";
   const canRmgReject = isRMG && !TERMINAL_STATUSES.includes(req.status)
@@ -5589,7 +5639,7 @@ export function RequirementDetailPage() {
     // live ONLY here now, instead of trailing below every tab.
     { key: "details", label: "Details" },
     ...(showPostings ? [{ key: "postings", label: "Job Postings" }] : []),
-    ...(canSeeResumes || screenerOnly
+    ...((canSeeResumes || screenerOnly) && !hmOnly
       ? [
           // Renamed from "Resumes" (user decision, 25 Aug 2026): every resume
           // here IS an application, so the tab is named for the people.
@@ -5654,7 +5704,7 @@ export function RequirementDetailPage() {
             </div>
             <div className="flex items-center gap-2 text-sm">
               <span className="text-[11px] font-bold uppercase tracking-wider text-white/70">Priority</span>
-              {(isRMG || isSalesHead || isAdmin) ? (
+              {(isRMG || isSalesHead || isAdmin || isHmHere) ? (
                 /* RMG/Sales_Head set urgency inline (25 Aug 2026) — deliberately
                    not the full edit form, which exposes budget fields. */
                 <select
@@ -5841,6 +5891,8 @@ export function RequirementDetailPage() {
       )}
 
       {/* Headcount, and the RMG approval it moves through (21 Sep 2026). */}
+      <HmJdReviewBanner req={req} toast={toast} onDone={() => onChanged()} />
+
       <PositionsPanel
         target={{ requirementId: req.id, label: req.opportunity_opp_id || req.req_number,
                   title: req.title, status: req.status }}
@@ -5864,10 +5916,10 @@ export function RequirementDetailPage() {
           live in the Details tab. */}
       <DetailTabStrip tabs={detailTabs} active={tab} onChange={setTab} />
       {tab === "postings" && <JobPostingsTab req={req} toast={toast} onRequirementChanged={() => onChanged()} />}
-      {tab === "resumes" && (canSeeResumes || screenerOnly) && (
+      {tab === "resumes" && (canSeeResumes || screenerOnly) && !hmOnly && (
         <ResumesTab req={req} toast={toast} onRequirementChanged={() => onChanged()} />
       )}
-      {tab === "slots" && (canSeeResumes || screenerOnly) && <InterviewHistoryTab req={req} toast={toast} />}
+      {tab === "slots" && (canSeeResumes || screenerOnly) && !hmOnly && <InterviewHistoryTab req={req} toast={toast} />}
       {tab === "applicants" && showApplicantsTab && (
         <RequirementApplicantsTab key={applicantsKey} oppId={req.opportunity_id} toast={toast} />
       )}

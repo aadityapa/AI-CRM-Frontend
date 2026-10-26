@@ -27,6 +27,7 @@ import {
 import { apiGet, authFetch } from "../api/client";
 import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../components/interview-recording/RecordingViewer";
 import { PageHeader, HERO_BTN } from "../crm/components/PageHeader";
+import { onlyActiveNames, useActiveCustomerList } from "../crm/lib/activeCustomers";
 import { LiveJoinPanel } from "../components/interview-live/LiveJoinPanel";
 
 /* ---------- types (mirror services/interview_integrity.py) ---------- */
@@ -397,7 +398,11 @@ export function IntegrityLogsPage() {
     return () => clearInterval(t);
   }, [anyLive]);
 
-  const customers = useMemo(() => [...new Set(rows.map((r) => r.customer_name).filter(Boolean) as string[])].sort(), [rows]);
+  const activeCustomers = useActiveCustomerList();   // the dropdown lists ACTIVE customers (23 Oct 2026)
+  const customers = useMemo(
+    () => onlyActiveNames([...new Set(rows.map((r) => r.customer_name).filter(Boolean) as string[])].sort(),
+      activeCustomers, customer),
+    [rows, activeCustomers, customer]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();

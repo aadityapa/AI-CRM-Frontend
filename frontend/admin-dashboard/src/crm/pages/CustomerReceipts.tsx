@@ -59,7 +59,7 @@ import {
   PAYMENT_MODES, ProofChip, daysLate, fmtDate, inr, isoDay, pillCls,
   type BranchOption, type BranchScope, type InvoiceOption, type Receipt,
 } from "./receipts/receiptShared";
-import { ReceiptDetailModal } from "./receipts/ReceiptWorkbench";
+import { ReceiptDetailModal, isLikelyMatch, isPartlyPaid, orderByLikelyMatch } from "./receipts/ReceiptWorkbench";
 
 export { daysLate };
 export type { BranchScope };
@@ -152,6 +152,17 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
     });
   }, [rows]);
   const openReceipt = (r: Receipt, start: "map" | "edit" | null = null) => setDetail({ receipt: r, start });
+  // 23 Oct 2026: "Receipts to map" on the work desk links `received-amounts?receipt=<id>`.
+  useEffect(() => {
+    let id = 0;
+    try { id = Number(new URLSearchParams(window.location.search).get("receipt") || 0); } catch { /* none */ }
+    if (!id) return;
+    crmGet<Receipt>(`/api/customer-receipts/${id}`)
+      .then((res) => res.data && setDetail({ receipt: res.data, start: res.data.unallocated_amount > 0 ? "map" : "edit" }))
+      .catch((e: any) => showToast(e?.message || "That receipt could not be opened", "err"));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Set branch" on a "No branch on record" group (23 Oct 2026).
+  const [assigning, setAssigning] = useState<Receipt[] | null>(null);
 
   const columns: Column<Receipt>[] = useMemo(() => { const all: Column<Receipt>[] = [
     { key: "received_date", label: "Received", sortable: true, render: (r) => fmtDate(r.received_date),
@@ -160,7 +171,13 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
       filter: { type: "select", options: customers } },
     { key: "branch_name", label: "Branch", sortable: true, render: (r) => r.branch_name
       ? <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-200"><MapPin size={11} aria-hidden /> {r.branch_name}</span>
-      : <span className="text-muted">—</span> },
+      : canEdit ? (
+        <button type="button" onClick={(e) => { e.stopPropagation(); setAssigning([r]); }}
+          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-300 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800"
+          title="Which branch paid this? Set it">
+          <MapPin size={11} aria-hidden /> Set branch
+        </button>
+      ) : <span className="text-muted">—</span> },
     { key: "amount", label: "Amount", sortable: true, align: "right",
       render: (r) => (
         <span className="block text-right">
@@ -321,6 +338,17 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
               </>
             )}
             onRowClick={(r) => openReceipt(r)}
+            groupActions={canEdit ? (rs) => (rs.some((r) => !r.branch_id) ? (
+              <>
+                <span className="text-xs text-amber-800 dark:text-amber-200">
+                  {rs.filter((r) => !r.branch_id).length} receipt{rs.filter((r) => !r.branch_id).length === 1 ? "" : "s"} with no branch named.
+                </span>
+                <button type="button" className={`${btnPrimary} !px-3 !py-1 text-xs`}
+                  onClick={() => setAssigning(rs.filter((r) => !r.branch_id))}>
+                  <MapPin size={13} aria-hidden /> Set branch
+                </button>
+              </>
+            ) : null) : undefined}
             rowKey={(r) => r.id}
             empty={<div className="rounded-card border border-subtle bg-surface-1 p-6 text-sm text-muted">No amounts received yet — Finance records the first one with “Add received amount”.</div>}
             rowActions={canEdit ? (r) => rowButtons(r) : undefined}
@@ -369,6 +397,13 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           toast={(m, kind) => showToast(m, kind)}
         />
       )}
+      {assigning && assigning.length > 0 && (
+        <AssignBranchModal
+          receipts={assigning}
+          onClose={() => setAssigning(null)}
+          onSaved={(msg) => { setAssigning(null); showToast(msg); load(); }}
+        />
+      )}
       {showAdd && (
         <AddReceiptModal
           customers={customers}
@@ -410,6 +445,86 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
 }
 
 /**
+ * "Set branch" (23 Oct 2026, user ask): name the branch that paid on one or
+ * several receipts of ONE customer. The customer's branches come from the same
+ * read the Add dialog uses (`invoice-options` meta). A receipt already mapped to
+ * another branch's invoices is skipped by the server and named in the toast.
+ */
+function AssignBranchModal({ receipts, onClose, onSaved }: {
+  receipts: Receipt[];
+  onClose: () => void;
+  onSaved: (msg: string) => void;
+}) {
+  const customerId = receipts[0].customer_id;
+  const [branches, setBranches] = useState<BranchOption[] | null>(null);
+  const [pick, setPick] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    crmGet<InvoiceOption[]>(`/api/customer-receipts/invoice-options${qs({ customer_id: customerId, include_paid: true })}`)
+      .then((res) => {
+        const bs = ((res.meta as any)?.branches || []) as BranchOption[];
+        setBranches(bs);
+        if (bs.length === 1) setPick(bs[0].id);
+      })
+      .catch((e: any) => setErr(e?.message || "Could not read the branches"));
+  }, [customerId]);
+  const total = receipts.reduce((a, r) => a + Number(r.amount || 0), 0);
+  const save = async () => {
+    if (!pick) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await crmPost("/api/customer-receipts/assign-branch", { receipt_ids: receipts.map((r) => r.id), branch_id: pick });
+      onSaved(res.message || "Branch set");
+    } catch (e: any) {
+      setErr(e?.message || "Could not set the branch");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="Set the branch that paid" onClose={onClose} medium
+      hero={<DialogHero icon={MapPin} tone="emerald" eyebrow="Received amount"
+        title="Which branch paid?"
+        person={{ name: receipts[0].customer_name || `Customer #${customerId}`,
+                  meta: `${receipts.length} receipt${receipts.length === 1 ? "" : "s"} · ${inr(total)}` }} />}>
+      <div className="space-y-3">
+        {branches === null && !err && <div className="text-sm text-muted">Loading the branches…</div>}
+        {branches && branches.length === 0 && (
+          <div className="rounded-card bg-surface-2 p-3 text-sm text-secondary">
+            This customer has no branches on record. Add one on the customer page first.
+          </div>
+        )}
+        {branches && branches.length > 0 && (
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Branch">
+            {branches.map((b) => (
+              <button key={b.id} type="button" role="radio" aria-checked={pick === b.id} onClick={() => setPick(b.id)}
+                className={`flex min-w-[10rem] items-start gap-2 rounded-card border px-3 py-2 text-left text-sm transition-colors ${pick === b.id ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500 dark:bg-emerald-950/40" : "border-subtle bg-surface-1 hover:bg-surface-2"}`}>
+                <MapPin size={15} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden />
+                <span className="font-semibold text-primary">{b.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <ul className="max-h-48 space-y-1 overflow-auto rounded-card border border-subtle bg-surface-2 p-2 text-xs">
+          {receipts.map((r) => (
+            <li key={r.id} className="flex justify-between gap-2">
+              <span>{fmtDate(r.received_date)} · {r.reference_number || r.payment_mode || "—"}</span>
+              <span className="font-semibold tabular-nums text-primary">{inr(r.amount)}</span>
+            </li>
+          ))}
+        </ul>
+        {err && <div className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{err}</div>}
+      </div>
+      <DialogActions tone="emerald" icon={MapPin} label={`Set branch on ${receipts.length}`} busy={busy}
+        disabled={!pick} onCancel={onClose} onConfirm={() => void save()}
+        hint={pick ? undefined : "Pick the branch"} />
+    </Modal>
+  );
+}
+
+/**
  * "Add received amount" (redesigned 8 Oct 2026 on the dialog kit): the money
  * (customer · amount · date · mode · reference) → the invoices it settles
  * (an invoice still waiting for the customer's approval / its IRN is shown
@@ -446,7 +561,8 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
   const needsBranch = branches.length > 0 || !!noBranch;
   const branchStep = needsBranch && !presetBranch;
   const branchOptions = useMemo(() => options.filter((o) => !needsBranch || !branchKey ? !needsBranch
-    : branchKey === "none" ? !o.branch_id : String(o.branch_id) === branchKey), [options, needsBranch, branchKey]);
+    /* + invoices with no branch on record — any branch's money may go on them (24 Oct 2026). */
+    : branchKey === "none" ? !o.branch_id : (!o.branch_id || String(o.branch_id) === branchKey)), [options, needsBranch, branchKey]);
   const monthChoices = useMemo(() => [...new Map(branchOptions.filter((o) => o.month)
     .map((o) => [o.month as string, o.month_label || o.month])).entries()].sort((a, b) => b[0].localeCompare(a[0])),
   [branchOptions]);
@@ -732,7 +848,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                 </div>
                 <ul className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
                   {visibleOptions.length === 0 && <li className="px-1 py-2 text-xs text-muted">No invoice matches “{invQuery}”.</li>}
-                  {visibleOptions.map((o) => {
+                  {orderByLikelyMatch(visibleOptions, amt).map((o) => {
                     const on = selected.has(o.id);
                     const locked = !!o.payment_block;
                     const take = takeFor(o.id);
@@ -761,6 +877,15 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                             <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                               <span>Invoice {inr(o.grand_total)}</span>
                               {o.paid_amount > 0 && <span>· paid {inr(o.paid_amount)}</span>}
+                              {isPartlyPaid(o) && (
+                                <span className="rounded-full bg-orange-50 px-1.5 font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
+                                  Partly paid · {inr(o.balance_amount)} still due</span>
+                              )}
+                              {isLikelyMatch(o, amt) && (
+                                <span className="rounded-full bg-emerald-100 px-1.5 font-semibold text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
+                                  title="This invoice's balance equals the amount received">Likely match</span>
+                              )}
+                              {!o.branch_id && branchKey && branchKey !== "none" && <span>· no branch on record</span>}
                               {o.due_date && (() => {
                                 const late = daysLate(o.due_date);
                                 return late > 0

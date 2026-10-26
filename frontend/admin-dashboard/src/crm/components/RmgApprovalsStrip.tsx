@@ -133,12 +133,12 @@ export function RmgApproveRowButtons({ requirementId, title, oppId, onChanged, s
       setLoading(false);
     }
   };
-  const size = compact ? "!px-2 !py-1 text-[11px]" : "!py-1 text-xs";
+  const size = compact ? "!min-h-0 !h-8 !px-2.5 !py-0 text-xs" : "!py-1 text-xs";
   return (
     <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
       <button type="button" className={`${btnPrimary} ${size}`} onClick={() => void openApprove()} disabled={loading}
         title="Review the JD & skills and approve the position for sourcing">
-        {loading ? "Opening…" : "RMG approve"}
+        {loading ? "Opening…" : compact ? "Approve" : "RMG approve"}
       </button>
       <button type="button" className={`${btnDanger} ${size}`} onClick={() => setRejecting(true)}
         title="Send the position back to Sales with a reason">Reject</button>

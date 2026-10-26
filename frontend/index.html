@@ -5247,6 +5247,8 @@
     .device-test-tile[data-status="testing"] { border-color: rgba(59, 130, 246, 0.55); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 12px 30px rgba(59, 130, 246, 0.12); }
     .device-test-tile-name { font-size: 12.5px; }
     .device-test-tile-hint { font-size: 13.5px; line-height: 1.55; color: #9fb3c8; }
+    /* 24 Oct 2026: why the screen share failed is written INSIDE its tile. */
+    .device-test-tile[data-test="screen"][data-status="error"] .device-test-tile-hint { color: #fecdd3; white-space: pre-line; }
     .device-test-meter { height: 10px; border-radius: 999px; }
     .device-test-meter-bar { border-radius: 999px; background: linear-gradient(90deg, #22c55e, #a3e635 60%, #facc15); }
     .device-test-status { font-size: 14px; }
@@ -9320,7 +9322,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=52"></script>
+  <script type="module" src="js/app.js?v=53"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

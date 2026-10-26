@@ -1642,7 +1642,8 @@ export function CandidateDetailPage() {
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Resume / CV</div>
               <div className="truncate text-sm">
-                {data.cv_url ? <FileLink url={data.cv_url} label="View CV" /> : <span className="text-muted">Not uploaded yet</span>}
+                {data.cv_url ? <FileLink url={data.cv_url} label="View CV"
+                  downloadName={[data.first_name, data.last_name].filter(Boolean).join(" ")} /> : <span className="text-muted">Not uploaded yet</span>}
               </div>
             </div>
             {canWrite && (
@@ -1670,7 +1671,8 @@ export function CandidateDetailPage() {
               <div className="text-[11px] font-bold uppercase tracking-wide text-muted">Resignation certificate</div>
               <div className="truncate text-sm">
                 {data.resignation_certificate_url
-                  ? <FileLink url={data.resignation_certificate_url} label="Resignation certificate" />
+                  ? <FileLink url={data.resignation_certificate_url} label="Resignation certificate"
+                      downloadName={`${[data.first_name, data.last_name].filter(Boolean).join(" ")} - Notice period proof`} />
                   : <span className="text-muted">Not uploaded</span>}
               </div>
             </div>
@@ -1884,7 +1886,8 @@ export function CandidateDetailPage() {
       )}
 
       {shownTab === "resumes" && (
-        <ResumeLibraryTab candidateId={data.id} canWrite={canWrite} notify={showToast} onChanged={load} />
+        <ResumeLibraryTab candidateId={data.id} canWrite={canWrite} notify={showToast} onChanged={load}
+          candidateName={[data.first_name, data.last_name].filter(Boolean).join(" ")} />
       )}
       {shownTab === "matching" && (
         <MatchingPositionsTab candidateId={data.id} isTa={isTa} notify={showToast} onApplied={load}

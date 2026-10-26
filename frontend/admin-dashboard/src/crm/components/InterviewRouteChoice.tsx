@@ -13,7 +13,7 @@
  * on a desk row — B-V2 `screening_desk.interview_route`); this renders that.
  */
 import { useState } from "react";
-import { BellRing, Bot, CalendarCheck2, PauseCircle, PlayCircle, Sparkles, StepForward, UsersRound } from "lucide-react";
+import { Archive, BellRing, Bot, CalendarCheck2, PauseCircle, PlayCircle, Sparkles, StepForward, UsersRound, XCircle } from "lucide-react";
 
 import { crmPost } from "../api";
 import { DecisionDialog, type DecisionSpec } from "./dialogKit";
@@ -103,8 +103,10 @@ export function ChooseAiL1Modal({ profileId, candidateName, context, onClose, on
    leave the row with no button — the ladder only opened on a pass. The AI
    verdict is advice: RMG / GM can proceed to the review anyway (L2 / Submit
    to Sales), park the candidate, or release a hold.
-   POST …/ai-l1-decision {decision: proceed|hold|release, note}. */
-export type AiL1Decision = "proceed" | "hold" | "release";
+   POST …/ai-l1-decision {decision: proceed|hold|release|reject, note}.
+   23 Oct 2026: "reject" closes the candidacy (RMG Rejected) — TA's row then
+   offers Archive / Re-apply instead of Reschedule AI L1. */
+export type AiL1Decision = "proceed" | "hold" | "release" | "reject";
 
 const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionSpec> = {
   proceed: (ai) => ({
@@ -141,6 +143,21 @@ const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionS
     reason: { label: "Note (optional)", placeholder: "e.g. Customer confirmed the budget" },
     happens: [{ icon: BellRing, text: "The release is logged on the profile." }],
     confirmLabel: "Release hold", busyLabel: "Saving…",
+  }),
+  reject: (ai) => ({
+    tone: "rose", icon: XCircle, eyebrow: "After the AI L1", title: "Reject the candidate",
+    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Rejecting marks the interview <b>Rejected</b> and closes
+      this candidacy as <b>RMG Rejected</b>.</>,
+    flow: { steps: ["AI L1", "Rejected", "TA archives"], current: 1 },
+    reason: { label: "Why reject", required: true, min: 5,
+      placeholder: "e.g. Could not explain the basics of the core skill",
+      picks: ["Core skill answers were weak", "Communication not at the level needed",
+        "Reviewed the recording — not a fit for this position"] },
+    happens: [
+      { icon: BellRing, text: "The TA who applied the candidate is told, with your reason." },
+      { icon: Archive, text: "TA's row offers Archive (or Re-apply later) — no more AI L1 reschedule." },
+    ],
+    confirmLabel: "Reject candidate", busyLabel: "Rejecting…",
   }),
 };
 

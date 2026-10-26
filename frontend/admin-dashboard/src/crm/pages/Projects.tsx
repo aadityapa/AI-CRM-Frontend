@@ -181,7 +181,7 @@ export function ProjectsListPage() {
     if (sp.get("create") === "1") {
       setShowNew(true);
       sp.delete("create");
-      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}?${sp.toString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

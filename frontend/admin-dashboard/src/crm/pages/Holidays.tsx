@@ -8,6 +8,7 @@ import { HolidayNameField } from "../components/HolidayNameField";
 import { FilterChips } from "../components/FilterChips";
 import type { ActiveFilter } from "../components/FilterChips";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
+import { fetchActiveCustomers } from "../lib/activeCustomers";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import {
@@ -107,7 +108,7 @@ export function HolidaysPage() {
     if (sp.get("create") === "1") {
       setModal({});
       sp.delete("create");
-      window.history.replaceState(null, "", `${window.location.pathname}?${sp.toString()}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}?${sp.toString()}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -121,8 +122,10 @@ export function HolidaysPage() {
   useEffect(() => {
     // Match Customers page default: only Active accounts in the picker.
     // Inactive duplicates (e.g. old legal-name rows) otherwise clutter the filter.
-    fetchAllMaster<CustomerLite>("/api/customers", { status: "Active" })
-      .then((rows) => setCustomers(rows.sort((a, b) => a.name.localeCompare(b.name))))
+    // The open names list (every CRM role) — /api/customers is gated to the
+    // Customers tab, which an HR login may not hold (23 Oct 2026).
+    fetchActiveCustomers()
+      .then((rows) => setCustomers(rows.map((c): CustomerLite => ({ id: c.id, name: c.name }))))
       .catch(() => {});
     crmGet<{ id: number; name: string }[]>("/api/customers/names")
       .then((r) => setCustomerNames(new Map((r.data || []).map((c) => [c.id, c.name]))))

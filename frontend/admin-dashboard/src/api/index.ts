@@ -192,14 +192,31 @@ export async function patchInterviewHrStatus(
   return apiPatch(`/hr/interviews/${encodeURIComponent(id)}/status`, { status: statusToApiSlug(status) });
 }
 
+/** What a report-page decision did to the CRM candidacy (23 Oct 2026). */
+export type HrDecisionOutcome = {
+  linked: boolean;
+  profile_id: number | null;
+  decision: string | null;
+  status_before: string | null;
+  status_after: string | null;
+  moved: boolean;
+  closed: boolean;
+  message: string;
+  next?: string[];
+};
+
 export async function setHrCandidateDecision(
   candidateId: string,
-  decision: "shortlist" | "reject" | "on_hold" | null
-): Promise<{ status: string; candidate_id: string; hr_decision: string | null }> {
+  decision: "shortlist" | "reject" | "on_hold" | null,
+  interviewId?: string,
+): Promise<{ status: string; candidate_id: string; hr_decision: string | null; crm?: HrDecisionOutcome | null }> {
   const id = String(candidateId || "").trim();
   if (!id) throw new Error("Candidate id is required.");
   return apiPut(`/hr/candidates/${encodeURIComponent(id)}/hr-decision`, {
     decision: decision === null ? null : decision,
+    // The interview on screen: lets the server self-heal a resume-email key
+    // and mirror the decision onto THIS interview, not just the newest.
+    ...(interviewId ? { interview_id: interviewId } : {}),
   });
 }
 

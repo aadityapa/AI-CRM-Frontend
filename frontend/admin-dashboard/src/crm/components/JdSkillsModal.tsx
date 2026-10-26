@@ -27,7 +27,7 @@ import { DialogActions, DialogFailure, DialogHero, DialogSection, WhatHappens, u
 import { FileLink } from "./FileUpload";
 import { SkillListEditor, mergeSkillRows, newSkillKey, type SkillMaster, type SkillRow } from "./SkillListEditor";
 import { Modal, focusRing, inputCls } from "./ui";
-import { TaPicker, fetchTaAssignments, withStaleAssignees, type TaOption } from "./PositionTeamPanel";
+import { TaPicker, fetchTaAssignments, fetchTeam, withStaleAssignees, type TaOption } from "./PositionTeamPanel";
 
 /** A JD file on the requirement (`kind: "rmg_jd"`). */
 export type JdFile = { id: number; file_url: string; file_name: string | null; kind?: string | null };
@@ -132,6 +132,27 @@ export function JdSkillsModal({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [approve, req.id]);
+  /* The Hiring Manager(s) (22 Oct 2026) are picked in the same click —
+     `hm_user_ids`. With one, the position waits for their JD confirmation. */
+  const [hmOptions, setHmOptions] = useState<TaOption[]>([]);
+  const [hmPicked, setHmPicked] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    if (!approve) return;
+    let cancelled = false;
+    fetchTeam(req.id, "hm")
+      .then((r) => {
+        if (cancelled) return;
+        setHmOptions(withStaleAssignees(r.options, r.assignments));
+        setHmPicked(new Set(r.assignments.map((a) => a.user_id)));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [approve, req.id]);
+  const toggleHm = (id: number) => setHmPicked((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const toggleTa = (id: number) => setTaPicked((s) => {
     const next = new Set(s);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -223,6 +244,7 @@ export function JdSkillsModal({
           rmg_jd_text: rmgJdText,
           skills,
           ...(taOptions.length ? { ta_user_ids: Array.from(taPicked) } : {}),
+          ...(hmOptions.length ? { hm_user_ids: Array.from(hmPicked) } : {}),
         });
         toast(res.message || "Position approved — TA can source now");
         onSaved(res.data);
@@ -352,7 +374,14 @@ export function JdSkillsModal({
           )}
 
           {approve && (
-            <DialogSection n={5} title="Note for TA" tone={tone} optional done={comment.trim().length > 0}
+            <DialogSection n={5} title="Hiring Manager" tone={tone} optional done={hmPicked.size > 0}
+              hint="The Karnex Hiring Manager who owns this position. With one, the position waits for them to confirm the JD & skills before TA sources; they also review candidates before the customer and sign off the selection.">
+              <TaPicker kind="hm" options={hmOptions} picked={hmPicked} onToggle={toggleHm} />
+            </DialogSection>
+          )}
+
+          {approve && (
+            <DialogSection n={6} title="Note for TA" tone={tone} optional done={comment.trim().length > 0}
               hint="Anything the recruiter should know when sourcing — goes with the approval.">
               <input className={inputCls} value={comment} onChange={(e) => setComment(e.target.value)}
                 placeholder="e.g. Customer wants automotive background; night shift; joining within 30 days" />
@@ -373,7 +402,9 @@ export function JdSkillsModal({
             { icon: ScanLine, text: "Every resume on this position is ATS-scored on the mandatory skills and the JD keywords." },
             { icon: Bot, text: "The AI L1 interview asks questions from this JD." },
             { icon: Users, text: approve
-                ? (taPicked.size ? `The position opens for sourcing — the ${taPicked.size} assigned TA(s) are told.` : "The position opens for sourcing — every TA is told.")
+                ? (hmPicked.size
+                    ? `The Hiring Manager${hmPicked.size > 1 ? "s" : ""} confirm${hmPicked.size > 1 ? "" : "s"} the JD & skills first — then the position opens and TA is told.`
+                    : taPicked.size ? `The position opens for sourcing — the ${taPicked.size} assigned TA(s) are told.` : "The position opens for sourcing — every TA is told.")
                 : "Suggested Candidates are matched against these skills." },
             ...(approve ? [{ icon: Sparkles, text: "The approval is logged with your note." }] : []),
           ]} />

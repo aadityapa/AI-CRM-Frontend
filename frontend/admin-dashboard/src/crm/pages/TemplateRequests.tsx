@@ -8,6 +8,7 @@ import type { Meta } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanAct } from "../useAccess";
 import { crmNavigate } from "../routerHooks";
+import { pushAppHistory } from "../../lib/appHistory";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -118,7 +119,7 @@ function goToTemplatesTab(row?: TR | null) {
   const params = new URLSearchParams(window.location.search);
   params.set("view", "templates");
   params.delete("p");
-  window.history.pushState({}, "", `${window.location.pathname}?${params.toString()}`);
+  pushAppHistory(`${window.location.pathname}?${params.toString()}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

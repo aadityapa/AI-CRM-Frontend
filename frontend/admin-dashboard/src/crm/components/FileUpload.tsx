@@ -1,6 +1,6 @@
 /** File upload button with progress indicator + authenticated in-page file preview. */
 import React, { useEffect, useRef, useState } from "react";
-import { Download, FileText, Upload } from "lucide-react";
+import { Download, FileText, Upload, ZoomIn, ZoomOut } from "lucide-react";
 import { authFetch } from "../../api/client";
 import { crmUpload } from "../api";
 import { Modal, btnSecondary } from "./ui";
@@ -127,7 +127,11 @@ async function renderPdfToContainer(
     if (signal.cancelled) return;
     const page = await pdf.getPage(pageNum);
     const base = page.getViewport({ scale: 1 });
-    const scale = Math.min(1.4, Math.max(0.9, (container.clientWidth || 720) / base.width));
+    // Drawn at twice the fitted size (23 Oct 2026): the pages are shown at the
+    // container's width and the zoom buttons enlarge them up to 3× — a canvas
+    // drawn at 1× went blurry the moment anyone zoomed into a notice-period proof.
+    const fit = Math.min(1.4, Math.max(0.9, (container.clientWidth || 720) / base.width));
+    const scale = Math.min(3, fit * 2);
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(viewport.width);
@@ -180,15 +184,39 @@ async function extractPdfText(data: ArrayBuffer): Promise<string> {
   return parts.join("\n\n— — —\n\n").trim();
 }
 
+/** The name a downloaded file gets (23 Oct 2026, user ask: "a downloaded resume
+ * should be named after the candidate"). `base` is the candidate's name (or the
+ * label); characters Windows refuses are dropped and the real extension added
+ * unless the name already ends with it. PURE. */
+export function downloadFileName(base: string, ext: string): string {
+  const clean = (base || "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim() || "file";
+  const e = (ext || "").replace(/^\./, "").toLowerCase();
+  if (!e || e === "bin") return clean;
+  return clean.toLowerCase().endsWith(`.${e}`) ? clean : `${clean}.${e}`;
+}
+
+/** Zoom steps for the PDF / image preview. */
+export const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+
+/** The next zoom step up (dir 1) or down (dir -1). PURE. */
+export function nextZoom(current: number, dir: 1 | -1): number {
+  if (dir > 0) return ZOOM_STEPS.find((z) => z > current + 1e-9) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  return [...ZOOM_STEPS].reverse().find((z) => z < current - 1e-9) ?? ZOOM_STEPS[0];
+}
+
 /** The preview body WITHOUT the modal shell (28 Aug 2026): reused by the
  * bulk-upload verify wizard, which renders the resume beside an edit form. */
 export function FilePreviewPane({
   url,
   title,
+  downloadName,
 }: {
   url: string;
   title: string;
+  /** What Download saves the file as — the candidate's name for a resume. */
+  downloadName?: string;
 }) {
+  const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -222,6 +250,7 @@ export function FilePreviewPane({
       setPdfView("original");
       setPdfText(null);
       setKind("other");
+      setZoom(1);
       try {
         const path = toAuthPath(url);
         let blob: Blob;
@@ -343,8 +372,9 @@ export function FilePreviewPane({
     const href = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = href;
-    const name = title.includes(".") ? title : `${title || "file"}.${fileExt || "bin"}`;
-    a.download = name;
+    a.download = downloadName
+      ? downloadFileName(downloadName, fileExt)
+      : title.includes(".") ? title : `${title || "file"}.${fileExt || "bin"}`;
     a.click();
     URL.revokeObjectURL(href);
   };
@@ -364,6 +394,11 @@ export function FilePreviewPane({
     }
   };
 
+  // Zoom (23 Oct 2026, user ask: "zoom in / out on the notice-period proof"):
+  // PDFs (original view) and images.
+  const zoomable = !loading && !error && ((kind === "pdf" && pdfView === "original") || (kind === "image" && !!blobUrl));
+  const zoomBtn = "inline-flex h-7 w-7 items-center justify-center rounded-control text-secondary hover:bg-surface-1 hover:text-primary disabled:opacity-40";
+
   const toggleBtn = (on: boolean) =>
     `rounded-control px-2.5 py-1 text-xs font-semibold transition-colors duration-micro ${
       on ? "bg-surface-1 text-brand-600 shadow-sm dark:text-brand-300" : "text-muted hover:text-primary"}`;
@@ -382,6 +417,16 @@ export function FilePreviewPane({
               </button>
             </div>
           )}
+          {zoomable && (
+            <div className="inline-flex items-center rounded-control bg-surface-2 p-0.5 ring-1 ring-inset ring-subtle" role="group" aria-label="Zoom">
+              <button type="button" className={zoomBtn} onClick={() => setZoom((z) => nextZoom(z, -1))}
+                disabled={zoom <= ZOOM_STEPS[0]} aria-label="Zoom out" title="Zoom out"><ZoomOut size={14} aria-hidden /></button>
+              <button type="button" className="min-w-[3.25rem] px-1 text-xs font-semibold tabular-nums text-secondary hover:text-primary"
+                onClick={() => setZoom(1)} title="Back to fit">{Math.round(zoom * 100)}%</button>
+              <button type="button" className={zoomBtn} onClick={() => setZoom((z) => nextZoom(z, 1))}
+                disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]} aria-label="Zoom in" title="Zoom in"><ZoomIn size={14} aria-hidden /></button>
+            </div>
+          )}
           <button type="button" className={btnSecondary} onClick={download} disabled={!ready || loading}>
             <Download size={14} /> Download
           </button>
@@ -396,13 +441,15 @@ export function FilePreviewPane({
           <p className="text-center text-sm text-muted">Rendering resume…</p>
         )}
         <div
-          ref={pdfHostRef}
           className={
             kind === "pdf" && !error && pdfView === "original"
-              ? "max-h-[65vh] min-h-[200px] overflow-y-auto rounded-lg bg-surface-2 p-2"
+              ? "max-h-[65vh] min-h-[200px] overflow-auto rounded-lg bg-surface-2 p-2"
               : "hidden"
           }
-        />
+        >
+          {/* The host keeps the drawn pages; its width is the zoom (100% = fit). */}
+          <div ref={pdfHostRef} style={{ width: `${zoom * 100}%` }} className="mx-auto" />
+        </div>
         {kind === "pdf" && !error && pdfView === "text" && (
           pdfTextBusy || pdfText == null ? (
             <p className="py-8 text-center text-sm text-muted">Extracting text…</p>
@@ -424,7 +471,13 @@ export function FilePreviewPane({
           </pre>
         )}
         {!loading && !error && kind === "image" && blobUrl && (
-          <img src={blobUrl} alt={title} className="mx-auto max-h-[65vh] max-w-full rounded-lg object-contain" />
+          zoom === 1 ? (
+            <img src={blobUrl} alt={title} className="mx-auto max-h-[65vh] max-w-full rounded-lg object-contain" />
+          ) : (
+            <div className="max-h-[65vh] overflow-auto rounded-lg bg-surface-2 p-2">
+              <img src={blobUrl} alt={title} style={{ width: `${zoom * 100}%`, maxWidth: "none" }} className="mx-auto rounded-lg" />
+            </div>
+          )
         )}
         {!loading && !error && kind === "other" && (
           <p className="py-6 text-center text-sm text-muted">
@@ -440,21 +493,27 @@ export function FilePreviewPane({
 function FilePreviewModal({
   url,
   title,
+  downloadName,
   onClose,
 }: {
   url: string;
   title: string;
+  downloadName?: string;
   onClose: () => void;
 }) {
   return (
-    <Modal title={title} onClose={onClose} medium>
-      <FilePreviewPane url={url} title={title} />
+    <Modal title={downloadName ? `${title} — ${downloadName}` : title} onClose={onClose} medium>
+      <FilePreviewPane url={url} title={title} downloadName={downloadName} />
     </Modal>
   );
 }
 
-/** Opens CRM files in an authenticated medium modal (same tab). External URLs open in a new tab. */
-export function FileLink({ url, label = "View file" }: { url?: string | null; label?: string }) {
+/** Opens CRM files in an authenticated medium modal (same tab). External URLs open in a new tab.
+ * `downloadName` (23 Oct 2026): what Download saves the file as — pass the
+ * candidate's name for a resume ("Ravi Kumar.pdf", never "View CV.pdf"). */
+export function FileLink({ url, label = "View file", downloadName }: {
+  url?: string | null; label?: string; downloadName?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   if (!url) return <span className="text-xs text-muted">—</span>;
 
@@ -488,7 +547,8 @@ export function FileLink({ url, label = "View file" }: { url?: string | null; la
       >
         <FileText size={14} /> {label}
       </button>
-      {open && <FilePreviewModal url={authPath || url} title={label} onClose={() => setOpen(false)} />}
+      {open && <FilePreviewModal url={authPath || url} title={label} downloadName={downloadName || undefined}
+        onClose={() => setOpen(false)} />}
     </>
   );
 }

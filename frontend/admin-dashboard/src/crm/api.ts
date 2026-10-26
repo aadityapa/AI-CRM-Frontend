@@ -103,10 +103,26 @@ async function request<T = any>(path: string, init?: RequestInit): Promise<{ dat
         : body?.detail && typeof body.detail === "object" ? [body.detail] : []);
     throw new CrmApiError(msg, res.status, errs);
   }
+  const method = (init?.method || "GET").toUpperCase();
+  if (method !== "GET" && !NO_DESK_ANNOUNCE.test(path)) announceDeskChange();
   if (body && typeof body === "object" && "data" in body) {
     return { data: body.data as T, meta: body.meta as Meta | undefined, message: body.message || "" };
   }
   return { data: body as T, meta: undefined, message: "" };
+}
+
+/** 23 Oct 2026 (user report: dashboard queues were not "real time"): every
+ *  successful change tells the open work desks / dashboards to re-read
+ *  (`useDeskData({live})` listens — same tab directly, other tabs of this
+ *  browser through storage). Ticks and preferences move no work. */
+export const DESK_CHANGED_EVENT = "crm:desk-changed";
+const NO_DESK_ANNOUNCE = /\/desk\/marks|\/table-preferences|\/notifications/;
+
+export function announceDeskChange(): void {
+  try {
+    window.dispatchEvent(new Event(DESK_CHANGED_EVENT));
+    window.localStorage.setItem(DESK_CHANGED_EVENT, String(Date.now()));
+  } catch { /* storage may be blocked — the same-tab event already went */ }
 }
 
 export function qs(params: Record<string, string | number | boolean | undefined | null>): string {

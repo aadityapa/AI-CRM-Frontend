@@ -36,6 +36,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { pushAppHistory } from "../../lib/appHistory";
 import { readCrmPath } from "../router";
 
 const TAB_PREFIX = "crm.tab:";
@@ -57,8 +58,8 @@ function writeParam(name: string, value: string, mode: "push" | "replace"): void
     const url = new URL(window.location.href);
     if (url.searchParams.get(name) === value) return;
     url.searchParams.set(name, value);
-    const fn = mode === "push" ? window.history.pushState : window.history.replaceState;
-    fn.call(window.history, window.history.state, "", url.toString());
+    if (mode === "push") pushAppHistory(url.toString());
+    else window.history.replaceState(window.history.state, "", url.toString());
   } catch { /* the tab still switches; only the address is not updated */ }
 }
 

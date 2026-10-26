@@ -90,6 +90,54 @@ export function RoundOffToggle({ value, onChange, disabled }: {
   );
 }
 
+export type PerDayPlan = { perDay: number; days: number; amount: number; before: number };
+
+/**
+ * PURE twin of the server's `services.proforma.round_per_day` (24 Oct 2026):
+ * a PART month on a Monthly / Yearly rate bills days × the per-day amount
+ * rounded to the rupee. A full month (amount = rate), a longer cycle and
+ * Hourly / Daily rates are never changed — null then.
+ */
+export function roundPerDay(line: { billing_unit?: string | null; rate_per_unit?: number | null;
+  amount?: number | null; per_day_charge?: number | null } | null | undefined): PerDayPlan | null {
+  if (!line) return null;
+  const unit = line.billing_unit || "Monthly";
+  if (unit !== "Monthly" && unit !== "Yearly") return null;
+  const r = Number(line.rate_per_unit || 0);
+  const a = Number(line.amount || 0);
+  const p = Number(line.per_day_charge || 0);
+  if (!(r > 0) || !(a > 0) || !(p > 0) || a >= r) return null;
+  let days = a / p;
+  const snapped = Math.round(days * 2) / 2;
+  days = Math.abs(days - snapped) < 0.05 ? snapped : Math.round(days * 100) / 100;
+  if (!(days > 0)) return null;
+  const perDay = Math.round(p);
+  let amount = Math.round(days * perDay * 100) / 100;
+  if (amount > r) amount = r;
+  return { perDay, days, amount, before: Math.round(a * 100) / 100 };
+}
+
+const inrPlain = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+export function RoundPerDayToggle({ value, onChange, plan }: {
+  value: boolean; onChange: (next: boolean) => void; plan: PerDayPlan;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2 rounded-card border border-subtle px-3 py-2 text-sm hover:bg-surface-2">
+      <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={value}
+        onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        <span className="font-semibold text-primary">Round off the per-day amount</span>
+        <span className="block text-xs text-muted">
+          Per day {inrPlain(plan.perDay)} × {plan.days} days = <b className="text-primary">{inrPlain(plan.amount)}</b>
+          {" "}(exact: {inrPlain(plan.before)}). The invoice prints these figures, so Qty × Rate per day = Amount.
+          A full month is never changed.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 export function ProformaBanner({ inv }: { inv: { invoice_number: string; returned_reason?: string | null; returned_at?: string | null; invoice_format?: InvoiceFormat | null } }) {
   const returned = !!inv.returned_at;
   return (

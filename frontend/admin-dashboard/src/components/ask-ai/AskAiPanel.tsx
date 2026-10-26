@@ -39,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { APP_NAME } from "../../lib/brand";
+import { pushAppHistory } from "../../lib/appHistory";
 import { CRM_NAV } from "../../crm/nav";
 import { crmNavigate, readCrmPath } from "../../crm/routerHooks";
 import { fetchHelpContext, postAssist, TOOL_LABELS, type ChatTurn } from "./askAiApi";
@@ -541,7 +542,7 @@ export function AskAiPanel({ open, onClose }: { open: boolean; onClose: () => vo
       const qs = new URLSearchParams(window.location.search);
       if (qs.get("view") !== "crm") {
         qs.set("view", "crm");
-        window.history.pushState({}, "", `${window.location.pathname}?${qs.toString()}`);
+        pushAppHistory(`${window.location.pathname}?${qs.toString()}`);
         window.dispatchEvent(new PopStateEvent("popstate"));
       }
       crmNavigate(path);

@@ -44,7 +44,7 @@ export type ApplyLinkData = {
 /** Requirement states before RMG has approved the position for sourcing. */
 const PRE_APPROVAL = new Set([
   "Draft", "Pending_Sales_Head_Approval", "Sales_Head_Rejected",
-  "Pending_Engineering_Review", "Engineering_Rejected",
+  "Pending_Engineering_Review", "Engineering_Rejected", "Pending_HM_Review",
 ]);
 
 export type ApplyLinkState = "pending" | "open" | "closed";

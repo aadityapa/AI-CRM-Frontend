@@ -7,7 +7,7 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from "react
 import {
   Briefcase,
   AlertTriangle, Building2, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, GraduationCap, Mail, MapPin,
-  Pencil, Plus, UserPlus, UsersRound, Wallet,
+  Pencil, Plus, UserPlus, Wallet,
 } from "lucide-react";
 import { crmGet, crmPost, qs } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
@@ -22,12 +22,14 @@ import { DataTable } from "../components/DataTable";
 import { PositionsPanel } from "../components/PositionsPanel";
 import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
 import { RmgApproveRowButtons } from "../components/RmgApprovalsStrip";
-import { AssignTasButton, InlinePriority, PositionTeamPanel, PriorityPill, TaChip, type TaAssignment } from "../components/PositionTeamPanel";
+import { HmJdReviewBannerFor } from "../components/HiringManagerPanels";
+import { InlinePriority, PositionTeamPanel, PriorityPill, type TaAssignment } from "../components/PositionTeamPanel";
+import { FilledCell, OppRowActions, TeamCell } from "../components/OpportunityRowParts";
 import { JdSkillsCardForRequirement } from "../components/JdSkillsCard";
 import { ApplyLinkCard } from "../components/ApplyLinkCard";
 import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
-import { RowActions, afterListDelete } from "../components/RowActions";
+import { afterListDelete } from "../components/RowActions";
 import { FileLink } from "../components/FileUpload";
 import { ApplicantsBoard, type ApplicantRow } from "../components/ApplicantsBoard";
 import { Timeline } from "../components/Timeline";
@@ -106,6 +108,7 @@ type Opportunity = {
   /** The position's urgency + the TAs working it (1 Oct 2026) — from the headcount map. */
   requirement_priority?: string | null;
   assigned_tas?: TaAssignment[];
+  hiring_managers?: TaAssignment[];
   /** The position row's facts (1 Oct 2026) — the list prints TA's row for every role. */
   requirement_experience_min?: number | null;
   requirement_experience_max?: number | null;
@@ -212,39 +215,6 @@ const navRoles = (path: string): string[] => CRM_NAV.find((n) => n.path === path
 const fmtMoney = (v?: number | null) => (v === null || v === undefined ? "—" : Number(v).toLocaleString());
 const fmtDate = (v?: string | null) => (v ? new Date(v).toLocaleDateString() : "—");
 
-/**
- * "open / total" headcount for one opportunity (21 Sep 2026).
- *
- * Open is what still needs sourcing (total − joined), so it is the number in
- * front; zero open reads as filled, and a pending RMG decision is flagged
- * because the target is about to move. An opportunity with no requirement yet
- * has no numbers at all — "—" rather than a made-up 0.
- */
-function PositionsCell({ row }: { row: Opportunity }) {
-  const total = row.positions_total;
-  if (total === null || total === undefined) return <span className="text-muted">—</span>;
-  const open = Number(row.positions_open ?? 0);
-  const filled = open === 0;
-  return (
-    <span className="inline-flex items-center gap-1.5 tabular-nums">
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ring-subtle"
-            title={`${open} open of ${total}`}>
-        <UsersRound size={12} className="text-muted" aria-hidden />
-        <span className={filled ? "text-success" : "text-primary"}>{open}</span>
-        <span className="font-semibold text-muted">/ {total}</span>
-      </span>
-      {row.positions_change_pending && (
-        <span
-          className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
-          title="A position change is waiting for RMG approval"
-        >
-          Change
-        </span>
-      )}
-    </span>
-  );
-}
-
 /* ------------------------------------------------------------------ list page */
 
 export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SOW" } = {}) {
@@ -262,6 +232,8 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   /* RMG approval from the row (7 Oct 2026, user ask) — whoever the approve gate admits
      (RMG, a GM through the approval, Admin); shown only on a position awaiting RMG. */
   const canEngApprove = useCanApprove("requirement.engineering_approve");
+  // Change TAs / Assign HM (23 Oct 2026): RMG / GM by default, Admin-editable.
+  const canAssignTeam = useCanApprove("requirement.team.assign");
   const canProjects = useCanAct("projects", "view", useHasRole(...navRoles("projects")));
   const canProjectEmployees = useCanAct("project-employees", "view", useHasRole(...navRoles("project-employees")));
   const listTabs = LIST_TABS.filter((t) =>
@@ -388,22 +360,24 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
       render: (r) => (
         <div className="min-w-[16rem]">
           <div className="font-semibold text-primary">{r.title}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             {r.requirement_id != null && (canSetPriority
-              ? <InlinePriority requirementId={r.requirement_id} value={r.requirement_priority} toast={showToast}
-                  onChanged={(p) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, requirement_priority: p } : x)))} />
+              ? <span onClick={(e) => e.stopPropagation()}>
+                  <InlinePriority requirementId={r.requirement_id} value={r.requirement_priority} toast={showToast}
+                    onChanged={(p) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, requirement_priority: p } : x)))} />
+                </span>
               : r.requirement_priority && <PriorityPill p={r.requirement_priority} />)}
             {(r.requirement_experience_min != null || r.requirement_experience_max != null) && (
               <span className="inline-flex items-center gap-1 text-xs text-muted">
                 <GraduationCap size={12} aria-hidden /> {fmtRange(r.requirement_experience_min, r.requirement_experience_max, "yrs")}
               </span>
             )}
+            {(r.requirement_budget_ctc_min != null || r.requirement_budget_ctc_max != null) && (
+              <span className="inline-flex items-center gap-1 text-xs text-muted" title="Budget (CTC)">
+                <Wallet size={12} aria-hidden /> {fmtRange(r.requirement_budget_ctc_min, r.requirement_budget_ctc_max, "")}
+              </span>
+            )}
           </div>
-          {(r.assigned_tas?.length ?? 0) > 0 && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1" title="TAs assigned to source this position">
-              {(r.assigned_tas || []).map((a) => <TaChip key={a.id} a={a} />)}
-            </div>
-          )}
         </div>
       ) },
     { key: "customer_name", label: "Customer", sortable: true, filter: { type: "select", options: customerOpts },
@@ -425,35 +399,32 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
       } },
     // Positions (21 Sep 2026): open / total — server-computed per page, not
     // sortable (sorting one page of a derived value would read like a lie).
-    { key: "positions_open", label: "Positions", render: (r) => <PositionsCell row={r} /> },
-    { key: "budget", label: "Budget",
-      render: (r) => (
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-primary">
-          <Wallet size={13} className="text-muted" aria-hidden />
-          {fmtRange(r.requirement_budget_ctc_min, r.requirement_budget_ctc_max, "")}
-        </span>
-      ) },
+    { key: "positions_open", label: "Filled",
+      render: (r) => <FilledCell total={r.positions_total} joined={r.positions_joined}
+        open={r.positions_open} changePending={r.positions_change_pending} /> },
     // ONE status wording (`display_status_for`): the sourcing status while the
     // deal is live, the Sales wording once it is settled or parked; a deal
     // with no requirement yet badges its approval / stage.
-    { key: "status", label: "Status",
-      render: (r) => (
-        <StatusBadge
-          status={r.requirement_display_status
-            || (r.approval_status && r.approval_status !== "Approved" ? r.approval_status : r.pipeline_stage)}
-          label={r.requirement_display_status ? undefined
-            : (r.approval_status && r.approval_status !== "Approved" ? undefined : pipelineStageLabel(r.pipeline_stage))}
-        />
-      ) },
-    { key: "target_closure_date", label: "Target date",
+    /* Status + target date in one cell (24 Oct 2026 redesign) — the overdue
+       chip sits under the status it belongs to, one column fewer. */
+    { key: "status", label: "Status · target",
       render: (r) => {
         const due = dueChip(r.requirement_target_closure_date, r.requirement_status);
         return (
-          <div className="whitespace-nowrap">
-            <span className="inline-flex items-center gap-1.5 text-primary">
-              <CalendarDays size={13} className="text-muted" aria-hidden /> {fmtRowDate(r.requirement_target_closure_date)}
-            </span>
-            {due && <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${due.cls}`}>{due.label}</div>}
+          <div className="min-w-[9rem]">
+            <StatusBadge
+              status={r.requirement_display_status
+                || (r.approval_status && r.approval_status !== "Approved" ? r.approval_status : r.pipeline_stage)}
+              label={r.requirement_display_status ? undefined
+                : (r.approval_status && r.approval_status !== "Approved" ? undefined : pipelineStageLabel(r.pipeline_stage))}
+            />
+            {r.requirement_target_closure_date && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 whitespace-nowrap text-xs text-secondary">
+                <span className="inline-flex items-center gap-1"><CalendarDays size={12} className="text-muted" aria-hidden />
+                  {fmtRowDate(r.requirement_target_closure_date)}</span>
+                {due && <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${due.cls}`}>{due.label}</span>}
+              </div>
+            )}
           </div>
         );
       } },
@@ -464,6 +435,16 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
       filter: { type: "select" as const, options: typeOpts } }] : []),
     { key: "created_at", label: "Created", sortable: true, align: "right", render: (r) => fmtDate(r.created_at),
       filter: { type: "date-range" } },
+    /* Sourcing team (24 Oct 2026): TAs + Hiring Managers as avatars. Only a
+       team assigner (`requirement.team.assign` — RMG / GM by default) gets the
+       clickable groups and "+" slots; every other role sees the team read-only. */
+    { key: "team", label: "Sourcing team",
+      render: (r) => (
+        <TeamCell requirementId={r.requirement_id} label={r.opp_id || r.title}
+          tas={r.assigned_tas} hms={r.hiring_managers} canAssign={canAssignTeam} toast={showToast}
+          onTas={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))}
+          onHms={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, hiring_managers: rows } : x)))} />
+      ) },
   ];
 
   /* Header figures — from the page already loaded, nothing fetched. */
@@ -472,6 +453,10 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const pageOpen = rows.reduce((n, r) => n + (Number(r.positions_open) || 0), 0);
   const pageHigh = rows.filter((r) => r.requirement_priority === "High").length;
   const pageOverdue = rows.filter((r) => dueChip(r.requirement_target_closure_date, r.requirement_status)?.cls.includes("danger")).length;
+  /* Team gaps on this page (24 Oct 2026) — only positions that exist count. */
+  const withPosition = rows.filter((r) => r.requirement_id != null);
+  const needTa = withPosition.filter((r) => !(r.assigned_tas?.length)).length;
+  const needHm = withPosition.filter((r) => !(r.hiring_managers?.length)).length;
 
   return (
     <div className="space-y-4">
@@ -487,6 +472,8 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           { label: activeTab ? activeTab.label.toLowerCase() : "opportunities", value: meta ? meta.total : "—", title: "Total in the open tab" },
           { label: "positions open", value: pageOpen, title: "Open positions on this page" },
           { label: "high priority", value: pageHigh },
+          ...(needTa ? [{ label: "need a TA", value: needTa, title: "Positions on this page with no TA assigned" }] : []),
+          ...(needHm ? [{ label: "need an HM", value: needHm, title: "Positions on this page with no Hiring Manager" }] : []),
           ...(pageOverdue ? [{ label: "past target date", value: pageOverdue }] : []),
         ] : undefined}
         actions={canWrite ? (
@@ -551,42 +538,33 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           // and RMG — the roles the backend allows — never saw it on the
           // list and had to open every opportunity to apply.
           rowActionsLabel="Actions"
-          rowActions={(canWrite || canApply || canSetPriority || canEngApprove) ? (r) => (
-            <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              {canEngApprove && r.requirement_id != null && r.requirement_status === "Pending_Engineering_Review" && (
-                <RmgApproveRowButtons requirementId={r.requirement_id} title={r.title} oppId={r.opp_id}
-                  onChanged={() => void load()} showToast={showToast} />
-              )}
-              {canSetPriority && r.requirement_id != null && (
-                <AssignTasButton requirementId={r.requirement_id} label={r.opp_id || r.title} assigned={r.assigned_tas}
-                  toast={showToast}
-                  onChanged={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))} />
-              )}
-              {canApply && (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-control p-1.5 text-muted transition-colors hover:bg-surface-2 hover:!text-indigo-600"
-                  title="Apply a candidate to this opportunity"
-                  aria-label={`Apply a candidate to ${r.title}`}
-                  onClick={(e) => { e.stopPropagation(); setApplyTo(r); }}
-                >
-                  <UserPlus size={15} />
-                </button>
-              )}
-              {canWrite && (
-                <RowActions
-                  entity="opportunity"
-                  itemLabel={r.title}
-                  onEdit={() => setEditId(r.id)}
-                  deleteUrl={`/api/opportunities/${r.id}`}
-                  onDeleted={() => afterListDelete(r.id, setRows, load)}
-                  notify={showToast}
-                  canEdit
-                  canDelete
-                  colored />
-              )}
-            </span>
-          ) : undefined}
+          /* Actions (24 Oct 2026 redesign): ONE main button (RMG approve when the
+             position waits for RMG · Assign TAs when nobody sources it and you may
+             assign · Apply), Edit, and a ⋯ menu with the rest — Delete at its
+             bottom. Same rights as before; Team assignment stays RMG / GM only. */
+          rowActions={(r) => (
+            <OppRowActions
+              id={r.id}
+              label={r.opp_id || r.title}
+              title={r.title}
+              requirementId={r.requirement_id}
+              tas={r.assigned_tas}
+              hms={r.hiring_managers}
+              canAssignTeam={canAssignTeam}
+              canApply={canApply}
+              canWrite={canWrite}
+              approveSlot={canEngApprove && r.requirement_id != null && r.requirement_status === "Pending_Engineering_Review"
+                ? <RmgApproveRowButtons requirementId={r.requirement_id} title={r.title} oppId={r.opp_id}
+                    onChanged={() => void load()} showToast={showToast} />
+                : undefined}
+              onApply={() => setApplyTo(r)}
+              onEdit={() => setEditId(r.id)}
+              onTas={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, assigned_tas: rows } : x)))}
+              onHms={(rows) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, hiring_managers: rows } : x)))}
+              onDeleted={() => afterListDelete(r.id, setRows, load)}
+              toast={showToast}
+            />
+          )}
         />
       )}
 
@@ -1393,7 +1371,7 @@ export function SuggestedCandidatesTab({
                     Email
                   </button>
                 )}
-                {r.cv_url && <FileLink url={r.cv_url} label="Resume" />}
+                {r.cv_url && <FileLink url={r.cv_url} label="Resume" downloadName={r.name} />}
                 {r.linkedin_url && (
                   <a className={`${btnSecondary} !px-2.5 !py-1 text-xs`} target="_blank"
                     rel="noreferrer" href={r.linkedin_url}>
@@ -2198,6 +2176,12 @@ export function OpportunityDetailPage() {
           <RmgApproveRowButtons requirementId={opp.requirement_id} title={opp.title} oppId={opp.opp_id}
             compact={false} onChanged={reloadOpp} showToast={showToast} />
         </div>
+      ) : null}
+
+      {/* The position waits for its Hiring Manager to confirm the JD & skills
+          (22 Oct 2026) — the HM decides here; everyone else sees who it waits on. */}
+      {opp.requirement_id && opp.requirement_status === "Pending_HM_Review" ? (
+        <HmJdReviewBannerFor requirementId={opp.requirement_id} toast={showToast} onDone={reloadOpp} />
       ) : null}
 
       {/* Priority + the TAs assigned to source it (1 Oct 2026, user ask) —

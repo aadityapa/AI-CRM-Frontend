@@ -34,6 +34,24 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Partly paid: some money in, a balance still due (PURE). */
+export function isPartlyPaid(o: Pick<InvoiceOption, "paid_amount" | "balance_amount"> & { tds_deducted?: number }): boolean {
+  return (Number(o.paid_amount || 0) > 0 || Number(o.tds_deducted || 0) > 0) && Number(o.balance_amount || 0) > 0;
+}
+
+/** The invoice whose balance equals this payment (±₹1) — the likely one when the
+ *  customer's advice names no invoice (24 Oct 2026; server `likely_match`). PURE. */
+export function isLikelyMatch(o: Pick<InvoiceOption, "balance_amount">, amount: number): boolean {
+  const b = Number(o.balance_amount || 0);
+  return b > 0 && amount > 0 && Math.abs(b - amount) < 1;
+}
+
+/** Likely matches first, the rest in the server's (oldest-first) order. PURE. */
+export function orderByLikelyMatch<T extends Pick<InvoiceOption, "balance_amount">>(rows: T[], amount: number): T[] {
+  const hit = rows.filter((o) => isLikelyMatch(o, amount));
+  return hit.length ? [...hit, ...rows.filter((o) => !isLikelyMatch(o, amount))] : rows;
+}
+
 /**
  * How much each ticked invoice gets (PURE, the client twin of the server's
  * `plan_mapping`): typed amounts first, then the rest oldest-first, each up to
@@ -324,9 +342,13 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
 
   const lockedBranch = !!receipt.branch_id;
   const needsBranch = branches.length > 0 || !!noBranch;
-  const branchOptions = useMemo(() => options.filter((o) => !needsBranch ? true
+  /* A branch's invoices + invoices with no branch on record (24 Oct 2026 — the
+     server takes them on any branch's receipt). Likely matches first: an invoice
+     whose balance is this payment (the advice that came without a number). */
+  const branchOptions = useMemo(() => orderByLikelyMatch(options.filter((o) => !needsBranch ? true
     : !branchKey ? false
-    : branchKey === "none" ? !o.branch_id : String(o.branch_id) === branchKey), [options, needsBranch, branchKey]);
+    : branchKey === "none" ? !o.branch_id : (!o.branch_id || String(o.branch_id) === branchKey)), available),
+  [options, needsBranch, branchKey, available]);
   const months = useMemo(() => [...new Map(branchOptions.filter((o) => o.month)
     .map((o) => [o.month as string, o.month_label || o.month])).entries()].sort((a, b) => b[0].localeCompare(a[0])), [branchOptions]);
   const visible = useMemo(() => {
@@ -479,6 +501,15 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
                               <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                                 <span>Invoice {inr(o.grand_total)}</span>
                                 {o.paid_amount > 0 && <span>· paid {inr(o.paid_amount)}</span>}
+                                {isPartlyPaid(o) && (
+                                  <span className="rounded-full bg-orange-50 px-1.5 font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">
+                                    Partly paid · {inr(o.balance_amount)} still due</span>
+                                )}
+                                {isLikelyMatch(o, available) && (
+                                  <span className="rounded-full bg-emerald-100 px-1.5 font-semibold text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
+                                    title="This invoice's balance equals the amount on this payment">Likely match</span>
+                                )}
+                                {!o.branch_id && <span>· no branch on record</span>}
                                 {o.due_date && (late > 0
                                   ? <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 font-semibold ${late > 60 ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300" : "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"}`}>
                                       <Clock size={10} aria-hidden /> {late} d late</span>

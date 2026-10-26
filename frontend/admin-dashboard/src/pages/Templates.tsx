@@ -14,6 +14,7 @@ import {
 import { apiDelete, apiGet } from "../api/client";
 import { ConfirmModal, Spinner } from "../crm/components/ui";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../crm/components/PageHeader";
+import { onlyActiveNames, useActiveCustomerList } from "../crm/lib/activeCustomers";
 
 type JobConfig = {
   jobId: string;
@@ -248,9 +249,12 @@ export function TemplatesPage({
 
   const archivedCount = useMemo(() => (jobs || []).filter((j) => j.archived).length, [jobs]);
   const activeJobs = useMemo(() => (jobs || []).filter((j) => !j.archived), [jobs]);
+  const activeCustomers = useActiveCustomerList();   // the dropdown lists ACTIVE customers (23 Oct 2026)
   const customers = useMemo(
-    () => Array.from(new Set((jobs || []).map((j) => j.customerName || "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [jobs],
+    () => onlyActiveNames(
+      Array.from(new Set((jobs || []).map((j) => j.customerName || "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+      activeCustomers, customer),
+    [jobs, activeCustomers, customer],
   );
   const shown = useMemo(() => filterTemplates(jobs, { tab, q, customer, source, sort }), [jobs, tab, q, customer, source, sort]);
   const ours = activeJobs.filter((j) => questionSource(j) === "ours").length;

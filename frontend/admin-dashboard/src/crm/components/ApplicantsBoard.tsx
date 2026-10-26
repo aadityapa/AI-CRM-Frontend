@@ -25,13 +25,14 @@ import { AiInterviewCell, type AiInterviewFields } from "./AiInterviewCell";
 import { CandidateStatusBadge } from "./CandidateStatusBadge";
 import { InterviewRoundsModal } from "./InterviewRoundsModal";
 import { FLOW_BTN } from "./flowButtons";
+import { HmDecisionButton } from "./HiringManagerPanels";
 import { CandidateHoldButton, HoldNote, defaultHoldSide, type CandidateHoldInfo } from "./CandidateHold";
 import { useMe } from "../CrmApp";
 import { SalesActionLauncher, SalesItemActions, TermsLine, type SalesAct, type SalesDeskItem } from "./SalesDeskActions";
 import type { OfferTerms } from "./OfferApprovalGate";
 import { FileLink } from "./FileUpload";
 import { STAGE_TONE, visibleStageBuckets } from "../lib/candidateStageBuckets";
-import { useCandidateStages } from "../useAccess";
+import { useCanApprove, useCandidateStages } from "../useAccess";
 import { CrmLink } from "../router";
 import { fmtDateShort, fmtDateTime12 } from "../../lib/datetime";
 import type { Meta } from "../api";
@@ -121,7 +122,13 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
   const [rounds, setRounds] = useState<{ profileId: number; name: string } | null>(null);
   const counts = meta?.phase_counts || {};
   // "All" = the server's own total ("all"); summing every key counted it twice.
-  const holdSide = defaultHoldSide([...(useMe()?.roles || [])]);
+  const me = useMe();
+  const holdSide = defaultHoldSide([...(me?.roles || [])]);
+  /* The Hiring Manager decides from the list (22 Oct 2026). A scoped HM only
+     ever lists their own positions; Admin / CEO may decide anywhere. */
+  const hmMayReview = useCanApprove("profile.hm_review");
+  const hmMaySign = useCanApprove("profile.hm_signoff");
+  const hmHere = Boolean(me?.hiring_manager_scoped) || (me?.roles || []).some((x) => x === "Admin" || x === "CEO");
   const total = useMemo(() => counts.all != null ? Number(counts.all) || 0
     : Object.entries(counts).filter(([k]) => k !== "archive" && k !== "all")
       .reduce((t, [, n]) => t + (Number(n) || 0), 0), [counts]);
@@ -206,7 +213,7 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
                         </span>
                       )}
                       {r.notice_period && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">Notice {r.notice_period}</span>}
-                      {r.cv_url && <span className="inline-flex items-center gap-1 text-[11px]"><FileText size={11} aria-hidden /><FileLink url={r.cv_url} label="Resume" /></span>}
+                      {r.cv_url && <span className="inline-flex items-center gap-1 text-[11px]"><FileText size={11} aria-hidden /><FileLink url={r.cv_url} label="Resume" downloadName={name} /></span>}
                     </div>
                   </div>
                 </div>
@@ -235,6 +242,12 @@ export function ApplicantsBoard({ rows, meta, search, onSearch, page, onPage, st
                       title="Every interview — record the customer's feedback in place">
                       <ClipboardCheck size={13} aria-hidden /> Interviews
                     </button>
+                    {hmHere && ((r.candidate_status?.key === "hm_review" && hmMayReview)
+                      || (r.candidate_status?.key === "hm_signoff" && hmMaySign)) && (
+                      <HmDecisionButton compact profileId={r.id} candidateName={name}
+                        kind={r.candidate_status?.key === "hm_review" ? "review" : "signoff"}
+                        toast={toast} onDone={onChanged} />
+                    )}
                     {!CLOSED_STAGES.has(r.pipeline_status) && (
                       <CandidateHoldButton profileId={r.id} candidateName={name} hold={r.hold}
                         defaultSide={holdSide} onDone={(m) => { toast(m); onChanged(); }} />

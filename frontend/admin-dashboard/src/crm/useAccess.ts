@@ -42,7 +42,11 @@ export type ApprovalAction =
   | "invoice.convert_proforma" | "invoice.revision.approve" | "credit_note.approve"
   | "opportunity.approve" | "requirement.sales_head_approve" | "requirement.engineering_approve"
   | "requirement.positions.approve" | "profile.rmg_screening" | "profile.sales_head_decision"
-  | "profile.budget_resolve" | "profile.fast_track_internal" | "leave.approve" | "leave.reject";
+  | "profile.budget_resolve" | "profile.fast_track_internal" | "leave.approve" | "leave.reject"
+  | "requirement.hm_approve" | "profile.hm_review" | "profile.hm_signoff"
+  // 23 Oct 2026: RMG / GM decisions, Admin-editable (were buttons any
+  // Requirements: Edit grant implied — a TA saw them).
+  | "requirement.positions.request" | "requirement.team.assign";
 
 /** May this user press an APPROVAL button? (25 Sep 2026)
  *

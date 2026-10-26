@@ -28,7 +28,9 @@ import { TeachingEmpty } from "../components/TeachingEmpty";
 import { SectionHeaderBanner, WizardField, InfoChip } from "../components/wizard";
 import { applyHoursAttendanceRule } from "../lib/timesheetAttendance";
 import { fmtDateTime12 } from "../../lib/datetime";
-import { InvoiceFormatPicker, PROFORMA_COLOR, RoundOffToggle, normalizeFormat } from "../components/invoice/ProformaActions";
+import {
+  InvoiceFormatPicker, PROFORMA_COLOR, RoundOffToggle, RoundPerDayToggle, normalizeFormat, roundPerDay,
+} from "../components/invoice/ProformaActions";
 import type { InvoiceFormat } from "../components/invoice/types";
 import { BILLING_UNITS, unitWord } from "../lib/billingUnits";
 import { toDateKey } from "../lib/calendarDates";
@@ -43,7 +45,8 @@ import {
   splitByQty, splitProblems, type SplitBy, type SplitDays,
   type BillingProgress, type SplitRow,
 } from "../components/invoice/SplitAcrossPos";
-import { DialogActions, DialogFailure, DialogHero, DialogSection, ReasonBox, WhatHappens, useCtrlEnter } from "../components/dialogKit";
+import { DecisionDialog, DialogActions, DialogFailure, DialogHero, DialogSection, ReasonBox, WhatHappens, useCtrlEnter } from "../components/dialogKit";
+import { REOPEN_SPEC } from "./dashboard/ReturnedProformasPanel";
 import { TimesheetPeriodModal, fmtDay as fmtPeriodDay, type ApplyPeriodOptions } from "../components/TimesheetPeriodModal";
 import { WorkMonth, monthName, periodText } from "../components/WorkMonth";
 import { PaymentBreakdownModal, type BreakdownSheet } from "../components/PaymentBreakdownModal";
@@ -1731,6 +1734,12 @@ export function TimesheetDetailPage() {
   const [showReject, setShowReject] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, showToast] = useToast();
+  /* 26 Oct 2026: Finance returned this sheet's Proforma — the people who work
+     the sheet reopen it to correct and submit again (server decides). */
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const mayReopenRole = useHasRole("Sales", "Sales_Head", "RMG");
+  const screensAsRmg = useCanApprove("profile.rmg_screening");
+  const canReopen = mayReopenRole || canReject || screensAsRmg;
   /* "Fill from file" (25 Sep 2026): the customer's Excel or PDF for THIS
      month fills the grid through the same server reader as Import / Upload. */
   const fillInputRef = useRef<HTMLInputElement>(null);
@@ -2396,6 +2405,34 @@ export function TimesheetDetailPage() {
           )}
         </div>
       </div>
+      )}
+
+      {ts.status === "Approved" && ts.invoice?.kind === "Proforma" && ts.invoice?.returned_at && (
+        <div className="flex flex-wrap items-start gap-3 rounded-card border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" role="alert">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-rose-600 text-white" aria-hidden><Undo2 size={15} /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-bold">Finance returned Proforma {ts.invoice.invoice_number}</span>
+            “{ts.invoice.returned_reason || "No reason given"}” — correct the timesheet and submit it again, or the GM reissues it as is.
+          </span>
+          {canReopen && (
+            <button type="button" onClick={() => setReopenOpen(true)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-control bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700">
+              <Undo2 size={14} aria-hidden /> Reopen to correct
+            </button>
+          )}
+        </div>
+      )}
+      {reopenOpen && ts.invoice && (
+        <DecisionDialog spec={REOPEN_SPEC}
+          person={{ name: employeeName || "Timesheet", meta: monthName(ts.year, ts.month) }}
+          notice={<span><b>Finance said:</b> “{ts.invoice.returned_reason}”</span>}
+          onClose={() => setReopenOpen(false)}
+          onConfirm={async (note) => {
+            const res = await crmPost(`/api/timesheets/${ts.id}/reopen-for-correction`, { note: note || null });
+            setReopenOpen(false);
+            showToast(res.message || "Timesheet reopened — correct it and submit again");
+            await load();
+          }} />
       )}
 
       {ts.status === "Rejected" && ts.rejection_reason && (
@@ -3082,6 +3119,8 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   const [format, setFormat] = useState<Required<InvoiceFormat>>(normalizeFormat(null));
   // Round the grand total to the rupee (5 Oct 2026) — Finance can still change it.
   const [roundOff, setRoundOff] = useState(false);
+  // Round the per-day amount (24 Oct 2026) — part month on a Monthly / Yearly rate.
+  const [roundPerDayOn, setRoundPerDayOn] = useState(false);
   /* Toasts render BEHIND this modal, so a failure ("PO balance insufficient")
      was invisible to the user. The error must live inside the dialog, right
      under the button that caused it. */
@@ -3242,6 +3281,7 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
           ...(selected ? { po_id: selected.id } : {}),
           invoice_format: format,
           round_off: roundOff,
+          ...(Object.keys(overrides).length === 0 && roundPerDayOn ? { round_per_day: true } : {}),
           ...overrides,
         },
       );
@@ -3301,10 +3341,17 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
   const li0: any = calc?.line_items?.[0];
   const qtyN = Number(qtyStr);
   const rateN = Number(rateStr);
-  const liveAmount = li0 && Number.isFinite(qtyN) && Number.isFinite(rateN)
-    ? Math.round(qtyN * rateN * 100) / 100 : Number(li0?.amount ?? calc?.totals?.sub_total ?? 0);
   const edited = !!li0 && (qtyN !== Number(li0.total_billed_qty) || rateN !== Number(li0.rate_per_unit));
-  const balanceAfter = selected && selected.balance_value != null ? selected.balance_value - liveAmount : null;
+  // Untouched → the server's amount (a part month bills days × per-day, which a
+  // 4-dp qty × monthly rate does not reproduce — 0.9677 × ₹2,60,000 ≠ ₹2,51,613).
+  const liveAmount = edited && Number.isFinite(qtyN) && Number.isFinite(rateN)
+    ? Math.round(qtyN * rateN * 100) / 100 : Number(li0?.amount ?? calc?.totals?.sub_total ?? 0);
+  /* Per-day round off (24 Oct 2026): offered on a part month of a Monthly /
+     Yearly rate, one PO, qty / rate untouched. The server applies the same rule. */
+  const perDayPlan = !splitMode && !edited ? roundPerDay(li0) : null;
+  const perDayActive = roundPerDayOn && !!perDayPlan;
+  const shownAmount = perDayActive ? perDayPlan!.amount : liveAmount;
+  const balanceAfter = selected && selected.balance_value != null ? selected.balance_value - shownAmount : null;
   const reissue = !!data?.returned_proforma;
   const title = reissue ? "Reissue proforma invoice" : "Raise proforma invoice";
   const month = data ? monthLabel(data.rate.month) : "";
@@ -3640,8 +3687,9 @@ export function PoSelectModal({ timesheetId, onClose, onGenerated, showToast }: 
                   )}
                   <div className="flex items-baseline justify-between border-t border-subtle pt-3">
                     <span className="text-xs font-semibold text-secondary">Sub-total (before GST)</span>
-                    <span className="text-xl font-bold tabular-nums text-primary">{inr(liveAmount)}</span>
+                    <span className="text-xl font-bold tabular-nums text-primary">{inr(shownAmount)}</span>
                   </div>
+                  {perDayPlan && <RoundPerDayToggle value={roundPerDayOn} onChange={setRoundPerDayOn} plan={perDayPlan} />}
                   {balanceAfter != null && (
                     <div className={`rounded-card px-3 py-2 text-xs ${balanceAfter < 0
                       ? "bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"

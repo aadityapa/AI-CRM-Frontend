@@ -12,6 +12,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { pushAppHistory } from "../../../lib/appHistory";
+
 export type ProfileFilters = {
   /** "archive" (6 Oct 2026) = archived by hand, or parked because the deal is on hold.
    *  "joined" (13 Oct 2026) = the candidacy is finished — no longer "In pipeline". */
@@ -101,8 +103,8 @@ function write(next: ProfileFilters, replace: boolean) {
   const url = `${window.location.pathname}?${p.toString()}${window.location.hash}`;
   // replaceState while typing so the Back button does not have to walk through
   // every keystroke; pushState for deliberate filter changes.
-  if (replace) window.history.replaceState({}, "", url);
-  else window.history.pushState({}, "", url);
+  if (replace) window.history.replaceState(window.history.state, "", url);
+  else pushAppHistory(url);
 }
 
 export function useProfileFilters() {

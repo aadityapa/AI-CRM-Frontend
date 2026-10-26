@@ -119,8 +119,10 @@ const SOURCE_LABEL: Record<string, string> = { cv: "CV on record", application: 
 
 /* ================================================================== library */
 
-export function ResumeLibraryTab({ candidateId, canWrite, onChanged, notify }: {
+export function ResumeLibraryTab({ candidateId, canWrite, onChanged, notify, candidateName }: {
   candidateId: number | string;
+  /** Download saves each version under the candidate's name (23 Oct 2026). */
+  candidateName?: string;
   canWrite: boolean;
   onChanged?: () => void;
   notify: (msg: string, kind?: "ok" | "err") => void;
@@ -269,7 +271,7 @@ export function ResumeLibraryTab({ candidateId, canWrite, onChanged, notify }: {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <FileLink url={v.file_url} label="View" />
+                  <FileLink url={v.file_url} label="View" downloadName={candidateName} />
                   {canWrite && !v.is_primary && (
                     <button type="button" disabled={busy === v.id} onClick={() => patch(v, { primary: true }, `“${v.label}” is now the main resume`)}
                       className="inline-flex h-8 items-center gap-1 rounded-lg bg-amber-50 px-2.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800">

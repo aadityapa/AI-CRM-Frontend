@@ -771,6 +771,67 @@ function _syncScreenTile(tileState) {
   _refreshContinueButton(tileState);
 }
 
+/* The hint the tile shows when sharing did not work (24 Oct 2026). It sits INSIDE
+   the screen tile — the status line at the bottom of the page was easy to miss. */
+const SCREEN_SHARE_STEPS =
+  "Click Share screen, open the “Entire screen” tab in the window that opens, click the picture of your screen, then press Share.";
+
+export function screenShareFailureHelp(result) {
+  const reason = String((result && result.reason) || "");
+  const surface = String((result && result.surface) || "");
+  if (reason === "not_entire_screen") {
+    const word = SURFACE_WORDS[surface] || "only part of your screen";
+    return `You shared ${word}. This interview records your entire screen.\n${SCREEN_SHARE_STEPS}`;
+  }
+  if (reason === "denied") {
+    return (
+      "Sharing was cancelled or blocked.\n" + SCREEN_SHARE_STEPS + "\n" +
+      "If no sharing window opens, your browser or company settings may block screen sharing — " +
+      "use the latest Google Chrome or Microsoft Edge on a personal laptop. " +
+      "On a Mac, allow the browser under System Settings ▸ Privacy & Security ▸ Screen Recording."
+    );
+  }
+  if (reason === "NotReadableError") {
+    return "Your computer would not let the browser capture the screen. Close other screen-recording or meeting apps (Zoom, Teams, Meet), then click Share screen again.";
+  }
+  if (reason === "NotFoundError") {
+    return "No screen was found to share. Click Share screen again; if it repeats, restart the browser.";
+  }
+  if (reason === "AbortError" || reason === "InvalidStateError") {
+    return `The share was interrupted. Keep this window in front and try again.\n${SCREEN_SHARE_STEPS}`;
+  }
+  return (
+    `Screen sharing failed (${reason || "unknown error"}). Click Share screen to try again. ` +
+    "If it keeps failing, use the latest Google Chrome or Microsoft Edge."
+  );
+}
+
+/* Tell the server what happened, so the Integrity tab can show why a candidate
+   could not share (24 Oct 2026). Runs before sign-in — the invite link's token
+   identifies the interview. Never awaited, never throws. */
+let _screenAttempts = 0;
+
+function _reportScreenShare(result) {
+  try {
+    const token = new URLSearchParams(window.location.search).get("invite") || "";
+    if (!token) return;
+    fetch(`/candidate/invite/${encodeURIComponent(token)}/device-check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        check: "screen_share",
+        ok: !!(result && result.ok),
+        reason: String((result && result.reason) || ""),
+        surface: String((result && result.surface) || ""),
+        attempt: _screenAttempts,
+      }),
+      keepalive: true,
+    }).catch(() => { /* reporting is best-effort */ });
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 async function _runScreenShare(tileState) {
   if (!isScreenShareSupported()) {
     _syncScreenTile(tileState);
@@ -778,7 +839,12 @@ async function _runScreenShare(tileState) {
   }
   _setTileStatus("screen", "testing");
   _setStatusMsg("");
+  _screenAttempts += 1;
   const result = await requestScreenShare();
+  _reportScreenShare(result);
+  if (!result.ok) {
+    _deviceDebug("screen_share_failed", { reason: result.reason || "", surface: result.surface || "" });
+  }
   if (result.ok) {
     tileState.screen = "ok";
     _setTileStatus("screen", "ok");
@@ -790,7 +856,7 @@ async function _runScreenShare(tileState) {
     tileState.screen = "error";
     _setTileStatus("screen", "error");
     const word = SURFACE_WORDS[String(result.surface || "")] || "only part of your screen";
-    _screenHint("Choose the “Entire screen” option in the sharing window.");
+    _screenHint(screenShareFailureHelp(result));
     _setStatusMsg(
       `You shared ${word}. This interview records your ENTIRE screen — click Share screen again, ` +
       "open the “Entire screen” tab in the browser's window, pick your screen and press Share."
@@ -798,6 +864,7 @@ async function _runScreenShare(tileState) {
   } else if (result.reason === "denied") {
     tileState.screen = "error";
     _setTileStatus("screen", "error");
+    _screenHint(screenShareFailureHelp(result));
     _setStatusMsg(
       SCREEN_REQUIRED
         ? "Screen sharing was cancelled. This interview records your screen along with the " +
@@ -807,6 +874,7 @@ async function _runScreenShare(tileState) {
   } else {
     tileState.screen = "error";
     _setTileStatus("screen", "error");
+    _screenHint(screenShareFailureHelp(result));
     _setStatusMsg(`Screen sharing failed: ${result.reason || "unknown error"}. Click Share screen to try again.`);
   }
   _refreshContinueButton(tileState);
@@ -858,8 +926,8 @@ function _resetGate(tileState) {
   _setTileStatus("screen", "required");
   _screenHint(
     SCREEN_REQUIRED
-      ? "Required. Click Share screen and choose this tab — your screen is recorded with the interview so the reviewer sees each question as you answer it."
-      : "Click Share screen and choose this tab so the reviewer sees each question as you answer it."
+      ? "Required. Click Share screen, choose “Entire screen” and press Share — your whole screen is recorded with the interview."
+      : "Click Share screen, choose “Entire screen” and press Share — your whole screen is recorded with the interview."
   );
   const screenBtn = _qs('[data-action="screen-share"]', _tile("screen"));
   if (screenBtn) screenBtn.disabled = false;

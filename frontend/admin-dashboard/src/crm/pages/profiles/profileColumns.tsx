@@ -444,13 +444,16 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
     {
       key: "resume_url",
       label: "CV",
-      render: (r) => (r.resume_url ? <FileLink url={r.resume_url} label="View" /> : dash),
+      render: (r) => (r.resume_url ? <FileLink url={r.resume_url} label="View" downloadName={r.candidate_name} /> : dash),
     },
     {
       key: "resignation_certificate_url",
       label: "Resignation cert.",
       render: (r) => {
-        if (r.resignation_certificate_url) return <FileLink url={r.resignation_certificate_url} label="View" />;
+        if (r.resignation_certificate_url) {
+          return <FileLink url={r.resignation_certificate_url} label="View"
+            downloadName={`${r.candidate_name || "Candidate"} - Notice period proof`} />;
+        }
         // Only chase the document when the candidate has actually resigned —
         // otherwise "missing" is not a problem to flag.
         if (r.resignation_status) {

@@ -4,8 +4,9 @@
  * (Admin/CEO ONLY — server-enforced by `GET /api/reports/revenue`). */
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Briefcase, Download, IndianRupee, Landmark, TrendingUp, UserSearch, type LucideIcon,
+  BarChart3, Briefcase, Download, IndianRupee, Landmark, ReceiptText, TrendingUp, UserSearch, type LucideIcon,
 } from "lucide-react";
+import { InvoiceSummaryReport } from "./reports/InvoiceSummaryReport";
 import { PageHeader } from "../components/PageHeader";
 import { authFetch } from "../../api/client";
 import { qs, crmGet } from "../api";
@@ -23,7 +24,7 @@ import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import { usePageTab } from "../lib/pageState";
 import { fmtDateShort } from "../../lib/datetime";
 
-type TabKey = "opportunities" | "profiles" | "productivity" | "financial" | "revenue";
+type TabKey = "opportunities" | "profiles" | "productivity" | "financial" | "revenue" | "invoice_summary";
 
 const TABS = [
   { key: "opportunities", label: "Opportunities" },
@@ -40,6 +41,10 @@ const FINANCIAL_TAB = { key: "financial", label: "Financial Reports" };
    dashboard "Revenue this month" tile deep-links here via `?tab=revenue`. */
 const REVENUE_TAB = { key: "revenue", label: "Revenue" };
 
+/* Invoice Summary (23 Oct 2026) — the month's invoices per customer, ready to
+   paste into a mail. Sales · Sales Manager · Sales Head · Finance by role. */
+const INVOICE_SUMMARY_TAB = { key: "invoice_summary", label: "Invoice Summary" };
+
 /** Presentation for the report picker (icon · one line · accent). Keys match
  *  the tab keys above; purely visual. */
 const TAB_LOOK: Record<string, { icon: LucideIcon; blurb: string; tone: string }> = {
@@ -48,16 +53,17 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; blurb: string; tone: string }
   productivity: { icon: TrendingUp, blurb: "Each recruiter's sourcing, pipeline and outcomes in a window.", tone: "from-emerald-500 to-teal-600" },
   financial: { icon: Landmark, blurb: "POs, invoices, payments and TDS in one place.", tone: "from-amber-500 to-orange-600" },
   revenue: { icon: IndianRupee, blurb: "Billed, collected, margin and cash flow.", tone: "from-rose-500 to-pink-600" },
+  invoice_summary: { icon: ReceiptText, blurb: "This month's invoices per customer — copy and send.", tone: "from-teal-500 to-cyan-600" },
 };
 
 /** Tabs that host their own component (no shared DataTable / CSV export). */
-const HOSTED_TABS: ReadonlySet<TabKey> = new Set<TabKey>(["financial", "revenue", "productivity"]);
+const HOSTED_TABS: ReadonlySet<TabKey> = new Set<TabKey>(["financial", "revenue", "productivity", "invoice_summary"]);
 
 const TEAM_OPTIONS = ["Sales", "RMG", "TA"];
 const OPP_STATUS_OPTIONS = ["Active", "On Hold", "Rejected", "Closed", "Archived"];
 const PROFILE_STATUS_OPTIONS = ["Active", "Rejected", "Joined"];
 
-const CSV_FILENAMES: Record<Exclude<TabKey, "financial" | "revenue" | "productivity">, string> = {
+const CSV_FILENAMES: Record<Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary">, string> = {
   opportunities: "opportunities-report.csv",
   profiles: "candidate-profiles-report.csv",
 };
@@ -176,10 +182,13 @@ export function CrmReportsPage() {
   // Revenue: Finance + the Sales family by ROLE (Admin / CEO implicit).
   const revenueRoleOk = useHasRole("Finance", "Sales", "Sales_Head");
   const showRevenue = sub.allowed("revenue", revenueRoleOk);
+  // Same roles as Revenue (the server's INVOICE_SUMMARY_READ), its own tick.
+  const showInvoiceSummary = sub.allowed("invoice_summary", revenueRoleOk);
   const tabs = [
     ...TABS.filter((t) => sub.allowed(t.key)),
     ...(showFinancial ? [FINANCIAL_TAB] : []),
     ...(showRevenue ? [REVENUE_TAB] : []),
+    ...(showInvoiceSummary ? [INVOICE_SUMMARY_TAB] : []),
   ];
   // A deep link to a tab this user cannot see falls back to the first visible tab.
   const tab: TabKey = tabs.some((t) => t.key === requestedTab)
@@ -247,7 +256,7 @@ export function CrmReportsPage() {
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
-      a.download = CSV_FILENAMES[tab as Exclude<TabKey, "financial" | "revenue" | "productivity">];
+      a.download = CSV_FILENAMES[tab as Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary">];
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -417,6 +426,8 @@ export function CrmReportsPage() {
           No report is switched on for your login. Ask Admin / CEO to tick the reports you need
           in Access Control.
         </div>
+      ) : tab === "invoice_summary" ? (
+        showInvoiceSummary && <InvoiceSummaryReport />
       ) : tab === "revenue" ? (
         showRevenue && <RevenueReport canSetTargets={canSetTargets} />
       ) : tab === "productivity" ? (

@@ -10,9 +10,11 @@
  * a GM custom role passes through the screener gate exactly like RMG.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Flag, UserPlus, Users } from "lucide-react";
+import { Flag, UserCheck, UserPlus, Users } from "lucide-react";
 
 import { crmGet, crmPatch, crmPut } from "../api";
+import { useHasRole } from "../CrmApp";
+import { useCanApprove } from "../useAccess";
 import { fmtDateShort } from "../../lib/datetime";
 import { DecisionDialog, type DecisionSpec } from "./dialogKit";
 import { CONTROL } from "./controlTower";
@@ -46,14 +48,30 @@ export function withStaleAssignees(options: TaOption[], team: Pick<TaAssignment,
 /** The team endpoint, as every caller reads it. `options` is non-empty only for a writer. */
 export type TaAssignmentsPayload = { assignments: TaAssignment[]; options: TaOption[] };
 
-/** ONE fetch for "who is on the team, who may I pick, may I change it". */
-export async function fetchTaAssignments(requirementId: number): Promise<TaAssignmentsPayload & { canAssign: boolean }> {
-  const res = await crmGet<TaAssignmentsPayload>(`/api/requirements/${requirementId}/ta-assignments`);
+/** The two teams on a position (22 Oct 2026): the TAs who source it and the
+ *  Hiring Managers who own it. Same row shape, same gate, two endpoints. */
+export type TeamKind = "ta" | "hm";
+const TEAM = {
+  ta: { path: "ta-assignments", key: "assignments", word: "TA", plural: "TAs" },
+  hm: { path: "hiring-managers", key: "hiring_managers", word: "Hiring Manager", plural: "Hiring Managers" },
+} as const;
+
+/** ONE fetch for "who is on the team, who may I pick, may I change it".
+ *  `isMine` (Hiring Managers only): this login is one of them. */
+export async function fetchTeam(requirementId: number, kind: TeamKind = "ta"):
+  Promise<TaAssignmentsPayload & { canAssign: boolean; isMine: boolean }> {
+  const t = TEAM[kind];
+  const res = await crmGet<any>(`/api/requirements/${requirementId}/${t.path}`);
   return {
-    assignments: res.data?.assignments || [],
+    assignments: res.data?.[t.key] || [],
     options: res.data?.options || [],
     canAssign: Boolean((res.meta as any)?.can_assign),
+    isMine: Boolean((res.meta as any)?.is_mine),
   };
+}
+
+export function fetchTaAssignments(requirementId: number) {
+  return fetchTeam(requirementId, "ta");
 }
 
 export const PRIORITIES = ["Low", "Medium", "High"] as const;
@@ -91,6 +109,38 @@ export function TaChip({ a }: { a: TaAssignment }) {
   );
 }
 
+/** "HM: Neha, Ravi" under a list row's title (22 Oct 2026) — renders nothing without one. */
+export function HmLine({ hms }: { hms?: TaAssignment[] | null }) {
+  if (!hms?.length) return null;
+  return (
+    <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+         title="Hiring Manager(s) of this position">
+      <UserCheck size={11} aria-hidden /> HM: {hms.map((h) => h.name).join(", ")}
+    </div>
+  );
+}
+
+const HM_SPEC: DecisionSpec = {
+  tone: "emerald",
+  icon: UserCheck,
+  eyebrow: "Hiring Manager",
+  title: "Assign the Hiring Manager",
+  intro: "Tick the Karnex Hiring Manager(s) who own this position. They see only the positions they are on, " +
+    "confirm the JD & skills before TA sources, review candidates before the customer and sign off the selection.",
+  reason: {
+    label: "Note for the Hiring Manager (optional)",
+    required: false,
+    placeholder: "e.g. Customer wants two AUTOSAR heads by month end",
+    picks: ["Please confirm the JD today", "Customer interviews start next week"],
+  },
+  happens: [
+    { icon: UserCheck, text: "Each newly assigned Hiring Manager is told (bell + email)" },
+    { icon: Users, text: "A position RMG has not approved yet waits for their JD confirmation after approval" },
+  ],
+  confirmLabel: "Save Hiring Managers",
+  busyLabel: "Saving…",
+};
+
 const ASSIGN_SPEC: DecisionSpec = {
   tone: "indigo",
   icon: UserPlus,
@@ -113,11 +163,14 @@ const ASSIGN_SPEC: DecisionSpec = {
 };
 
 /** The TA checkbox grid — the Assign dialog and the RMG approval dialog share it. */
-export function TaPicker({ options, picked, onToggle }: {
+export function TaPicker({ options, picked, onToggle, kind = "ta" }: {
   options: TaOption[];
   picked: Set<number>;
   onToggle: (id: number) => void;
+  /** Whose picker — the wording only (22 Oct 2026: the Hiring Manager picker). */
+  kind?: TeamKind;
 }) {
+  const t = TEAM[kind];
   const [q, setQ] = useState("");
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -127,16 +180,18 @@ export function TaPicker({ options, picked, onToggle }: {
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-bold uppercase tracking-wide text-muted">
-          TAs · {picked.size} picked
+          {t.plural} · {picked.size} picked
         </span>
         {options.length > 6 && (
-          <input type="text" className={`${CONTROL} w-44`} placeholder="Find a TA…" value={q}
-                 onChange={(e) => setQ(e.target.value)} aria-label="Find a TA" />
+          <input type="text" className={`${CONTROL} w-44`} placeholder={`Find a ${t.word}…`} value={q}
+                 onChange={(e) => setQ(e.target.value)} aria-label={`Find a ${t.word}`} />
         )}
       </div>
       {options.length === 0 ? (
         <p className="rounded-card border border-dashed border-subtle px-3 py-2 text-sm text-muted">
-          No active TA login exists yet — add one under Access Control ▸ Users.
+          {kind === "hm"
+            ? "No active Hiring Manager login exists yet — give someone the Hiring Manager role under Access Control ▸ Users."
+            : "No active TA login exists yet — add one under Access Control ▸ Users."}
         </p>
       ) : (
         <div className="grid max-h-64 grid-cols-1 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
@@ -155,21 +210,22 @@ export function TaPicker({ options, picked, onToggle }: {
                   <span className="block truncate font-medium">{o.name}</span>
                   {o.stale && (
                     <span className="block text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                      No longer an active TA — untick to remove
+                      No longer an active {t.word} — untick to remove
                     </span>
                   )}
                 </span>
               </label>
             );
           })}
-          {shown.length === 0 && <p className="text-sm text-muted">No TA matches “{q}”.</p>}
+          {shown.length === 0 && <p className="text-sm text-muted">No {t.word} matches “{q}”.</p>}
         </div>
       )}
     </div>
   );
 }
 
-function AssignTasModal({ requirementId, label, options, current, onClose, onDone, toast }: {
+function AssignTasModal({ requirementId, label, options, current, onClose, onDone, toast, kind = "ta" }: {
+  kind?: TeamKind;
   requirementId: number;
   label: string;
   options: TaOption[];
@@ -188,19 +244,20 @@ function AssignTasModal({ requirementId, label, options, current, onClose, onDon
 
   return (
     <DecisionDialog
-      spec={ASSIGN_SPEC}
+      spec={kind === "hm" ? HM_SPEC : ASSIGN_SPEC}
       person={{ name: label }}
       onClose={onClose}
       onConfirm={async (note) => {
-        const res = await crmPut<{ assignments: TaAssignment[] }>(
-          `/api/requirements/${requirementId}/ta-assignments`,
+        const t = TEAM[kind];
+        const res = await crmPut<any>(
+          `/api/requirements/${requirementId}/${t.path}`,
           { user_ids: Array.from(picked), note: note || null });
         toast(res.message || "Team saved");
-        onDone(res.data?.assignments || []);
+        onDone(res.data?.[t.key] || []);
         onClose();
       }}
     >
-      <TaPicker options={choices} picked={picked} onToggle={toggle} />
+      <TaPicker options={choices} picked={picked} onToggle={toggle} kind={kind} />
     </DecisionDialog>
   );
 }
@@ -218,25 +275,27 @@ const ASSIGN_CHIP = `${CHIP_BASE} bg-gradient-to-r from-purple-500 to-indigo-600
  *  a different hue from Assign so the two states still read apart at a glance. */
 const CHANGE_CHIP = `${CHIP_BASE} bg-gradient-to-r from-teal-500 to-sky-600 text-[#fff]`;
 
-export function AssignTasButton({ requirementId, label, assigned, onChanged, toast, className }: {
-  requirementId: number;
+/** The assign flow without its button (24 Oct 2026): fetch the team when asked,
+ *  refuse with a toast when the server's `meta.can_assign` says no, then render
+ *  the same dialog. `AssignTasButton`, the list's team avatars and its ⋯ menu all
+ *  open the dialog through this — one flow, one gate (the server's). */
+export function useAssignTeam({ requirementId, label, kind = "ta", onChanged, toast }: {
+  requirementId: number | null | undefined;
   label: string;
-  assigned?: TaAssignment[] | null;
+  kind?: TeamKind;
   onChanged: (rows: TaAssignment[]) => void;
   toast: ToastFn;
-  className?: string;
 }) {
   const [open, setOpen] = useState<{ options: TaOption[]; current: TaAssignment[] } | null>(null);
   const [busy, setBusy] = useState(false);
-  const count = assigned?.length ?? 0;
-  const start = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (busy) return;
+  const start = async (e?: React.SyntheticEvent) => {
+    e?.stopPropagation();
+    e?.preventDefault();
+    if (busy || requirementId == null) return;
     setBusy(true);
     try {
-      const res = await fetchTaAssignments(requirementId);
-      if (!res.canAssign) { toast("Your role cannot assign TAs on this position", "err"); return; }
+      const res = await fetchTeam(requirementId, kind);
+      if (!res.canAssign) { toast(`Your role cannot assign ${TEAM[kind].plural} on this position`, "err"); return; }
       setOpen({ options: res.options, current: res.assignments });
     } catch (err: any) {
       toast(err?.message || "The sourcing team could not be loaded", "err");
@@ -244,24 +303,44 @@ export function AssignTasButton({ requirementId, label, assigned, onChanged, toa
       setBusy(false);
     }
   };
+  const modal = open && requirementId != null ? (
+    <AssignTasModal
+      kind={kind}
+      requirementId={requirementId}
+      label={label}
+      options={open.options}
+      current={open.current}
+      onClose={() => setOpen(null)}
+      onDone={onChanged}
+      toast={toast}
+    />
+  ) : null;
+  return { start, busy, modal };
+}
+
+export function AssignTasButton({ requirementId, label, assigned, onChanged, toast, className, kind = "ta" }: {
+  /** "hm" = the Hiring Manager chip (22 Oct 2026). */
+  kind?: TeamKind;
+  requirementId: number;
+  label: string;
+  assigned?: TaAssignment[] | null;
+  onChanged: (rows: TaAssignment[]) => void;
+  toast: ToastFn;
+  className?: string;
+}) {
+  const { start, busy, modal } = useAssignTeam({ requirementId, label, kind, onChanged, toast });
+  const count = assigned?.length ?? 0;
   return (
     <>
       <button type="button" disabled={busy} onClick={(e) => void start(e)}
         className={className || (count ? CHANGE_CHIP : ASSIGN_CHIP)}
-        title={count ? "Change the TAs sourcing this position" : "Assign one or more TAs to source this position"}>
-        <UserPlus size={11} aria-hidden /> {count ? "Change" : "Assign TAs"}
+        title={kind === "hm"
+          ? (count ? "Change the Hiring Managers of this position" : "Assign the Hiring Manager of this position")
+          : (count ? "Change the TAs sourcing this position" : "Assign one or more TAs to source this position")}>
+        {kind === "hm" ? <UserCheck size={11} aria-hidden /> : <UserPlus size={11} aria-hidden />}
+        {count ? "Change" : kind === "hm" ? "Assign HM" : "Assign TAs"}
       </button>
-      {open && (
-        <AssignTasModal
-          requirementId={requirementId}
-          label={label}
-          options={open.options}
-          current={open.current}
-          onClose={() => setOpen(null)}
-          onDone={onChanged}
-          toast={toast}
-        />
-      )}
+      {modal}
     </>
   );
 }
@@ -325,7 +404,11 @@ export function PositionTeamPanel({ requirementId, label, priority, showPriority
   const [canAssign, setCanAssign] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [assigning, setAssigning] = useState(false);
+  const [assigning, setAssigning] = useState<TeamKind | null>(null);
+  // The Hiring Managers of the position (22 Oct 2026) — same gate as the TA team.
+  const [hms, setHms] = useState<TaAssignment[]>([]);
+  const [hmOptions, setHmOptions] = useState<TaOption[]>([]);
+  const [isHm, setIsHm] = useState(false);
   const [prio, setPrio] = useState(priority || "Medium");
   const [prioBusy, setPrioBusy] = useState(false);
   useEffect(() => { setPrio(priority || "Medium"); }, [priority]);
@@ -333,18 +416,27 @@ export function PositionTeamPanel({ requirementId, label, priority, showPriority
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    fetchTaAssignments(requirementId)
-      .then((res) => {
+    Promise.all([fetchTeam(requirementId, "ta"), fetchTeam(requirementId, "hm").catch(() => null)])
+      .then(([ta, hm]) => {
         if (!alive) return;
-        setRows(res.assignments);
-        setOptions(res.options);
-        setCanAssign(res.canAssign);
+        setRows(ta.assignments);
+        setOptions(ta.options);
+        setCanAssign(ta.canAssign);
+        setHms(hm?.assignments || []);
+        setHmOptions(hm?.options || []);
+        setIsHm(Boolean(hm?.isMine));
         setErr("");
       })
       .catch((e: any) => { if (alive) setErr(e?.message || "The sourcing team could not be loaded"); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [requirementId]);
+  // Priority keeps its own rule (RMG / Sales Head / a screener / the position's
+  // Hiring Manager — server `hm_or(screener_or(…))`); assigning the team is the
+  // separate `requirement.team.assign` decision (23 Oct 2026).
+  const prioRole = useHasRole("RMG", "Sales_Head");
+  const prioScreener = useCanApprove("profile.rmg_screening");
+  const canSetPriority = canAssign || isHm || prioRole || prioScreener;
 
   const setPriority = async (p: string) => {
     const before = prio;
@@ -372,7 +464,7 @@ export function PositionTeamPanel({ requirementId, label, priority, showPriority
         {showPriority && <div className="flex items-center gap-2">
           <Flag size={14} className="text-muted" aria-hidden />
           <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Priority</span>
-          {canAssign ? (
+          {canSetPriority ? (
             <select className={`${CONTROL} !h-8 !py-0 text-xs font-semibold`} value={prio} disabled={prioBusy}
                     onChange={(e) => void setPriority(e.target.value)} title="Set the sourcing priority" aria-label="Priority">
               {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -393,19 +485,41 @@ export function PositionTeamPanel({ requirementId, label, priority, showPriority
           )}
         </div>
         {canAssign && !err && (
-          <button type="button" className={`${btnSecondary} !py-1.5 text-xs`} onClick={() => setAssigning(true)}>
+          <button type="button" className={`${btnSecondary} !py-1.5 text-xs`} onClick={() => setAssigning("ta")}>
             <UserPlus size={13} /> {rows.length ? "Change TAs" : "Assign TAs"}
           </button>
         )}
       </div>
+      {!err && (hms.length > 0 || canAssign) && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-subtle px-4 py-2.5">
+          <UserCheck size={14} className="text-emerald-600 dark:text-emerald-400" aria-hidden />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Hiring Manager</span>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            {hms.length === 0
+              ? <span className="text-xs text-muted">None yet — a Hiring Manager confirms the JD, reviews candidates and signs off the selection</span>
+              : hms.map((a) => <TaChip key={a.id} a={a} />)}
+            {isHm && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                You
+              </span>
+            )}
+          </div>
+          {canAssign && (
+            <button type="button" className={`${btnSecondary} !py-1.5 text-xs`} onClick={() => setAssigning("hm")}>
+              <UserCheck size={13} /> {hms.length ? "Change Hiring Manager" : "Assign Hiring Manager"}
+            </button>
+          )}
+        </div>
+      )}
       {assigning && (
         <AssignTasModal
+          kind={assigning}
           requirementId={requirementId}
           label={label}
-          options={options}
-          current={rows}
-          onClose={() => setAssigning(false)}
-          onDone={(next) => { setRows(next); onChanged?.(); }}
+          options={assigning === "hm" ? hmOptions : options}
+          current={assigning === "hm" ? hms : rows}
+          onClose={() => setAssigning(null)}
+          onDone={(next) => { if (assigning === "hm") setHms(next); else setRows(next); onChanged?.(); }}
           toast={toast}
         />
       )}

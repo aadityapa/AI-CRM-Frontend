@@ -184,7 +184,7 @@ export function AtsBreakdownModal({ row, onClose, onOpenProfile }: {
           </span>
           <div className="flex gap-2">
             {row.resume_file_url && (
-              <span className={`${btnSecondary} !py-1.5 text-xs`}><FileLink url={row.resume_file_url} label="Open resume" /></span>
+              <span className={`${btnSecondary} !py-1.5 text-xs`}><FileLink url={row.resume_file_url} label="Open resume" downloadName={row.candidate_name} /></span>
             )}
             {onOpenProfile && (
               <button type="button" className={`${btnSecondary} !py-1.5 text-xs`} onClick={onOpenProfile}>

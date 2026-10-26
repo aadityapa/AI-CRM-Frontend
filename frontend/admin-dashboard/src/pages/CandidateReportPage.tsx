@@ -55,7 +55,8 @@ import { ProfessionalAssessmentSections } from "../components/candidate-report/P
 import type { StrengthsWeaknessesAnalysis } from "../types/strengthsWeaknesses";
 import { SW_POSITION_VERSION } from "../types/strengthsWeaknesses";
 import { L2QuestionsCard } from "../components/candidate-report/L2QuestionsCard";
-import type { L2QuestionSet } from "../api";
+import type { HrDecisionOutcome, L2QuestionSet } from "../api";
+import { DecisionOutcomeBanner } from "../components/candidate-report/DecisionOutcomeBanner";
 import { DeleteInterviewRecordModal } from "../components/DeleteInterviewRecordModal";
 import { RecordingViewer } from "../components/interview-recording/RecordingViewer";
 import {
@@ -137,6 +138,9 @@ export function CandidateReportPage({
   // legacy "shortlist" | "reject" wire format and just extend the union.
   const [hrMark, setHrMark] = useState<"shortlist" | "reject" | "on_hold" | null>(null);
   const [hrSaving, setHrSaving] = useState<"shortlist" | "reject" | "on_hold" | null>(null);
+  const [decisionOutcome, setDecisionOutcome] = useState<
+    (HrDecisionOutcome & { choice: "shortlist" | "reject" | "on_hold" | null }) | null
+  >(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [rescoreBusy, setRescoreBusy] = useState(false);
   const [toast, setToast] = useState("");
@@ -161,10 +165,10 @@ export function CandidateReportPage({
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = useCallback((msg: string) => {
+  const showToast = useCallback((msg: string, ms = 2400) => {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(""), 2400);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), ms);
   }, []);
 
   useEffect(
@@ -695,10 +699,16 @@ export function CandidateReportPage({
     setHrSaving(decision);
     const nextDecision: "shortlist" | "reject" | "on_hold" | null =
       hrMark === decision ? null : decision;
+    // 23 Oct 2026: the HEALED key (history) — the URL's cid can be the resume's
+    // email, which answered 404 and made the buttons look dead for RMG / GM.
+    const cid = history?.candidate?.id || candidateId;
+    const iid = String(selectedInterviewId || initialInterviewId || "").trim() || undefined;
     try {
-      await setHrCandidateDecision(candidateId, nextDecision);
+      const res = await setHrCandidateDecision(cid, nextDecision, iid);
+      setDecisionOutcome(res?.crm ? { ...res.crm, choice: nextDecision } : null);
       invalidateApiCache("/hr/dashboard");
-      const hist = await getCandidateInterviewHistory(candidateId, { limit: 80 });
+      invalidateApiCache("/api/");
+      const hist = await getCandidateInterviewHistory(res?.candidate_id || cid, { limit: 80, iid });
       setHistory(hist);
       if (hist?.candidate) {
         setCandidate({
@@ -722,7 +732,8 @@ export function CandidateReportPage({
         showToast("On Hold — saved everywhere for this candidate");
       }
     } catch (e: unknown) {
-      showToast(String((e as Error)?.message || e));
+      // A refusal must be readable — it used to vanish after 2.4 s.
+      showToast(`Could not save the decision: ${String((e as Error)?.message || e)}`, 8000);
     } finally {
       setHrSaving(null);
     }
@@ -837,7 +848,7 @@ export function CandidateReportPage({
               onClick={() => void persistHrDecision("shortlist")}
               {...navTap}
               aria-pressed={hrMark === "shortlist"}
-              title="Mark this candidate as Shortlisted"
+              title="Shortlist — moves the candidate to RMG Review (request the L2 or Submit to Sales). Click again to clear."
               className={`group fx-lift relative inline-flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-bold tracking-wide transition-colors duration-micro ease-smooth disabled:opacity-50 disabled:cursor-not-allowed ${focusRing} ${
                 hrMark === "shortlist"
                   ? "border-transparent bg-success text-white shadow-raised"
@@ -874,7 +885,7 @@ export function CandidateReportPage({
               onClick={() => void persistHrDecision("on_hold")}
               {...navTap}
               aria-pressed={hrMark === "on_hold"}
-              title="Park this candidate as On Hold"
+              title="On Hold — nothing moves; decide later. Click again to clear."
               className={`group fx-lift relative inline-flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-bold tracking-wide transition-colors duration-micro ease-smooth disabled:opacity-50 disabled:cursor-not-allowed ${focusRing} ${
                 hrMark === "on_hold"
                   ? "border-transparent bg-warning text-white shadow-raised"
@@ -904,7 +915,7 @@ export function CandidateReportPage({
               onClick={() => void persistHrDecision("reject")}
               {...navTap}
               aria-pressed={hrMark === "reject"}
-              title="Mark this candidate as Rejected"
+              title="Reject — closes the candidacy as RMG Rejected; TA then gets Archive and Re-apply on the row."
               className={`group fx-lift relative inline-flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-bold tracking-wide transition-colors duration-micro ease-smooth disabled:opacity-50 disabled:cursor-not-allowed ${focusRing} ${
                 hrMark === "reject"
                   ? "border-transparent bg-danger-solid text-white shadow-raised"
@@ -995,6 +1006,9 @@ export function CandidateReportPage({
       ) : null}
 
       <div className="mx-auto max-w-screen-2xl w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        {decisionOutcome ? (
+          <DecisionOutcomeBanner outcome={decisionOutcome} onClose={() => setDecisionOutcome(null)} />
+        ) : null}
         {/*
           May 2026 — confirmation banner that mirrors the active decision.
           The amber "On Hold" branch lives alongside the existing emerald

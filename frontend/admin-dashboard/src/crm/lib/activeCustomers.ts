@@ -26,11 +26,38 @@ let activePromise: Promise<CustomerName[]> | null = null;
 let allPromise: Promise<CustomerName[]> | null = null;
 
 function load(path: string): Promise<CustomerName[]> {
+  const activeOnly = path.includes("status=Active");
   return crmGet<CustomerName[]>(path).then((r) =>
     (r.data || [])
       .map((c) => ({ id: Number(c.id), name: String(c.name), status: c.status }))
+      // 23 Oct 2026: never trust the query alone — a row that says it is not
+      // Active stays out of an "active" list whatever answered the request.
+      .filter((c) => !activeOnly || !c.status || c.status === "Active")
       .sort((a, b) => a.name.localeCompare(b.name)),
   );
+}
+
+/**
+ * PURE: keep only the customer NAMES that are active (dropdowns built from the
+ * rows of a page — Interview Reports, Integrity, Templates). The value already
+ * chosen stays so the filter never blanks itself; with no active list yet
+ * (still loading / no CRM access) everything is kept.
+ */
+export function onlyActiveNames(names: string[], active: CustomerName[] | null, selected?: string): string[] {
+  if (!active || !active.length) return names;
+  const ok = new Set(active.map((c) => c.name.trim().toLowerCase()));
+  return names.filter((n) => ok.has(String(n).trim().toLowerCase()) || (!!selected && n === selected));
+}
+
+/** The active customer list, or null while it loads / when it cannot be read. */
+export function useActiveCustomerList(): CustomerName[] | null {
+  const [list, setList] = useState<CustomerName[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchActiveCustomers().then((r) => { if (alive) setList(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return list;
 }
 
 /** Active customers — the Customers tab's default list. One request per page load. */

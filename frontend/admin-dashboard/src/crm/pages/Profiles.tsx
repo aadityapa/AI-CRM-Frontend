@@ -5,9 +5,10 @@
  * the Change Status dropdown); rejections, backward moves and customer feedback need a note.
  * Calm-premium recipe (DESIGN-DECISIONS.md): token-only colors, raised cards,
  * zebra-free 48px table rows, right-aligned numerics, one primary action per screen. */
+import { HmCandidateGate, type HmProfileInfo } from "../components/HiringManagerPanels";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, ArrowRight, ArrowRightLeft, BadgeCheck, Bot, CalendarPlus, Check, Copy, ExternalLink, FileText, GitBranch, IndianRupee, Link2, MapPin, Pencil, Plus, Route, Save, Send, Trash2, UserCheck, UsersRound, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowRightLeft, BadgeCheck, Bot, CalendarPlus, Check, Copy, ExternalLink, FileText, GitBranch, IndianRupee, Link2, MapPin, Pencil, Plus, Route, Save, Send, Trash2, UserCheck, UsersRound, Wrench, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { CANDIDATE_STAGE_BUCKETS } from "../lib/candidateStageBuckets";
 import { DuplicateProfileNotice, duplicateProfileFromError } from "../components/DuplicateProfileNotice";
@@ -44,6 +45,7 @@ import { ScheduleAiInterviewModal } from "../components/ScheduleAiInterviewModal
 import { useHandoverNote } from "../components/handoverNote";
 import { SalesReadinessPanel } from "../components/SalesReadinessPanel";
 import { BACKWARD_MOVES, StageActionBar } from "../components/StageActions";
+import { AdminCorrectionModal } from "../components/AdminCorrectionModal";
 import type { AiScheduleResult as SharedAiScheduleResult } from "../components/ScheduleAiInterviewModal";
 import {
   AiThinking, ConfirmModal, EmptyState, ErrorBox, Field, Modal, Spinner, StatusBadge, Tabs,
@@ -242,6 +244,8 @@ type ProfileDetail = ProfileRow & {
   hr_offer?: HrOffer | null;
   /** Why the internal fast-track to Sales is unavailable; null = available. */
   fast_track_block?: string | null;
+  /** The Hiring Manager's review + sign-off (22 Oct 2026); null = no HM on the deal. */
+  hiring_manager?: HmProfileInfo;
   candidate: {
     id: number;
     full_name: string;
@@ -1027,6 +1031,9 @@ export function ProfileDetailPage() {
   const [submitApprovalOpen, setSubmitApprovalOpen] = useState(false);
   // "View feedback" opens every round in a pop-up, the latest AI verdict open.
   const [roundsOpen, setRoundsOpen] = useState(false);
+  // Admin / CEO undo a wrong call (23 Oct 2026) — `useHasRole()` = Admin / CEO.
+  const isAdminLogin = useHasRole();
+  const [correcting, setCorrecting] = useState(false);
   const canOpenAiReport = useCanOpenAiReport();
   const [hrRoundOpen, setHrRoundOpen] = useState(false);
   const [hrFeedbackOpen, setHrFeedbackOpen] = useState(false);
@@ -1233,7 +1240,8 @@ export function ProfileDetailPage() {
                   {/* The resume is what a reviewer needs most — one click away. */}
                   {detail.candidate?.cv_url ? (
                     <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-semibold">
-                      <FileLink url={detail.candidate.cv_url} label="View CV" />
+                      <FileLink url={detail.candidate.cv_url} label="View CV"
+                        downloadName={detail.candidate?.full_name || detail.candidate_name || undefined} />
                     </span>
                   ) : (
                     <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs">No CV on file</span>
@@ -1313,8 +1321,25 @@ export function ProfileDetailPage() {
               />
             </div>
           )}
+          {isAdminLogin && (
+            <div className="flex flex-wrap items-center gap-3 rounded-card border border-dashed border-subtle px-4 py-2.5">
+              <span className="text-xs text-muted">
+                RMG / GM or anyone took a wrong call? Put the stage, the screening or the AI L1 decision right.
+              </span>
+              <button type="button" onClick={() => setCorrecting(true)}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800">
+                <Wrench size={13} aria-hidden /> Admin correction
+              </button>
+            </div>
+          )}
         </div>
       </div>
+      {correcting && (
+        <AdminCorrectionModal profileId={detail.id}
+          candidateName={detail.candidate?.full_name || detail.candidate_name}
+          onClose={() => setCorrecting(false)}
+          onDone={(msg) => { setCorrecting(false); showToast(msg); void load(); loadAi(); }} />
+      )}
       {moveTo && (
         <TransitionModal
           profileId={detail.id}
@@ -1360,6 +1385,12 @@ export function ProfileDetailPage() {
           <b>Shortlisted by RMG</b> — proceed with the candidate: agree an AI L1 slot and send the invitation link.
         </div>
       )}
+
+      {/* The Hiring Manager's two decisions (22 Oct 2026): the review before the
+          customer and the sign-off before the Sales Head. */}
+      <HmCandidateGate info={detail.hiring_manager ?? null} profileId={detail.id} stage={detail.pipeline_status}
+        candidateName={detail.candidate?.full_name || detail.candidate_name || "This candidate"}
+        toast={showToast} onDone={load} />
 
       {/* Internal candidate (25 Sep 2026): an existing employee can skip L1/L2
           and go straight to Sales — only when the server says it applies. */}
@@ -2129,10 +2160,12 @@ export function OverviewTab({
       <OverviewSection icon={FileText} tone="from-slate-500 to-slate-700" title="Documents & notes">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <DocTile label="CV" present={!!detail.resume_url}>
-            {detail.resume_url ? <FileLink url={detail.resume_url} label={detail.cv_original_filename || "View CV"} /> : <span className="text-muted">Not uploaded</span>}
+            {detail.resume_url ? <FileLink url={detail.resume_url} label={detail.cv_original_filename || "View CV"}
+              downloadName={detail.candidate?.full_name || detail.candidate_name || undefined} /> : <span className="text-muted">Not uploaded</span>}
           </DocTile>
           <DocTile label="Resignation Certificate" present={!!detail.resignation_certificate_url}>
-            {detail.resignation_certificate_url ? <FileLink url={detail.resignation_certificate_url} label="View" /> : <span className="text-muted">Not uploaded yet</span>}
+            {detail.resignation_certificate_url ? <FileLink url={detail.resignation_certificate_url} label="View"
+              downloadName={`${detail.candidate?.full_name || detail.candidate_name || "Candidate"} - Notice period proof`} /> : <span className="text-muted">Not uploaded yet</span>}
             {canEditOnboarding && detail.candidate?.id && (
               <FileUploadButton
                 path={`/api/candidates/${detail.candidate.id}/resignation-certificate`}

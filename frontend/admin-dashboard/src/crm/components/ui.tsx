@@ -8,6 +8,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Inbox, Info, X, XCircle } from "lucide-react";
 import { AnimatedNumber } from "./motion3d";
 import { statusHelp } from "../lib/statusHelp";
+import { canGoBack } from "../../lib/appHistory";
 
 /* Mirrors the motion tokens in src/styles/tokens.css (--dur-*, --ease-out).
  * framer-motion needs raw numbers — keep in sync with tokens.css. */
@@ -18,7 +19,7 @@ export const focusRing = "focus-visible:outline-none focus-visible:shadow-focus-
 /* ---------- Status badge (consistent colour map per spec) ---------- */
 const GREEN = ["Active", "Closed_Won", "Joined", "Approved", "Paid", "Fulfilled", "Accepted", "Passed", "Present", "Open_For_Sourcing", "Confirmed"];
 const BLUE = ["In_Progress", "Submitted", "Scheduled", "Posted_On_Portals", "Scored", "New", "Sourcing", "Technical_Screening", "RMG_Review", "Sales_Screening", "Customer_Screening", "Customer_Interview", "L1_Feedback", "L2_Feedback", "Shortlisted", "Customer_Approval", "HR_Screening", "HR_Interviewing", "Preboarding", "Completed", "Closed_Partial"];
-const YELLOW = ["On_Hold", "Sales_Hold", "Pending", "Pending_Scan", "Partially_Paid", "Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Unpaid", "Half_Day", "Blanket", "Draft"];
+const YELLOW = ["On_Hold", "Sales_Hold", "Pending", "Pending_Scan", "Partially_Paid", "Pending_Sales_Head_Approval", "Pending_Engineering_Review", "Pending_HM_Review", "Unpaid", "Half_Day", "Blanket", "Draft"];
 const RED = ["Rejected", "Closed_Lost", "Cancelled", "Failed", "Expired", "Absent", "Sales_Head_Rejected", "Engineering_Rejected", "Sales_Rejected", "RMG_Rejected", "Customer_Rejected", "Self_Withdrawn", "Exhausted"];
 const GREY = ["Archived", "Inactive", "Closed", "Not_Scheduled", "Removed", "Leave", "Holiday"];
 
@@ -60,6 +61,7 @@ export const STATUS_LABEL_OVERRIDES: Record<string, string> = {
   // Label only — stored values unchanged, no migration.
   Pending_Sales_Head_Approval: "Awaiting Sales Head approval",
   Pending_Engineering_Review: "Awaiting RMG review",
+  Pending_HM_Review: "Awaiting Hiring Manager",
   Pending_RMG: "Awaiting RMG template",
   RMG_Review: "RMG Review",
   // Opportunity "Sales Hold" (8 Sep 2026). On_Hold is NOT relabelled here —
@@ -606,7 +608,7 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
             It may have been removed, or it is not shared with your role. If a link brought you here and
             you need it, ask your administrator.
           </div>
-          {typeof window !== "undefined" && window.history.length > 1 && (
+          {typeof window !== "undefined" && canGoBack() && (
             <button type="button" onClick={() => window.history.back()}
               className={`mt-2 rounded-control text-sm font-semibold text-brand-600 hover:underline ${focusRing}`}>
               ← Go back

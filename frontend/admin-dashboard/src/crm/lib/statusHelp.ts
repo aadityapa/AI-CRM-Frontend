@@ -15,6 +15,8 @@ export const STATUS_HELP: Record<string, string> = {
   Pending_Sales_Head_Approval: "Waiting for the Sales Head to approve or reject.",
   Pending_Engineering_Review:
     "Waiting for RMG to review, attach a Job Description and approve. TA cannot source until this is done.",
+  Pending_HM_Review:
+    "RMG approved; the position's Hiring Manager confirms the JD & skills before TA starts sourcing.",
   Open_For_Sourcing: "Approved and ready — TA can start sourcing candidates now.",
   Posted_On_Portals: "The job has been posted on portals; applications are coming in.",
   In_Progress: "Candidates are being sourced and screened for this requirement.",

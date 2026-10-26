@@ -284,7 +284,7 @@ function TargetsModal({ data, onClose, onSaved }: { data: HiringData; onClose: (
  *  the server gate is the "dashboard" tab, which every template carries. */
 // "Interviewer" (10 Oct 2026): a panel member takes rounds; the company's
 // hiring pace is not their desk (user: "remove this Hiring control tower").
-const SKIP_ONLY_ROLES = new Set(["HR", "Finance", "Interviewer"]);
+const SKIP_ONLY_ROLES = new Set(["HR", "Finance", "Interviewer", "Hiring Manager"]);
 
 export function useShowsHiringTower(): boolean {
   const me = useMe();

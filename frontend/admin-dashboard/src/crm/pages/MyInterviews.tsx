@@ -398,7 +398,7 @@ function DetailPane({ roundId, onChanged, showToast }: {
           )}
         </div>
         {!c.cv_url && <p className="mt-2 text-sm text-muted">No CV on file for this candidate.</p>}
-        {c.cv_url && showCv && <div className="mt-3"><FilePreviewPane url={c.cv_url} title={`${c.name} — resume`} /></div>}
+        {c.cv_url && showCv && <div className="mt-3"><FilePreviewPane url={c.cv_url} title={`${c.name} — resume`} downloadName={c.name} /></div>}
       </section>
 
       {d.my_other_rounds.length > 0 && (

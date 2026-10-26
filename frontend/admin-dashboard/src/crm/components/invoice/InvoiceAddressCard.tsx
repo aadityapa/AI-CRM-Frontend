@@ -19,8 +19,12 @@ export type PartyForm = {
   name?: string | null; line1?: string | null; line2?: string | null; city?: string | null;
   state?: string | null; pincode?: string | null; country?: string | null; gstin?: string | null;
   pan?: string | null; print_address?: string | null;
+  /** 26 Oct 2026: the branch the party comes from and the label printed under the
+   *  name ("Visteon - Chennai"). */
+  branch_id?: number | null; branch_name?: string | null;
 };
-type AddrOnly = Omit<PartyForm, "name" | "gstin" | "pan" | "print_address">;
+type AddrOnly = Omit<PartyForm, "name" | "gstin" | "pan" | "print_address" | "branch_id" | "branch_name">;
+export type BranchChoice = { id: number; branch_name: string; is_primary: boolean; buyer: PartyForm; shipping: PartyForm };
 
 export type InvoiceParties = {
   invoice_id: number; invoice_number: string | null; invoice_date: string | null; kind: string;
@@ -31,7 +35,18 @@ export type InvoiceParties = {
   customer_address_changed: boolean;
   po: { po_number: string; billing: AddrOnly | null; delivery: AddrOnly | null } | null;
   same_address: { id: number; invoice_number: string | null; invoice_date: string | null; kind: string }[];
+  /** Every branch of the customer (26 Oct 2026) — a PO raised on the wrong branch is fixed in one click. */
+  branches?: BranchChoice[];
+  po_billing_branch?: { id: number } | null;
 };
+
+/** The whole party of a branch (name, branch line, address, GSTIN, PAN) — PURE. */
+export function partyFromBranch(b: BranchChoice): { buyer: PartyForm; shipping: PartyForm } {
+  const { print_address: _a, ...buyer } = b.buyer;
+  const { print_address: _b, ...shipping } = b.shipping;
+  return { buyer: { ...buyer, branch_id: b.id, branch_name: b.branch_name },
+    shipping: { ...shipping, branch_id: b.id, branch_name: b.branch_name, name: shipping.name || buyer.name } };
+}
 
 const SOURCE_WORDS: Record<string, string> = {
   issued: "Kept from the day it was raised",
@@ -71,6 +86,7 @@ function PartyBlock({ icon: Icon, title, f, gst }: { icon: typeof Building2; tit
         <Icon size={12} aria-hidden /> {title}
       </p>
       <p className="text-sm font-semibold text-primary">{f.name || "—"}</p>
+      {f.branch_name && <p className="text-xs font-semibold text-secondary">{f.branch_name}</p>}
       <p className="text-xs leading-relaxed text-secondary">{addressLine(f) || "No address on record"}</p>
       {gst && (f.gstin || f.pan) && (
         <p className="mt-1 text-[11px] text-muted">
@@ -165,6 +181,7 @@ export function InvoiceAddressCard({ invoiceId, canCorrect, onChanged, notify }:
 
 const FIELDS: { key: keyof PartyForm; label: string; span?: boolean; buyerOnly?: boolean }[] = [
   { key: "name", label: "Name on the invoice", span: true },
+  { key: "branch_name", label: "Branch line (printed under the name — leave blank for none)", span: true },
   { key: "line1", label: "Address line 1", span: true },
   { key: "line2", label: "Address line 2", span: true },
   { key: "city", label: "City" }, { key: "state", label: "State" },
@@ -206,6 +223,7 @@ function CorrectAddressModal({ data, onClose, onSaved }: {
   const [apply, setApply] = useState<Set<number>>(new Set(data.same_address.map((s) => s.id)));
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
+  const [movePo, setMovePo] = useState(true);
   const problems = correctionProblems(buyer, reason);
   const dirty = JSON.stringify(buyer) !== JSON.stringify(strip(data.printed.buyer)) || reason.trim() !== "";
 
@@ -216,6 +234,18 @@ function CorrectAddressModal({ data, onClose, onSaved }: {
     out.push({ label: "Use the customer's current address", buyer: data.current.buyer, ship: data.current.shipping });
     return out;
   }, [data]);
+
+  const branches = data.branches || [];
+  const pickedBranch = branches.find((b) => b.id === buyer.branch_id) || null;
+  const poBranchId = data.po_billing_branch?.id ?? null;
+  // The PO still bills another branch → offer to move it so NEW invoices follow.
+  const offerMovePo = Boolean(pickedBranch && data.po && pickedBranch.id !== poBranchId);
+  const applyBranch = (b: BranchChoice) => {
+    const next = partyFromBranch(b);
+    setBuyer(next.buyer);
+    setShip(next.shipping);
+    setShipOwn(addressLine(next.shipping) !== addressLine(next.buyer));
+  };
 
   const fillFrom = (b?: AddrOnly, s?: AddrOnly) => {
     const pick = (src: AddrOnly) => ({ line1: src.line1, line2: src.line2, city: src.city, state: src.state,
@@ -231,6 +261,7 @@ function CorrectAddressModal({ data, onClose, onSaved }: {
     try {
       const r = await crmPut<InvoiceParties>(`/api/invoices/${data.invoice_id}/parties`, {
         buyer, shipping: shipOwn ? ship : null, reason: reason.trim(), apply_to: [...apply],
+        move_po_to_branch: offerMovePo && movePo,
       });
       onSaved(r.data as InvoiceParties, r.message || "Address corrected");
     } catch (e: any) {
@@ -257,6 +288,36 @@ function CorrectAddressModal({ data, onClose, onSaved }: {
             This invoice already has an IRN. Correcting the printed address here does not change what is registered on the
             GST portal — fix it there too if the registered address was wrong.
           </p>
+        )}
+        {branches.length > 0 && (
+          <div className="rounded-lg border border-subtle bg-surface-2 p-3">
+            <p className="mb-1.5 text-xs font-bold text-primary">Bill this invoice to a branch</p>
+            <p className="mb-2 text-[11px] text-muted">
+              Picks the branch's name, branch line, address, GSTIN and PAN in one go — use it when the PO was raised on the wrong branch.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {branches.map((b) => {
+                const on = buyer.branch_id === b.id;
+                return (
+                  <button key={b.id} type="button" aria-pressed={on} onClick={() => applyBranch(b)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${on
+                      ? "border-indigo-500 bg-indigo-600 text-white"
+                      : "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300"}`}>
+                    {b.branch_name}{b.is_primary ? " · primary" : ""}{b.id === poBranchId ? " · on the PO" : ""}
+                  </button>
+                );
+              })}
+            </div>
+            {offerMovePo && pickedBranch && data.po && (
+              <label className="mt-2 flex items-start gap-2 rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <input type="checkbox" className="mt-0.5" checked={movePo} onChange={(e) => setMovePo(e.target.checked)} />
+                <span>
+                  <b>Also move PO {data.po.po_number} to {pickedBranch.branch_name}</b> — new invoices on this PO will then
+                  print this branch. Leave unticked to change only the invoices you are correcting.
+                </span>
+              </label>
+            )}
+          </div>
         )}
         <div className="flex flex-wrap gap-1.5">
           {fills.map((f) => (

@@ -68,11 +68,14 @@ type Props<T> = {
   rowActions?: (r: T) => React.ReactNode;
   rowKey?: (r: T) => string | number;
   empty?: React.ReactNode;
+  /** A strip of actions under a group's header (23 Oct 2026: "Set branch" on a
+   *  receipts group with no branch). Return null for no strip. */
+  groupActions?: (rows: T[]) => React.ReactNode;
 };
 
 export function CustomerGroupedList<T>({
   rows, loading, columns, customerId, customerName, search = "", matches, noun,
-  summary, onRowClick, rowHref, rowActions, rowKey, empty,
+  summary, onRowClick, rowHref, rowActions, rowKey, empty, groupActions,
 }: Props<T>) {
   const [rowMenu, setRowMenu] = useState<RowMenuState>(null);
   const groups = useMemo<CustomerGroup<T>[]>(() => {
@@ -121,6 +124,10 @@ export function CustomerGroupedList<T>({
             </span>
             {summary && <span className="ml-auto flex flex-wrap gap-x-5 text-xs text-muted">{summary(g.rows)}</span>}
           </button>
+          {groupActions && (() => {
+            const node = groupActions(g.rows);
+            return node ? <div className="flex flex-wrap items-center gap-2 border-t border-subtle bg-surface-2 px-4 py-2">{node}</div> : null;
+          })()}
           {isOpen(g.customer_id) && (
             <div className="overflow-x-auto border-t border-subtle">
               <table className="w-full text-sm">

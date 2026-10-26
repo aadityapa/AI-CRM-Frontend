@@ -25,7 +25,7 @@
  * `var()` token. The chosen tab is remembered per browser
  * (`localStorage["crm.ceo.tab"]`) — a convenience, never state.
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Briefcase, Building2, ChevronDown, ChevronRight, ReceiptText, RefreshCw, Target, Users, Wallet,
 } from "lucide-react";
@@ -44,6 +44,7 @@ import { PaceCard } from "./HiringControlTower";
 import type { HiringData } from "./HiringControlTower";
 import { useDeskData } from "./DeskWidgets";
 import { BillingTracker } from "./BillingTracker";
+import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
 
 /* ---------- payload (services/executive_dashboard.py) ---------- */
 
@@ -75,6 +76,8 @@ export type FinanceData = {
   by_type: { label: string; billed: number; invoices: number; share_pct: number | null }[];
   top_customers: { customer_id: number; customer: string; billed: number; share_pct: number | null }[];
   concentration: { top1_share_pct: number | null; top3_share_pct: number | null; risk: boolean; top_customer: string | null };
+  /** 24 Oct 2026 — the scope the figures were built for + every choice. */
+  filters?: { customer_id: number | null; project_id: number | null; options: { customers: FilterOption[]; projects: FilterOption[] } };
 };
 
 type Kind = "internal" | "external" | "unknown";
@@ -311,7 +314,10 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   // At the FY zoom the target is the FY target; `month_*` is the SELECTED period's
   // figure at month / quarter zoom (the report's naming, kept as-is).
   const isFy = period.kind === "fy";
-  const target = isFy ? t.fy_target : t.month_target;
+  // 27 Oct 2026: with a customer / project filter the billed figure is one
+  // account; the target is the company's — no attainment, no gap.
+  const scoped = !!t.scoped;
+  const target = scoped ? null : isFy ? t.fy_target : t.month_target;
   const attainment = isFy ? t.fy_attainment_pct : t.month_attainment_pct;
   const gap = target === null ? null : Math.max(0, target - h.billed);
   const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
@@ -334,7 +340,8 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
               sub={`${inrCompact(m.gross_margin)} on ${inrCompact(m.cost)} people cost`} />
         <Tile label={`${isFy ? "FY" : "Period"} target`} value={target === null ? "—" : pct(attainment, 0)}
               tone={attainmentState(attainment) === "ok" ? "success" : attainmentState(attainment) === "warn" ? "warning" : "neutral"}
-              to={rev} sub={target === null ? "no target set — Reports ▸ Revenue ▸ Targets" : `of ${inrCompact(target)}`} />
+              to={rev} sub={scoped ? "company-wide — clear the customer filter to compare"
+                : target === null ? "no target set — Reports ▸ Revenue ▸ Targets" : `of ${inrCompact(target)}`} />
         <Tile label="DSO" value={c.dso_days === null ? "—" : `${num(c.dso_days)} d`} tone={lowGood(c.dso_days, 45, 60) === "ok" ? "success" : lowGood(c.dso_days, 45, 60) === "warn" ? "warning" : "danger"} to={rev}
               sub={c.avg_days_to_pay === null ? "no receipts in the period" : `paid ${num(c.avg_days_to_pay)} days after due on average`} />
         <Tile label="PO cover" value={d.pipeline.po_cover_months === null ? "—" : `${d.pipeline.po_cover_months} mo`} to="pos"
@@ -1191,7 +1198,15 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
   const [period, setPeriod] = useState<PeriodKind>("fy");
   const [month, setMonth] = useState<string>(thisMonthKey());
 
-  const url = `/api/dashboard/ceo${qs({ tab: dataTab, month, period })}`;
+  // 24 Oct 2026 — the Finance tab narrows to one customer / project (the same
+  // scope as the Revenue report); the other tabs never send it.
+  const [scope, setScope] = useState<{ customer: number | null; project: number | null }>({ customer: null, project: null });
+  const scoped = dataTab === "finance";
+  const url = `/api/dashboard/ceo${qs({
+    tab: dataTab, month, period,
+    customer_id: scoped ? scope.customer ?? undefined : undefined,
+    project_id: scoped ? scope.project ?? undefined : undefined,
+  })}`;
   const { data, loading, error, retry } = useDeskData<CeoPayload<unknown>>(url);
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [toast, showToast] = useToast();
@@ -1206,6 +1221,12 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
       setTargetsFor({ month, targets: r.data.targets }); setTargetsOpen(true);
     } catch (e: any) { showToast(e?.message || "Could not load the targets", "err"); }
   };
+  // Keep the last options seen, so the pickers do not blink while a new scope loads.
+  const [financeOptions, setFinanceOptions] = useState<{ customers: FilterOption[]; projects: FilterOption[] } | null>(null);
+  useEffect(() => {
+    const opts = data && data.tab === "finance" ? (data.data as FinanceData).filters?.options : null;
+    if (opts) setFinanceOptions(opts);
+  }, [data]);
   const atCurrent = useMemo(() => {
     if (!data) return month >= thisMonthKey();
     return data.period.is_current || data.period.end >= new Date().toISOString().slice(0, 10);
@@ -1268,6 +1289,24 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
             );
           })}
         </div>}
+        {tab === "finance" && financeOptions && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-subtle px-5 py-2.5">
+            <ScopeFilterBar
+              options={financeOptions}
+              customerId={scope.customer}
+              projectId={scope.project}
+              onCustomer={(v) => setScope((s) => ({
+                customer: v,
+                // A project of another customer would make an empty scope.
+                project: v && s.project && financeOptions.projects.find((p) => p.id === s.project)?.customer_id !== v ? null : s.project,
+              }))}
+              onProject={(v) => setScope((s) => ({ ...s, project: v }))}
+            />
+            {(scope.customer || scope.project) && (
+              <span className="text-[11px] text-muted">Every tile, dial and chart below is for this scope only.</span>
+            )}
+          </div>
+        )}
       </header>
 
       {isBilling && <BillingTracker />}
