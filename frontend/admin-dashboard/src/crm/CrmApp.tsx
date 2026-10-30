@@ -916,9 +916,7 @@ export default function CrmApp() {
   if (!me.roles.length) {
     return (
       <div className="p-6">
-        <ErrorBox error={me.access?.template_id
-          ? "Your account has an access template but no CRM role. The template decides which tabs you see; a role (built-in or custom) is what lets you into the CRM. Ask an Admin to add one in Access Control ▸ Users ▸ Edit Roles."
-          : "No CRM role is assigned to your account. Ask an Admin to add one in Access Control ▸ Users ▸ Edit Roles."} />
+        <ErrorBox error="No CRM role is assigned to your account. A role is what lets you into the CRM and decides what you see. Ask an Admin to add one in Access Control ▸ Users ▸ Edit Roles." />
       </div>
     );
   }

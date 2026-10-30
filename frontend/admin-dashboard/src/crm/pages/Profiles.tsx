@@ -1863,11 +1863,15 @@ export function OverviewTab({
   const [designationId, setDesignationId] = useState(detail.designation_id != null ? String(detail.designation_id) : "");
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
   const [designations, setDesignations] = useState<{ id: number; name: string }[]>([]);
+  /* Loaded whenever the block SHOWS, not only while it is editable (28 Oct 2026,
+     user report): at Joined the selects are read-only, and with no options loaded
+     they printed "Select…" although HR had picked Engineering / Engineer — which
+     is exactly what the Employees record then showed. */
   useEffect(() => {
-    if (!canEditOnboarding) return;
+    if (!showOnboardingRecord) return;
     fetchAllMaster<{ id: number; name: string }>("/api/departments").then(setDepartments).catch(() => setDepartments([]));
     fetchAllMaster<{ id: number; name: string }>("/api/designations").then(setDesignations).catch(() => setDesignations([]));
-  }, [canEditOnboarding]);
+  }, [showOnboardingRecord]);
   // "" = not yet asked, "yes" / "no" = the answer — three states, so a bare
   // checkbox (which cannot say "unknown") would have been wrong here.
   const [relocation, setRelocation] = useState<"" | "yes" | "no">(

@@ -118,8 +118,8 @@ export function ApplyLinkCard({ requirementId, toast }: { requirementId: number;
             <h2 className="text-base font-bold text-primary">Candidate application link</h2>
             <p className="mt-0.5 text-sm text-muted">
               Post this on Naukri, LinkedIn or any job portal. Every application lands in this
-              position&apos;s Applicants at <strong className="text-primary">Sourcing</strong> — review it, then
-              move the candidate to Technical Screening.
+              position&apos;s Applied Candidates at <strong className="text-primary">Sourcing</strong> — review it,
+              then move the candidate to Technical Screening.
             </p>
           </div>
         </div>

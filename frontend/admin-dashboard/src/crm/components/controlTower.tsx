@@ -15,13 +15,13 @@
  *    `w-N` after `inputCls` never wins;
  *  - no alpha modifier on a `var()` token (`bg-surface-2/60` compiles to nothing).
  */
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, Minus } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { chartPalette, chartPaletteDark, neutral, radius, semantic, semanticDark } from "../../design-system/tokens/tokens";
 import { useTheme } from "../../theme/ThemeProvider";
-import { CrmLink } from "../routerHooks";
+import { CrmLink, crmNavigate, crmUrl } from "../routerHooks";
 
 /* ---------- formatting (one copy for every tower) ---------- */
 
@@ -289,10 +289,15 @@ const TILE_BAR: Record<TileTone, string> = {
  * that produced the number; without, a plain card (a derived figure such as
  * a margin percentage has no list to open).
  */
-export function Tile({ label, value, sub, to, tone = "brand", foot }: {
+export function Tile({ label, value, sub, to, tone = "brand", foot, onClick, active = false, title }: {
   label: string; value: React.ReactNode; sub?: React.ReactNode; to?: string; tone?: TileTone;
   /** Optional bottom row (delta chips); `sub` stays directly under the number. */
   foot?: React.ReactNode;
+  /** In-page action (e.g. narrow the table below) — used when there is no `to`. */
+  onClick?: () => void;
+  /** Draws the tile as the one currently chosen. */
+  active?: boolean;
+  title?: string;
 }) {
   const body = (
     <>
@@ -304,6 +309,14 @@ export function Tile({ label, value, sub, to, tone = "brand", foot }: {
     </>
   );
   const cls = "fx-lift relative flex min-h-[6.5rem] flex-col overflow-hidden rounded-card border border-subtle bg-surface-1 p-4 shadow-raised";
+  if (!to && onClick) {
+    return (
+      <button type="button" onClick={onClick} title={title} aria-pressed={active}
+        className={`${cls} group w-full cursor-pointer text-left transition-shadow duration-micro hover:shadow-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${active ? "ring-2 ring-brand-500 dark:ring-brand-400" : ""}`}>
+        {body}
+      </button>
+    );
+  }
   if (!to) return <div className={cls}>{body}</div>;
   return (
     <CrmLink to={to} className={`${cls} group transition-shadow duration-micro hover:shadow-overlay`}>
@@ -522,11 +535,38 @@ export type BarSeries = {
 /** Category labels longer than this get angled x-axis ticks. */
 const LONG_LABEL = 11;
 
+/** What clicking a bar does (29 Oct 2026, "every graph should open the data behind it"):
+ *  a CRM path to open, or a callback that acts in place. `series` is the bar clicked
+ *  (when the click landed between bars, the first ticked series with a value). */
+export type BarClickTarget = string | null | undefined;
+export type BarLink = (row: Record<string, unknown>, series: string) => BarClickTarget;
+
+/** Open a CRM path from a chart click; Ctrl / ⌘ / middle-click → a new tab. */
+export function openBarLink(path: string, e?: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; button?: number } | null): void {
+  if (e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1)) {
+    window.open(crmUrl(path), "_blank", "noopener");
+    return;
+  }
+  crmNavigate(path);
+}
+
+/** The series a click between bars belongs to: the first ticked one with a non-zero value. */
+export function seriesAt(row: Record<string, unknown>, ticked: string[]): string | null {
+  return ticked.find((k) => Number(row[k]) !== 0 && Number.isFinite(Number(row[k]))) ?? ticked[0] ?? null;
+}
+
 export function FilteredBars({ data, series, xKey = "label", format, height = 260, layout = "horizontal",
-                               rowFilter = false, rowLabel = "Show", stacked = false, className = "" }: {
+                               rowFilter = false, rowLabel = "Show", stacked = false, className = "",
+                               barLink, onBarClick, clickHint }: {
   data: Record<string, unknown>[]; series: BarSeries[]; xKey?: string; format?: (v: number) => string;
   height?: number; layout?: "horizontal" | "vertical"; rowFilter?: boolean; rowLabel?: string;
   stacked?: boolean; className?: string;
+  /** A bar opens this CRM path (null = that bar opens nothing). */
+  barLink?: BarLink;
+  /** A bar acts in place (filters a table, picks a chip) — checked before `barLink`. */
+  onBarClick?: (row: Record<string, unknown>, series: string) => void;
+  /** The line under the series ticks that says what a click does. */
+  clickHint?: string;
 }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
@@ -549,6 +589,26 @@ export function FilteredBars({ data, series, xKey = "label", format, height = 26
   const angled = !vertical && visible.some((r) => String(r[xKey]).length > LONG_LABEL);
   const chartHeight = vertical ? Math.max(height, 28 * visible.length + 40) : height + (angled ? 40 : 0);
 
+  // A bar's own click names its series; the chart's click (which fires after, and also
+  // catches a click in the empty part of a column) does the opening — once.
+  const clickable = !!(barLink || onBarClick);
+  const clickedSeries = useRef<string | null>(null);
+  const openRow = (row: Record<string, unknown>, seriesKey: string, e?: React.MouseEvent | null) => {
+    if (onBarClick) { onBarClick(row, seriesKey); return; }
+    const path = barLink?.(row, seriesKey);
+    if (path) openBarLink(path, e ?? null);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onChartClick = (state: any, e?: React.MouseEvent) => {
+    const picked = clickedSeries.current;
+    clickedSeries.current = null;
+    const row = state?.activePayload?.[0]?.payload as Record<string, unknown> | undefined;
+    if (!row) return;
+    const k = picked ?? seriesAt(row, active.map((s) => s.key));
+    if (k) openRow(row, k, e);
+  };
+  const hint = clickHint ?? "Click a bar to open the records behind it · Ctrl-click opens a new tab";
+
   return (
     <div className={`grid gap-4 ${rowFilter ? "lg:grid-cols-[1fr,11rem]" : ""} ${className}`}>
       <div className="min-w-0">
@@ -563,11 +623,13 @@ export function FilteredBars({ data, series, xKey = "label", format, height = 26
               </label>
             );
           })}
+          {clickable && <span className="ml-auto text-[11px] text-muted">{hint}</span>}
         </div>
-        <div style={{ height: chartHeight }}>
+        <div style={{ height: chartHeight }} className={clickable ? "[&_.recharts-bar-rectangle]:cursor-pointer [&_.recharts-wrapper]:cursor-pointer" : undefined}>
           {active.length && visible.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={visible} layout={vertical ? "vertical" : "horizontal"} margin={{ top: 8, right: 12, bottom: 4, left: vertical ? 8 : 0 }}>
+              <BarChart data={visible} layout={vertical ? "vertical" : "horizontal"} margin={{ top: 8, right: 12, bottom: 4, left: vertical ? 8 : 0 }}
+                        onClick={clickable ? onChartClick : undefined}>
                 <CartesianGrid strokeDasharray="3 3" stroke={axis} strokeOpacity={0.2} vertical={vertical} horizontal={!vertical} />
                 {vertical ? (
                   <>
@@ -586,7 +648,8 @@ export function FilteredBars({ data, series, xKey = "label", format, height = 26
                   <Bar key={s.key} dataKey={s.key} name={s.label} fill={colorOf(s, series.indexOf(s))}
                        stackId={stacked ? (s.stackId ?? "stack") : s.stackId}
                        radius={vertical ? [0, radius.input, radius.input, 0] : [radius.input, radius.input, 0, 0]}
-                       barSize={vertical ? 14 : 22} animationDuration={250} />
+                       maxBarSize={vertical ? 14 : 22} animationDuration={250}
+                       onClick={clickable ? () => { clickedSeries.current = s.key; } : undefined} />
                 ))}
               </BarChart>
             </ResponsiveContainer>

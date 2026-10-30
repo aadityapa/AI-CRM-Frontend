@@ -170,9 +170,9 @@ describe("CEO dashboard", () => {
     expect(screen.getByText("Behind target")).toBeTruthy();     // alert chip
     expect(screen.getAllByRole("figure").length).toBeGreaterThanOrEqual(3);   // three speedometers
     expect(screen.getByRole("tab", { name: /Finance/ }).getAttribute("aria-selected")).toBe("true");
-    // Money tiles open Reports ▸ Revenue at the SAME anchor + zoom.
+    // 27 Oct 2026 — every money tile opens its own drill-down page at the SAME anchor + zoom.
     const billed = screen.getByText("Billed (excl. GST)").closest("a");
-    expect(billed?.getAttribute("href")).toMatch(/p=reports&tab=revenue&month=2026-09&period=fy/);
+    expect(billed?.getAttribute("href")).toMatch(/p=insights%2Fbilled&month=2026-09&period=fy/);
     // Bar charts carry tick filters: series chips + a row list with All / None.
     expect(screen.getAllByRole("checkbox", { name: /People cost/ }).length).toBe(2);   // trend + cash flow
     expect(screen.getAllByRole("checkbox", { name: /Outstanding/ }).length).toBeGreaterThan(0);   // ageing is a bar chart too
@@ -248,7 +248,9 @@ describe("CEO dashboard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Quarterly" }));
     expect(screen.getByRole("checkbox", { name: "Q1 FY26-27" })).toBeTruthy();
     // Untick a series: its chip goes off (the chart redraws with what is ticked).
-    const internal = screen.getAllByRole("checkbox", { name: /^Onboarded — internal$/ })[0] as HTMLInputElement;
+    // Grouped columns like the Finance tab (28 Oct 2026): onboarded beside internal / external, nothing stacked.
+    expect(screen.getAllByRole("checkbox", { name: "Onboarded" }).length).toBe(1);
+    const internal = screen.getAllByRole("checkbox", { name: /^Internal$/ })[0] as HTMLInputElement;
     expect(internal.checked).toBe(true);
     fireEvent.click(internal);
     expect(internal.checked).toBe(false);
@@ -278,8 +280,9 @@ describe("CEO dashboard", () => {
     expect(screen.getAllByRole("checkbox", { name: "On the bench" }).length).toBe(3);   // unfolded · by designation · tenure
     expect(screen.getByRole("checkbox", { name: "Engineer" })).toBeTruthy();            // designation row tick
     expect(screen.getByText("Asha Rao")).toBeTruthy();                                   // roll-off name
-    // Tiles deep-link to the Employees list with the deployment filter.
+    // On the CEO dashboard the tiles open the drill-down page, bench chip pre-selected
+    // (HR's desk, without `drill`, keeps the Employees list link).
     const benchTile = screen.getAllByText("On the bench", { selector: "div.uppercase" })[0];
-    expect(benchTile.closest("a")?.getAttribute("href")).toMatch(/p=employees&deployment=bench/);
+    expect(benchTile.closest("a")?.getAttribute("href")).toMatch(/p=insights%2Fheadcount&.*scope=bench/);
   });
 });

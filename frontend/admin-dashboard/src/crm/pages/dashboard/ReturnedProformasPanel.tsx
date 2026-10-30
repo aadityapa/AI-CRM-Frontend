@@ -74,7 +74,10 @@ export const REOPEN_SPEC: DecisionSpec = {
   confirmLabel: "Reopen to correct", busyLabel: "Reopening…",
 };
 
-export function ReturnedProformasPanel() {
+/** `embedded` (26 Oct 2026): rendered inside My Tasks ▸ Returned Proformas — the
+ *  tile already names it, so no rose header and no outer card. The Dashboard
+ *  shows a tile only (B-V2 `work_desk._returned_pi_tab`). */
+export function ReturnedProformasPanel({ embedded = false, onChanged }: { embedded?: boolean; onChanged?: () => void } = {}) {
   const [f, setF] = useSessionState<Filters>("dash.returnedPi", EMPTY);
   const [text, setText] = useState(f.search);
   const [rows, setRows] = useState<ReturnedRow[]>([]);
@@ -139,8 +142,8 @@ export function ReturnedProformasPanel() {
   }
 
   return (
-    <section className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised" aria-label="Proformas returned by Finance">
-      <header className="bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 px-5 py-4 text-[#fff]">
+    <section className={embedded ? "" : "overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised"} aria-label="Proformas returned by Finance">
+      {!embedded && <header className="bg-gradient-to-r from-rose-600 via-pink-600 to-orange-500 px-5 py-4 text-[#fff]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-[#fff]/15 ring-1 ring-[#fff]/25">
@@ -157,7 +160,7 @@ export function ReturnedProformasPanel() {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
           </button>
         </div>
-      </header>
+      </header>}
 
       <div className="space-y-3 border-b border-subtle px-5 py-3">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Whose move">
@@ -229,6 +232,7 @@ export function ReturnedProformasPanel() {
             setDone(`${reopen.employee || "The"} timesheet for ${reopen.month_label} is open — correct it and submit again.`);
             setReopen(null);
             setTick((n) => n + 1);
+            onChanged?.();
           }} />
       )}
     </section>

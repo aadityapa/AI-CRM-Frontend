@@ -1,5 +1,49 @@
 # CLAUDE.md — Karnex frontend (AI-Interview-Model-F-V2)
 
+## 0. Project at a glance — READ FIRST, UPDATE ON EVERY CHANGE
+
+> **Standing rule (user, 29 Oct 2026):** every change or update must also update §0 here and §0 in
+> `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
+> remaining). Do it in the same session, beside the dated note.
+
+**Last updated:** 29 Oct 2026 (clickable charts). **State:** `tsc` green; vitest green on the touched files; nothing committed since
+`f807e80`.
+
+**Project:** **Karnex Orbit**, Karnex's AI interview platform plus the staffing CRM/ERP. This repo is its two front-ends.
+
+**Stack:**
+- **Admin dashboard:** `/admin`, React 18 + Vite 5 + TypeScript + Tailwind 3 + recharts. It has its own query-param
+  router (`?view=` / `?p=`).
+- **Candidate interview runtime:** `/`, vanilla ES modules in `frontend/js`, cache-busted by `app.js?v=N` (now 53).
+  MediaPipe is self-hosted under `frontend/vendor`.
+- The backend is FastAPI on the same origin (see B-V2).
+
+**Front-end decisions that hold:**
+- Shared atoms live in `crm/components/controlTower.tsx` (Tile, Panel, FilteredBars, Speedometer). CEO charts are
+  grouped bars with series and row ticks; nothing is stacked.
+- Dialogs use `crm/components/dialogKit.tsx`; wizards use `crm/components/wizard/`.
+- Every lazy import uses `lazyRetry`.
+- History: always `pushAppHistory`; never a bare `pushState` or a `replaceState(null)`.
+- Never `${inputCls} w-N`; use `CONTROL` or `!w-N`.
+- Customer pickers are active-only (`useActiveCustomers`).
+- The UI never guesses permissions: it follows `/api/me` and the server's `meta.can_*`.
+- A clickable row that hosts a dialog checks `isOwnDomClick`. A clickable list passes `rowHref`.
+- Every dashboard chart is clickable: a new `FilteredBars` passes `barLink` (a CRM path) or `onBarClick` (an in-place
+  filter).
+
+**Remaining (front-end):**
+- Commit; add `.gitattributes`.
+- Add `/apply` and `/book` to `vite.config.ts` and `vercel-build.mjs`.
+- P1 hours-cap parity.
+- Retire the old `crm/taxInvoice/` generator.
+- §9 access backlog: pages gated by role only.
+- Swallowed catches that blank dropdowns.
+- Clickable charts are still missing on the Revenue report, Financial Reports and the HR (interview) dashboard.
+- No CI; contrast check not wired.
+- Candidate runtime item still open in §10: #5, the pre-login device-id mismatch.
+
+---
+
 Working notes for AI assistants. **Rewritten 18 Aug 2026**, **re-verified 20 Aug 2026** from a full
 mechanical scan of both repos (route extraction, per-page API-call inventory, gate-hook census,
 token-layer diff, prefix three-way diff, typecheck run). Numbers below were measured.
@@ -2500,6 +2544,45 @@ salesperson · By step · By type · By position · By area · By customer). Scr
 ("Notice 16–30 days"), new options Serving notice / LWD given, AI L1 on hold, AI L1 not attempted. CEO Finance tab:
 with a customer / project scope the target tile reads "company-wide — clear the customer filter" (`Targets.scoped`).
 
+**26 Oct 2026 (later) — Returned Proformas is a tile, not a Dashboard panel (server half in B-V2 `CLAUDE.md`):**
+user ask with a screenshot — remove the big rose panel under "My work today" and show it like the tiles above.
+`CrmDashboard.tsx` no longer mounts `ReturnedProformasPanel`. The server sends a `returned_pi` desk tab ("Returned
+Proformas", stage caption "Finance sent back", `TAB_LOOK` FileWarning rose → orange; always shown to those who may see it — "None" / "All clear" at zero) →
+the tile opens `my-tasks?tab=returned_pi`, where `MyTasksPage` renders `ReturnedProformasPanel embedded` (no gradient
+header; whose-move chips, customer / month / search, Reopen to correct) instead of the generic item list.
+
+**26 Oct 2026 (night) — Access Templates errors are visible; "Tabs from" prefers the template (server half in B-V2
+`CLAUDE.md`):** `AccessTemplates.tsx` put every Save / Delete / Assign refusal in the ErrorBox at the TOP of the page
+while those buttons sit at the bottom of a long editor — the Assign click looked dead (the 400 for Raju). Each now also
+toasts the server's message (`notify(msg, "err")`) and the ErrorBox repeats under the action bar; a successful assign
+reloads the template cards (user counts). `UsersAdmin.tsx` "Tabs from" select and `accessLabelFor` show the TEMPLATE
+when one is assigned (it can now sit beside the custom role it is tagged with), else the custom role. tsc green.
+
+**27 Oct 2026 — no "My work today" for Admin / CEO; a page behind every CEO tile; Billing Tracker tiles + charts
+(`crm/pages/dashboard/CeoInsightPage.test.ts` 4; server half in B-V2 `CLAUDE.md`):** (1) `CrmDashboard.tsx`: Admin / CEO
+no longer get the `WorkDesk` tiles (user ask) — `<CeoDashboard />` + Start here only. (2) **`crm/pages/dashboard/
+CeoInsightPage.tsx`** (route **`insights/:metric`**, `lazyRetry`) renders `GET /api/dashboard/ceo/drill/{metric}` for every
+metric with ONE layout: `PageHeader` (tab colour + icon, the question, Dashboard / Refresh, `PeriodSwitcher` +
+`DateStepper` on the same anchor contract, a "One customer only · clear" chip, "Next:" related pages) → KPI `Tile`s →
+the first chart full width, the rest 2-up (`FilteredBars`; series colour from the server's tone via `toneHex`) → each
+table in a `Panel` with status chips (counts + ₹, from `segments`; `default_segment(s)` pre-selected), search, sortable
+headers, sticky header, totals row for money columns, Show more (50 at a time), CSV of what is shown (`toCsv`,
+formula-neutralised), every cell with a `link` a `CrmLink` → notes "How these numbers are worked out". Re-reads every
+2 min while visible. URL state via `replaceState(window.history.state, …)`. PURE exports `insightLink`, `formatValue`,
+`filterRows`, `sortRows`, `toCsv`, `toneHex`, `CHIP_TONE`. `router.CRM_FILTER_KEYS` += `month`, `period`, `customer_id`
+(always set by the link that needs them). (3) **`CeoDashboard.tsx` tiles now open those pages** (`insightLink(metric,
+period, {scope, customer_id, project_id})`): Finance — Billed · Collected · Outstanding · Overdue · Gross margin · Target ·
+DSO · PO cover (with the tab's customer / project scope); Customer — Customers billing · Billed · Collected · Outstanding ·
+Overdue · Heads in period (deployed) · Growing / shrinking · Top customer; Sales — Positions brought in · Onboarded · Open
+now · Fill rate · Fulfilled · Active customers · Stale · Waiting in stages; People — Headcount · Deployed · Bench ·
+Joined · Left · Attrition · Revenue per head · Roll-offs. `PeopleTab` takes `drill` (only the CEO dashboard passes it —
+HR's desk keeps its plain Employees links; the drill route is Admin / CEO for People). The Revenue report links remain
+only for the alert chips. (4) **`BillingTracker.tsx`**: `TrackerSummary` between the header and the filters, from
+`meta.summary` — six clickable cards (Proforma to raise → stage awaiting_proforma · With the customer → awaiting_customer ·
+Payment due → unpaid · Overdue → the overdue switch · Paid → paid · TDS from clients → the TDS switch) and three bar
+charts (work by month stacked by stage group — counts, since a sheet not yet invoiced has no amount; how late the open
+money is; customers due / with them / paid).
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -3640,3 +3723,131 @@ Sales Manager), so their Dashboard gets the Finance + Billing Tracker tabs.
 branch line, address, GSTIN and PAN; an amber note when the picked branch is not the PO's (new invoices on the PO would
 still print the old branch — change the PO too). The form gains a **Branch line** field (printed under the name; blank =
 none) and `PartyBlock` shows it. tsc green. **Later:** the amber note became a ticked-by-default checkbox **"Also move PO … to <branch>"** (`move_po_to_branch` in the PUT) — new invoices on that PO then print the branch too.
+
+**27 Oct 2026 (later) — ONE "Roles & permissions" tab: Access Templates merged into Roles (`crm/pages/RolesAdmin.test.ts`
+2; server half + migration 0149 in B-V2 `CLAUDE.md`):** user decision. `crm/pages/AccessTemplates.tsx` is DELETED; the
+Access Control hub (`UsersAdmin.tsx`) is **Users · Roles & permissions · Audit log** (`HubTab` lost `templates`; an old
+`?tab=templates` link — read before `usePageTab` normalises it — lands on Roles), and the `access-templates` route renders
+`AccessTemplatesRedirect` (replaceState to `users?tab=roles`). **`RolesAdmin.tsx`**: built-in role cards show their own
+permissions (People · Tabs · Buttons, or "Product rules" when not configured, "Everything" for Admin / CEO) with **Members**
+(`BuiltinMembersModal`, read-only list + Reset password — membership stays Users ▸ Edit roles) and **Permissions**
+(`BuiltinPermissionsModal`: info notice while it follows the product rules, "Start from the suggested permissions" from
+`suggested_tab_access`, `TabPermissionMatrix` with sub-tabs, "Follow the product's rules for buttons" switch else
+`ApprovalGrants`, "Back to the product rules" → `DELETE …/builtin/{name}/permissions`; save → `PUT`). PURE
+`samePermissions` drives `dirty`. Registry read from `/api/roles/registry`. **Users tab**: the "Tabs from" column is
+**Permissions from** — "Built-in role(s) (…)" or one custom role (`role:ID`); no templates optgroup; rows carry no
+`access_template_id`; the Manage dialog says "Tabs come from the permissions of Sales + GM". Edit Roles copy: a person's
+permissions are those of every ticked role, added up. CrmApp's no-role screen no longer mentions templates;
+`TabPermissionMatrix` / `ApprovalGrants` copy and comments point at `/api/roles/registry`; Start-here links "Roles &
+permissions". tsc green, eslint 0 errors.
+
+
+**28 Oct 2026 — Employee page: no Current CTC; HR's onboarding details shown; the Joined profile shows its
+Department / Designation (`crm/lib/employeeFields.test.ts` now 5; server half + migration 0150 in B-V2 `CLAUDE.md`):**
+screenshot report. (1) `employeeFields.ts`: `current_ctc` is removed from the Job details card (user request — the
+`canSeeCtc` / `locked` skips in `Employees.tsx` are now no-ops); the card gains OPTIONAL `offer_letter_reference`,
+`customer_onboarding_date` and `relocation_applicable` (a Yes / No `select` via `YES_NO`, so an explicit "No" shows —
+a toggle would hide it; `displayValue` compares `String(v)`). (2) ⚠️ `Profiles.tsx` `OverviewTab`: the departments /
+designations masters loaded only while `canEditOnboarding`, so at Joined the read-only selects printed "Select…" although
+HR had picked Engineering / Engineer (the values the Employees record showed). They now load whenever
+`showOnboardingRecord`.
+
+**28 Oct 2026 (later) — the Candidate application link on TA's position page (UI only; the server gate already admits
+TA):** the card lived only on the OPPORTUNITY page's Details tab, which a TA never opens (their Opportunities menu lands
+on the position page). `Requirements.tsx` `RequirementDetailPage` now mounts the same `ApplyLinkCard` on its Details tab
+under `JdSkillsCard`; a login the server refuses sees nothing (the card hides on any error). Card copy says
+"Applied Candidates" (was "Applicants"). tsc green.
+
+**28 Oct 2026 (later still) — the tiles on a CEO drill page are clickable (`CeoInsightPage.test.ts` now 5; server half in
+B-V2 `CLAUDE.md`):** `controlTower.Tile` gains `onClick` / `active` / `title` (a `<button>`, ring when active). On
+`CeoInsightPage`, a tile follows the server's `go`: `metric` → a link to that drill page (same period / scope); otherwise
+it narrows the first table (chips from `go.segments`, PURE `rowHas` / `filterRows(..., where)` for `go.where`, sorts by
+`go.sort` largest first), shows a "Showing the rows behind <tile> · N rows · Show all rows" strip and scrolls the table into
+view; a second click, a chip or "All" lets go. A tile without `go` shows the whole table.
+
+**28 Oct 2026 (night) — every CEO tab's charts look like the Finance tab's (UI only, no server change;
+`billingTrackerDials.test.ts` 2, `CeoDashboard.test.tsx` re-pinned):** user ask — Customer, Sales, People and Billing
+Tracker charts "same as Finance". ⚠️ **Nothing is stacked on any CEO tab any more**: every `FilteredBars` is grouped
+columns with series ticks AND row ticks (`rowFilter`), no `stacked`, no `stackId` (a `stackId` alone still stacks —
+`FilteredBars` passes it through). `FilteredBars` bars use `maxBarSize` (was a fixed `barSize`), so many grouped series
+shrink to fit instead of overlapping; with few series nothing changes. **Customer**: the unfolded chart has a **Totals /
+By customer** switch — Totals is Finance's own (billed · collected · people cost · margin = billed − cost, from
+`monthly[]`), By customer one column per customer; Deployed on customer sites = Total deployed + the first four
+customers / locations ticked; Receivables = Outstanding · Overdue (Not yet due off). **Sales**: positions brought in ·
+onboarded · internal · external (unknown off). **People**: People cost = Total · Deployed · Bench; placements charts get row
+ticks. **Billing Tracker** (`TrackerSummary`) now reads in the Finance order: six `Tile`s (the same clickable tile, ringed
+while its stage / switch is on — `SummaryCard` deleted) → **How the work moved, month by month** (`Panel`, groups + "All
+work") → three `Speedometer`s from PURE `trackerDials(tiles)`: **Collected** (paid ÷ paid + due + with the customer, goal 70 %),
+**Overdue** (overdue ÷ payment due, `invert`, limit 20 %), **Waiting at a stage** (avg days, `invert`, goal 7) → How late the
+open money is · Customers (due / with them / paid side by side), each a `Panel` with a state chip.
+
+**29 Oct 2026 — every dashboard graph opens the data behind it (`crm/pages/dashboard/chartClicks.test.ts` 9; server
+half in B-V2 `CLAUDE.md`):** a screenshot report said clicking a chart did nothing. The changes:
+
+- **The chart component.** `controlTower.FilteredBars` takes:
+  - `barLink(row, series)`, a CRM path to open;
+  - `onBarClick(row, series)`, an action in place, checked first;
+  - `clickHint`, the line beside the series ticks.
+
+  Behaviour:
+  - A bar's own click names its series. The chart's click, which also catches a click in the empty part of a column,
+    opens it once.
+  - A click that lands between bars takes the first ticked series that has a value (PURE `seriesAt`).
+  - Ctrl / ⌘ / Shift / middle-click opens a new tab (`openBarLink`).
+  - The cursor is a pointer only when the chart is clickable.
+- **Drill-page helpers** (`CeoInsightPage.tsx`):
+  - `bucketPeriod(key)` reads "YYYY-MM", "YYYY-Qn" (Indian FY: Q1 = April, Q4 = January of the next year) and "FYyyyy"
+    (via `fyAnchorMonth`).
+  - `bucketLink(metric, key, extra)` builds the drill link for a bar's bucket.
+  - `insightLink` takes `q`. The drill page reads it and opens with the main table already narrowed to rows naming it
+    (a "Showing the rows behind …" strip; "Show all rows" clears it). A change of period drops `q`.
+- **Drill-page charts** (PURE `drillBarAction`), tried in this order:
+  1. Open the row's link.
+  2. Zoom the page to the bar's month / quarter / FY.
+  3. Pick the status chip with the same name.
+  4. Search the table for the label (never for "Others").
+- **CEO tabs** (`CeoDashboard.tsx`; `MONEY_METRIC` / `moneyMetric` map a series to its drill page; `rowCid`):
+  - **Finance:**
+    - Monthly bars → that month's billed / collected / margin page, keeping the customer / project scope.
+    - Who we bill → billed for that customer.
+    - Cash flow → outstanding (money) or margin (people cost).
+    - Ageing → outstanding / overdue.
+    - Engagement type → billed.
+  - **Customer:**
+    - Unfolded → the month's page; a customer column opens it for that customer (id looked up by name).
+    - Deployed → deployed at that bucket (+ customer).
+    - Billing / receivables → billed / collected / margin / outstanding / overdue for the customer.
+    - PO runway → po.
+    - People → deployed, or positions with scope open.
+  - **Sales:**
+    - Trend → positions brought in, or onboarded, for that bucket.
+    - Positions by customer → positions (open / stale / filled) or onboarded.
+    - Funnel → positions with the stage's scope.
+    - Sales owner → positions `q=<owner>`.
+    - Stage delays → stages `q=<stage>`.
+  - **People:**
+    - Month bars → headcount deployed / bench, joiners or exits at that month.
+    - Designation → headcount `q=<role>`.
+    - Tenure → headcount.
+    - Roll-offs → rolloffs.
+    - Placements → deployed.
+    - HR's desk, which has no drill pages, gets `employees?deployment=…` / `employees` / `project-employees` instead.
+- **Billing Tracker** (PURE `trackerBarPatch`): a bar narrows the tracker's own table and scrolls to it.
+  - Month bar → work month + stage group (`to_raise` · `with_customer` · `due` · `paid`; "All work" → all).
+  - Lateness bar → that late bucket.
+  - Customer bar → that customer + group.
+
+  A chosen group shows as its own chip (`GROUP_CHIP`).
+- **Other roles:**
+  - Hiring control tower (PURE `hiringBarLink`): opportunities · `profiles?f_stage=joined` · `customers/:id` ·
+    profiles.
+  - Role sections in `CrmDashboard`:
+    - Quarter chart → revenue report / joined.
+    - Funnels → opportunities.
+    - Sourcing pipeline → `requirements/:id` (`?tab=resumes`).
+    - Recruiter productivity → reports.
+    - PO consumption → `pos/:id`.
+    - TA scorecard → profiles.
+  - Hiring Manager stage chart → profiles.
+- **Not wired yet:** the Revenue report and Financial Reports charts, and the Interview-platform HR dashboard's weekly
+  chart.

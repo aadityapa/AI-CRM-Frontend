@@ -192,9 +192,21 @@ export function funnelRows(f: HiringData["funnel"]) {
 
 /** Active customers as bar rows (+ "Others (N)" when the server folded some). */
 export function customerRows(c: HiringData["customers"]) {
-  const rows = c.rows.map((r) => ({ label: r.name, open: r.open_positions, joined: r.joined, positions: r.total_positions, opportunities: r.opportunities }));
+  const rows: Record<string, string | number>[] = c.rows.map((r) => ({ label: r.name, customer_id: r.id, open: r.open_positions, joined: r.joined, positions: r.total_positions, opportunities: r.opportunities }));
   if (c.others.count > 0) rows.push({ label: `Others (${c.others.count})`, open: c.others.open_positions, joined: 0, positions: 0, opportunities: 0 });
   return rows;
+}
+
+/** The page a bar of the hiring tower opens (29 Oct 2026 — every graph opens its data).
+ *  The tower is shown to every role, so these are the role's own lists, the same
+ *  places its tiles open — never the Admin-only drill pages. PURE. */
+export function hiringBarLink(chart: "trend" | "funnel" | "customers" | "stages",
+                              row: Record<string, unknown>, series: string): string | null {
+  const joined = series === "onboardings" || series === "joined";
+  if (joined) return "profiles?f_stage=joined";
+  if (chart === "stages") return "profiles";
+  if (chart === "customers") return typeof row.customer_id === "number" ? `customers/${row.customer_id}` : "opportunities";
+  return "opportunities";
 }
 
 /** Stage delays as bar rows: waiting · over the amber line · over the red line · average days. */
@@ -367,6 +379,7 @@ export function HiringControlTower() {
           {/* Row 3 — the trend: positions brought in vs onboarded, with ticks. */}
           <Panel title="Positions brought in vs onboardings" hint={`last ${data.series.length} ${PERIODS.find((p) => p.key === period)?.label.toLowerCase()}s — tick a series or a period`}>
             <FilteredBars rowFilter rowLabel={`${PERIODS.find((p) => p.key === period)?.label ?? "Period"}s`}
+                          barLink={(r, s) => hiringBarLink("trend", r, s)}
                           data={data.series.map((s) => ({ label: s.label, positions_in: s.positions_in, onboardings: s.onboardings, opportunities: s.opportunities, fulfilled: s.fulfilled, customer_closed: s.customer_closed }))}
                           series={[{ key: "positions_in", label: "Positions brought in", color: 0 }, { key: "onboardings", label: "Onboardings", color: 1 },
                                    { key: "opportunities", label: "Opportunities", color: 3, defaultOff: true }, { key: "fulfilled", label: "Fulfilled", color: 2, defaultOff: true },
@@ -378,6 +391,7 @@ export function HiringControlTower() {
             <Panel title="Where the positions stand" hint="today's snapshot, not the period"
                    action={<span className="text-xs text-muted">all time: <span className="font-semibold text-success">{num(data.funnel.fulfilled)} fulfilled</span> · {num(data.funnel.customer_closed)} closed by customer</span>}>
               <FilteredBars rowFilter rowLabel="Stages" height={220} data={funnelRows(data.funnel)}
+                            barLink={(r, s) => hiringBarLink("funnel", r, s)}
                             series={[{ key: "positions", label: "Positions", color: 0 }]} />
             </Panel>
             <Panel
@@ -391,6 +405,7 @@ export function HiringControlTower() {
             >
               {data.customers.rows.length ? (
                 <FilteredBars rowFilter rowLabel="Customers" height={220} data={customerRows(data.customers)}
+                              barLink={(r, s) => hiringBarLink("customers", r, s)}
                               series={[{ key: "open", label: "Open", color: 5 }, { key: "joined", label: "Joined", color: 2 },
                                        { key: "positions", label: "Total positions", color: 7, defaultOff: true }, { key: "opportunities", label: "Opportunities", color: 3, defaultOff: true }]} />
               ) : (
@@ -403,6 +418,7 @@ export function HiringControlTower() {
                  action={data.stage_delays.total_waiting ? <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[data.stage_delays.rows.some((r) => r.state === "bad") ? "bad" : data.stage_delays.rows.some((r) => r.state === "warn") ? "warn" : "ok"]}`}>{num(data.stage_delays.total_waiting)} waiting</span> : undefined}>
             {data.stage_delays.total_waiting ? (
               <FilteredBars rowFilter rowLabel="Stages" height={220} data={stageRows(data.stage_delays)}
+                            barLink={(r, s) => hiringBarLink("stages", r, s)}
                             series={[{ key: "waiting", label: "Waiting", color: 0 }, { key: "over_warn", label: `Over ${data.stage_delays.warn_days} d`, color: 6 },
                                      { key: "over_bad", label: `Over ${data.stage_delays.bad_days} d`, color: 5 }, { key: "avg_days", label: "Avg days", color: 7, defaultOff: true }]} />
             ) : (

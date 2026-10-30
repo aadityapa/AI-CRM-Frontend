@@ -51,7 +51,8 @@ const FinanceReportsPage = lazyRetry(() =>
 const EmployeesListPage = lazyRetry(() => import("./pages/Employees").then((m) => ({ default: m.EmployeesListPage })));
 const EmployeeDetailPage = lazyRetry(() => import("./pages/Employees").then((m) => ({ default: m.EmployeeDetailPage })));
 const UsersAdminPage = lazyRetry(() => import("./pages/UsersAdmin").then((m) => ({ default: m.UsersAdminPage })));
-const AccessTemplatesPage = lazyRetry(() => import("./pages/AccessTemplates").then((m) => ({ default: m.AccessTemplatesPage })));
+// Access Templates were merged into Roles (27 Oct 2026): the old address redirects.
+const AccessTemplatesRedirect = lazyRetry(() => import("./pages/UsersAdmin").then((m) => ({ default: m.AccessTemplatesRedirect })));
 const CrmSettingsPage = lazyRetry(() => import("./pages/CrmSettings").then((m) => ({ default: m.CrmSettingsPage })));
 const SupportTicketsPage = lazyRetry(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketsPage })));
 const SupportTicketDetailPage = lazyRetry(() => import("./pages/SupportTickets").then((m) => ({ default: m.SupportTicketDetailPage })));
@@ -61,6 +62,8 @@ const ProfilePage = lazyRetry(() => import("./pages/Profile").then((m) => ({ def
 const ScreeningDeskPage = lazyRetry(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
 const MyInterviewsPage = lazyRetry(() => import("./pages/MyInterviews").then((m) => ({ default: m.MyInterviewsPage })));
 const MyTasksPage = lazyRetry(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
+// The page behind every CEO-dashboard tile (27 Oct 2026).
+const CeoInsightPage = lazyRetry(() => import("./pages/dashboard/CeoInsightPage").then((m) => ({ default: m.CeoInsightPage })));
 
 export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "", element: CrmDashboardPage },
@@ -83,6 +86,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   // A bare <a target=_blank> to the file cannot send the bearer token.
   { pattern: "file-view", element: FileViewPage },
   { pattern: "my-tasks", element: MyTasksPage },
+  { pattern: "insights/:metric", element: CeoInsightPage },
   { pattern: "calendar", element: CalendarPage },
   { pattern: "emails", element: EmailCenterPage },
   { pattern: "activity-log", element: ActivityLogPage },
@@ -110,7 +114,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "employees", element: EmployeesListPage },
   { pattern: "employees/:id", element: EmployeeDetailPage },
   { pattern: "users", element: UsersAdminPage },
-  { pattern: "access-templates", element: AccessTemplatesPage },
+  { pattern: "access-templates", element: AccessTemplatesRedirect },
   { pattern: "settings", element: CrmSettingsPage },
   { pattern: "support-tickets", element: SupportTicketsPage },
   { pattern: "support-tickets/:id", element: SupportTicketDetailPage },

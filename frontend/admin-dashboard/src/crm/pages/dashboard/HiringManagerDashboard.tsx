@@ -260,7 +260,8 @@ export function HiringManagerDashboard() {
       {data.positions.length > 0 && (
         <div className="grid gap-4 xl:grid-cols-2">
           <Panel title="Candidates by stage" hint="Every live candidate on your positions, by the stage they are in.">
-            <FilteredBars data={stageRows} series={[{ key: "Candidates", label: "Candidates", color: 0 }]} height={240} />
+            <FilteredBars data={stageRows} series={[{ key: "Candidates", label: "Candidates", color: 0 }]} height={240}
+                          barLink={() => "profiles"} clickHint="Click a bar to open Candidate Profiles" />
           </Panel>
           <Panel title="Latest moves" hint="The last stage changes and decisions on your candidates.">
             {data.recent.length ? (

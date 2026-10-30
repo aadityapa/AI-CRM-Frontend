@@ -1,4 +1,7 @@
-/** Access-template helpers — read effective_access from /api/me (server source of truth).
+/** Access helpers — read effective_access from /api/me (server source of truth).
+ * Since 27 Oct 2026 the permissions come from the user's ROLES (built-in and
+ * custom, each with its own permissions — Access Templates were merged into
+ * Roles); "templated" below means "restricted by a role's permissions".
  *
  * Modes are a LADDER, mirroring `backend/services/access_registry.py`:
  * view < edit < create. A "create" grant satisfies an "edit" check, and so on.

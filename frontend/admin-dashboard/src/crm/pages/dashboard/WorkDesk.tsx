@@ -33,7 +33,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Armchair, Cake, Plane, UserCog,
   BadgeCheck, BadgeIndianRupee, Check, Building2, CalendarClock, CalendarHeart, CalendarPlus, CheckCircle2,
-  ChevronRight, ClipboardCheck, ClipboardList, DoorOpen, ExternalLink, FileClock, FileSpreadsheet, Handshake,
+  ChevronRight, ClipboardCheck, ClipboardList, DoorOpen, ExternalLink, FileClock, FileSpreadsheet, FileWarning, Handshake,
   Hourglass, ListChecks, ListTodo, MessagesSquare, PartyPopper, RefreshCw, ScanSearch, Send, Trophy, UserCheck,
   Receipt, UserSearch, UsersRound, Video, WalletCards, type LucideIcon,
 } from "lucide-react";
@@ -56,7 +56,11 @@ import type { CustomerSlotOffer } from "../../lib/interviewRounds";
 import { CrmLink } from "../../router";
 import { useDeskData } from "./DeskWidgets";
 import { DecisionDialog, type DecisionSpec } from "../../components/dialogKit";
+import { ReturnedProformasPanel } from "./ReturnedProformasPanel";
 import { EMPTY_FILTER, TaskFilterBar, filterItems, groupKeyOf, type GroupBy, type TaskFilter } from "./taskFilters";
+
+/** The returned-Proforma tile (B-V2 `work_desk.RETURNED_PI_TAB`). */
+const RETURNED_PI_TAB = "returned_pi";
 
 type DeskItem = {
   key: string;
@@ -139,6 +143,8 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; accent: string }> = {
   fin_partially_paid: { icon: WalletCards, accent: "from-amber-500 to-rose-600" },
   fin_tds_pending: { icon: Receipt, accent: "from-amber-500 to-yellow-600" },
   fin_receipts: { icon: Building2, accent: "from-teal-500 to-cyan-600" },
+  // 26 Oct 2026: Proformas Finance returned — a tile instead of the Dashboard panel.
+  returned_pi: { icon: FileWarning, accent: "from-rose-500 to-orange-500" },
   inv_confirm: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_submit: { icon: Send, accent: "from-sky-500 to-indigo-600" },
   sales_response: { icon: Hourglass, accent: "from-cyan-500 to-sky-600" },
@@ -448,6 +454,11 @@ export function MyTasksPage() {
               </CrmLink>
             ) : null}
           </div>
+          {active.key === RETURNED_PI_TAB ? (
+            /* 26 Oct 2026: the returned-Proforma board itself — whose-move chips,
+               customer / month / search, Reopen to correct — under the tile. */
+            <ReturnedProformasPanel embedded onChanged={retry} />
+          ) : (<>
           {active.items.length > 0 && (
             <TaskFilterBar items={active.items} filter={filter} shown={shownItems.length} tabKey={active.key}
               onChange={(f) => setFilters((all) => ({ ...all, [active.key]: f }))} />
@@ -617,6 +628,7 @@ export function MyTasksPage() {
               The first {active.items.length} of {active.count} are listed — narrow with the filters, or open the full page.
             </p>
           )}
+          </>)}
         </section>
       )}
 

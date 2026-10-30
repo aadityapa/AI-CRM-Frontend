@@ -9,7 +9,7 @@
  * (`crm_deps.gated_write_action` → `action_permissions.user_may`) and the UI
  * (`useCanApprove`, from `me.approvals`) read the same list.
  *
- * The catalogue comes from `GET /api/access-templates/registry` → `approvals`,
+ * The catalogue comes from `GET /api/roles/registry` → `approvals`,
  * so a new approval action appears here without a frontend change.
  */
 import { CheckSquare } from "lucide-react";

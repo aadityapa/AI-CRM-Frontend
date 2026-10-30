@@ -28,25 +28,36 @@ describe("employee profile fields", () => {
       ["title", "middle_name", "display_name", "emergency_number", "pan", "aadhar"]);
   });
 
-  it("counts the core gaps — here only the CTC — and skips a field the login cannot see", () => {
-    expect(missingCore(emp).map((m) => m.field.key)).toEqual(["current_ctc"]);
-    expect(missingCore(emp, (f) => f.key === "current_ctc")).toEqual([]);
+  it("counts the core gaps and skips a field the login cannot see", () => {
+    const noDob = { ...emp, date_of_birth: null };
+    expect(missingCore(noDob).map((m) => m.field.key)).toEqual(["date_of_birth"]);
+    expect(missingCore(noDob, (f) => f.key === "date_of_birth")).toEqual([]);
+  });
+
+  it("no CTC on the Employee page (28 Oct 2026); the offer-time details are listed", () => {
+    const keys = EMPLOYEE_CARDS.job.fields.map((f) => f.key);
+    expect(keys).not.toContain("current_ctc");
+    expect(keys).toEqual(expect.arrayContaining(
+      ["offer_letter_reference", "customer_onboarding_date", "relocation_applicable"]));
+    const reloc = EMPLOYEE_CARDS.job.fields.find((f) => f.key === "relocation_applicable")!;
+    expect(displayValue({ relocation_applicable: false }, reloc)).toBe("No");
+    expect(visibleFields({ relocation_applicable: false }, [reloc])).toHaveLength(1);
   });
 
   it("saves only what changed, typed for the API", () => {
     const job = EMPLOYEE_CARDS.job.fields;
     const draft = Object.fromEntries(job.map((f) => [f.key, seedValue(emp, f)]));
     expect(changedPayload(emp, job, draft)).toEqual({});
-    draft.current_ctc = "600000";
+    draft.offer_letter_reference = "HR/KARNEX/OL-060/2026";
     draft.department_id = "4";
-    expect(changedPayload(emp, job, draft)).toEqual({ current_ctc: 600000, department_id: 4 });
+    expect(changedPayload(emp, job, draft)).toEqual(
+      { offer_letter_reference: "HR/KARNEX/OL-060/2026", department_id: 4 });
   });
 
   it("reads values the way HR says them, and refuses a blank name or a bad email", () => {
     const f = (k: string) => EMPLOYEE_CARDS.job.fields.find((x) => x.key === k)!;
     expect(displayValue(emp, f("employment_type"))).toBe("Full Time");
     expect(displayValue(emp, f("reporting_manager_id"))).toBe("Manjeet Singh");
-    expect(displayValue({ current_ctc: 600000 }, f("current_ctc"))).toBe("₹6,00,000");
     expect(validationError({ first_name: " " })).toBe("First name is required");
     expect(validationError({ email: "nope" })).toBe("A valid official email is required");
     expect(validationError({ phone: "1" })).toBeNull();

@@ -1,22 +1,24 @@
 /**
- * Access Control ▸ Roles (23 Sep 2026).
+ * Access Control ▸ Roles & permissions (23 Sep 2026; Access Templates merged in
+ * on 27 Oct 2026 — B-V2 migration 0149).
  *
  * Roles grouped by DEPARTMENT (7 Oct 2026, user ask): one section per
  * department (`registry.departments`, B-V2 `access_registry.DEPARTMENTS`), the
  * eight built-in roles and every custom role Admin/CEO has created
- * (`GET /api/roles`) as cards with people / tabs / buttons counts. A custom role is a name + the same tab grant
- * map an Access Template uses (`TabPermissionMatrix`), and it takes effect
- * for its members exactly like an authoritative template — see B-V2
- * `models/custom_roles.py`. From here Admin/CEO can create/edit/deactivate a
- * role, manage its members, and reset any member's password.
+ * (`GET /api/roles`) as cards with people / tabs / buttons counts.
  *
- * Built-in roles are listed for completeness only: their permissions come from
- * the product's role rules and membership is edited on the Users tab.
+ * EVERY role holds its own permissions (`TabPermissionMatrix` + sub-tab ticks +
+ * `ApprovalGrants`): a custom role always; a built-in role once Admin sets them
+ * ("Permissions" on its card → `PUT /api/roles/builtin/{name}/permissions`) —
+ * until then it follows the product's role rules. A person's permissions are
+ * those of every role they hold, added up. Custom-role membership is edited
+ * here; built-in membership on the Users tab (Edit roles).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BadgeIndianRupee, ClipboardCheck, Cpu, Crown, Handshake, HeartHandshake, KeyRound, Pencil, Plus, Search, Shapes,
-  Shield, ShieldCheck, Trash2, UserMinus, UserPlus, UserSearch, Users, type LucideIcon,
+  RotateCcw, Shield, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, UserMinus, UserPlus, UserSearch, Users,
+  type LucideIcon,
 } from "lucide-react";
 import { DialogHero, DialogSection } from "../components/dialogKit";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
@@ -37,6 +39,15 @@ type BuiltinRole = {
   name: string; label: string; builtin: true; members_count: number; description: string; department?: string;
   /** Which candidate stages the role sees (13 Oct 2026). */
   candidate_stages?: StageAccess;
+  /** Its own permissions (27 Oct 2026). `configurable` false for Admin / CEO;
+   *  `configured` false = the product's role rules decide. */
+  configurable?: boolean;
+  configured?: boolean;
+  tab_access?: GrantMap;
+  field_access?: Record<string, Record<string, string>>;
+  /** null = the buttons follow the product's role lists. */
+  action_access?: string[] | null;
+  suggested_tab_access?: GrantMap;
 };
 type CustomRole = {
   id: number; name: string; description: string; is_active: boolean;
@@ -104,6 +115,8 @@ export function RolesPanel({ notify }: { notify: Notify }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<CustomRole | { department: string } | null>(null);
   const [membersFor, setMembersFor] = useState<CustomRole | null>(null);
+  const [builtinEdit, setBuiltinEdit] = useState<BuiltinRole | null>(null);
+  const [builtinMembers, setBuiltinMembers] = useState<BuiltinRole | null>(null);
   const [deleteFor, setDeleteFor] = useState<CustomRole | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -117,7 +130,7 @@ export function RolesPanel({ notify }: { notify: Notify }) {
     try {
       const [roles, reg] = await Promise.all([
         crmGet<{ builtin: BuiltinRole[]; custom: CustomRole[]; candidate_stages?: StageCatalogue }>("/api/roles"),
-        crmGet<{ tabs: RegistryTab[]; approvals?: ApprovalDef[]; departments?: Department[] }>("/api/access-templates/registry"),
+        crmGet<{ tabs: RegistryTab[]; approvals?: ApprovalDef[]; departments?: Department[] }>("/api/roles/registry"),
       ]);
       setBuiltin(roles.data?.builtin || []);
       setCustom(roles.data?.custom || []);
@@ -164,8 +177,9 @@ export function RolesPanel({ notify }: { notify: Notify }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="max-w-2xl">
           <p className="text-sm text-secondary">
-            Roles are grouped by <strong>department</strong>. A built-in role carries the product's own rules; a
-            custom role is a name plus exactly the tabs and buttons you tick — add people to it and that is all they get.
+            Every role holds its own <strong>permissions</strong> — the tabs, fields and buttons its people get. A
+            built-in role follows the product's role rules until you press <em>Permissions</em> on it; a custom role is a
+            name plus exactly what you tick. Someone with several roles gets all of them added up.
             Every role also carries its <strong>candidate stages</strong>: the stages (and candidates) it sees on
             Candidate Profiles and inside every opportunity — press <em>Stages</em> on a card.
           </p>
@@ -266,19 +280,45 @@ export function RolesPanel({ notify }: { notify: Notify }) {
                     </div>
                     <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-secondary">Built-in</span>
                   </div>
-                  <p className="mt-1 line-clamp-2 min-h-[2rem] text-xs text-secondary">Permissions come from the product's role rules; an Access Template can narrow or widen the tabs.</p>
+                  <p className="mt-1 line-clamp-2 min-h-[2rem] text-xs text-secondary">{r.description}</p>
                   <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
                     <div className="rounded-control bg-surface-2 px-2 py-1.5">
                       <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">People</dt>
                       <dd className="text-sm font-bold tabular-nums text-primary">{r.members_count}</dd>
                     </div>
-                    <div className="col-span-2 rounded-control bg-surface-2 px-2 py-1.5">
-                      <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">Assigned from</dt>
-                      <dd className="text-sm font-semibold text-primary">Users ▸ Edit roles</dd>
-                    </div>
+                    {r.configured ? (
+                      <>
+                        <div className="rounded-control bg-surface-2 px-2 py-1.5">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">Tabs</dt>
+                          <dd className="text-sm font-bold tabular-nums text-primary">{Object.keys(r.tab_access || {}).length}</dd>
+                        </div>
+                        <div className="rounded-control bg-surface-2 px-2 py-1.5">
+                          <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">Buttons</dt>
+                          <dd className="text-sm font-bold tabular-nums text-primary">{r.action_access == null ? "Rules" : r.action_access.length}</dd>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="col-span-2 rounded-control bg-surface-2 px-2 py-1.5">
+                        <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted">Permissions</dt>
+                        <dd className="text-sm font-semibold text-primary">{r.configurable === false ? "Everything" : "Product rules"}</dd>
+                      </div>
+                    )}
                   </dl>
+                  {r.configured && (
+                    <p className="mt-2 truncate text-[11px] text-muted" title={tabSummary(r.tab_access || {}, labels)}>{tabSummary(r.tab_access || {}, labels)}</p>
+                  )}
                   <StageAccessLine access={r.candidate_stages} catalogue={stageCatalogue}
                     onEdit={r.candidate_stages ? () => setStagesFor({ label: r.label, builtin: r.name, access: r.candidate_stages! }) : undefined} />
+                  <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
+                    <button className={actionBtn} onClick={() => setBuiltinMembers(r)} title="Who holds this role (assigned in Users ▸ Edit roles)">
+                      <Users size={13} /> Members
+                    </button>
+                    {r.configurable !== false && (
+                      <button className={actionBtn} onClick={() => setBuiltinEdit(r)} title="Set the tabs, fields and buttons everyone holding this role gets">
+                        <SlidersHorizontal size={13} /> Permissions
+                      </button>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
@@ -297,6 +337,14 @@ export function RolesPanel({ notify }: { notify: Notify }) {
           onSaved={() => { setEditing(null); void load(); }}
           notify={notify}
         />
+      )}
+      {builtinEdit && (
+        <BuiltinPermissionsModal role={builtinEdit} registry={registry} approvals={approvals}
+          onClose={() => setBuiltinEdit(null)}
+          onSaved={(msg) => { setBuiltinEdit(null); notify(msg); void load(); }} />
+      )}
+      {builtinMembers && (
+        <BuiltinMembersModal role={builtinMembers} onClose={() => setBuiltinMembers(null)} notify={notify} />
       )}
       {stagesFor && stageCatalogue && (
         <CandidateStagesModal roleLabel={stagesFor.label} builtin={stagesFor.builtin} customId={stagesFor.customId}
@@ -432,6 +480,182 @@ function RoleEditorModal({
         )}
         {error && <p className="text-sm text-danger">{error}</p>}
       </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------ built-in role permissions */
+
+/** Did anything change? PURE — exported for the test. */
+export function samePermissions(
+  a: { tabs: GrantMap; fields: FieldGrantMap; actions: string[] | null },
+  b: { tabs: GrantMap; fields: FieldGrantMap; actions: string[] | null },
+): boolean {
+  const clean = (g: GrantMap) => Object.fromEntries(Object.entries(g).filter(([, v]) => v).sort());
+  return JSON.stringify(clean(a.tabs)) === JSON.stringify(clean(b.tabs))
+    && JSON.stringify(a.fields) === JSON.stringify(b.fields)
+    && JSON.stringify(a.actions) === JSON.stringify(b.actions);
+}
+
+function BuiltinPermissionsModal({
+  role, registry, approvals, onClose, onSaved,
+}: {
+  role: BuiltinRole; registry: RegistryTab[]; approvals: ApprovalDef[];
+  onClose: () => void; onSaved: (msg: string) => void;
+}) {
+  const start = { tabs: role.tab_access || {}, fields: (role.field_access || {}) as FieldGrantMap, actions: role.action_access ?? null };
+  const [grants, setGrants] = useState<GrantMap>(start.tabs);
+  const [fieldGrants, setFieldGrants] = useState<FieldGrantMap>(start.fields);
+  const [followRules, setFollowRules] = useState(start.actions == null);
+  const [actions, setActions] = useState<string[]>(start.actions || []);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const granted = Object.keys(grants).filter((k) => grants[k]).length;
+  const current = { tabs: grants, fields: fieldGrants, actions: followRules ? null : actions };
+  const dirty = !samePermissions(start, current);
+  const suggested = role.suggested_tab_access || {};
+
+  const save = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await crmPut(`/api/roles/builtin/${encodeURIComponent(role.name)}/permissions`, {
+        tab_access: grants,
+        field_access: Object.fromEntries(Object.entries(fieldGrants).filter(([k]) => grants[k])),
+        action_access: followRules ? null : actions,
+      });
+      onSaved(res.message || "Permissions saved");
+    } catch (err: any) {
+      setError(err?.message || "Could not save the permissions");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const backToRules = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await crmDelete(`/api/roles/builtin/${encodeURIComponent(role.name)}/permissions`);
+      onSaved(res.message || "Back to the product's role rules");
+    } catch (err: any) {
+      setError(err?.message || "Could not reset the role");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Permissions — ${role.label}`}
+      onClose={onClose}
+      wide
+      dirty={dirty}
+      hero={<DialogHero tone="indigo" icon={Shield} eyebrow="Built-in role · permissions"
+        title={role.label}
+        subtitle={`Applies to everyone holding ${role.label} (${role.members_count} ${role.members_count === 1 ? "person" : "people"}), added to any other role they hold.`}
+        flow={{ steps: ["Tabs", "Buttons & approvals", "Save"], current: 0 }} />}
+      footer={
+        <>
+          {role.configured && (
+            <button className={`${btnSecondary} mr-auto`} onClick={backToRules} disabled={busy}
+              title="Remove these permissions — the product's role rules decide again">
+              <RotateCcw size={14} /> Back to the product rules
+            </button>
+          )}
+          <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={btnPrimary} onClick={save} disabled={busy || granted === 0 || (!dirty && !!role.configured)}>
+            {busy ? "Saving…" : role.configured ? "Save changes" : "Set permissions"}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {!role.configured && (
+          <div className="rounded-card border border-info/40 bg-info-soft px-4 py-3 text-sm text-primary">
+            <strong>{role.label}</strong> follows the product's role rules today — nothing restricts the people holding it.
+            Setting permissions here makes them exactly what you tick (plus anything their other roles give).
+          </div>
+        )}
+        <DialogSection n={1} tone="indigo" title="Tabs the role opens" done={granted > 0}
+          hint="View · Edit · Create per tab, and which sections inside it.">
+          {Object.keys(suggested).length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button className={actionBtn} onClick={() => setGrants({ ...suggested })}
+                title="Fill the tabs with the product's suggested permissions for this role">
+                <Sparkles size={13} /> Start from the suggested permissions ({Object.keys(suggested).length} tabs)
+              </button>
+              <span className="text-xs text-muted">You can change anything afterwards.</span>
+            </div>
+          )}
+          <TabPermissionMatrix tabs={registry} value={grants} onChange={setGrants}
+            fieldValue={fieldGrants} onFieldChange={setFieldGrants} />
+          {granted === 0 && <p className="mt-2 text-xs text-warning">Grant at least one tab.</p>}
+        </DialogSection>
+        {approvals.length > 0 && (
+          <DialogSection n={2} tone="indigo" title="Buttons & approvals" optional done={!followRules}
+            hint="Leave it on the product's rules, or tick exactly which approvals and buttons this role may press.">
+            <label className="mb-3 inline-flex items-center gap-2 text-sm text-secondary">
+              <input type="checkbox" checked={followRules} onChange={(e) => setFollowRules(e.target.checked)} />
+              Follow the product's rules for buttons (who approves what is set in Users ▸ Action permissions)
+            </label>
+            {!followRules && (
+              <>
+                <ApprovalGrantsHeading count={actions.length} total={approvals.length} />
+                <ApprovalGrants approvals={approvals} value={actions} onChange={setActions} />
+              </>
+            )}
+          </DialogSection>
+        )}
+        {error && <p className="text-sm text-danger">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
+function BuiltinMembersModal({ role, onClose, notify }: { role: BuiltinRole; onClose: () => void; notify: Notify }) {
+  const [members, setMembers] = useState<Member[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [resetFor, setResetFor] = useState<Member | null>(null);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setMembers((await crmGet<Member[]>(`/api/roles/builtin/${encodeURIComponent(role.name)}/members`)).data || []);
+    } catch (err: any) {
+      setError(err?.message || "Could not load members");
+    } finally {
+      setLoading(false);
+    }
+  }, [role.name]);
+  useEffect(() => { void load(); }, [load]);
+  return (
+    <Modal title={`${role.label} — members`} onClose={onClose} medium
+      footer={<><span className="mr-auto text-xs text-muted">Add or remove people in Users ▸ Edit roles</span>
+        <button className={btnPrimary} onClick={onClose}>Done</button></>}>
+      {error && <div className="mb-3"><ErrorBox error={error} onRetry={load} /></div>}
+      {loading ? <Spinner label="Loading members…" /> : members.length === 0 ? (
+        <EmptyState message={`Nobody holds ${role.label}.`} />
+      ) : (
+        <ul className="divide-y divide-subtle rounded-card border border-subtle">
+          {members.map((m) => (
+            <li key={m.id} className="flex items-center gap-3 px-4 py-2.5">
+              <Avatar name={m.full_name || m.username} size={34} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-primary">{m.full_name || m.username}</span>
+                  {!m.is_active && <StatusBadge status="Inactive" />}
+                </div>
+                <div className="truncate text-xs text-muted">{m.email}</div>
+              </div>
+              <button className={actionBtn} onClick={() => setResetFor(m)} title="Set or generate a new password">
+                <KeyRound size={13} /> Reset password
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {resetFor && <ResetPasswordModal user={resetFor} onClose={() => setResetFor(null)} notify={notify} />}
     </Modal>
   );
 }

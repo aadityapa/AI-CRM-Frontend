@@ -44,6 +44,7 @@ import { PaceCard } from "./HiringControlTower";
 import type { HiringData } from "./HiringControlTower";
 import { useDeskData } from "./DeskWidgets";
 import { BillingTracker } from "./BillingTracker";
+import { bucketLink, insightLink } from "./CeoInsightPage";
 import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
 
 /* ---------- payload (services/executive_dashboard.py) ---------- */
@@ -225,6 +226,20 @@ const highGood = (v: number | null | undefined, ok: number, warn: number): State
 const lowGood = (v: number | null | undefined, ok: number, warn: number): StateTone =>
   v === null || v === undefined ? "none" : v <= ok ? "ok" : v <= warn ? "warn" : "bad";
 
+/** A chart row's customer id (null for "Others" and for rows that are not a customer). */
+const rowCid = (r: Record<string, unknown>): number | null =>
+  typeof r.customer_id === "number" && r.customer_id > 0 ? r.customer_id : null;
+
+/** Which drill page a money series opens (29 Oct 2026 — every bar opens its data). */
+const MONEY_METRIC: Record<string, string> = {
+  billed: "billed", previous: "billed", share: "billed", invoices: "billed",
+  collected: "collected",
+  cost: "margin", people_cost: "margin", margin: "margin",
+  outstanding: "outstanding", current: "outstanding", not_due: "outstanding",
+  overdue: "overdue",
+};
+const moneyMetric = (series: string, fallback = "billed") => MONEY_METRIC[series] ?? fallback;
+
 /** Reports ▸ Revenue at the same anchor + zoom — the page behind every money tile. */
 const revenueLink = (p: CeoPeriod) => `reports?tab=revenue&month=${p.anchor_month}&period=${p.kind}`;
 
@@ -308,6 +323,9 @@ const ZOOM_ROWS: Record<PeriodKind, string> = { month: "Months", quarter: "Quart
 
 function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   const rev = revenueLink(period);
+  // 27 Oct 2026 — every tile opens its own drill-down page (same period, same scope).
+  const drill = (metric: string, scope?: string) => insightLink(metric, period,
+    { scope, customer_id: d.filters?.customer_id, project_id: d.filters?.project_id });
   const h = d.headline, t = d.targets, m = d.margin, c = d.collections;
   const collectionState = highGood(h.collection_rate_pct, 90, 75);
   const marginState = highGood(m.gross_margin_pct, 30, 15);
@@ -323,35 +341,40 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
   const cash = d.cashflow;
   const monthly = d.monthly.filter((r) => !r.future);
+  const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id };
+  // 29 Oct 2026 — every bar opens the drill page of its series, zoomed to that bar.
+  const monthBar = (r: Record<string, unknown>, s: string) => bucketLink(moneyMetric(s), r.key, scopeIds);
+  const customerBar = (r: Record<string, unknown>, s: string) =>
+    insightLink(moneyMetric(s), period, { customer_id: rowCid(r) ?? d.filters?.customer_id, project_id: d.filters?.project_id });
 
   return (
     <div className="space-y-4">
       <Alerts alerts={d.alerts} to={rev} where="Reports ▸ Revenue" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Billed (excl. GST)" value={inrCompact(h.billed)} to={rev} sub={`${num(h.invoices)} invoices`}
+        <Tile label="Billed (excl. GST)" value={inrCompact(h.billed)} to={drill("billed")} sub={`${num(h.invoices)} invoices`}
               foot={<><Delta value={h.billed_mom_pct} label={period.comparison_label} /><Delta value={h.billed_yoy_pct} label="YoY" /></>} />
-        <Tile label="Collected" value={inrCompact(h.collected)} tone="success" to={rev} sub={`${pct(h.collection_rate_pct, 0)} of billed`}
+        <Tile label="Collected" value={inrCompact(h.collected)} tone="success" to={drill("collected")} sub={`${pct(h.collection_rate_pct, 0)} of billed`}
               foot={<Delta value={h.collected_mom_pct} label={period.comparison_label} />} />
-        <Tile label="Outstanding" value={inrCompact(h.outstanding)} tone={h.outstanding > 0 ? "warning" : "neutral"} to={rev} sub={`${num(h.open_invoices)} open invoices`} />
-        <Tile label="Overdue" value={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "danger" : "success"} to={rev}
+        <Tile label="Outstanding" value={inrCompact(h.outstanding)} tone={h.outstanding > 0 ? "warning" : "neutral"} to={drill("outstanding")} sub={`${num(h.open_invoices)} open invoices`} />
+        <Tile label="Overdue" value={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "danger" : "success"} to={drill("overdue")}
               sub={d.ageing.overdue_90_plus > 0 ? `${inrCompact(d.ageing.overdue_90_plus)} past 90 days` : "nothing past 90 days"} />
-        <Tile label="Gross margin" value={pct(m.gross_margin_pct, 0)} tone={marginState === "ok" ? "success" : marginState === "warn" ? "warning" : "danger"} to={rev}
+        <Tile label="Gross margin" value={pct(m.gross_margin_pct, 0)} tone={marginState === "ok" ? "success" : marginState === "warn" ? "warning" : "danger"} to={drill("margin")}
               sub={`${inrCompact(m.gross_margin)} on ${inrCompact(m.cost)} people cost`} />
         <Tile label={`${isFy ? "FY" : "Period"} target`} value={target === null ? "—" : pct(attainment, 0)}
               tone={attainmentState(attainment) === "ok" ? "success" : attainmentState(attainment) === "warn" ? "warning" : "neutral"}
-              to={rev} sub={scoped ? "company-wide — clear the customer filter to compare"
+              to={drill("target")} sub={scoped ? "company-wide — clear the customer filter to compare"
                 : target === null ? "no target set — Reports ▸ Revenue ▸ Targets" : `of ${inrCompact(target)}`} />
-        <Tile label="DSO" value={c.dso_days === null ? "—" : `${num(c.dso_days)} d`} tone={lowGood(c.dso_days, 45, 60) === "ok" ? "success" : lowGood(c.dso_days, 45, 60) === "warn" ? "warning" : "danger"} to={rev}
+        <Tile label="DSO" value={c.dso_days === null ? "—" : `${num(c.dso_days)} d`} tone={lowGood(c.dso_days, 45, 60) === "ok" ? "success" : lowGood(c.dso_days, 45, 60) === "warn" ? "warning" : "danger"} to={drill("dso")}
               sub={c.avg_days_to_pay === null ? "no receipts in the period" : `paid ${num(c.avg_days_to_pay)} days after due on average`} />
-        <Tile label="PO cover" value={d.pipeline.po_cover_months === null ? "—" : `${d.pipeline.po_cover_months} mo`} to="pos"
+        <Tile label="PO cover" value={d.pipeline.po_cover_months === null ? "—" : `${d.pipeline.po_cover_months} mo`} to={drill("po")}
               tone={lowGood(d.pipeline.po_cover_months === null ? null : -d.pipeline.po_cover_months, -2, -1) === "ok" ? "success" : "warning"}
               sub={`${inrCompact(d.pipeline.active_po_balance)} active PO balance`} />
       </div>
 
       {/* 1 · How the year unfolded — the CEO's first question, so the first chart. */}
       <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint="billed · collected · people cost · margin, month by month — tick what to compare">
-        <FilteredBars data={monthly} rowFilter rowLabel="Months" format={inrCompact}
+        <FilteredBars data={monthly} rowFilter rowLabel="Months" format={inrCompact} barLink={monthBar}
                       series={[{ key: "billed", label: "Billed", color: 0 }, { key: "collected", label: "Collected", color: 1 },
                                { key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2, defaultOff: true }]} />
       </Panel>
@@ -396,8 +419,8 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
         <Panel title="Who we bill" hint={d.concentration.risk ? `${d.concentration.top_customer} is ${pct(d.concentration.top1_share_pct, 0)} of billing — concentration risk` : `top 3 = ${pct(d.concentration.top3_share_pct, 0)} of billing`}
                action={d.concentration.risk ? <StateChip state="warn">Concentrated</StateChip> : undefined}>
           {d.top_customers.length ? (
-            <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220}
-                          data={d.top_customers.map((r) => ({ label: r.customer, billed: r.billed, share: r.share_pct ?? 0 }))}
+            <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} barLink={customerBar}
+                          data={d.top_customers.map((r) => ({ label: r.customer, customer_id: r.customer_id, billed: r.billed, share: r.share_pct ?? 0 }))}
                           series={[{ key: "billed", label: "Billed", color: 0 }, { key: "share", label: "Share %", color: 3, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">No billing in this period.</p>}
         </Panel>
@@ -405,6 +428,8 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
         <Panel title="Cash flow — next 3 months" hint={`as of ${fmtDay(cash.as_of)} · what lands each month vs the people cost that month`}
                action={<StateChip state={cash.covers_cost ? "ok" : "bad"}>{cash.covers_cost ? "Covers cost" : "Short"}</StateChip>}>
           <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={200}
+                        barLink={(_r, s) => (s === "people_cost" ? insightLink("margin", period, scopeIds) : insightLink("outstanding", period, scopeIds))}
+                        clickHint="Click a bar: money due → the open invoices · people cost → who it is for"
                         data={cash.months.map((r) => ({ label: r.label, expected: r.expected, at_pace: r.expected_at_pace, people_cost: r.people_cost, net: r.net_at_pace }))}
                         series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: true },
                                  { key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }]} />
@@ -423,6 +448,7 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
                action={d.ageing.overdue_90_plus > 0 ? <StateChip state="bad">{inrCompact(d.ageing.overdue_90_plus)} past 90 d</StateChip> : undefined}>
           {d.ageing.buckets.length ? (
             <FilteredBars rowFilter rowLabel="Buckets" format={inrCompact} height={200}
+                          barLink={(r) => insightLink(/not|current|0\s*[–-]\s*0/i.test(String(r.label)) ? "outstanding" : "overdue", period, scopeIds)}
                           data={d.ageing.buckets.map((b) => ({ label: b.label, amount: b.amount, invoices: b.count }))}
                           series={[{ key: "amount", label: "Outstanding", color: 5 }, { key: "invoices", label: "Invoices", color: 7, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">Nothing outstanding.</p>}
@@ -434,6 +460,7 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
         <Panel title="Billing by engagement type" hint="T&M · Work package · Fixed price · Retainer">
           {d.by_type.length ? (
             <FilteredBars rowFilter rowLabel="Types" format={inrCompact} height={220}
+                          barLink={() => insightLink("billed", period, scopeIds)}
                           data={d.by_type.map((r) => ({ label: r.label, billed: r.billed, share: r.share_pct ?? 0, invoices: r.invoices }))}
                           series={[{ key: "billed", label: "Billed", color: 0 }, { key: "share", label: "Share %", color: 3, defaultOff: true }, { key: "invoices", label: "Invoices", color: 7, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">No billing in this period.</p>}
@@ -514,7 +541,7 @@ function ProjectRows({ rows, open, toggle }: { rows: ProjectRow[]; open: Set<str
 }
 
 function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
-  const rev = revenueLink(period);
+  const drill = (metric: string, scope?: string) => insightLink(metric, period, { scope });
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
   const [zoom, setZoom] = useState<PeriodKind>("month");          // deployed-heads zoom: months of the period first
@@ -540,19 +567,39 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
 
   // Charts: the period month by month with the top customers as series, then
   // four cuts of the customer book — billing, receivables, PO runway, people.
-  const monthly = d.monthly.filter((r) => !r.future).map((r) => ({ label: r.label, ...r.customers }));
-  const monthSeries = d.monthly_series.map((name, i) => ({ key: name, label: name, color: i, stackId: "billed" }));
+  // Grouped columns like the Finance tab (28 Oct 2026, CEO ask): the totals view is
+  // Finance's own "How the year unfolded"; "By customer" puts one column per customer
+  // side by side — nothing is stacked on any tab.
+  const [unfoldBy, setUnfoldBy] = useState<"totals" | "customers">("totals");
+  const pastMonths = d.monthly.filter((r) => !r.future);
+  const monthly = unfoldBy === "totals"
+    ? pastMonths.map((r) => ({ label: r.label, key: r.key, billed: r.billed, collected: r.collected, cost: r.cost, margin: r.billed - r.cost }))
+    : pastMonths.map((r) => ({ label: r.label, key: r.key, ...r.customers }));
+  // 29 Oct 2026 — every bar opens its data: a customer-named series narrows the drill
+  // page to that customer (looked up by name; "Others" opens everyone).
+  const idByName = useMemo(() => new Map(d.customers.map((c) => [c.customer, c.customer_id])), [d.customers]);
+  const unfoldBar = (r: Record<string, unknown>, s: string) => (unfoldBy === "totals"
+    ? bucketLink(moneyMetric(s), r.key)
+    : bucketLink("billed", r.key, { customer_id: idByName.get(s) ?? null }));
+  const deployedBar = (r: Record<string, unknown>, s: string) =>
+    bucketLink("deployed", r.key, { customer_id: groupBy === "customers" ? idByName.get(s) ?? null : null });
+  const customerBar = (metricOf: (s: string) => string, scopeOf?: (s: string) => string | undefined) =>
+    (r: Record<string, unknown>, s: string) => insightLink(metricOf(s), period, { customer_id: rowCid(r), scope: scopeOf?.(s) });
+  const monthSeries = unfoldBy === "totals"
+    ? [{ key: "billed", label: "Billed", color: 0 }, { key: "collected", label: "Collected", color: 1 },
+       { key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2, defaultOff: true }]
+    : d.monthly_series.map((name, i) => ({ key: name, label: name, color: i }));
   const active = d.customers.filter((c) => c.billed > 0 || c.previous > 0 || c.outstanding > 0 || c.heads_today > 0);
-  const billing = active.map((c) => ({ label: c.customer, billed: c.billed, previous: c.previous, collected: c.collected, cost: c.cost, margin: c.margin }));
-  const receivables = active.filter((c) => c.outstanding > 0).map((c) => ({ label: c.customer, outstanding: c.outstanding, overdue: c.overdue, current: c.outstanding - c.overdue }));
-  const runway = active.filter((c) => c.po_balance > 0 || c.monthly_burn > 0).map((c) => ({ label: c.customer, po_balance: c.po_balance, burn: c.monthly_burn, cover: c.po_cover_months ?? 0 }));
-  const people = active.filter((c) => c.heads > 0 || c.open_positions > 0).map((c) => ({ label: c.customer, deployed: c.heads_today, internal: c.internal, external: c.external, open: c.open_positions }));
+  const billing = active.map((c) => ({ label: c.customer, customer_id: c.customer_id, billed: c.billed, previous: c.previous, collected: c.collected, cost: c.cost, margin: c.margin }));
+  const receivables = active.filter((c) => c.outstanding > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, outstanding: c.outstanding, overdue: c.overdue, current: c.outstanding - c.overdue }));
+  const runway = active.filter((c) => c.po_balance > 0 || c.monthly_burn > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, po_balance: c.po_balance, burn: c.monthly_burn, cover: c.po_cover_months ?? 0 }));
+  const people = active.filter((c) => c.heads > 0 || c.open_positions > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, deployed: c.heads_today, internal: c.internal, external: c.external, open: c.open_positions }));
   const runwayShort = runway.filter((r) => r.burn > 0 && r.cover < 2).length;
   // Deployed heads over time — rows are buckets, series are customers OR locations (one toggle).
-  const deployedRows = d.deployed_trend[zoom].filter((r) => !r.future).map((r) => ({ label: r.label, total: r.total, ...r[groupBy] }));
+  const deployedRows = d.deployed_trend[zoom].filter((r) => !r.future).map((r) => ({ label: r.label, key: r.key, total: r.total, ...r[groupBy] }));
   const deployedSeries = [
-    ...d.deployed_series[groupBy].map((name, i) => ({ key: name, label: name, color: i, stackId: "heads" })),
-    { key: "total", label: "Total deployed", color: 7, defaultOff: true, stackId: "total" },
+    { key: "total", label: "Total deployed", color: 7 },
+    ...d.deployed_series[groupBy].map((name, i) => ({ key: name, label: name, color: i, defaultOff: i >= 4 })),
   ];
 
   return (
@@ -560,20 +607,23 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
       <Alerts alerts={d.alerts} to="customers" where="Customers" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Customers billing" value={num(s.customers_billing)} to="customers" sub={`of ${num(s.customers)} with activity`} />
-        <Tile label="Billed" value={inrCompact(s.billed)} to={rev} foot={<Delta value={s.change_pct} label={period.comparison_label} />} />
-        <Tile label="Collected" value={inrCompact(s.collected)} tone="success" to={rev} sub={`${pct(collectionPct, 0)} of billed`} />
-        <Tile label="Outstanding" value={inrCompact(s.outstanding)} tone={s.outstanding > 0 ? "warning" : "neutral"} to={rev} />
-        <Tile label="Overdue" value={inrCompact(s.overdue)} tone={s.overdue > 0 ? "danger" : "success"} to={rev} />
-        <Tile label="Heads in period" value={num(s.heads)} to="project-employees" sub={`${num(s.heads_today)} deployed today`} />
-        <Tile label="Growing / shrinking" value={`${num(growing)} / ${num(shrinking)}`} tone={shrinking > growing ? "warning" : "success"} to="customers" sub={`accounts ${period.comparison_label}`} />
-        <Tile label="Top customer" value={pct(s.top1_share_pct, 0)} tone={s.concentration_risk ? "warning" : "neutral"} sub={s.top_customer ?? "—"} to={rev} />
+        <Tile label="Customers billing" value={num(s.customers_billing)} to={drill("customers")} sub={`of ${num(s.customers)} with activity`} />
+        <Tile label="Billed" value={inrCompact(s.billed)} to={drill("billed")} foot={<Delta value={s.change_pct} label={period.comparison_label} />} />
+        <Tile label="Collected" value={inrCompact(s.collected)} tone="success" to={drill("collected")} sub={`${pct(collectionPct, 0)} of billed`} />
+        <Tile label="Outstanding" value={inrCompact(s.outstanding)} tone={s.outstanding > 0 ? "warning" : "neutral"} to={drill("outstanding")} />
+        <Tile label="Overdue" value={inrCompact(s.overdue)} tone={s.overdue > 0 ? "danger" : "success"} to={drill("overdue")} />
+        <Tile label="Heads in period" value={num(s.heads)} to={drill("deployed")} sub={`${num(s.heads_today)} deployed today`} />
+        <Tile label="Growing / shrinking" value={`${num(growing)} / ${num(shrinking)}`} tone={shrinking > growing ? "warning" : "success"} to={drill("customers", shrinking > growing ? "shrinking" : "growing")} sub={`accounts ${period.comparison_label}`} />
+        <Tile label="Top customer" value={pct(s.top1_share_pct, 0)} tone={s.concentration_risk ? "warning" : "neutral"} sub={s.top_customer ?? "—"} to={drill("customers")} />
       </div>
 
       {/* 1 · How the period unfolded, customer by customer. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded — by customer`} hint="billed month by month, stacked by customer — tick a customer or a month">
-        {monthSeries.length ? (
-          <FilteredBars data={monthly} stacked rowFilter rowLabel="Months" format={inrCompact} series={monthSeries} />
+      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+             hint={unfoldBy === "totals" ? "billed · collected · people cost · margin, month by month — tick what to compare"
+               : "billed month by month, one column per customer — tick a customer or a month"}
+             action={<Segmented value={unfoldBy} options={[{ key: "totals", label: "Totals" }, { key: "customers", label: "By customer" }]} onChange={setUnfoldBy} label="Unfolded view" />}>
+        {pastMonths.length && monthSeries.length ? (
+          <FilteredBars key={unfoldBy} data={monthly} rowFilter rowLabel="Months" format={inrCompact} series={monthSeries} barLink={unfoldBar} />
         ) : <p className="text-sm text-muted">No billing in this period.</p>}
       </Panel>
 
@@ -585,7 +635,8 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                </div>
              }>
         {d.deployed_series[groupBy].length ? (
-          <FilteredBars key={`${zoom}-${groupBy}`} data={deployedRows} stacked rowFilter rowLabel={ZOOM_ROWS[zoom]} series={deployedSeries} />
+          <FilteredBars key={`${zoom}-${groupBy}`} data={deployedRows} rowFilter rowLabel={ZOOM_ROWS[zoom]} height={220} series={deployedSeries}
+                        barLink={deployedBar} clickHint="Click a bar to see who was deployed in that period" />
         ) : <p className="text-sm text-muted">Nobody deployed in this window.</p>}
       </Panel>
 
@@ -620,6 +671,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                action={s.concentration_risk ? <StateChip state="warn">Concentrated</StateChip> : undefined}>
           {billing.length ? (
             <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} data={billing}
+                          barLink={customerBar((s) => moneyMetric(s))}
                           series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: period.comparison_label, color: 7 },
                                    { key: "collected", label: "Collected", color: 1, defaultOff: true }, { key: "cost", label: "People cost", color: 6, defaultOff: true },
                                    { key: "margin", label: "Margin", color: 2, defaultOff: true }]} />
@@ -629,9 +681,10 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
         <Panel title="Receivables by customer" hint="what each customer still owes · overdue = past the due date today"
                action={s.overdue > 0 ? <StateChip state="bad">{inrCompact(s.overdue)} overdue</StateChip> : <StateChip state="ok">Nothing overdue</StateChip>}>
           {receivables.length ? (
-            <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} data={receivables} stacked
-                          series={[{ key: "current", label: "Not yet due", color: 1 }, { key: "overdue", label: "Overdue", color: 5 },
-                                   { key: "outstanding", label: "Total outstanding", color: 7, defaultOff: true, stackId: "total" }]} />
+            <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} data={receivables}
+                          barLink={customerBar((s) => moneyMetric(s, "outstanding"))}
+                          series={[{ key: "outstanding", label: "Outstanding", color: 0 }, { key: "overdue", label: "Overdue", color: 5 },
+                                   { key: "current", label: "Not yet due", color: 1, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">Nothing outstanding.</p>}
         </Panel>
 
@@ -639,6 +692,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                action={runwayShort ? <StateChip state="warn">{runwayShort} under 2 months</StateChip> : undefined}>
           {runway.length ? (
             <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} data={runway}
+                          barLink={customerBar(() => "po")}
                           series={[{ key: "po_balance", label: "PO balance", color: 0 }, { key: "burn", label: "Monthly burn", color: 6 },
                                    { key: "cover", label: "Months of cover", color: 3, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">No active PO or deployment.</p>}
@@ -647,6 +701,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
         <Panel title="People by customer" hint="deployed today · internal vs external placements · open positions">
           {people.length ? (
             <FilteredBars rowFilter rowLabel="Customers" height={220} data={people}
+                          barLink={customerBar((s) => (s === "open" ? "positions" : "deployed"), (s) => (s === "open" ? "open" : undefined))}
                           series={[{ key: "deployed", label: "Deployed today", color: 0 }, { key: "internal", label: "Internal", color: 2 },
                                    { key: "external", label: "External", color: 1 }, { key: "open", label: "Open positions", color: 5 }]} />
           ) : <p className="text-sm text-muted">Nobody deployed and nothing open.</p>}
@@ -723,6 +778,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
 /* ====================================================================== Sales */
 
 function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
+  const drill = (metric: string, scope?: string) => insightLink(metric, period, { scope });
   const [scope, setScope] = useState<"live" | "all">("live");
   const [zoom, setZoom] = useState<PeriodKind>("month");   // months inside the period first; Quarterly / Yearly one click away
   const k = d.kpis, mix = d.onboarding_mix, ps = d.positions_summary, f = d.funnel;
@@ -731,7 +787,19 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
   const mixState = highGood(mix.internal_pct, 40, 20);
   const positions = scope === "live" ? d.positions.filter((p) => p.live) : d.positions;
   const trend = d.onboarding_trend[zoom].filter((r) => !r.future);
-  const byCustomer = d.by_customer.map((c) => ({ label: c.customer, open: c.open, joined: c.joined, positions: c.positions, internal: c.internal, external: c.external, stale: c.stale }));
+  // 29 Oct 2026 — every bar opens the positions / onboardings behind it.
+  const trendBar = (r: Record<string, unknown>, s: string) =>
+    (s === "positions_in" ? bucketLink("positions", r.key, { scope: "brought_in" }) : bucketLink("onboarded", r.key));
+  const POS_SCOPE: Record<string, string | undefined> = { open: "open", stale: "stale", joined: "filled" };
+  const customerPosBar = (r: Record<string, unknown>, s: string) => (s === "internal" || s === "external"
+    ? insightLink("onboarded", period, { customer_id: rowCid(r) })
+    : insightLink("positions", period, { customer_id: rowCid(r), scope: POS_SCOPE[s] }));
+  const FUNNEL_SCOPE: Record<string, string | undefined> = { "Open to fill": "open", "Workable by TA": "open", "Joined so far": "filled" };
+  const funnelBar = (r: Record<string, unknown>) => insightLink("positions", period, { scope: FUNNEL_SCOPE[String(r.label)] });
+  const ownerBar = (r: Record<string, unknown>, s: string) =>
+    insightLink("positions", period, { scope: POS_SCOPE[s], q: /^Others/.test(String(r.label)) ? null : String(r.label) });
+  const stageBar = (r: Record<string, unknown>) => insightLink("stages", period, { q: String(r.label) });
+  const byCustomer = d.by_customer.map((c) => ({ label: c.customer, customer_id: c.customer_id, open: c.open, joined: c.joined, positions: c.positions, internal: c.internal, external: c.external, stale: c.stale }));
   const byOwner = d.by_owner.map((o) => ({ label: o.owner, positions: o.positions, open: o.open, joined: o.joined, opportunities: o.opportunities }));
   const funnel = [
     { label: "Pipeline", value: f.pipeline, hint: "positions on every requirement still moving" },
@@ -748,25 +816,25 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
       <Alerts alerts={d.alerts} to="opportunities" where="Opportunities" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Positions brought in" value={num(k.pipeline_positions)} to="opportunities" foot={<Delta value={k.pipeline_positions_prev ? ((k.pipeline_positions - k.pipeline_positions_prev) / k.pipeline_positions_prev) * 100 : null} label={period.comparison_label} />} sub={`${num(k.opportunities)} opportunities`} />
-        <Tile label="Onboarded" value={num(k.onboardings)} tone="success" to="profiles?f_state=joined" foot={<Delta value={k.onboardings_prev ? ((k.onboardings - k.onboardings_prev) / k.onboardings_prev) * 100 : null} label={period.comparison_label} />}
+        <Tile label="Positions brought in" value={num(k.pipeline_positions)} to={drill("positions", "brought_in")} foot={<Delta value={k.pipeline_positions_prev ? ((k.pipeline_positions - k.pipeline_positions_prev) / k.pipeline_positions_prev) * 100 : null} label={period.comparison_label} />} sub={`${num(k.opportunities)} opportunities`} />
+        <Tile label="Onboarded" value={num(k.onboardings)} tone="success" to={drill("onboarded")} foot={<Delta value={k.onboardings_prev ? ((k.onboardings - k.onboardings_prev) / k.onboardings_prev) * 100 : null} label={period.comparison_label} />}
               sub={<><span className="font-semibold text-success">{mix.internal} internal</span> · <span className="font-semibold text-info">{mix.external} external</span>{mix.unknown ? ` · ${mix.unknown} unknown` : ""}</>} />
-        <Tile label="Open now" value={num(k.active_positions)} tone={k.active_positions ? "warning" : "success"} to="opportunities" sub={`${num(k.workable_positions)} workable (approved, not on hold)`} />
-        <Tile label="Fill rate" value={pct(fillPct, 0)} tone={fillState === "ok" ? "success" : fillState === "warn" ? "warning" : "danger"} sub={`${num(ps.joined)} of ${num(ps.total)} live positions filled`} />
-        <Tile label="Fulfilled" value={num(k.positions_fulfilled)} tone="success" sub={<>customer closed <span className="font-semibold text-danger">{num(k.positions_customer_closed)}</span> beside, never added</>} />
-        <Tile label="Active customers" value={num(k.active_customers)} to="customers" sub={d.customers.largest ? `${d.customers.largest.name} holds ${pct(d.customers.largest.share_pct, 0)} of open positions` : "with a live, approved deal"} tone={d.customers.concentration_risk ? "warning" : "brand"} />
-        <Tile label="Stale positions" value={num(ps.stale_30)} tone={ps.stale_30 ? "danger" : "success"} to="opportunities" sub="open for 30+ days" />
-        <Tile label="Waiting in stages" value={num(d.stage_delays.total_waiting)} tone={d.stage_delays.rows.some((r) => r.state === "bad") ? "danger" : d.stage_delays.rows.some((r) => r.state === "warn") ? "warning" : "neutral"} to="profiles" sub="candidates between stages" />
+        <Tile label="Open now" value={num(k.active_positions)} tone={k.active_positions ? "warning" : "success"} to={drill("positions", "open")} sub={`${num(k.workable_positions)} workable (approved, not on hold)`} />
+        <Tile label="Fill rate" to={drill("positions")} value={pct(fillPct, 0)} tone={fillState === "ok" ? "success" : fillState === "warn" ? "warning" : "danger"} sub={`${num(ps.joined)} of ${num(ps.total)} live positions filled`} />
+        <Tile label="Fulfilled" to={drill("positions", "filled")} value={num(k.positions_fulfilled)} tone="success" sub={<>customer closed <span className="font-semibold text-danger">{num(k.positions_customer_closed)}</span> beside, never added</>} />
+        <Tile label="Active customers" value={num(k.active_customers)} to={drill("customers")} sub={d.customers.largest ? `${d.customers.largest.name} holds ${pct(d.customers.largest.share_pct, 0)} of open positions` : "with a live, approved deal"} tone={d.customers.concentration_risk ? "warning" : "brand"} />
+        <Tile label="Stale positions" value={num(ps.stale_30)} tone={ps.stale_30 ? "danger" : "success"} to={drill("positions", "stale")} sub="open for 30+ days" />
+        <Tile label="Waiting in stages" value={num(d.stage_delays.total_waiting)} tone={d.stage_delays.rows.some((r) => r.state === "bad") ? "danger" : d.stage_delays.rows.some((r) => r.state === "warn") ? "warning" : "neutral"} to={drill("stages")} sub="candidates between stages" />
       </div>
 
       {/* 1 · How the period unfolded — positions in vs onboarded, internal vs external, at three zooms. */}
       <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint={`${ZOOM_LABEL[zoom].toLowerCase()} · positions brought in vs candidates onboarded (internal / external) — tick a series or a period`}
              action={<Segmented value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} label="Onboarding zoom" />}>
-        <FilteredBars key={zoom} data={trend} stacked rowFilter rowLabel={ZOOM_ROWS[zoom]}
-                      series={[{ key: "positions_in", label: "Positions brought in", color: 3, stackId: "in" },
-                               { key: "internal", label: "Onboarded — internal", color: 2 }, { key: "external", label: "Onboarded — external", color: 0 },
-                               { key: "unknown", label: "Onboarded — unknown", color: 7 },
-                               { key: "onboardings", label: "Total onboarded", color: 1, defaultOff: true, stackId: "total" }]} />
+        <FilteredBars key={zoom} data={trend} rowFilter rowLabel={ZOOM_ROWS[zoom]} barLink={trendBar}
+                      series={[{ key: "positions_in", label: "Positions brought in", color: 3 },
+                               { key: "onboardings", label: "Onboarded", color: 1 },
+                               { key: "internal", label: "Internal", color: 2 }, { key: "external", label: "External", color: 0 },
+                               { key: "unknown", label: "Unknown", color: 7, defaultOff: true }]} />
       </Panel>
 
       {/* 2 · The dials: Sales pace · Fulfilment pace · internal share. */}
@@ -794,7 +862,7 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
         <Panel title="Positions by customer" hint="live positions · open vs joined · internal vs external · stale"
                action={d.customers.concentration_risk ? <StateChip state="warn">Concentrated</StateChip> : undefined}>
           {byCustomer.length ? (
-            <FilteredBars rowFilter rowLabel="Customers" height={220} data={byCustomer}
+            <FilteredBars rowFilter rowLabel="Customers" height={220} data={byCustomer} barLink={customerPosBar}
                           series={[{ key: "open", label: "Open", color: 5 }, { key: "joined", label: "Joined", color: 2 },
                                    { key: "positions", label: "Total positions", color: 7, defaultOff: true }, { key: "internal", label: "Internal", color: 1, defaultOff: true },
                                    { key: "external", label: "External", color: 0, defaultOff: true }, { key: "stale", label: "Stale 30+ d", color: 6, defaultOff: true }]} />
@@ -803,13 +871,13 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
 
         <Panel title="Where every position stands" hint="today's snapshot of the sourcing funnel"
                action={<span className="text-xs text-muted">all time: <span className="font-semibold text-success">{num(f.fulfilled)} fulfilled</span> · {num(f.customer_closed)} closed by customer</span>}>
-          <FilteredBars rowFilter rowLabel="Stages" height={220} data={funnel}
+          <FilteredBars rowFilter rowLabel="Stages" height={220} data={funnel} barLink={funnelBar}
                         series={[{ key: "positions", label: "Positions", color: 0 }]} />
         </Panel>
 
         <Panel title="By Sales owner" hint="positions on live deals or deals opened in the period">
           {byOwner.length ? (
-            <FilteredBars rowFilter rowLabel="Owners" height={220} data={byOwner}
+            <FilteredBars rowFilter rowLabel="Owners" height={220} data={byOwner} barLink={ownerBar}
                           series={[{ key: "positions", label: "Positions", color: 3 }, { key: "open", label: "Open", color: 5 },
                                    { key: "joined", label: "Joined", color: 2 }, { key: "opportunities", label: "Opportunities", color: 7, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">No positions in this view.</p>}
@@ -818,7 +886,7 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
         <Panel title="Hiring-stage delays" hint={`candidates waiting at each stage · amber ≥ ${d.stage_delays.warn_days} days · red ≥ ${d.stage_delays.bad_days} days since the last move`}
                action={d.stage_delays.total_waiting ? <StateChip state={d.stage_delays.rows.some((r) => r.state === "bad") ? "bad" : d.stage_delays.rows.some((r) => r.state === "warn") ? "warn" : "ok"}>{num(d.stage_delays.total_waiting)} waiting</StateChip> : undefined}>
           {stages.length ? (
-            <FilteredBars rowFilter rowLabel="Stages" height={220} data={stages}
+            <FilteredBars rowFilter rowLabel="Stages" height={220} data={stages} barLink={stageBar}
                           series={[{ key: "waiting", label: "Waiting", color: 0 }, { key: "over_warn", label: `Over ${d.stage_delays.warn_days} d`, color: 6 },
                                    { key: "over_bad", label: `Over ${d.stage_delays.bad_days} d`, color: 5 }, { key: "avg_days", label: "Avg days", color: 7, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">Nobody is waiting at an interview, offer or joining stage right now.</p>}
@@ -1015,21 +1083,27 @@ function PeopleDirectory({ d, period }: { d: PeopleData; period: CeoPeriod }) {
   );
 }
 
-/** Internal vs external placements (29 Sep 2026, HR ask): stacked bars per bucket
+/** Internal vs external placements (29 Sep 2026, HR ask): grouped bars per bucket
  *  of the period, a customer split, and the counts — the Revenue page's rule. */
-function PlacementsPanels({ p }: { p: PlacementsData }) {
+function PlacementsPanels({ p, period, canDrill }: { p: PlacementsData; period: CeoPeriod; canDrill: boolean }) {
   const h = p.headline;
-  const series = p.series.map((r) => ({ label: r.label, internal: r.internal, external: r.external, unknown: r.unknown,
+  const series = p.series.map((r) => ({ label: r.label, key: r.key, internal: r.internal, external: r.external, unknown: r.unknown,
                                         total: r.internal + r.external + r.unknown }));
-  const customers = p.by_customer.slice(0, 12).map((c) => ({ label: c.customer, internal: c.internal, external: c.external, unknown: c.unknown }));
+  const customers = p.by_customer.slice(0, 12).map((c) => ({ label: c.customer, customer_id: c.customer_id, internal: c.internal, external: c.external, unknown: c.unknown }));
+  // 29 Oct 2026 — a bar opens the people placed: the deployed list for that bucket /
+  // customer (CEO / Admin), else the Employees list placed on projects (HR).
+  const seriesBar = (r: Record<string, unknown>) => (canDrill
+    ? bucketLink("deployed", r.key) ?? insightLink("deployed", period) : "employees?deployment=deployed");
+  const customerBar = (r: Record<string, unknown>) => (canDrill
+    ? insightLink("deployed", period, { customer_id: rowCid(r) }) : "employees?deployment=deployed");
   const share = h.internal_pct;
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       <Panel title="Placed — internal vs external" hint={`${p.window.label} · ${p.window.bucket === "week" ? "by week" : "by month"} · internal = already with us before the placement`}
              action={<span className="text-xs font-semibold text-secondary">{num(h.placements)} placements</span>}>
-        <FilteredBars data={series} stacked height={230}
-                      series={[{ key: "internal", label: "Internal", color: 2 }, { key: "external", label: "External", color: 1 },
-                               { key: "unknown", label: "Unknown", color: 7 }, { key: "total", label: "Total", color: 0, defaultOff: true, stackId: "total" }]} />
+        <FilteredBars data={series} rowFilter rowLabel={p.window.bucket === "week" ? "Weeks" : "Months"} height={230} barLink={seriesBar}
+                      series={[{ key: "total", label: "Placed", color: 0 }, { key: "internal", label: "Internal", color: 2 },
+                               { key: "external", label: "External", color: 1 }, { key: "unknown", label: "Unknown", color: 7, defaultOff: true }]} />
       </Panel>
       <Panel title="Mix this period" hint="who we placed — our own people or new hires"
              action={<StateChip state={share === null ? "none" : share >= 50 ? "ok" : "warn"}>{pct(share, 0)} internal</StateChip>}>
@@ -1045,7 +1119,7 @@ function PlacementsPanels({ p }: { p: PlacementsData }) {
       </Panel>
       <Panel title="By customer" hint="where they went — internal vs external">
         {customers.length ? (
-          <FilteredBars data={customers} stacked height={230}
+          <FilteredBars data={customers} rowFilter rowLabel="Customers" height={230} barLink={customerBar}
                         series={[{ key: "internal", label: "Internal", color: 2 }, { key: "external", label: "External", color: 1 },
                                  { key: "unknown", label: "Unknown", color: 7, defaultOff: true }]} />
         ) : <p className="text-sm text-muted">No placements in this period.</p>}
@@ -1054,14 +1128,39 @@ function PlacementsPanels({ p }: { p: PlacementsData }) {
   );
 }
 
-export function PeopleTab({ d, period }: { d: PeopleData; period: CeoPeriod }) {
+export function PeopleTab({ d, period, drill: canDrill = false }: { d: PeopleData; period: CeoPeriod; drill?: boolean }) {
   const h = d.headline;
+  // CEO / Admin open the drill-down pages; HR's desk (no access to them) keeps the plain lists.
+  const go = (metric: string, plain: string, scope?: string) => (canDrill ? insightLink(metric, period, { scope }) : plain);
   const utilState = highGood(h.utilisation_pct, 85, 70);
   const attrState = lowGood(h.attrition_pct, 10, 20);
   const benchState = lowGood(h.bench_cost_pct, 10, 20);
   const past = d.monthly.filter((r) => !r.future);
-  const strip = past.map((r) => ({ label: r.label, headcount: r.headcount ?? 0, deployed: r.deployed ?? 0, bench: r.bench ?? 0, joiners: r.joiners, exits: r.exits }));
-  const costs = past.map((r) => ({ label: r.label, cost: r.cost ?? 0, bench_cost: r.bench_cost ?? 0, deployed_cost: (r.cost ?? 0) - (r.bench_cost ?? 0) }));
+  const strip = past.map((r) => ({ label: r.label, key: r.key, headcount: r.headcount ?? 0, deployed: r.deployed ?? 0, bench: r.bench ?? 0, joiners: r.joiners, exits: r.exits }));
+  const costs = past.map((r) => ({ label: r.label, key: r.key, cost: r.cost ?? 0, bench_cost: r.bench_cost ?? 0, deployed_cost: (r.cost ?? 0) - (r.bench_cost ?? 0) }));
+  // 29 Oct 2026 — every bar opens the people behind it: the drill page at that month
+  // for CEO / Admin; HR (no drill pages) gets the Employees list in the same cut.
+  const PEOPLE_SERIES: Record<string, { metric: string; scope?: string; plain: string }> = {
+    deployed: { metric: "headcount", scope: "deployed", plain: "employees?deployment=deployed" },
+    deployed_cost: { metric: "headcount", scope: "deployed", plain: "employees?deployment=deployed" },
+    bench: { metric: "headcount", scope: "bench", plain: "employees?deployment=bench" },
+    bench_cost: { metric: "headcount", scope: "bench", plain: "employees?deployment=bench" },
+    headcount: { metric: "headcount", plain: "employees" },
+    cost: { metric: "headcount", plain: "employees" },
+    joiners: { metric: "joiners", plain: "employees" },
+    exits: { metric: "exits", plain: "employees" },
+    on_notice: { metric: "exits", scope: "notice", plain: "employees" },
+  };
+  const monthPeopleBar = (r: Record<string, unknown>, s: string) => {
+    const m = PEOPLE_SERIES[s] ?? PEOPLE_SERIES.headcount;
+    return canDrill ? bucketLink(m.metric, r.key, { scope: m.scope }) : m.plain;
+  };
+  const cutPeopleBar = (withName: boolean) => (r: Record<string, unknown>, s: string) => {
+    const m = PEOPLE_SERIES[s] ?? PEOPLE_SERIES.headcount;
+    const name = String(r.label ?? "");
+    return canDrill ? insightLink(m.metric, period, { scope: m.scope, q: withName && !/^Others/.test(name) ? name : null }) : m.plain;
+  };
+  const rolloffBar = () => (canDrill ? insightLink("rolloffs", period) : "project-employees");
   const planned = d.monthly.filter((r) => r.future && r.exits > 0).reduce((a, r) => a + r.exits, 0);
   const byRole = d.by_role.map((r) => ({ label: r.role, deployed: r.deployed, bench: r.bench, on_notice: r.on_notice, cost: r.cost }));
   const tenure = d.tenure.map((t) => ({ label: t.label, deployed: t.deployed, bench: t.bench }));
@@ -1073,26 +1172,27 @@ export function PeopleTab({ d, period }: { d: PeopleData; period: CeoPeriod }) {
       <Alerts alerts={d.alerts} to="employees" where="Employees" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Headcount" value={num(h.headcount)} to="employees" sub={`${num(h.opening_headcount)} at the start of the period`} foot={<Delta value={h.opening_headcount ? ((h.headcount - h.opening_headcount) / h.opening_headcount) * 100 : null} label="since start" />} />
-        <Tile label="Deployed" value={num(h.deployed)} tone="success" to="employees?deployment=deployed" sub={`${pct(h.utilisation_pct, 0)} utilisation`} />
-        <Tile label="On the bench" value={num(h.bench)} tone={h.bench ? "warning" : "success"} to="employees?deployment=bench" sub={`${inrCompact(h.bench_cost_month)} / month · ${pct(h.bench_cost_pct, 0)} of people cost`} />
-        <Tile label="Joined" value={num(h.joiners)} tone="success" to="employees" sub={`in ${period.short_label}`} />
-        <Tile label="Left" value={num(h.exits)} tone={h.exits ? "danger" : "neutral"} to="employees" sub={`net ${h.net_change >= 0 ? "+" : ""}${h.net_change}${planned ? ` · ${planned} planned` : ""}`} />
-        <Tile label="Attrition" value={pct(h.attrition_pct, 0)} tone={attrState === "ok" ? "success" : attrState === "warn" ? "warning" : "danger"} to="employees" sub={`${num(h.on_notice)} on notice`} />
-        <Tile label="Revenue / deployed head" value={inrCompact(h.revenue_per_deployed_head)} sub={`${inrCompact(h.billed)} billed`} to={revenueLink(period)} />
-        <Tile label="Roll-offs next 90 d" value={num(h.rolloffs_90d)} tone={h.rolloffs_90d ? "warning" : "success"} to="project-employees" sub={`${inrCompact(rateAtRisk)} / month at risk`} />
+        <Tile label="Headcount" value={num(h.headcount)} to={go("headcount", "employees")} sub={`${num(h.opening_headcount)} at the start of the period`} foot={<Delta value={h.opening_headcount ? ((h.headcount - h.opening_headcount) / h.opening_headcount) * 100 : null} label="since start" />} />
+        <Tile label="Deployed" value={num(h.deployed)} tone="success" to={go("headcount", "employees?deployment=deployed", "deployed")} sub={`${pct(h.utilisation_pct, 0)} utilisation`} />
+        <Tile label="On the bench" value={num(h.bench)} tone={h.bench ? "warning" : "success"} to={go("headcount", "employees?deployment=bench", "bench")} sub={`${inrCompact(h.bench_cost_month)} / month · ${pct(h.bench_cost_pct, 0)} of people cost`} />
+        <Tile label="Joined" value={num(h.joiners)} tone="success" to={go("joiners", "employees")} sub={`in ${period.short_label}`} />
+        <Tile label="Left" value={num(h.exits)} tone={h.exits ? "danger" : "neutral"} to={go("exits", "employees")} sub={`net ${h.net_change >= 0 ? "+" : ""}${h.net_change}${planned ? ` · ${planned} planned` : ""}`} />
+        <Tile label="Attrition" value={pct(h.attrition_pct, 0)} tone={attrState === "ok" ? "success" : attrState === "warn" ? "warning" : "danger"} to={go("exits", "employees")} sub={`${num(h.on_notice)} on notice`} />
+        <Tile label="Revenue / deployed head" value={inrCompact(h.revenue_per_deployed_head)} sub={`${inrCompact(h.billed)} billed`} to={go("deployed", revenueLink(period))} />
+        <Tile label="Roll-offs next 90 d" value={num(h.rolloffs_90d)} tone={h.rolloffs_90d ? "warning" : "success"} to={go("rolloffs", "project-employees")} sub={`${inrCompact(rateAtRisk)} / month at risk`} />
       </div>
 
       {/* 1 · How the period unfolded — headcount, deployed, bench, joiners, exits, month by month. */}
       <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint="headcount · deployed · bench at month end, joiners and exits in the month — tick what to compare">
-        <FilteredBars data={strip} rowFilter rowLabel="Months"
+        <FilteredBars data={strip} rowFilter rowLabel="Months" barLink={monthPeopleBar}
+                      clickHint={canDrill ? "Click a bar to see the people in it that month" : "Click a bar to open the Employees list"}
                       series={[{ key: "deployed", label: "Deployed", color: 2 }, { key: "bench", label: "On the bench", color: 6 },
                                { key: "headcount", label: "Headcount", color: 0, defaultOff: true }, { key: "joiners", label: "Joiners", color: 1, defaultOff: true },
                                { key: "exits", label: "Exits", color: 5, defaultOff: true }]} />
       </Panel>
 
       {/* 1b · Internal vs external placements (29 Sep 2026, HR ask). */}
-      {d.placements && <PlacementsPanels p={d.placements} />}
+      {d.placements && <PlacementsPanels p={d.placements} period={period} canDrill={canDrill} />}
 
       {/* 2 · The dials: utilisation · attrition · bench cost. */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -1122,22 +1222,22 @@ export function PeopleTab({ d, period }: { d: PeopleData; period: CeoPeriod }) {
       {/* 3 · Four cuts of the workforce — bar charts with their own ticks. */}
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="People cost by month" hint="CTC ÷ 12 of everyone on the rolls · split deployed vs bench">
-          <FilteredBars data={costs} stacked rowFilter rowLabel="Months" format={inrCompact} height={220}
-                        series={[{ key: "deployed_cost", label: "Deployed", color: 2 }, { key: "bench_cost", label: "Bench", color: 6 },
-                                 { key: "cost", label: "Total", color: 0, defaultOff: true, stackId: "total" }]} />
+          <FilteredBars data={costs} rowFilter rowLabel="Months" format={inrCompact} height={220} barLink={monthPeopleBar}
+                        series={[{ key: "cost", label: "Total", color: 0 }, { key: "deployed_cost", label: "Deployed", color: 2 },
+                                 { key: "bench_cost", label: "Bench", color: 6 }]} />
         </Panel>
 
         <Panel title="Deployed vs bench by designation" hint="who is idle, by role — the skills on the bench"
                action={<span className="text-xs text-muted">{num(h.headcount)} on the rolls today</span>}>
           {byRole.length ? (
-            <FilteredBars data={byRole} stacked rowFilter rowLabel="Designations" height={220}
+            <FilteredBars data={byRole} rowFilter rowLabel="Designations" height={220} barLink={cutPeopleBar(true)}
                           series={[{ key: "deployed", label: "Deployed", color: 2 }, { key: "bench", label: "On the bench", color: 6 },
-                                   { key: "on_notice", label: "On notice", color: 5, defaultOff: true, stackId: "notice" }]} />
+                                   { key: "on_notice", label: "On notice", color: 5, defaultOff: true }]} />
           ) : <p className="text-sm text-muted">Nobody on the rolls.</p>}
         </Panel>
 
         <Panel title="Tenure mix" hint={`how long today's people have been with us · avg ${h.avg_tenure_years ?? "—"} yrs`}>
-          <FilteredBars data={tenure} stacked rowFilter rowLabel="Tenure" height={220}
+          <FilteredBars data={tenure} rowFilter rowLabel="Tenure" height={220} barLink={cutPeopleBar(false)}
                         series={[{ key: "deployed", label: "Deployed", color: 2 }, { key: "bench", label: "On the bench", color: 6 }]} />
         </Panel>
 
@@ -1145,7 +1245,7 @@ export function PeopleTab({ d, period }: { d: PeopleData; period: CeoPeriod }) {
                action={d.rolloffs.length ? <StateChip state={d.rolloffs.some((r) => r.days_left !== null && r.days_left <= 30) ? "bad" : "warn"}>{num(d.rolloffs.length)} heads</StateChip> : <StateChip state="ok">None</StateChip>}>
           {rolloffs.length ? (
             <>
-              <FilteredBars data={rolloffs} rowFilter rowLabel="Months" height={180}
+              <FilteredBars data={rolloffs} rowFilter rowLabel="Months" height={180} barLink={rolloffBar}
                             series={[{ key: "heads", label: "Heads", color: 6 }, { key: "monthly_rate", label: "Monthly rate at risk", color: 5, defaultOff: true }]} />
               <ul className="mt-3 divide-y divide-subtle">
                 {d.rolloffs.slice(0, 5).map((r) => (
@@ -1317,7 +1417,7 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
       {!isBilling && data && data.tab === "finance" && <FinanceTab d={data.data as FinanceData} period={data.period} />}
       {!isBilling && data && data.tab === "customer" && <CustomerTab d={data.data as CustomerData} period={data.period} />}
       {!isBilling && data && data.tab === "sales" && <SalesTab d={data.data as SalesData} period={data.period} />}
-      {!isBilling && data && data.tab === "people" && <PeopleTab d={data.data as PeopleData} period={data.period} />}
+      {!isBilling && data && data.tab === "people" && <PeopleTab d={data.data as PeopleData} period={data.period} drill />}
       {targetsOpen && targetsFor && (
         <RevenueTargetsModal month={targetsFor.month} targets={targetsFor.targets}
                              onClose={() => setTargetsOpen(false)}

@@ -26,6 +26,7 @@ import { DialogActions } from "../components/dialogKit";
 // ONE "Edit JD & skills" dialog (30 Sep 2026): the requirement page used to keep a
 // stale private copy without the JD-file drop zone — the Screening Desk had it.
 import { JdSkillsCard } from "../components/JdSkillsCard";
+import { ApplyLinkCard } from "../components/ApplyLinkCard";
 import {
   SalesHeadDecisionModal, SubmitForApprovalModal, type SalesHeadDecision,
 } from "../components/OfferApprovalGate";
@@ -6001,6 +6002,11 @@ export function RequirementDetailPage() {
       )}
 
       <JdSkillsCard req={req} canEdit={canEditJdSkills} toast={toast} onSaved={(u) => onChanged(u)} />
+      {/* The application link (28 Oct 2026, user ask): TA never opens the
+          opportunity page — their Opportunities menu lands here — so the card
+          lives on this Details tab too. Same component, same server gate
+          (TA · RMG / GM · Sales · Sales Head); a login without it sees nothing. */}
+      <ApplyLinkCard requirementId={req.id} toast={toast} />
       </>)}
 
       {/* modals */}

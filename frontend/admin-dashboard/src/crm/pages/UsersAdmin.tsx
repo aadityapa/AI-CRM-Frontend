@@ -7,7 +7,6 @@ import { Lock, Plus, Send, Shield, ShieldCheck, UserCog, Crown, Briefcase, Users
 import { crmGet, crmPost, qs } from "../api";
 import type { Meta } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
-import { AccessTemplatesPage } from "./AccessTemplates";
 import { RolesPanel } from "./RolesAdmin";
 import { ResetPasswordModal } from "../components/ResetPasswordModal";
 import { AccessAuditLog } from "../components/access/AccessAuditLog";
@@ -31,11 +30,13 @@ import {
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import {
-  ConfirmModal, ErrorBox, Modal, StatusBadge, Tabs,
+  ConfirmModal, ErrorBox, Modal, Spinner, StatusBadge, Tabs,
   btnPrimary, btnSecondary, inputCls, useToast,
 } from "../components/ui";
 import { SectionHeaderBanner, WizardField, FieldLabel } from "../components/wizard";
 import { usePageTab } from "../lib/pageState";
+import { crmUrl } from "../router";
+import { replaceAppHistory } from "../../lib/appHistory";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -156,7 +157,6 @@ type UserRow = {
   /** Admin/CEO-defined roles (Access Control ▸ Roles). */
   custom_roles?: string[];
   tab_access?: string[] | null;
-  access_template_id?: number | null;
   /** Last successful sign-in (ISO) — 7 Oct 2026. */
   last_login?: string | null;
   /** An Admin reset is waiting for the user's own password. */
@@ -167,13 +167,14 @@ type UserRow = {
 
 type UserCounts = { total: number; active: number; inactive: number; no_role: number; password_pending: number };
 type UserStatusFilter = "" | "active" | "inactive" | "no_role" | "password_pending";
-type HubTab = "users" | "roles" | "templates" | "audit";
+/** Access Templates were merged into Roles (27 Oct 2026, B-V2 migration 0149):
+ *  every role carries its own permissions, so the hub is Users · Roles &
+ *  permissions · Audit log. An old `?tab=templates` link opens Roles. */
+type HubTab = "users" | "roles" | "audit";
 const HUB_TABS: { key: HubTab; label: string }[] = [
-  { key: "users", label: "Users" }, { key: "roles", label: "Roles" },
-  { key: "templates", label: "Access Templates" }, { key: "audit", label: "Audit log" },
+  { key: "users", label: "Users" }, { key: "roles", label: "Roles & permissions" },
+  { key: "audit", label: "Audit log" },
 ];
-
-type AccessTemplateOpt = { id: number; name: string; is_active: boolean };
 
 type Notify = (msg: string, kind?: "ok" | "err") => void;
 
@@ -723,7 +724,7 @@ function EditRolesModal({
       <p className="mb-3 text-sm text-muted">
         Choose which CRM roles <b>{displayName}</b> should have — built-in roles and any custom roles
         (e.g. <b>GM</b>, <b>Sales Manager</b>). The selection below <b>replaces all existing roles</b>.
-        Picking a custom role also removes any Access Template, so the role alone decides their tabs.
+        Their permissions are those of every role ticked here, added up.
       </p>
       {nothingSelected && (
         <p className="mb-3 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
@@ -884,11 +885,11 @@ function TabAccessModal({
     >
       <WizFormShell
         title={`Edit Tab Access — ${user.username}`}
-        subtitle="Choose which tabs and fields this user can see — a per-user override on top of any Access Template."
+        subtitle="Choose which tabs and fields this user can see — a per-user override on top of their roles' permissions."
         icon={<Lock size={20} aria-hidden />}
       >
       <p className="mb-3 text-sm text-muted">
-        Per-user override on top of any assigned <b>Access Template</b> (override wins per tab/field).
+        Per-user override on top of their <b>roles' permissions</b> (override wins per tab/field).
         Choose which tabs <b>{user.full_name || user.username}</b> can see. Unchecked tabs are hidden.
       </p>
       {user.roles.length === 0 && (
@@ -1017,12 +1018,28 @@ function TabAccessModal({
 
 /* --------------------------------------------------------------- page */
 
+/** The old Access Templates page (merged into Roles, 27 Oct 2026): a saved
+ *  link or bookmark lands on Access Control ▸ Roles & permissions. */
+export function AccessTemplatesRedirect() {
+  useEffect(() => {
+    replaceAppHistory(crmUrl("users?tab=roles"));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+  return <Spinner label="Opening Roles & permissions…" />;
+}
+
 export function UsersAdminPage() {
   const isAdmin = useHasRole();
   const me = useMe();
-  // Access Control hub (target IA): ONE sidebar entry with Users, Roles, Access
-  // Templates and (7 Oct 2026) the Audit log as tabs inside it.
+  // Access Control hub (target IA): ONE sidebar entry with Users, Roles &
+  // permissions and (7 Oct 2026) the Audit log as tabs inside it.
+  // Read BEFORE usePageTab normalises an unknown tab away.
+  const [cameForTemplates] = useState(() => new URLSearchParams(window.location.search).get("tab") === "templates");
   const [hubTab, setHubTab] = usePageTab<HubTab>("tab", "users", HUB_TABS.map((t) => t.key));
+  useEffect(() => {
+    // A bookmark / link to the old Access Templates tab lands on Roles.
+    if (cameForTemplates) setHubTab("roles", { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
   const [toast, notify] = useToast();
   const [rows, setRows] = useState<UserRow[]>([]);
@@ -1042,9 +1059,8 @@ export function UsersAdminPage() {
   const [manageId, setManageId] = useState<number | null>(null);
   const [auditKey, setAuditKey] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [templates, setTemplates] = useState<AccessTemplateOpt[]>([]);
   const [customRoles, setCustomRoles] = useState<{ id: number; name: string; is_active: boolean }[]>([]);
-  const [templateBusyId, setTemplateBusyId] = useState<number | null>(null);
+  const [sourceBusyId, setSourceBusyId] = useState<number | null>(null);
   const [showInvite, setShowInvite] = useState(false);
   const [flows, setFlows] = useState<EmailFlow[]>([]);
   const [perms, setPerms] = useState<ActionPerm[]>([]);
@@ -1089,9 +1105,6 @@ export function UsersAdminPage() {
   };
 
   useEffect(() => {
-    crmGet<AccessTemplateOpt[]>("/api/access-templates")
-      .then((r) => setTemplates((r.data || []).filter((t) => t.is_active)))
-      .catch(() => {});
     crmGet<{ custom: { id: number; name: string; is_active: boolean }[] }>("/api/roles")
       .then((r) => setCustomRoles((r.data?.custom || []).filter((c) => c.is_active)))
       .catch(() => {});
@@ -1142,24 +1155,21 @@ export function UsersAdminPage() {
     }
   };
 
-  /** ONE source of access per user (23 Sep 2026): role default, an Access
-   *  Template, or a custom role. The server clears whichever was set before. */
+  /** Where a user's permissions come from: ONE custom role, or their built-in
+   *  roles (each with its own permissions, else the product rules). */
   const setAccessSource = async (user: UserRow, value: string) => {
     const [kind, idStr] = value ? value.split(":") : ["default", ""];
-    setTemplateBusyId(user.id);
+    setSourceBusyId(user.id);
     try {
-      const res = await crmPost<{ access_template_id: number | null; custom_roles: string[]; roles?: string[] }>(
+      const res = await crmPost<{ custom_roles: string[]; roles?: string[] }>(
         `/api/users/${user.id}/access-source`,
         { kind, id: idStr ? Number(idStr) : null },
       );
       notify(res.message || "Access updated");
-      // A template can add the built-in role it is tagged with (a user needs a
-      // role to open the CRM), so the role chips are refreshed from the reply too.
       setRows((prev) =>
         prev.map((r) => (r.id === user.id
           ? {
               ...r,
-              access_template_id: res.data?.access_template_id ?? null,
               custom_roles: res.data?.custom_roles ?? [],
               roles: res.data?.roles ?? r.roles,
             }
@@ -1169,7 +1179,7 @@ export function UsersAdminPage() {
     } catch (e: any) {
       notify(e?.message || "Failed to update access", "err");
     } finally {
-      setTemplateBusyId(null);
+      setSourceBusyId(null);
     }
   };
 
@@ -1185,11 +1195,9 @@ export function UsersAdminPage() {
 
   /** Where this user's tabs come from — the Manage dialog's one-liner. */
   const accessLabelFor = (r: UserRow): string => {
-    const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
-    if (roleMatch) return `custom role ${roleMatch.name}`;
-    const t = templates.find((x) => x.id === r.access_template_id);
-    if (t) return `template ${t.name}`;
-    return "their role defaults";
+    const held = [...r.roles.map((x) => x.replace(/_/g, " ")), ...(r.custom_roles || [])];
+    if (!held.length) return "no role yet";
+    return `the permissions of ${held.join(" + ")}`;
   };
   const managed = manageId != null ? rows.find((r) => r.id === manageId) || null : null;
 
@@ -1214,25 +1222,26 @@ export function UsersAdminPage() {
     },
     {
       key: "roles", label: "Roles",
-      // No role at all = the CRM refuses them ("No CRM role is assigned"),
-      // whatever template they carry. Say so on the row, where it can be fixed.
+      // No role at all = the CRM refuses them ("No CRM role is assigned").
+      // Say so on the row, where it can be fixed.
       render: (r) => (r.roles.length || (r.custom_roles || []).length)
         ? <RoleChips roles={r.roles} custom={r.custom_roles} />
         : (
           <span className="rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger"
-            title="A template decides which tabs a user sees; a role is what lets them into the CRM. Use Edit Roles.">
+            title="A role is what lets someone into the CRM and decides what they see. Use Edit Roles.">
             No role — cannot open the CRM
           </span>
         ),
     },
     {
-      key: "access_template_id",
-      label: "Tabs from",
+      key: "permissions_from",
+      label: "Permissions from",
       render: (r) => {
-        // The one thing that decides this user's tabs: a custom role, an
-        // Access Template, or the built-in role defaults.
+        // Access Templates were merged into Roles (27 Oct 2026): ONE custom
+        // role, or the person's built-in roles (their own permissions, else
+        // the product rules). Built-in roles are changed in Edit Roles.
         const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
-        const value = roleMatch ? `role:${roleMatch.id}` : r.access_template_id ? `template:${r.access_template_id}` : "";
+        const value = roleMatch ? `role:${roleMatch.id}` : "";
         const isAdminRow = r.roles.includes("Admin") || r.roles.includes("CEO");
         if (isAdminRow && !value) {
           return <span className="text-xs font-semibold text-muted" title="Admin and CEO open every tab">Full access</span>;
@@ -1241,21 +1250,16 @@ export function UsersAdminPage() {
           <select
             className={`${inputCls} !w-auto min-w-[10rem] py-1 text-xs`}
             value={value}
-            disabled={templateBusyId === r.id}
+            disabled={sourceBusyId === r.id}
             onChange={(e) => setAccessSource(r, e.target.value)}
             onClick={(e) => e.stopPropagation()}
-            aria-label={`Where ${r.full_name || r.username}'s tabs come from`}
-            title="Picking one clears the others"
+            aria-label={`Where ${r.full_name || r.username}'s permissions come from`}
+            title="A custom role here replaces their other custom roles; built-in roles stay (Edit Roles)"
           >
-            <option value="">Role defaults</option>
+            <option value="">Built-in role{r.roles.length === 1 ? "" : "s"}{r.roles.length ? ` (${r.roles.map((x) => x.replace(/_/g, " ")).join(", ")})` : ""}</option>
             {customRoles.length > 0 && (
               <optgroup label="Custom roles">
                 {customRoles.map((c) => <option key={`r${c.id}`} value={`role:${c.id}`}>{c.name}</option>)}
-              </optgroup>
-            )}
-            {templates.length > 0 && (
-              <optgroup label="Access templates">
-                {templates.map((t) => <option key={`t${t.id}`} value={`template:${t.id}`}>{t.name}</option>)}
               </optgroup>
             )}
           </select>
@@ -1327,10 +1331,8 @@ export function UsersAdminPage() {
         eyebrow="Admin · CEO"
         title="Access Control"
         subtitle={hubTab === "roles"
-          ? "Roles are the job titles people sign in as. Create a custom role, choose the tabs and approvals it carries, then add its members."
-          : hubTab === "templates"
-            ? "An Access Template is a reusable set of tabs and fields. A person gets their tabs from ONE place: their role defaults, a template, or a custom role."
-            : hubTab === "audit"
+          ? "Roles are the job titles people sign in as — and each one carries its own tabs, fields and buttons. Set a built-in role's permissions or create a custom role, then add its members."
+          : hubTab === "audit"
               ? "Every change to who may do what — roles, access, passwords, deactivations — with who made it and why."
               : "Who can sign in and what they can open. Manage a person to change roles, reset a password or end access — every change is recorded."}
         stats={counts ? [
@@ -1360,9 +1362,7 @@ export function UsersAdminPage() {
       <div>
         {toast}
         {header}
-        {hubTab === "roles" ? <RolesPanel notify={notify} />
-          : hubTab === "audit" ? <AccessAuditLog refreshKey={auditKey} />
-            : <AccessTemplatesPage />}
+        {hubTab === "roles" ? <RolesPanel notify={notify} /> : <AccessAuditLog refreshKey={auditKey} />}
       </div>
     );
   }

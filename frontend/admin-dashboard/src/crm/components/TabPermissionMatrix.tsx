@@ -9,7 +9,7 @@
  * Extracted for Access Control ▸ Roles so a role is granted permissions with
  * the SAME vocabulary and registry as an Access Template. Tab-level only —
  * field overrides stay a template feature. The registry comes from
- * `GET /api/access-templates/registry`, so a tab added to the server appears
+ * `GET /api/roles/registry`, so a tab added to the server appears
  * here without a frontend change ("Other" catches unknown modules).
  */
 import { useMemo, useState } from "react";
@@ -57,7 +57,7 @@ export function resetSubTabs(map: Record<string, string> | undefined): Record<st
 }
 
 /** Tick list of a tab's sub-tabs (22 Oct 2026, user ask: "give access to each
- *  sub-tab"). Used by Access Templates and Access Control ▸ Roles. */
+ *  sub-tab"). Used by Access Control ▸ Roles & permissions (custom and built-in roles). */
 export function SubTabPicker({
   subtabs, value, onChange,
 }: {
@@ -127,7 +127,7 @@ export function moduleOf(tab: Pick<RegistryTab, "key" | "group">): string {
 
 /** Shown under the Interview Platform module header. */
 export const IV_MODULE_HINT =
-  "Once any of these is ticked, the template alone decides the Interview Platform tabs (roles no longer add any). "
+  "Once any of these is ticked, the roles' ticks decide the Interview Platform tabs (the role rules no longer add any). "
   + "View opens the page; Edit also allows the page's changes (template authoring, scheduling, deleting reports).";
 
 const MODES = [

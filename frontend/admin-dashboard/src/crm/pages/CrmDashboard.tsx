@@ -19,8 +19,6 @@ import { WorkDesk } from "./dashboard/WorkDesk";
 import { PanelDashboard } from "./dashboard/PanelDashboard";
 import { HiringManagerDashboard } from "./dashboard/HiringManagerDashboard";
 import { PoExpiryPanel } from "./dashboard/PoExpiryPanel";
-import { ReturnedProformasPanel } from "./dashboard/ReturnedProformasPanel";
-import { useCanApprove } from "../useAccess";
 import { HiringControlTower, useShowsHiringTower } from "./dashboard/HiringControlTower";
 import { CeoDashboard, PeopleTab } from "./dashboard/CeoDashboard";
 import type { CeoPayload, PeopleData } from "./dashboard/CeoDashboard";
@@ -50,6 +48,7 @@ type RequirementsData = {
 
 type RmgData = {
   pipeline: {
+    requirement_id?: number;
     req_number: string;
     /** ONE id rule (18 Aug 2026): the parent opportunity's OPP-xxxx is what humans see. */
     opp_id?: string | null;
@@ -94,6 +93,7 @@ type FinanceData = {
   outstanding_invoices: { count: number; amount: number };
   tds_pending: { count: number; amount: number };
   po_consumption: {
+    id?: number;
     po_number: string;
     total_value: number;
     consumed_value: number;
@@ -274,15 +274,16 @@ function ExecutiveSection() {
       </div>
       <Panel title="Quarter by quarter" hint="candidates joined and revenue billed, per financial-year quarter — tick a series or a quarter">
         <FilteredBars rowFilter rowLabel="Quarters" data={quarters} format={(v) => (v >= 1000 ? inrCompact(v) : num(v))}
+                      barLink={(_r, s) => (s === "joined" ? "profiles?f_stage=joined" : "reports?tab=revenue&period=quarter")}
                       series={[{ key: "revenue", label: "Revenue", color: 0 }, { key: "joined", label: "Joined", color: 2, defaultOff: true }]} />
       </Panel>
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Opportunity funnel" hint="deals by pipeline stage, today">
-          <FilteredBars rowFilter rowLabel="Stages" height={220} data={funnelData(data.opportunity_funnel, "stage")}
+          <FilteredBars rowFilter rowLabel="Stages" height={220} data={funnelData(data.opportunity_funnel, "stage")} barLink={() => "opportunities"}
                         series={[{ key: "count", label: "Opportunities", color: 0 }]} />
         </Panel>
         <Panel title="Requirement funnel" hint="positions by sourcing status, today">
-          <FilteredBars rowFilter rowLabel="Statuses" height={220} data={funnelData(data.requirement_funnel, "status")}
+          <FilteredBars rowFilter rowLabel="Statuses" height={220} data={funnelData(data.requirement_funnel, "status")} barLink={() => "opportunities"}
                         series={[{ key: "count", label: "Requirements", color: 3 }]} />
         </Panel>
       </div>
@@ -321,7 +322,7 @@ function RequirementsSection() {
           </div>
         </Panel>
         <Panel title="Requirement funnel" hint="positions by sourcing status, today — tick a status to compare">
-          <FilteredBars rowFilter rowLabel="Statuses" data={funnelData(data.funnel, "status")}
+          <FilteredBars rowFilter rowLabel="Statuses" data={funnelData(data.funnel, "status")} barLink={() => "opportunities"}
                         series={[{ key: "count", label: "Requirements", color: 0 }]} />
         </Panel>
       </div>
@@ -337,6 +338,7 @@ function RmgSection() {
   if (error || !data)
     return <Section title="RMG Pipeline"><ErrorBox error={error || "No data"} onRetry={retry} /></Section>;
   const pipeline = data.pipeline.map((r) => ({
+    requirement_id: r.requirement_id ?? 0,
     label: r.opp_id || r.req_number, positions: r.no_of_positions, resumes: r.resumes_count,
     in_pipeline: Object.values(r.profiles_by_status).reduce((a, b) => a + b, 0),
   }));
@@ -352,6 +354,7 @@ function RmgSection() {
       <Panel title="Sourcing pipeline by position" hint="positions · resumes · candidates in the pipeline, per open requirement — tick a position to compare">
         {pipeline.length ? (
           <FilteredBars rowFilter rowLabel="Positions" data={pipeline}
+                        barLink={(r, s) => (r.requirement_id ? `requirements/${r.requirement_id}${s === "positions" ? "" : "?tab=resumes"}` : "opportunities")}
                         series={[{ key: "positions", label: "Positions", color: 0 }, { key: "resumes", label: "Resumes", color: 3 }, { key: "in_pipeline", label: "In pipeline", color: 2 }]} />
         ) : <p className="text-sm text-muted">No open requirements in sourcing.</p>}
       </Panel>
@@ -440,7 +443,7 @@ function TaSection() {
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Recruiter productivity" hint="resumes screened today · this week · all time · shortlisted — tick a recruiter to compare">
           {productivity.length ? (
-            <FilteredBars rowFilter rowLabel="Recruiters" height={240} data={productivity}
+            <FilteredBars rowFilter rowLabel="Recruiters" height={240} data={productivity} barLink={() => "reports?tab=productivity"}
                           series={[{ key: "today", label: "Today", color: 0 }, { key: "week", label: "This week", color: 3 },
                                    { key: "shortlisted", label: "Shortlisted", color: 2 }, { key: "total", label: "All time", color: 7, defaultOff: true }]} />
           ) : <EmptyState message="No screening activity yet" />}
@@ -478,7 +481,7 @@ function FinanceSection() {
   const utilPct = poTotal ? (poConsumed / poTotal) * 100 : null;
   // A high utilisation means the POs are running out — renewals are due.
   const utilState: StateTone = utilPct === null ? "none" : utilPct < 70 ? "ok" : utilPct < 90 ? "warn" : "bad";
-  const pos = data.po_consumption.map((p) => ({ label: p.po_number, consumed: p.consumed_value, balance: p.balance_value, total: p.total_value, pct: p.pct_consumed }));
+  const pos = data.po_consumption.map((p) => ({ id: p.id ?? 0, label: p.po_number, consumed: p.consumed_value, balance: p.balance_value, total: p.total_value, pct: p.pct_consumed }));
   const nearlyOut = data.po_consumption.filter((p) => p.pct_consumed >= 90).length;
   return (
     <Section title="Finance">
@@ -499,6 +502,7 @@ function FinanceSection() {
         <Panel title="PO consumption" hint="active POs, top 20 by value — consumed vs balance, tick a PO to compare">
           {pos.length ? (
             <FilteredBars rowFilter rowLabel="Purchase orders" stacked format={inrCompact} data={pos}
+                          barLink={(r) => (r.id ? `pos/${r.id}` : "pos")}
                           series={[{ key: "consumed", label: "Consumed", color: 5 }, { key: "balance", label: "Balance", color: 2 },
                                    { key: "total", label: "Total", color: 7, defaultOff: true, stackId: "total" }, { key: "pct", label: "% used", color: 3, defaultOff: true, stackId: "pct" }]} />
           ) : <EmptyState message="No active purchase orders" />}
@@ -548,7 +552,7 @@ const START_HERE: { match: string[]; steps: { label: string; to: string; desc: s
     match: ["Admin", "CEO"],
     steps: [
       { label: "Users", to: "users", desc: "create logins and assign CRM roles" },
-      { label: "Access Templates", to: "access-templates", desc: "control what each role sees and edits" },
+      { label: "Roles & permissions", to: "users?tab=roles", desc: "what each role sees, edits and approves" },
       { label: "Settings", to: "settings", desc: "organisation, billing, background jobs and UI text" },
     ],
   },
@@ -607,7 +611,7 @@ const START_HERE_KEY = "crm.startHere.dismissed";
 
 /** Icon per destination (CTC Slab shares `customers` and is keyed by label). */
 const STEP_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
-  users: Users, "access-templates": ShieldCheck, settings: Settings, opportunities: Briefcase,
+  users: Users, "users?tab=roles": ShieldCheck, settings: Settings, opportunities: Briefcase,
   customers: Building2, "CTC Slab": Layers, projects: FolderKanban, profiles: UserCheck,
   candidates: UserSearch, "template-requests": CalendarClock, pos: FileText, invoices: Receipt,
   tds: Percent, employees: Users, "leave-applications": CalendarCheck, holidays: CalendarDays,
@@ -727,6 +731,7 @@ function TaTrackingSection({ mine }: { mine: boolean }) {
         <Panel title={mine ? "Your funnel" : "By recruiter"} hint="applied · active · interviews · shortlisted · joined · rejected — tick a series or a recruiter">
           {rows.length ? (
             <FilteredBars rowFilter={!mine} rowLabel="Recruiters" height={240} data={rows}
+                          barLink={(_r, s) => (s === "joined" ? "profiles?f_stage=joined" : "profiles")}
                           series={[{ key: "applied", label: "Applied", color: 0 }, { key: "active", label: "Active", color: 3, defaultOff: true },
                                    { key: "interviews", label: "Interviews", color: 1 }, { key: "shortlisted", label: "Shortlisted", color: 2 },
                                    { key: "joined", label: "Joined", color: 4 }, { key: "rejected", label: "Rejected", color: 5, defaultOff: true }]} />
@@ -763,12 +768,8 @@ export function CrmDashboardPage() {
   // People — Finance, Admin and CEO; 26 Oct 2026 the Sales Manager and the
   // Sales Head too (server: `dashboards.billing_reader`, by role).
   const showBilling = useHasRole("Finance", "Sales_Head") || Boolean(me.sees_team);
-  // Proformas Finance returned (26 Oct 2026): the Sales family, RMG / GM and
-  // Finance see which month came back and why (server: `returned_proformas.may_see`).
-  const canRaise = useCanApprove("timesheet.generate_invoice");
-  const canApproveSheets = useCanApprove("timesheet.approve");
-  const screener = useCanApprove("profile.rmg_screening");
-  const showReturned = useHasRole("Finance", "Sales", "Sales_Head", "RMG") || canRaise || canApproveSheets || screener;
+  // Proformas Finance returned are a tile in "My work today" (26 Oct 2026, user
+  // ask: no big panel) — the server adds it for whoever `returned_proformas.may_see`.
   // The Sales → TA control tower (23 Sep 2026): every desk except a pure
   // HR / Finance login reads the same positions, onboardings and pace.
   const showHiringTower = useShowsHiringTower();
@@ -814,7 +815,10 @@ export function CrmDashboardPage() {
       {/* The login's daily tasks as tabs (28 Sep 2026) — feedback due, rounds
           to schedule, candidates awaiting a call, screening, upcoming, queues.
           The server picks the tabs; every role gets its own set. */}
-      {panelOnly && !isHm ? <PanelDashboard /> : <WorkDesk />}
+      {/* Admin / CEO get no "My work today" (27 Oct 2026, user ask): their two
+          approval tiles live on the Opportunities ▸ Pending Approval tab and in
+          the bell; the Dashboard is the company view alone. */}
+      {panelOnly && !isHm ? <PanelDashboard /> : isAdmin ? null : <WorkDesk />}
       {isHm && !isAdmin && <HiringManagerDashboard />}
       {/* Admin / CEO (28 Sep 2026): the company view and nothing else — Finance
           (revenue) is the first tab, so it is the first thing on the page.
@@ -829,7 +833,6 @@ export function CrmDashboardPage() {
         </>
       ) : (
         <>
-          {showReturned && <ReturnedProformasPanel />}
           <StartHereCard />
           {showCompanyFinance &&<CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets} />}
           {showHiringTower && <HiringControlTower />}

@@ -44,10 +44,17 @@ export const EMPLOYMENT_TYPES = [
   { value: "Contract", label: "Contract" },
 ];
 
+/** A yes / no answer where "No" is a real answer (a toggle would hide it). */
+const YES_NO = [{ value: "true", label: "Yes" }, { value: "false", label: "No" }];
+
 export const EMPLOYEE_CARDS: Record<EmpCardKey, { title: string; subtitle: string; fields: EmpField[] }> = {
   job: {
     title: "Job details",
-    subtitle: "Where they sit in Karnex and what they are paid",
+    subtitle: "Where they sit in Karnex",
+    /* No CTC on this card (28 Oct 2026, user request) — the salary is not shown on
+       the Employee page. The offer-time details HR fills on the candidate profile
+       (offer letter ref · customer onboarding · relocation) are copied here at
+       Joined, so they are listed as optional fields: shown once filled. */
     fields: [
       { key: "employee_code", label: "Employee ID", kind: "text", core: true, placeholder: "e.g. 324" },
       { key: "email", label: "Official email", kind: "email", core: true, mandatory: true },
@@ -57,12 +64,14 @@ export const EMPLOYEE_CARDS: Record<EmpCardKey, { title: string; subtitle: strin
       { key: "designation_id", label: "Designation", kind: "ref", ref: "designations", display: "designation_name", core: true },
       { key: "reporting_manager_id", label: "Reporting manager", kind: "ref", ref: "people", display: "reporting_manager_name", core: true },
       { key: "work_location", label: "Work location", kind: "text", core: true, placeholder: "e.g. Pune" },
-      { key: "current_ctc", label: "Current CTC (per year)", kind: "money", core: true, placeholder: "e.g. 600000" },
       { key: "profile_type", label: "Profile type", kind: "select", core: true, options: opts(["Internal", "External"]) },
       { key: "is_active", label: "Status", kind: "toggle", core: true },
       { key: "reporting_hr_id", label: "Reporting HR", kind: "ref", ref: "people", display: "reporting_hr_name" },
       { key: "role_title", label: "Role", kind: "text" },
       { key: "experience_years", label: "Experience before joining (yrs)", kind: "number" },
+      { key: "offer_letter_reference", label: "Offer letter reference", kind: "text", maxLength: 255 },
+      { key: "customer_onboarding_date", label: "Customer onboarding date", kind: "date" },
+      { key: "relocation_applicable", label: "Relocation applicable", kind: "select", options: YES_NO },
       { key: "skills", label: "Skills", kind: "skills" },
       { key: "portal_access", label: "Portal access", kind: "toggle" },
     ],
@@ -180,7 +189,7 @@ export function displayValue(emp: Record<string, any>, f: EmpField): string | nu
   switch (f.kind) {
     case "toggle": return f.key === "is_active" ? (v ? "Active" : "Inactive") : (v ? "Yes" : "No");
     case "ref": return emp[f.display || ""] || `#${v}`;
-    case "select": return f.options?.find((o) => o.value === v)?.label || String(v).replace(/_/g, " ");
+    case "select": return f.options?.find((o) => o.value === String(v))?.label || String(v).replace(/_/g, " ");
     case "date": {
       const d = new Date(String(v));
       return Number.isNaN(d.getTime()) ? String(v)

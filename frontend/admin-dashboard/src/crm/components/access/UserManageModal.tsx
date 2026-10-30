@@ -30,7 +30,6 @@ export type ManagedUser = {
   roles: string[];
   custom_roles?: string[];
   tab_access?: string[] | null;
-  access_template_id?: number | null;
   last_login?: string | null;
   must_change_password?: boolean;
   has_employee?: boolean;
@@ -89,7 +88,7 @@ function Action({ icon: Icon, label, hint, onClick, disabled, title, tone = "neu
 
 export function UserManageModal({ user, accessLabel, isSelf, emailPaused, actions, onClose, refreshKey = 0 }: {
   user: ManagedUser;
-  /** "Custom role · GM" / "Template · Default — TA" / "Role defaults". */
+  /** "the permissions of Sales + GM" / "no role yet". */
   accessLabel: string;
   isSelf: boolean;
   emailPaused: boolean;

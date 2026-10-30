@@ -14,7 +14,7 @@
  * quick switches (overdue, TDS pending, split, no branch), behind "More filters",
  * with removable chips (`billingTrackerFilters.ts`).
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowRight, CalendarRange, ChevronLeft, ChevronRight, Download, FileText, Hourglass, ListChecks,
   RefreshCw, Search, SlidersHorizontal, X,
@@ -23,7 +23,8 @@ import {
 import { authFetch } from "../../../api/client";
 import { DESK_CHANGED_EVENT, crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
-import { CONTROL, ICON_BTN, inr, inrCompact } from "../../components/controlTower";
+import { CONTROL, FilteredBars, ICON_BTN, MiniStat, Panel, STATE_CHIP, Speedometer, Tile, inr, inrCompact, num, pct } from "../../components/controlTower";
+import { semanticAnchor } from "../../../design-system/tokens/tokens";
 import { useSessionState } from "../../lib/pageState";
 import {
   EMPTY_FILTERS, FLAG_LABELS, LATE_LABELS, activeChips, moreFilterCount, trackerQuery, withDefaults,
@@ -65,7 +66,42 @@ type Meta = {
     employees?: Named[]; pos?: Named[]; owners?: Named[];
   };
   late_total?: number;
+  /** 27 Oct 2026 — tiles + chart data over the same filtered rows (server `tracker_summary`). */
+  summary?: TrackerSummaryData;
 };
+
+type TrackerSummaryData = {
+  tiles: {
+    to_raise: number; to_raise_returned: number; with_customer: number; with_customer_amount: number;
+    due_amount: number; due_count: number; overdue_amount: number; overdue_count: number;
+    paid_amount: number; paid_count: number; tds_pending: number; avg_wait_days: number | null;
+  };
+  groups: { key: string; label: string }[];
+  by_month: Record<string, string | number>[];
+  late: { key: string; label: string; balance: number; count: number }[];
+  customers: { label: string; customer_id?: number | null; due: number; paid: number; with_customer: number }[];
+};
+
+/** What a bar of the Billing tab does (29 Oct 2026, "every graph opens its data"):
+ *  it narrows the table below to exactly what the bar counted. PURE. */
+export type TrackerBarPatch = { stage?: string; month?: string; late?: string; customer?: string; branch?: string; project?: string };
+export function trackerBarPatch(chart: "months" | "late" | "customers", row: Record<string, unknown>, series: string): TrackerBarPatch | null {
+  if (chart === "months") {
+    const month = String(row.key ?? "");
+    if (!month) return null;
+    return { month, stage: series === "total" ? "all" : series };   // to_raise · with_customer · due · paid (a group or a stage)
+  }
+  if (chart === "late") {
+    const late = String(row.key ?? "");
+    return late ? { late, stage: "all" } : null;
+  }
+  const cid = row.customer_id;
+  if (typeof cid !== "number") return null;
+  return { customer: String(cid), branch: "", project: "", stage: series === "paid" ? "paid" : series === "due" ? "due" : "with_customer" };
+}
+
+/** The chip a stage GROUP shows while a bar has chosen it (it is not one of the stage chips). */
+const GROUP_CHIP: Record<string, string> = { to_raise: "Proforma to raise / with Finance", with_customer: "With the customer", due: "Payment due" };
 
 /** One colour per stage — chips, dots and the row badge share it. */
 export const STAGE_LOOK: Record<string, { short: string; dot: string; chip: string }> = {
@@ -167,9 +203,19 @@ export function BillingTracker() {
       { key: "all", label: "All", count: counts.all },
       // 26 Oct 2026 — every generated tax invoice, newest first (the register).
       { key: "invoiced", label: "Invoices issued", count: counts.invoiced },
+      // A chart bar may choose a stage GROUP; it shows as its own chip while chosen.
+      ...(GROUP_CHIP[f.stage] ? [{ key: f.stage, label: GROUP_CHIP[f.stage], count: meta?.total }] : []),
       ...(meta?.stages || []).map((s) => ({ key: s.key, label: STAGE_LOOK[s.key]?.short || s.label, count: counts[s.key] })),
     ];
-  }, [meta]);
+  }, [meta, f.stage]);
+  // 29 Oct 2026 — a bar narrows the table to what it counted, then the table comes into view.
+  const listRef = useRef<HTMLDivElement>(null);
+  const onBar = (chart: "months" | "late" | "customers") => (row: Record<string, unknown>, series: string) => {
+    const patch = trackerBarPatch(chart, row, series);
+    if (!patch) return;
+    set(patch);
+    window.requestAnimationFrame(() => listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
   // 26 Oct 2026 — "take it from there whenever they want": every row the
   // filters hold (not one page) as CSV.
   const [csvBusy, setCsvBusy] = useState(false);
@@ -225,7 +271,15 @@ export function BillingTracker() {
         </div>
       </header>
 
-      <div className="space-y-3 border-b border-subtle px-5 py-3">
+      {meta?.summary && (
+        <TrackerSummary s={meta.summary} stage={f.stage} flags={f.flags}
+          onStage={(stage) => set({ stage })}
+          onOverdue={() => { if (!f.flags.includes("overdue")) toggleFlag("overdue"); }}
+          onTds={() => { if (!f.flags.includes("tds_pending")) toggleFlag("tds_pending"); }}
+          onBar={onBar} />
+      )}
+
+      <div ref={listRef} className="scroll-mt-4 space-y-3 border-b border-subtle px-5 py-3">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Billing stage">
           {chips.map((c) => {
             const on = f.stage === c.key;
@@ -515,6 +569,129 @@ function FilterField({ label, children }: { label: string; children: React.React
     <div className="min-w-0">
       <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.06em] text-muted">{label}</div>
       {children}
+    </div>
+  );
+}
+
+
+/* ---------- 27 Oct 2026 — the tab reads like the other CEO tabs: tiles, then bars ---------- */
+
+const GROUP_COLOR: Record<string, string> = {
+  to_raise: semanticAnchor.warning, with_customer: "#0ea5e9", due: semanticAnchor.danger, paid: semanticAnchor.success,
+};
+
+type Tone3 = "ok" | "warn" | "bad" | "none";
+const chipOf = (state: Tone3, text: string) => <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${STATE_CHIP[state]}`}>{text}</span>;
+
+/** PURE (exported for the test): the three dial figures of the Billing tab, from the tiles. */
+export function trackerDials(t: TrackerSummaryData["tiles"]) {
+  const pipeline = t.paid_amount + t.due_amount + t.with_customer_amount;
+  const collectedPct = pipeline > 0 ? (t.paid_amount / pipeline) * 100 : null;
+  const overduePct = t.due_amount > 0 ? (t.overdue_amount / t.due_amount) * 100 : null;
+  const collectedState: Tone3 = collectedPct === null ? "none" : collectedPct >= 70 ? "ok" : collectedPct >= 50 ? "warn" : "bad";
+  const overdueState: Tone3 = overduePct === null ? "none" : overduePct <= 20 ? "ok" : overduePct <= 40 ? "warn" : "bad";
+  const waitState: Tone3 = t.avg_wait_days === null ? "none" : t.avg_wait_days <= 7 ? "ok" : t.avg_wait_days <= 15 ? "warn" : "bad";
+  return { pipeline, collectedPct, overduePct, collectedState, overdueState, waitState };
+}
+
+/**
+ * The Billing tab in the Finance tab's reading order (28 Oct 2026, CEO ask):
+ * tiles → "How the work moved" (the first chart) → three dials → two bar charts,
+ * every chart grouped columns with series AND row ticks — nothing stacked.
+ */
+function TrackerSummary({ s, stage, flags, onStage, onOverdue, onTds, onBar }: {
+  s: TrackerSummaryData; stage: string; flags: string[];
+  onStage: (stage: string) => void; onOverdue: () => void; onTds: () => void;
+  onBar?: (chart: "months" | "late" | "customers") => (row: Record<string, unknown>, series: string) => void;
+}) {
+  const hint = "Click a bar to list those rows below";
+  const t = s.tiles;
+  const dial = trackerDials(t);
+  const groupSeries = [
+    ...s.groups.map((g) => ({ key: g.key, label: g.label, color: GROUP_COLOR[g.key] })),
+    { key: "total", label: "All work", color: "#64748b", defaultOff: true },
+  ];
+  const byMonth = s.by_month.map((r) => ({
+    ...r, total: s.groups.reduce((a, g) => a + (Number(r[g.key]) || 0), 0),
+  }));
+  const tdsOn = flags.includes("tds_pending"), overdueOn = flags.includes("overdue");
+  return (
+    <div className="space-y-4 border-b border-subtle bg-surface-2 px-5 py-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Tile label="Proforma to raise" value={num(t.to_raise)} tone="warning" onClick={() => onStage("awaiting_proforma")}
+          active={stage === "awaiting_proforma"} title="Show these rows"
+          sub={t.to_raise_returned ? `${t.to_raise_returned} returned to the GM` : "approved sheets / with Finance"} />
+        <Tile label="With the customer" value={inrCompact(t.with_customer_amount)} tone="brand" onClick={() => onStage("awaiting_customer")}
+          active={stage === "awaiting_customer"} title="Show these rows"
+          sub={`${num(t.with_customer)} invoices — approval or IRN pending`} />
+        <Tile label="Payment due" value={inrCompact(t.due_amount)} tone="brand" onClick={() => onStage("unpaid")}
+          active={stage === "unpaid"} title="Show these rows" sub={`${num(t.due_count)} open invoices`} />
+        <Tile label="Overdue" value={inrCompact(t.overdue_amount)} tone={t.overdue_amount > 0 ? "danger" : "success"} onClick={onOverdue}
+          active={overdueOn} title="Show only the overdue rows" sub={`${num(t.overdue_count)} past the due date`} />
+        <Tile label="Paid" value={inrCompact(t.paid_amount)} tone="success" onClick={() => onStage("paid")}
+          active={stage === "paid"} title="Show these rows" sub={`${num(t.paid_count)} invoices settled`} />
+        <Tile label="TDS from clients" value={inrCompact(t.tds_pending)} tone="neutral" onClick={onTds}
+          active={tdsOn} title="Show only rows with TDS pending" sub="certificate (Form 16A) pending" />
+      </div>
+
+      {/* 1 · How the work moved — the first chart, like Finance's "How the year unfolded". */}
+      <Panel title="How the work moved, month by month" hint="pieces of billed work per work month, by where each stands now — tick what to compare">
+        {byMonth.length ? (
+          <FilteredBars data={byMonth} series={groupSeries} rowFilter rowLabel="Months" format={(v) => num(v)}
+            onBarClick={onBar?.("months")} clickHint={hint} />
+        ) : <p className="text-sm text-muted">Nothing billed for these filters.</p>}
+      </Panel>
+
+      {/* 2 · The dials: collected · overdue · waiting. */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Panel title="Collected" hint="paid ÷ (paid + payment due + with the customer)"
+               action={chipOf(dial.collectedState, pct(dial.collectedPct, 0))}>
+          <Speedometer value={dial.collectedPct ?? 0} max={100} marker={70} markerLabel="goal" state={dial.collectedState}
+                       label="Collected share" caption="collected" format={(v) => `${Math.round(v)}%`} />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <MiniStat k="Paid" v={inrCompact(t.paid_amount)} tone="ok" />
+            <MiniStat k="Still to come in" v={inrCompact(t.due_amount + t.with_customer_amount)} tone={t.due_amount ? "warn" : "ok"} />
+          </div>
+        </Panel>
+        <Panel title="Overdue" hint="overdue ÷ payment due — lower is better"
+               action={chipOf(dial.overdueState, pct(dial.overduePct, 0))}>
+          <Speedometer value={dial.overduePct ?? 0} max={100} marker={20} markerLabel="limit" state={dial.overdueState} invert
+                       label="Overdue share" caption="of payment due" format={(v) => `${Math.round(v)}%`} />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <MiniStat k="Overdue" v={inrCompact(t.overdue_amount)} tone={t.overdue_amount ? "bad" : "ok"} hint={`${num(t.overdue_count)} invoices`} />
+            <MiniStat k="Payment due" v={inrCompact(t.due_amount)} hint={`${num(t.due_count)} invoices`} />
+          </div>
+        </Panel>
+        <Panel title="Waiting at a stage" hint="average days each open item has sat at its current step"
+               action={chipOf(dial.waitState, t.avg_wait_days === null ? "—" : `${t.avg_wait_days} d`)}>
+          <Speedometer value={t.avg_wait_days ?? 0} max={30} marker={7} markerLabel="goal" state={dial.waitState} invert
+                       label="Average wait" caption="days" format={(v) => `${Math.round(v)} d`} />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <MiniStat k="Proforma to raise" v={num(t.to_raise)} tone={t.to_raise ? "warn" : "ok"} />
+            <MiniStat k="With the customer" v={num(t.with_customer)} />
+          </div>
+        </Panel>
+      </div>
+
+      {/* 3 · Where the money is — two bar charts with their own ticks. */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="How late the open money is" hint="balance by days past the due date"
+               action={t.overdue_amount > 0 ? chipOf("bad", `${inrCompact(t.overdue_amount)} overdue`) : chipOf("ok", "Nothing overdue")}>
+          <FilteredBars data={s.late} rowFilter rowLabel="Buckets" height={220} format={(v) => inrCompact(v)}
+            onBarClick={onBar?.("late")} clickHint={hint}
+            series={[{ key: "balance", label: "Balance", color: semanticAnchor.danger },
+              { key: "count", label: "Invoices", color: "#94a3b8", defaultOff: true }]} />
+        </Panel>
+        <Panel title="Customers — due, with them, paid" hint="the ten largest customers in these filters">
+          {s.customers.length ? (
+            <FilteredBars data={s.customers} rowFilter rowLabel="Customers" height={220} format={(v) => inrCompact(v)}
+              onBarClick={onBar?.("customers")} clickHint={hint}
+              series={[{ key: "due", label: "Payment due", color: semanticAnchor.danger },
+                { key: "with_customer", label: "With the customer", color: "#0ea5e9" },
+                { key: "paid", label: "Paid", color: semanticAnchor.success }]} />
+          ) : <p className="text-sm text-muted">No customers in these filters.</p>}
+        </Panel>
+      </div>
     </div>
   );
 }

@@ -19,6 +19,8 @@ const CRM_FILTER_KEYS = [
   "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus", "einvoice",
   // page-state params (crm/lib/pageState.ts) — each belongs to one page only
   "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab", "receipt",
+  // CEO drill-down + Revenue report period params (27 Oct 2026) — always set by the link.
+  "month", "period", "customer_id",
   // Interview Platform report params — meaningless inside the CRM; a copied link
   // carried a stale candidate id back into App.readInitialView on reload.
   "cid", "iid", "ret",

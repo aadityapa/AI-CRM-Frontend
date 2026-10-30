@@ -8,7 +8,6 @@ import { ThemeProvider } from "../theme/ThemeProvider";
 import { CrmMeProvider } from "../crm/CrmApp";
 import { MyInterviewsPage } from "../crm/pages/MyInterviews";
 import { RolesPanel } from "../crm/pages/RolesAdmin";
-import { AccessTemplatesPage } from "../crm/pages/AccessTemplates";
 import { UsersAdminPage } from "../crm/pages/UsersAdmin";
 import { CrmSettingsPage } from "../crm/pages/CrmSettings";
 import { CrmReportsPage } from "../crm/pages/CrmReports";
@@ -95,7 +94,7 @@ const oppSummary = { count: 3, rfi_total: 4216000, rfi_known: 2, positions_total
   if (u.startsWith("/api/my-interviews/") && u.endsWith("/ai-summary")) body = { success: true, data: { available: true, report_status: "ready", final_status: "completed", terminated: false, not_attempted: false, overall_score_percent: 72, technical_score_percent: 70, communication_score_percent: 80, problem_solving_score_percent: 66, recommendation: "Hire", fitment: "Good fit", summary: "Answers were brief but correct; strong on embedded fundamentals.", strengths: ["RTOS concepts", "Clear communication"], improvements: ["Design-level questions"], skills: [{ skill: "RTOS", score: 78 }, { skill: "C++", score: 64 }], questions: { total: 8, answered: 7, skipped: 1, excluded: 0 }, job_title: "IT&V Engineer", completed_at_ist: "5 Oct 2026, 2:30 PM", result: "Passed", effective_result: "Passed", hr_decision_label: null, level: "L1" } };
   else if (u.startsWith("/api/my-interviews/")) { const id = Number(u.split("/")[3]); const r = rounds.find((x) => x.id === id)!; body = { success: true, data: { ...r, skills: [{ skill_id: 1, skill_name: "C++", is_mandatory: true, min_rating: 4 }, { skill_id: 3, skill_name: "RTOS", is_mandatory: true, min_rating: 3 }, { skill_id: 5, skill_name: "CAPL", is_mandatory: false, min_rating: 2 }], results_scale: ["No Hire", "Leaning No", "Leaning Hire", "Hire", "Strong Hire"], my_other_rounds: id === 501 ? [{ id: 504, kind: "L1_Interview", round_label: "L1 - Interview", scheduled_at: "2026-10-01T06:00:00+00:00", result: "Hire", phase: "done" }] : [] } }; }
   else if (u.startsWith("/api/my-interviews")) { const scope = new URLSearchParams(u.split("?")[1] || "").get("scope") || "pending"; body = { success: true, data: rounds.filter((r) => scope === "all" || r.phase === scope), meta: { counts: { pending: 2, upcoming: 1, done: 1 }, linked: q.get("unlinked") !== "1", scope } }; }
-  else if (u.includes("/api/access-templates/registry")) body = { success: true, data: { modes: ["view", "edit", "create"], tabs, approvals, departments, role_tags: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance", "GM", "Sales Manager", "Interviewer"] } };
+  else if (u.includes("/api/roles/registry")) body = { success: true, data: { modes: ["view", "edit", "create"], tabs, approvals, departments, role_tags: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance", "GM", "Sales Manager", "Interviewer"] } };
   else if (u.includes("/api/access-templates")) body = { success: true, data: templates };
   else if (u.includes("/api/roles")) body = { success: true, data: { builtin, custom } };
   else if (u.includes("/api/email-flows")) body = { success: true, data: { flows, all_roles: allRoles, paused_user_ids: [] } };
@@ -114,7 +113,6 @@ const me: any = w === "mi"
   : { id: 2, username: "karan", full_name: "Karan Singh", roles: ["Admin", "CEO"], access: { full: true }, approvals: [] };
 const noop = () => {};
 const view = w === "roles" ? <RolesPanel notify={noop} />
-  : w === "templates" ? <AccessTemplatesPage />
   : w === "perms" ? <UsersAdminPage />
   : w === "settings" ? <CrmSettingsPage />
   : w === "reports" ? <CrmReportsPage />
