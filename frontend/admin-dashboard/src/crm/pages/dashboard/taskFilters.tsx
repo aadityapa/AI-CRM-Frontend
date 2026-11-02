@@ -155,7 +155,11 @@ export function facetOptions(allItems: FilterableItem[], customer = "", showDone
 
 /** The items a filter keeps, in their server order. */
 export function filterItems<T extends FilterableItem>(items: T[], f: TaskFilter): T[] {
-  const words = f.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // Brackets / quotes / a full stop copied with a number never stop a match
+  // (2 Nov 2026 — the server's `clean_search` rule, word by word).
+  const words = f.q.trim().toLowerCase().split(/\s+/)
+    .map((w) => w.replace(/^[()[\]{}<>"'`“”‘’.,;:!?|]+|[()[\]{}<>"'`“”‘’.,;:!?|]+$/g, ""))
+    .filter(Boolean);
   return items.filter((i) => {
     if (i.done && f.done !== "show") return false;
     if (f.customer && i.customer !== f.customer) return false;

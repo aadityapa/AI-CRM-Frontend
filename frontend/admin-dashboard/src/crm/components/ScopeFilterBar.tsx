@@ -1,5 +1,5 @@
 /**
- * Customer → project scope picker (moved out of the Revenue report, 24 Oct 2026,
+ * Customer → branch → project scope picker (branch added 2 Nov 2026) (moved out of the Revenue report, 24 Oct 2026,
  * so the Dashboard's Finance tab uses the same one). The project list is scoped
  * to the chosen customer; quiet accounts stay selectable, grouped apart.
  */
@@ -8,25 +8,43 @@ import { CONTROL } from "./controlTower";
 
 export type FilterOption = {
   id: number; name: string; customer_id?: number | null;
+  /** Projects carry their delivery branch, so the list can follow the branch. */
+  branch_id?: number | null;
   /** Did this account/project bill inside the selected period? */
   billed?: boolean;
   /** Dormant records stay selectable — they are just labelled. */
   active?: boolean;
 };
 
+/** Branch value meaning "projects with no branch on record". */
+export const NO_BRANCH = 0;
+
+/** PURE: the projects the pickers offer for a customer + branch. */
+export function scopedProjects(projects: FilterOption[], customerId: number | null, branchId: number | null): FilterOption[] {
+  return projects.filter((p) =>
+    (customerId === null || p.customer_id === customerId)
+    && (branchId === null || (branchId === NO_BRANCH ? !p.branch_id : p.branch_id === branchId)));
+}
+
 export function ScopeFilterBar({
-  options, customerId, projectId, onCustomer, onProject,
+  options, customerId, projectId, onCustomer, onProject, branchId = null, onBranch,
 }: {
-  options: { customers: FilterOption[]; projects: FilterOption[] };
+  options: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] };
   customerId: number | null;
   projectId: number | null;
   onCustomer: (v: number | null) => void;
   onProject: (v: number | null) => void;
+  /** Optional (2 Nov 2026): pass both to show the Branch picker. */
+  branchId?: number | null;
+  onBranch?: (v: number | null) => void;
 }) {
-  const projects = customerId
-    ? options.projects.filter((p) => p.customer_id === customerId)
-    : options.projects;
-  const active = customerId !== null || projectId !== null;
+  const showBranch = !!onBranch && (options.branches?.length ?? 0) > 0;
+  const projects = scopedProjects(options.projects, customerId, showBranch ? branchId : null);
+  const branches = (options.branches || []).filter((b) => customerId === null || b.customer_id === customerId);
+  const custName = (id?: number | null) => options.customers.find((c) => c.id === id)?.name;
+  const branchLabel = (b: FilterOption) =>
+    customerId === null && custName(b.customer_id) ? `${custName(b.customer_id)} · ${b.name}` : b.name;
+  const active = customerId !== null || projectId !== null || (showBranch && branchId !== null);
 
   /**
    * Split into "billed here" and "everything else" rather than filtering the
@@ -64,6 +82,27 @@ export function ScopeFilterBar({
           </optgroup>
         )}
       </select>
+      {showBranch && (
+        <select
+          className={`${CONTROL} w-[13rem] max-w-full`}
+          value={branchId ?? ""}
+          onChange={(e) => onBranch!(e.target.value === "" ? null : Number(e.target.value))}
+          aria-label="Filter by customer branch"
+        >
+          <option value="">All branches</option>
+          {branches.filter((b) => b.billed).length > 0 && (
+            <optgroup label="Billed in this period">
+              {branches.filter((b) => b.billed).map((b) => <option key={b.id} value={b.id}>{branchLabel(b)}</option>)}
+            </optgroup>
+          )}
+          {branches.filter((b) => !b.billed).length > 0 && (
+            <optgroup label="No billing in this period">
+              {branches.filter((b) => !b.billed).map((b) => <option key={b.id} value={b.id}>{branchLabel(b)}</option>)}
+            </optgroup>
+          )}
+          <option value={NO_BRANCH}>No branch on record</option>
+        </select>
+      )}
       <select
         className={`${CONTROL} w-[13rem] max-w-full`}
         value={projectId ?? ""}
@@ -87,7 +126,7 @@ export function ScopeFilterBar({
         <button
           type="button"
           className="inline-flex h-9 items-center gap-1 rounded-control px-2 text-xs font-semibold text-brand-600 transition-colors duration-micro hover:bg-surface-2 dark:text-brand-300"
-          onClick={() => { onCustomer(null); onProject(null); }}
+          onClick={() => { onCustomer(null); onProject(null); onBranch?.(null); }}
         >
           <X className="h-3.5 w-3.5" aria-hidden /> Clear
         </button>

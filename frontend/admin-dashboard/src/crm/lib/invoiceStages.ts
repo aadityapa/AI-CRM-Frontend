@@ -37,6 +37,21 @@ export function invoiceTabParams(tab: string): Record<string, string> {
   return { stage: t?.stage || "unpaid" };
 }
 
+/**
+ * Where a search found its invoices (2 Nov 2026, screenshot: KRNX26-27-01-CT
+ * typed on the Proforma tab read "No invoices yet" while it sat under Unpaid).
+ * The tabs — among `allowed` keys, other than `current` — whose server count
+ * for this search is above zero, in tab order (PURE).
+ */
+export function tabsWithMatches(
+  counts: Record<string, number> | null | undefined, current: string, allowed?: string[],
+): { key: string; label: string; count: number }[] {
+  if (!counts) return [];
+  return INVOICE_STAGE_TABS
+    .filter((t) => t.stage && t.key !== current && (!allowed || allowed.includes(t.key)) && (counts[t.stage] || 0) > 0)
+    .map((t) => ({ key: t.key, label: t.label, count: counts[t.stage] || 0 }));
+}
+
 /** "Unpaid (12)" — the tab label with the server's count, when known. */
 export function stageTabLabel(tab: InvoiceStageTab, counts?: Record<string, number> | null): string {
   if (!tab.stage || !counts || counts[tab.stage] == null) return tab.label;

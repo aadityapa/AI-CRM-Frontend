@@ -60,6 +60,7 @@ import {
   type BranchOption, type BranchScope, type InvoiceOption, type Receipt,
 } from "./receipts/receiptShared";
 import { ReceiptDetailModal, isLikelyMatch, isPartlyPaid, orderByLikelyMatch } from "./receipts/ReceiptWorkbench";
+import { InvoiceSearchHits, type InvoiceHit } from "./receipts/InvoiceSearchHits";
 
 export { daysLate };
 export type { BranchScope };
@@ -143,6 +144,32 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
     }
   }, [page, debounced, sort, colFilters, view, scopeCustomer, scopeBranch]);
   useEffect(() => { load(); }, [load]);
+  /* 2 Nov 2026: a search that names an INVOICE — the server's `invoice_hits`
+     (what came in on it, which receipts paid it). Its own tiny request, so the
+     customer-wise view (which reads every page, no meta) gets it too. */
+  const [hits, setHits] = useState<InvoiceHit[]>([]);
+  useEffect(() => {
+    const term = debounced.trim();
+    if (!term) { setHits([]); return undefined; }
+    let alive = true;
+    crmGet<Receipt[]>(`/api/customer-receipts${qs({ search: term, customer_id: scopeCustomer ?? undefined, limit: 1 })}`)
+      .then((res) => { if (alive) setHits(((res.meta as any)?.invoice_hits || []) as InvoiceHit[]); })
+      .catch(() => { if (alive) setHits([]); });
+    return () => { alive = false; };
+  }, [debounced, scopeCustomer]);
+  const openReceiptById = (id: number) => {
+    const local = rows.find((x) => x.id === id);
+    if (local) { openReceipt(local); return; }
+    crmGet<Receipt>(`/api/customer-receipts/${id}`)
+      .then((res) => res.data && setDetail({ receipt: res.data, start: null }))
+      .catch((e: any) => showToast(e?.message || "That receipt could not be opened", "err"));
+  };
+  const searching = debounced.trim();
+  const emptyText = searching
+    ? (hits.length
+      ? `No received amount pays “${searching}” yet — see the invoice above.`
+      : `Nothing matches “${searching}” — the search reads the invoice / PI number, reference (UTR), notes, customer and branch.`)
+    : "No amounts received yet — Finance records the first one with “Add received amount”.";
   // Keep the open receipt in step with the list after a reload.
   useEffect(() => {
     setDetail((d) => {
@@ -312,12 +339,16 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           </div>
         </div>
       )}
+      {searching && (
+        <InvoiceSearchHits hits={hits} term={searching} onOpenReceipt={openReceiptById}
+          noReceipts={!loading && rows.length === 0} />
+      )}
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : view === "customer" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <input className={`${inputCls} !w-64`} placeholder="Search reference, notes, customer or branch…" value={search}
+            <input className={`${inputCls} !w-64`} placeholder="Search invoice no., UTR, customer, branch…" value={search}
               onChange={(e) => setSearch(e.target.value)} aria-label="Search received amounts" />
             <ViewToggle view={view} onChange={setView} />
             <span className="ml-auto text-xs text-muted">
@@ -350,7 +381,7 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
               </>
             ) : null) : undefined}
             rowKey={(r) => r.id}
-            empty={<div className="rounded-card border border-subtle bg-surface-1 p-6 text-sm text-muted">No amounts received yet — Finance records the first one with “Add received amount”.</div>}
+            empty={<div className="rounded-card border border-subtle bg-surface-1 p-6 text-sm text-muted">{emptyText}</div>}
             rowActions={canEdit ? (r) => rowButtons(r) : undefined}
           />
         </div>
@@ -377,7 +408,7 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
             </span>
           ) : undefined}
           filters={scope ? undefined : <ViewToggle view={view} onChange={setView} />}
-          emptyMessage="No amounts received yet — Finance records the first one with “Add received amount”."
+          emptyMessage={emptyText}
           rowActions={canEdit ? (r) => rowButtons(r) : undefined}
         />
       )}

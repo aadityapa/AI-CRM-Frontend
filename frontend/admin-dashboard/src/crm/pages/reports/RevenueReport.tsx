@@ -128,7 +128,9 @@ export type RevenueReportData = {
   months_in_period: number; short_label: string; comparison_label: string;
   filters: {
     customer_id: number | null; project_id: number | null;
-    options: { customers: FilterOption[]; projects: FilterOption[] };
+    /** 2 Nov 2026 — customer branch scope (0 = no branch on record). */
+    branch_id?: number | null;
+    options: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] };
   };
   headline: Headline;
   series: SeriesPoint[];
@@ -479,6 +481,11 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
     const v = Number(params.get("project_id"));
     return Number.isFinite(v) && v > 0 ? v : null;
   });
+  const [branchId, setBranchId] = useState<number | null>(() => {
+    const raw = params.get("branch_id");
+    const v = Number(raw);
+    return raw !== null && raw !== "" && Number.isFinite(v) && v >= 0 ? v : null;
+  });
   const [data, setData] = useState<RevenueReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -491,8 +498,11 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
   /** The query every request on this page shares, so the workbook can never be
    *  a different slice from what is on screen. */
   const query = useMemo(
-    () => ({ month, period, customer_id: customerId ?? undefined, project_id: projectId ?? undefined }),
-    [month, period, customerId, projectId],
+    () => ({
+      month, period, customer_id: customerId ?? undefined, project_id: projectId ?? undefined,
+      branch_id: branchId ?? undefined,
+    }),
+    [month, period, customerId, projectId, branchId],
   );
 
   /** Period-close workbook — streamed through authFetch (a bare <a href> carries no bearer). */
@@ -536,6 +546,18 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
       const owner = data?.filters.options.projects.find((p) => p.id === projectId)?.customer_id;
       if (owner !== id) setProjectId(null);
     }
+    if (id !== null && branchId !== null && branchId !== 0) {
+      const owner = data?.filters.options.branches?.find((b) => b.id === branchId)?.customer_id;
+      if (owner !== id) setBranchId(null);
+    }
+  };
+  /** Picking a branch drops a project delivered from another branch. */
+  const pickBranch = (id: number | null) => {
+    setBranchId(id);
+    if (id !== null && projectId !== null) {
+      const p = data?.filters.options.projects.find((x) => x.id === projectId);
+      if (p && (id === 0 ? !!p.branch_id : p.branch_id !== id)) setProjectId(null);
+    }
   };
 
   const meta = periodMeta(period);
@@ -570,14 +592,14 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               <span className="rounded-full border border-subtle bg-surface-2 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-secondary">
                 {meta.label}
               </span>
-              {data && (customerId !== null || projectId !== null) && (
+              {data && (customerId !== null || projectId !== null || branchId !== null) && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-[11px] font-bold text-brand-700 dark:bg-brand-900 dark:text-brand-300">
                   <Filter className="h-3 w-3" aria-hidden /> Filtered
                 </span>
               )}
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-muted">
-              Billed = invoice value before GST, by invoice date · Collected = customer receipts by payment date
+              Billed = invoice value before GST, by invoice date · Collected = money received, counted in the month of the invoice it pays (money still on account: the month it arrived)
               {data?.as_of && <> · as of {fmtDay(data.as_of)}</>}
             </p>
           </div>
@@ -615,6 +637,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               projectId={projectId}
               onCustomer={pickCustomer}
               onProject={setProjectId}
+              branchId={branchId}
+              onBranch={pickBranch}
             />
           </div>
         )}

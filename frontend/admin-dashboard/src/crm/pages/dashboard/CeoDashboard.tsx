@@ -78,7 +78,8 @@ export type FinanceData = {
   top_customers: { customer_id: number; customer: string; billed: number; share_pct: number | null }[];
   concentration: { top1_share_pct: number | null; top3_share_pct: number | null; risk: boolean; top_customer: string | null };
   /** 24 Oct 2026 — the scope the figures were built for + every choice. */
-  filters?: { customer_id: number | null; project_id: number | null; options: { customers: FilterOption[]; projects: FilterOption[] } };
+  filters?: { customer_id: number | null; project_id: number | null; branch_id?: number | null;
+    options: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] } };
 };
 
 type Kind = "internal" | "external" | "unknown";
@@ -325,7 +326,7 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   const rev = revenueLink(period);
   // 27 Oct 2026 — every tile opens its own drill-down page (same period, same scope).
   const drill = (metric: string, scope?: string) => insightLink(metric, period,
-    { scope, customer_id: d.filters?.customer_id, project_id: d.filters?.project_id });
+    { scope, customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id });
   const h = d.headline, t = d.targets, m = d.margin, c = d.collections;
   const collectionState = highGood(h.collection_rate_pct, 90, 75);
   const marginState = highGood(m.gross_margin_pct, 30, 15);
@@ -341,11 +342,11 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
   const cash = d.cashflow;
   const monthly = d.monthly.filter((r) => !r.future);
-  const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id };
+  const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id };
   // 29 Oct 2026 — every bar opens the drill page of its series, zoomed to that bar.
   const monthBar = (r: Record<string, unknown>, s: string) => bucketLink(moneyMetric(s), r.key, scopeIds);
   const customerBar = (r: Record<string, unknown>, s: string) =>
-    insightLink(moneyMetric(s), period, { customer_id: rowCid(r) ?? d.filters?.customer_id, project_id: d.filters?.project_id });
+    insightLink(moneyMetric(s), period, { customer_id: rowCid(r) ?? d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id });
 
   return (
     <div className="space-y-4">
@@ -1300,12 +1301,13 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
 
   // 24 Oct 2026 — the Finance tab narrows to one customer / project (the same
   // scope as the Revenue report); the other tabs never send it.
-  const [scope, setScope] = useState<{ customer: number | null; project: number | null }>({ customer: null, project: null });
+  const [scope, setScope] = useState<{ customer: number | null; project: number | null; branch: number | null }>({ customer: null, project: null, branch: null });
   const scoped = dataTab === "finance";
   const url = `/api/dashboard/ceo${qs({
     tab: dataTab, month, period,
     customer_id: scoped ? scope.customer ?? undefined : undefined,
     project_id: scoped ? scope.project ?? undefined : undefined,
+    branch_id: scoped ? scope.branch ?? undefined : undefined,
   })}`;
   const { data, loading, error, retry } = useDeskData<CeoPayload<unknown>>(url);
   const [targetsOpen, setTargetsOpen] = useState(false);
@@ -1322,7 +1324,7 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
     } catch (e: any) { showToast(e?.message || "Could not load the targets", "err"); }
   };
   // Keep the last options seen, so the pickers do not blink while a new scope loads.
-  const [financeOptions, setFinanceOptions] = useState<{ customers: FilterOption[]; projects: FilterOption[] } | null>(null);
+  const [financeOptions, setFinanceOptions] = useState<{ customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] } | null>(null);
   useEffect(() => {
     const opts = data && data.tab === "finance" ? (data.data as FinanceData).filters?.options : null;
     if (opts) setFinanceOptions(opts);
@@ -1397,12 +1399,19 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
               projectId={scope.project}
               onCustomer={(v) => setScope((s) => ({
                 customer: v,
-                // A project of another customer would make an empty scope.
+                // A project / branch of another customer would make an empty scope.
                 project: v && s.project && financeOptions.projects.find((p) => p.id === s.project)?.customer_id !== v ? null : s.project,
+                branch: v && s.branch && financeOptions.branches?.find((b) => b.id === s.branch)?.customer_id !== v ? null : s.branch,
               }))}
               onProject={(v) => setScope((s) => ({ ...s, project: v }))}
+              branchId={scope.branch}
+              onBranch={(v) => setScope((s) => {
+                const p = financeOptions.projects.find((x) => x.id === s.project);
+                const foreign = v !== null && p && (v === 0 ? !!p.branch_id : p.branch_id !== v);
+                return { ...s, branch: v, project: foreign ? null : s.project };
+              })}
             />
-            {(scope.customer || scope.project) && (
+            {(scope.customer || scope.project || scope.branch !== null) && (
               <span className="text-[11px] text-muted">Every tile, dial and chart below is for this scope only.</span>
             )}
           </div>

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
-  IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, Search, Undo2,
+  IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Search, Undo2,
   FileSpreadsheet, Landmark, ScrollText, Bell, XCircle,
 } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
@@ -35,11 +35,15 @@ import {
 } from "../components/invoice/ProformaActions";
 import { InvoiceJourney } from "../components/invoice/InvoiceJourney";
 import { InvoiceAddressCard } from "../components/invoice/InvoiceAddressCard";
+import {
+  ReversePaymentDialog, type PaymentRow,
+} from "../components/invoice/PaymentLink";
+import { RecordPaymentDialog } from "../components/invoice/RecordPaymentDialog";
 import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
 import { EInvoiceRegister } from "../components/invoice/EInvoiceRegister";
-import { EINVOICE_TAB_KEY, INVOICE_STAGE_TABS, invoiceTabParams } from "../lib/invoiceStages";
+import { EINVOICE_TAB_KEY, INVOICE_STAGE_TABS, invoiceTabParams, tabsWithMatches } from "../lib/invoiceStages";
 import {
   EMPTY_MORE_FILTERS, InvoiceStatusChip, MoreFiltersPanel, MoreFiltersToggle, StatusFilterPills,
   moreFilterCount, moreFilterQuery, rangeProblem,
@@ -2112,6 +2116,9 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const invSub = useSubTabs("invoices");
   /* Each tab carries its count (server `meta.stage_counts`, same filters). */
   const [stageCounts, setStageCounts] = useState<Record<string, number> | null>(null);
+  /* The search the counts above were worked out for — the "found in another
+     tab" jump only trusts counts of the term on screen (2 Nov 2026). */
+  const [countsSearch, setCountsSearch] = useState<string | null>(null);
   const invoiceTabs = INVOICE_TABS
     .filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key))
     .map((x) => ({ key: x.key, label: x.label, count: x.stage && stageCounts ? stageCounts[x.stage] ?? 0 : undefined }));
@@ -2220,6 +2227,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           if (!alive) return;
           const m = (r.meta as any) || {};
           setStageCounts((m.stage_counts as Record<string, number>) || null);
+          setCountsSearch(search);
           setStatusCounts((m.status_counts as StatusCount[]) || null);
           if (m.filter_options) setMoreOptions(m.filter_options);
         })
@@ -2228,7 +2236,60 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     return () => { alive = false; window.clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `moreKey` stands for `more`
   }, [tab, search, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, moreKey]);
-  useChangeEffect(() => { setPage(1); }, [customerFilter, projectFilter, branchFilter, monthFilter, statusFilter, moreKey]);
+  /* 2 Nov 2026 (screenshot): an invoice number searched on the WRONG tab read
+     "No invoices yet". When the open tab holds nothing for the search but
+     another tab does, the page moves to that tab once per search term (a
+     replace — Back is not filled with jumps), and the strip below names every
+     tab that holds a match. */
+  const searchTerm = search.trim();
+  const elsewhere = searchTerm && countsSearch === search && !einvoiceTab
+    ? tabsWithMatches(stageCounts, tab, invTabKeys) : [];
+  const currentStage = INVOICE_TABS.find((x) => x.key === tab)?.stage || "";
+  const hereCount = stageCounts && currentStage ? stageCounts[currentStage] ?? 0 : null;
+  const jumpedFor = useRef<string>("");
+  useEffect(() => {
+    if (!searchTerm || countsSearch !== search || einvoiceTab) return;
+    if (hereCount === 0 && elsewhere.length > 0 && jumpedFor.current !== searchTerm) {
+      jumpedFor.current = searchTerm;
+      setTab(elsewhere[0].key, { replace: true });
+      setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the counts drive it
+  }, [stageCounts, countsSearch, search, tab]);
+  const foundElsewhere = elsewhere.length > 0 ? (
+    <div className="flex flex-wrap items-center gap-2 rounded-card border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200">
+      <Search size={13} />
+      <span>“{searchTerm}” is also in:</span>
+      {elsewhere.map((t) => (
+        <button key={t.key} type="button"
+          className="rounded-full border border-sky-300 bg-white px-2.5 py-0.5 font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200"
+          onClick={() => { setTab(t.key); setPage(1); }}>
+          {t.label} · {t.count}
+        </button>
+      ))}
+    </div>
+  ) : null;
+  /* A search that finds nothing on this tab never reads "No invoices yet". */
+  const anyFilterBesidesSearch = !!(customerFilter || projectFilter || branchFilter || monthFilter || statusFilter
+    || moreFilterCount(more));
+  const searchEmpty = searchTerm ? (
+    <div className="mx-auto max-w-md py-6 text-center text-sm text-secondary">
+      <Search size={20} className="mx-auto mb-2 text-muted" />
+      {elsewhere.length > 0 ? (
+        <>Nothing on this tab for “{searchTerm}” — it is under{" "}
+          {elsewhere.map((t, i) => (
+            <span key={t.key}>{i > 0 ? ", " : ""}
+              <button type="button" className="font-semibold text-brand-700 underline dark:text-brand-300"
+                onClick={() => { setTab(t.key); setPage(1); }}>{t.label}</button>
+            </span>
+          ))}.</>
+      ) : (
+        <>No invoice or Proforma matches “{searchTerm}” on any tab.
+          {anyFilterBesidesSearch ? " A customer, project, month or status filter is on — clear it and search again." : " Check the number — the search reads the invoice number, PI number, PO number, customer, project and employee."}</>
+      )}
+    </div>
+  ) : null;
+  useChangeEffect(() => { setPage(1); }, [search, customerFilter, projectFilter, branchFilter, monthFilter, statusFilter, moreKey]);
   useChangeEffect(() => { setStatusFilter(""); }, [tab]);
   useChangeEffect(() => { setBranchFilter(""); setBranchChoices([]); }, [customerFilter]);
   const extraFilters = (
@@ -2329,11 +2390,12 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
       )}
       {einvoiceTab ? <EInvoiceRegister /> : null}
       {statusAndMore}
+      {foundElsewhere}
       {!einvoiceTab && error && <ErrorBox error={error} />}
       {einvoiceTab ? null : view === "customer" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice number or employee…"
+            <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice / PI / PO number, customer, employee…"
               value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search invoices" />
             {extraFilters}
             <select className="input-recessed !w-48 rounded-control px-3 py-2 text-sm"
@@ -2361,7 +2423,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
             )}
             onRowClick={(r) => crmNavigate(`invoices/${r.id}`)} rowHref={(r: any) => `invoices/${r.id}`}
             rowKey={(r) => r.id}
-            empty={<TeachingEmpty page="invoices" />}
+            empty={searchEmpty ?? <TeachingEmpty page="invoices" />}
             rowActions={(r) => (
               <RowActions
                 entity="invoice"
@@ -2407,7 +2469,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
             <ViewToggle view={view} onChange={setView} />
           </>
         }
-        emptyMessage={<TeachingEmpty page="invoices" />}
+        emptyMessage={searchEmpty ?? <TeachingEmpty page="invoices" />}
         rowActions={(r) => (
           <RowActions
             entity="invoice"
@@ -3004,6 +3066,7 @@ export function InvoiceDetailPage() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [taxPdfBusy, setTaxPdfBusy] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [reversing, setReversing] = useState<PaymentRow | null>(null);
   const [showTds, setShowTds] = useState(false);
   // The list's pencil lands here with ?edit=1 (11 Sep 2026) — open the editor
   // straight away, then drop the flag so Back/refresh does not reopen it.
@@ -3209,6 +3272,22 @@ export function InvoiceDetailPage() {
     { key: "reference_number", label: "Reference", render: (r) => r.reference_number || "—" },
     { key: "notes", label: "Notes", render: (r) => r.notes || "—" },
     { key: "recorded_by_name", label: "Recorded by", render: (r) => r.recorded_by_name || "—" },
+    {
+      key: "receipt_id", label: "Received amount",
+      render: (r) => r.receipt_id
+        ? <CrmLink to={`received-amounts?receipt=${r.receipt_id}`} className="font-semibold text-brand-600 hover:underline">#{r.receipt_id}</CrmLink>
+        : <span className="text-muted">Not linked</span>,
+    },
+    ...(canWrite ? [{
+      key: "_reverse", label: "",
+      render: (r: any) => (
+        <button type="button" onClick={() => setReversing(r)}
+          className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+          title="Undo this payment — the invoice balance goes back up">
+          <RotateCcw size={12} aria-hidden /> Reverse
+        </button>
+      ),
+    } as Column<any>] : []),
   ];
 
   return (
@@ -3441,8 +3520,17 @@ export function InvoiceDetailPage() {
         <RecordPaymentModal
           invoice={{ ...inv, grand_total: displayGrand, balance_amount: paymentBalance }}
           onClose={() => setShowPayment(false)}
-          onSaved={() => { setShowPayment(false); showToast("Payment recorded"); load(); }}
+          onSaved={(msg) => { setShowPayment(false); showToast(msg || "Payment recorded"); load(); }}
           onError={(m) => showToast(m, "err")}
+        />
+      )}
+      {reversing && (
+        <ReversePaymentDialog
+          invoiceId={inv.id}
+          invoiceNumber={inv.invoice_number}
+          payment={reversing}
+          onClose={() => setReversing(null)}
+          onDone={(msg) => { setReversing(null); showToast(msg); load(); }}
         />
       )}
       {showTds && !tds && (
@@ -3539,85 +3627,16 @@ function FinanceModalShell({
   );
 }
 
-function RecordPaymentModal({
-  invoice,
-  onClose,
-  onSaved,
-  onError,
-}: {
+/** Record Payment — the dialog lives in `components/invoice/RecordPaymentDialog.tsx`
+ *  (redesigned 2 Nov 2026: where the money is · the payment · notes, with "Map to
+ *  several invoices" on every credit on account). */
+function RecordPaymentModal(props: {
   invoice: any;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (msg?: string) => void;
   onError: (msg: string) => void;
 }) {
-  const [paymentDate, setPaymentDate] = useState(today());
-  const [amount, setAmount] = useState("");
-  const [mode, setMode] = useState("Bank Transfer");
-  const [reference, setReference] = useState("");
-  const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState("");
-
-  const balance = Number(invoice.balance_amount || 0);
-  const grand = Number(invoice.grand_total || 0);
-  const amtN = num(amount);
-  const amountErr =
-    amount === "" ? "" :
-    amtN === undefined || amtN <= 0 ? "Amount must be a positive number" :
-    amtN > balance ? `Cannot exceed the balance (${formatGstInr(balance)})` : "";
-
-  const submit = async () => {
-    if (!paymentDate || amtN === undefined || amtN <= 0 || amountErr) return;
-    setBusy(true);
-    try {
-      const payload: any = { payment_date: paymentDate, amount: amtN, payment_mode: mode };
-      if (reference.trim()) payload.reference_number = reference.trim();
-      if (notes.trim()) payload.notes = notes.trim();
-      await crmPost(`/api/invoices/${invoice.id}/record-payment`, payload);
-      onSaved();
-    } catch (e: any) {
-      const msg = e?.message || "Failed to record payment";
-      setServerError(msg);
-      onError(msg);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <FinanceModalShell
-      title="Record Payment"
-      subtitle={`Grand total ${formatGstInr(grand)}. Outstanding balance ${formatGstInr(balance)}. Log a receipt against this invoice.`}
-      icon={<IndianRupee size={20} aria-hidden />}
-      onClose={onClose}
-      error={serverError}
-      busy={busy}
-      onSubmit={() => void submit()}
-      submitLabel="Record Payment"
-      submitBusyLabel="Saving…"
-      submitDisabled={busy || amount === "" || !!amountErr || !paymentDate}
-    >
-      <WizardField label="Payment date" required icon="calendar" filled={!!paymentDate}>
-        <input type="date" className={inputCls} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-      </WizardField>
-      <WizardField label="Amount (₹)" required icon="hash" error={amountErr || undefined} filled={amtN !== undefined && amtN > 0 && !amountErr}>
-        <input type="number" min={0} step="0.01" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-      </WizardField>
-      <WizardField label="Payment mode" icon="hash" filled={!!mode}>
-        <select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}>
-          <option>Cash</option>
-          <option>Bank Transfer</option>
-          <option>Cheque</option>
-          <option>UPI</option>
-        </select>
-      </WizardField>
-      <WizardField label="Reference number" icon="hash" filled={!!reference}>
-        <input className={inputCls} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque no." />
-      </WizardField>
-      <WizardField label="Notes">
-        <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </WizardField>
-    </FinanceModalShell>
-  );
+  return <RecordPaymentDialog {...props} />;
 }
 
 /* =====================================================================

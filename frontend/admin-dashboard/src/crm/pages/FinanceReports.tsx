@@ -10,7 +10,7 @@
  * (and the Sales Manager) read; Admin / CEO everything. */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, ChevronDown, ChevronRight, ExternalLink, FileDown, Info, LineChart, RefreshCw, Search,
+  AlertTriangle, Building2, ChevronDown, ChevronRight, ExternalLink, FileDown, Info, LineChart, RefreshCw, Search,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
 import { crmGet, qs } from "../api";
@@ -23,6 +23,7 @@ import {
 } from "../components/controlTower";
 import { usePageTab } from "../lib/pageState";
 import { useSubTabs } from "../useAccess";
+import { NO_BRANCH, ScopeFilterBar, type FilterOption } from "../components/ScopeFilterBar";
 import { CrmLink } from "../routerHooks";
 
 /** Full rupees with paise — for ledgers, where every paisa has to reconcile. */
@@ -64,6 +65,7 @@ type ProfitData = {
   };
   by_project: { rows: ProjectRaw[]; heads_without_ctc: number };
   by_employee: { rows: EmployeeRaw[]; unlinked_billed: number; idle_count: number; idle_cost: number };
+  filters?: { options: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] } };
 };
 type MarginRaw = { customer_id: number | null; customer: string; billed: number; cost: number; margin: number; margin_pct: number | null; heads: number };
 type ProjectRaw = { project_id: number; project: string; customer: string | null; billed: number; cost: number; margin: number; margin_pct: number | null; heads: number };
@@ -120,19 +122,40 @@ function ProfitTab() {
   const [view, setView] = useState<ProfitView>("customer");
   const [sort, setSort] = useState<ProfitSort>("billed");
   const [search, setSearch] = useState("");
+  // 2 Nov 2026 — customer / branch / project scope (the Revenue report's own filters).
+  const [customerId, setCustomerId] = useState<number | null>(null);
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const res = await crmGet<ProfitData>(`/api/reports/revenue${qs({ month, period })}`);
+      const res = await crmGet<ProfitData>(`/api/reports/revenue${qs({
+        month, period, customer_id: customerId ?? undefined, branch_id: branchId ?? undefined,
+        project_id: projectId ?? undefined,
+      })}`);
       setData(res.data);
     } catch (e: any) {
       setError(e?.message || "Could not load the profit figures");
     } finally {
       setLoading(false);
     }
-  }, [month, period]);
+  }, [month, period, customerId, branchId, projectId]);
   useEffect(() => { void load(); }, [load]);
+
+  const options = data?.filters?.options;
+  const pickCustomer = (id: number | null) => {
+    setCustomerId(id);
+    const b = options?.branches?.find((x) => x.id === branchId);
+    if (id !== null && b && b.customer_id !== id) setBranchId(null);
+    const p = options?.projects.find((x) => x.id === projectId);
+    if (id !== null && p && p.customer_id !== id) setProjectId(null);
+  };
+  const pickBranch = (id: number | null) => {
+    setBranchId(id);
+    const p = options?.projects.find((x) => x.id === projectId);
+    if (id !== null && p && (id === NO_BRANCH ? !!p.branch_id : p.branch_id !== id)) setProjectId(null);
+  };
 
   const atCurrent = shiftMonthKey(month, periodMeta(period).months) > thisMonthKey();
   const rows = useMemo(() => {
@@ -179,6 +202,12 @@ function ProfitTab() {
           <RefreshCw className="h-4 w-4" aria-hidden />
         </button>
       </div>
+      {options && (
+        <div className="rounded-card border border-subtle bg-surface-2 px-3 py-2">
+          <ScopeFilterBar options={options} customerId={customerId} projectId={projectId}
+            onCustomer={pickCustomer} onProject={setProjectId} branchId={branchId} onBranch={pickBranch} />
+        </div>
+      )}
 
       {error ? <ErrorBox error={error} onRetry={load} /> : loading && !data ? <Spinner label="Working out the profit…" /> : data && m ? (
         <>
@@ -338,7 +367,12 @@ type ReceivableRow = {
   invoiced: number; received: number; tds: number; credit_notes: number;
   outstanding: number; overdue: number; invoice_count: number; overdue_count: number; oldest_days_late: number;
   open_invoices: OpenInvoice[];
+  /** 2 Nov 2026 — what each branch of the customer still owes (outstanding first). */
+  branches?: ReceivableBranch[];
 } & Record<BucketKey, number>;
+export type ReceivableBranch = {
+  branch_id: number; branch_name: string; outstanding: number; overdue: number; invoices: number;
+};
 type ReceivablesData = {
   as_of: string; customers: ReceivableRow[]; terms_days: number;
   totals: Record<string, number>; buckets: { key: BucketKey; label: string }[];
@@ -368,19 +402,42 @@ function ReceivablesTab() {
   const [search, setSearch] = useState("");
   const [only, setOnly] = useState<BucketKey | "overdue" | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
+  // 2 Nov 2026 — one customer, one branch ("0" = no branch on record).
+  const [customerId, setCustomerId] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [customerNames, setCustomerNames] = useState<{ id: number; name: string }[]>([]);
+  const [branchOptions, setBranchOptions] = useState<ReceivableBranch[]>([]);
+
+  useEffect(() => {
+    crmGet<{ id: number; name: string }[]>("/api/customers/names?status=Active")
+      .then((r) => setCustomerNames(r.data || []))
+      .catch(() => setCustomerNames([]));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const res = await crmGet<ReceivablesData>(`/api/finance/reports/receivables${qs({ as_of: asOf || undefined })}`);
+      const res = await crmGet<ReceivablesData>(`/api/finance/reports/receivables${qs({
+        as_of: asOf || undefined, customer_id: customerId || undefined,
+        branch_id: customerId && branchId !== "" ? branchId : undefined,
+      })}`);
       setData(res.data);
+      // The branch list comes from the customer's unfiltered row, so picking a
+      // branch never shrinks its own dropdown.
+      if (customerId && branchId === "") {
+        const row = res.data.customers.find((r) => String(r.customer_id) === customerId);
+        setBranchOptions(row?.branches || []);
+      }
+      if (customerId) setOpen(new Set([Number(customerId)]));
     } catch (e: any) {
       setError(e?.message || "Could not load the receivables");
     } finally {
       setLoading(false);
     }
-  }, [asOf]);
+  }, [asOf, customerId, branchId]);
   useEffect(() => { void load(); }, [load]);
+
+  const pickCustomer = (v: string) => { setCustomerId(v); setBranchId(""); setBranchOptions([]); };
 
   const customers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -418,6 +475,23 @@ function ReceivablesTab() {
         <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
           As of
           <input type="date" className={`${inputCls} !w-40`} value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+          Customer
+          <select className={`${inputCls} !w-52`} value={customerId} onChange={(e) => pickCustomer(e.target.value)}>
+            <option value="">All customers</option>
+            {customerNames.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+          Branch
+          <select className={`${inputCls} !w-52`} value={branchId} disabled={!customerId}
+            title={customerId ? undefined : "Pick a customer first"} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">All branches</option>
+            {branchOptions.map((b) => (
+              <option key={b.branch_id} value={b.branch_id}>{b.branch_name} · {inrCompact(b.outstanding)}</option>
+            ))}
+          </select>
         </label>
         <div className="relative min-w-[14rem] flex-1">
           <input className={`${inputCls} !pl-9`} placeholder="Search customer, invoice or employee…" value={search}
@@ -511,6 +585,7 @@ function ReceivablesTab() {
                                 <div className="text-xs text-muted">
                                   {r.open_invoices.length} unpaid
                                   {r.overdue_count > 0 ? ` · ${r.overdue_count} late · oldest ${r.oldest_days_late} d` : " · none late"}
+                                  {(r.branches?.length ?? 0) > 1 && ` · ${r.branches!.length} branches`}
                                 </div>
                               </div>
                             </div>
@@ -528,6 +603,35 @@ function ReceivablesTab() {
                         {isOpen && (
                           <tr className="border-b border-subtle bg-surface-2">
                             <td colSpan={10} className="px-4 py-3">
+                              {(r.branches?.length ?? 0) > 0 && (
+                                <div className="mb-3 flex flex-wrap gap-2" aria-label="What each branch owes">
+                                  {r.branches!.map((b) => {
+                                    const picked = String(r.customer_id) === customerId && branchId === String(b.branch_id);
+                                    return (
+                                      <button key={b.branch_id} type="button"
+                                        onClick={() => {
+                                          if (String(r.customer_id) !== customerId) {
+                                            setCustomerId(String(r.customer_id)); setBranchOptions(r.branches || []);
+                                          }
+                                          setBranchId(picked ? "" : String(b.branch_id));
+                                        }}
+                                        aria-pressed={picked}
+                                        title={picked ? "Show every branch again" : `Show only ${b.branch_name}`}
+                                        className={`flex items-center gap-2 rounded-pill border px-3 py-1 text-xs transition-colors ${
+                                          picked ? "border-brand-500 bg-brand-50 dark:bg-brand-900/30" : "border-subtle bg-surface-1 hover:bg-surface-3"}`}>
+                                        <Building2 size={12} className="text-muted" aria-hidden />
+                                        <span className="font-semibold text-primary">{b.branch_name}</span>
+                                        <span className="tabular-nums text-secondary">{rupees(b.outstanding)}</span>
+                                        {b.overdue > 0 && (
+                                          <span className="rounded-pill bg-danger-soft px-1.5 font-semibold tabular-nums text-danger">
+                                            {inrCompact(b.overdue)} late
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                               <table className="w-full text-xs">
                                 <thead>
                                   <tr className="text-left uppercase tracking-wide text-muted">
@@ -566,7 +670,7 @@ function ReceivablesTab() {
                       </React.Fragment>
                     );
                   })}
-                  {!search.trim() && !only && (
+                  {!search.trim() && !only && customers.length > 1 && (
                     <tr className="bg-surface-2 font-bold">
                       <td className="px-3 py-2">Total</td>
                       <td className="px-3 py-2 text-right tabular-nums">{rupees(t.outstanding)}</td>
@@ -594,6 +698,8 @@ type LedgerEntry = {
   /** Every line opens its invoice (22 Oct 2026). */
   invoice_id?: number | null; invoice_number?: string | null;
   receipt_id?: number | null; credit_note_id?: number | null;
+  /** 2 Nov 2026 — the customer branch the line belongs to. */
+  branch_id?: number | null; branch_name?: string | null;
 };
 
 const LEDGER_TYPE_TONE: Record<string, string> = {
@@ -601,17 +707,55 @@ const LEDGER_TYPE_TONE: Record<string, string> = {
   Payment: "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
   TDS: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
   "Credit Note": "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
+  "On account": "bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
+};
+/** One branch's totals over the whole ledger (to the To date). */
+export type LedgerBranch = {
+  branch_id: number; branch_name: string; invoices: number; debit: number; credit: number; balance: number;
 };
 type LedgerData = {
   customer_id: number; customer_name: string;
+  branch_id?: number | null; branch_name?: string | null;
+  branches?: LedgerBranch[];
   opening_balance: number; closing_balance: number;
   totals: { debit: number; credit: number };
   entries: LedgerEntry[];
 };
 
+/** PURE: the "All branches" total of the branch cards. */
+export function branchTotals(rows: LedgerBranch[]): { invoices: number; debit: number; credit: number; balance: number } {
+  return rows.reduce(
+    (t, r) => ({ invoices: t.invoices + r.invoices, debit: t.debit + r.debit, credit: t.credit + r.credit,
+      balance: t.balance + r.balance }),
+    { invoices: 0, debit: 0, credit: 0, balance: 0 },
+  );
+}
+
+function BranchCard({ name, sub, balance, active, onClick }: {
+  name: string; sub: string; balance: number; active: boolean; onClick: () => void;
+}) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active}
+      className={`min-w-[11rem] flex-1 rounded-card border p-3 text-left transition-colors duration-micro ${
+        active ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500 dark:bg-brand-900/30"
+          : "border-subtle bg-surface-1 hover:bg-surface-2"}`}>
+      <span className="flex items-center gap-1.5 text-xs font-semibold text-secondary">
+        <Building2 size={13} className={active ? "text-brand-600" : "text-muted"} aria-hidden /> {name}
+      </span>
+      <span className={`mt-1 block text-lg font-bold tabular-nums ${balance > 0 ? "text-primary" : "text-emerald-700 dark:text-emerald-300"}`}>
+        {inr2(balance)}
+      </span>
+      <span className="block text-[11px] text-muted">{sub}</span>
+    </button>
+  );
+}
+
 function CustomerLedgerTab() {
   const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
   const [customerId, setCustomerId] = useState("");
+  // "" = every branch; "0" = no branch on record; else a branch id.
+  const [branchId, setBranchId] = useState("");
+  const [branches, setBranches] = useState<LedgerBranch[]>([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [data, setData] = useState<LedgerData | null>(null);
@@ -630,28 +774,38 @@ function CustomerLedgerTab() {
     try {
       const res = await crmGet<LedgerData>(
         `/api/finance/reports/customer-ledger${qs({
-          customer_id: customerId, date_from: dateFrom || undefined, date_to: dateTo || undefined,
+          customer_id: customerId, branch_id: branchId === "" ? undefined : branchId,
+          date_from: dateFrom || undefined, date_to: dateTo || undefined,
         })}`,
       );
       setData(res.data);
+      // The branch summary is always over every branch, so the cards stay put
+      // while one branch is open.
+      setBranches(res.data.branches || []);
     } catch (e: any) {
       setError(e?.message || "Failed to load ledger");
     } finally {
       setLoading(false);
     }
-  }, [customerId, dateFrom, dateTo]);
+  }, [customerId, branchId, dateFrom, dateTo]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const pickCustomer = (v: string) => { setCustomerId(v); setBranchId(""); setBranches([]); setData(null); };
+  const oneBranch = branchId !== "";
+  const total = branchTotals(branches);
+  const branchLabel = data?.branch_name || (oneBranch ? branches.find((b) => String(b.branch_id) === branchId)?.branch_name : null);
 
   const exportCsv = () => {
     if (!data) return;
     downloadCsv(
-      `ledger-${data.customer_name}.csv`,
-      ["Date", "Type", "Reference", "Note", "Debit", "Credit", "Balance"],
+      `ledger-${data.customer_name}${branchLabel ? `-${branchLabel}` : ""}.csv`,
+      ["Date", "Branch", "Type", "Reference", "Note", "Debit", "Credit", "Balance"],
       [
-        ["", "Opening balance", "", "", "", "", data.opening_balance],
-        ...data.entries.map((e) => [e.date, e.type, e.ref, e.note, e.debit ?? "", e.credit ?? "", e.balance]),
-        ["", "Closing balance", "", "", data.totals.debit, data.totals.credit, data.closing_balance],
+        ["", "", "Opening balance", "", "", "", "", data.opening_balance],
+        ...data.entries.map((e) => [e.date, e.branch_name || "No branch on record", e.type, e.ref, e.note,
+          e.debit ?? "", e.credit ?? "", e.balance]),
+        ["", "", "Closing balance", "", "", data.totals.debit, data.totals.credit, data.closing_balance],
       ],
     );
   };
@@ -661,9 +815,19 @@ function CustomerLedgerTab() {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
           Customer
-          <select className={`${inputCls} !w-56`} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+          <select className={`${inputCls} !w-56`} value={customerId} onChange={(e) => pickCustomer(e.target.value)}>
             <option value="">Select customer…</option>
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+          Branch
+          <select className={`${inputCls} !w-56`} value={branchId} disabled={!customerId || branches.length === 0}
+            onChange={(e) => setBranchId(e.target.value)} aria-label="Filter the ledger by branch">
+            <option value="">All branches</option>
+            {branches.map((b) => (
+              <option key={b.branch_id} value={b.branch_id}>{b.branch_name} · {inr2(b.balance)}</option>
+            ))}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
@@ -681,10 +845,29 @@ function CustomerLedgerTab() {
         )}
       </div>
 
+      {customerId && branches.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Balance by branch{dateTo ? ` · as of ${fmtDay(dateTo)}` : ""} — pick one to see its own ledger
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <BranchCard name="All branches" active={!oneBranch} balance={total.balance}
+              sub={`${total.invoices} invoice${total.invoices === 1 ? "" : "s"} · billed ${inr2(total.debit)}`}
+              onClick={() => setBranchId("")} />
+            {branches.map((b) => (
+              <BranchCard key={b.branch_id} name={b.branch_name} active={branchId === String(b.branch_id)}
+                balance={b.balance}
+                sub={`${b.invoices} invoice${b.invoices === 1 ? "" : "s"} · billed ${inr2(b.debit)} · received ${inr2(b.credit)}`}
+                onClick={() => setBranchId(branchId === String(b.branch_id) ? "" : String(b.branch_id))} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : !customerId ? (
-        <EmptyState message="Pick a customer — the complete ledger shows every invoice, payment, TDS deduction and credit note with a running balance." />
+        <EmptyState message="Pick a customer — the complete ledger shows every invoice, payment, TDS deduction, credit note and money on account with a running balance, branch by branch." />
       ) : loading ? (
         <Spinner label="Building ledger…" />
       ) : data ? (
@@ -693,6 +876,7 @@ function CustomerLedgerTab() {
             <thead>
               <tr className="border-b border-subtle bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
                 <th className="px-3 py-2">Date</th>
+                {!oneBranch && <th className="px-3 py-2">Branch</th>}
                 <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">Reference</th>
                 <th className="px-3 py-2">Details</th>
@@ -704,16 +888,23 @@ function CustomerLedgerTab() {
             </thead>
             <tbody>
               <tr className="border-b border-subtle bg-surface-2 font-semibold">
-                <td className="px-3 py-2" colSpan={6}>Opening balance</td>
+                <td className="px-3 py-2" colSpan={oneBranch ? 6 : 7}>
+                  Opening balance{branchLabel ? ` · ${branchLabel}` : ""}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.opening_balance)}</td>
                 <td />
               </tr>
               {data.entries.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted">No activity in this period</td></tr>
+                <tr><td colSpan={oneBranch ? 8 : 9} className="px-3 py-6 text-center text-muted">No activity in this period</td></tr>
               )}
               {data.entries.map((e, i) => (
                 <tr key={i} className="border-b border-subtle hover:bg-surface-2">
                   <td className="px-3 py-2 whitespace-nowrap">{e.date}</td>
+                  {!oneBranch && (
+                    <td className="px-3 py-2 whitespace-nowrap text-secondary">
+                      {e.branch_name || <span className="text-muted">No branch</span>}
+                    </td>
+                  )}
                   <td className="px-3 py-2">
                     <span className={`inline-flex rounded-pill px-2 py-0.5 text-[11px] font-semibold ${LEDGER_TYPE_TONE[e.type] || "bg-surface-2 text-secondary"}`}>
                       {e.type}
@@ -743,12 +934,19 @@ function CustomerLedgerTab() {
                         className="inline-flex items-center gap-1 rounded-control border border-subtle px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/30">
                         <ExternalLink size={12} /> Open invoice
                       </CrmLink>
+                    ) : e.type === "On account" && e.receipt_id ? (
+                      <CrmLink to={`received-amounts?receipt=${e.receipt_id}`} title="Open the received amount to map it to invoices"
+                        className="inline-flex items-center gap-1 rounded-control border border-subtle px-2 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-900/30">
+                        <ExternalLink size={12} /> Map it
+                      </CrmLink>
                     ) : null}
                   </td>
                 </tr>
               ))}
               <tr className="bg-surface-2 font-bold">
-                <td className="px-3 py-2" colSpan={4}>Closing balance (receivable from {data.customer_name})</td>
+                <td className="px-3 py-2" colSpan={oneBranch ? 4 : 5}>
+                  Closing balance (receivable from {data.customer_name}{branchLabel ? ` · ${branchLabel}` : ""})
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.totals.debit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.totals.credit)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{inr2(data.closing_balance)}</td>

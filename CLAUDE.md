@@ -6,7 +6,7 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 29 Oct 2026 (clickable charts). **State:** `tsc` green; vitest green on the touched files; nothing committed since
+**Last updated:** 2 Nov 2026 (invoice search finds the number on every tab and on Received Amount; Record Payment redesign; branch-wise finance). **State:** `tsc` green; vitest green on the touched files; nothing committed since
 `f807e80`.
 
 **Project:** **Karnex Orbit**, Karnex's AI interview platform plus the staffing CRM/ERP. This repo is its two front-ends.
@@ -26,8 +26,15 @@
 - History: always `pushAppHistory`; never a bare `pushState` or a `replaceState(null)`.
 - Never `${inputCls} w-N`; use `CONTROL` or `!w-N`.
 - Customer pickers are active-only (`useActiveCustomers`).
+- A search never reads "nothing" while the server holds a match: Invoices jumps to the tab that has it
+  (`tabsWithMatches`); Received Amount shows the invoice the term names (`InvoiceSearchHits`).
 - The UI never guesses permissions: it follows `/api/me` and the server's `meta.can_*`.
 - A clickable row that hosts a dialog checks `isOwnDomClick`. A clickable list passes `rowHref`.
+- Record Payment's Received Amount link is optional (default "Don't link"); every payment can be reversed from the
+  invoice's Payment History (`crm/components/invoice/PaymentLink.tsx`). The dialog is
+  `crm/components/invoice/RecordPaymentDialog.tsx`; each credit on account opens its own Map invoices in place.
+- Finance filters have a Branch: `ScopeFilterBar` takes `branchId` / `onBranch` (projects follow the branch); the
+  Customer ledger and Who owes us pick a branch per customer.
 - Every dashboard chart is clickable: a new `FilteredBars` passes `barLink` (a CRM path) or `onBarClick` (an in-place
   filter).
 
@@ -2583,6 +2590,59 @@ Payment due → unpaid · Overdue → the overdue switch · Paid → paid · TDS
 charts (work by month stacked by stage group — counts, since a sheet not yet invoiced has no amount; how late the open
 money is; customers due / with them / paid).
 
+**2 Nov 2026 (later) — branch-wise Customer ledger, Who owes us, Revenue / Profit / CEO Finance tab
+(`crm/components/ScopeFilterBar.test.ts` 2; server half in B-V2 `CLAUDE.md`):** Finance ask with a screenshot of
+VISTEON's ledger. (1) **Customer ledger** (`FinanceReports.tsx`): a **Branch** select next to Customer (All branches +
+each branch with its balance; reset when the customer changes), and above the table **"Balance by branch"** cards
+(`BranchCard`: All branches + one per branch, billed / received / balance; a click opens that branch's own ledger, a second
+click goes back). The table gains a **Branch** column (hidden while one branch is open), the new **On account** line type
+(teal) with **Map it** → `received-amounts?receipt=N`, and the opening / closing rows name the branch; the CSV has a Branch
+column and the file name carries the branch. PURE `branchTotals` (exported). The cards come from the server's `branches`,
+computed over every branch, so they never shrink while one is open. (2) **Who owes us**: Customer + Branch selects (branch
+list cached from the customer's unfiltered row), the customer row says "N branches", and the expanded row starts with one
+chip per branch (amount + "late" amount) that narrows the table to it. (3) **`ScopeFilterBar`** gains an optional Branch
+picker (`branchId` / `onBranch`; options `branches` from the server, scoped to the customer, "Customer · Branch" when no
+customer is chosen, "No branch on record" = `NO_BRANCH` 0) and PURE `scopedProjects` (projects follow customer + branch).
+Used by the **Revenue report** (`?branch_id=` read on load, sent with the report AND the Excel pack; picking a customer drops
+a foreign branch, picking a branch drops a project of another branch), the **Profit** tab of Financial Reports (new scope
+row under the period) and the CEO **Finance tab**. (4) Drill pages (`CeoInsightPage`): `InsightExtra.branch_id`,
+`insightLink` / `readParams` / the address / the request carry it, the clear chip reads "One branch only"; every Finance-tab
+tile and bar passes the tab's branch on. `router.CRM_FILTER_KEYS` += `branch_id`.
+
+**2 Nov 2026 (latest) — Record Payment redesigned; Map invoices straight from it (`crm/components/invoice/
+RecordPaymentDialog.test.ts` 2; no server change):** screenshot report — the "Received Amount" choice cards overlapped
+their own text. **`crm/components/invoice/RecordPaymentDialog.tsx`** replaces the body of `Finance.RecordPaymentModal`
+(which now just renders it): `Modal xl` + emerald `DialogHero` (invoice number, "₹x still to collect", customer · branch,
+chips invoice total · received so far · "N credits on account") → **1 Where is this money?** (three `SourceCard`s in a
+3-column grid — Don't link · From a received amount (count badge) · Add to Received Amount; picking "From" pre-selects the
+credit that equals the balance, or the only one) with the credits as `ReceiptCard`s (radio, date · amount · mode ·
+reference · branch, on-account amount, a green **Likely match** chip, a line saying whether it covers the invoice, and
+**Map to several invoices** → reads `GET /api/customer-receipts/{id}` and opens the receipt workbench's
+`MapInvoicesModal` ON TOP, lazy-loaded via `lazyRetry`; saving it closes both and reloads the invoice) + "Open Received
+Amount" → **2 The payment** (big ₹ amount with Full balance / All on account / Half picks, date with Today / Yesterday,
+reference, mode chips; date / mode / reference locked when the money comes from a credit) → **3 Notes**; a sticky aside:
+progress bar and invoice total · received so far · this payment · balance after ("The invoice will read Paid"), the
+credit's on account now / left after with **Map the rest to other invoices**, and What happens next. Footer
+`DialogActions` "Record ₹x", the hint names what is missing, Ctrl+Enter records. PURE `receiptFit(balance, onAccount)`
+(match within ₹1 · covers · part) and `paymentEffect(grand, balance, amount)`. Same POST and payload as before
+(`linkPayload`, `paymentCap` from `PaymentLink.tsx`; `ReceivedAmountChoice` there is no longer used by Finance).
+Rendered at 1400 / 420 px with no console errors.
+
+**2 Nov 2026 (latest, later) — an invoice number is found everywhere (`crm/pages/receipts/InvoiceSearchHits.test.ts` 2;
+server half in B-V2 `CLAUDE.md`):** screenshots — KRNX26-27-01-CT existed, but Invoices (open on Proforma) and Received
+Amount both read empty. (1) **Invoices** (`Finance.InvoicesPage`): PURE `invoiceStages.tabsWithMatches(counts, current,
+allowed)`; the tab counts now remember which search they belong to (`countsSearch`). When the open tab holds nothing for
+the search and another tab does, the page **moves to that tab** once per term (replace, so Back is not filled), a sky strip
+"“term” is also in: Unpaid · 1" offers every other tab with a match, and the empty state never says "No invoices yet"
+during a search (`searchEmpty`: "it is under Unpaid" with a link, or "no invoice matches on any tab" + a hint when another
+filter is on). A new search resets to page 1. Placeholder: "invoice / PI / PO number, customer, employee". (2) **Received
+Amount** (`CustomerReceipts.tsx`): a small extra read for the server's `meta.invoice_hits` (works in the customer-wise view
+too) → **`crm/pages/receipts/InvoiceSearchHits.tsx`** above the list: each invoice with its stage chip, customer, total ·
+received · due, PURE `hitMessage` ("Nothing received against this invoice yet", the payment block, "Fully settled",
+"Still a Proforma"), a button per receipt that paid it (opens the workbench) and **Open invoice · Record payment**. The
+empty text names what the search reads. (3) My Tasks search (`taskFilters.filterItems`) drops the same wrapping
+punctuation word by word.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -3851,3 +3911,24 @@ half in B-V2 `CLAUDE.md`):** a screenshot report said clicking a chart did nothi
   - Hiring Manager stage chart → profiles.
 - **Not wired yet:** the Revenue report and Financial Reports charts, and the Interview-platform HR dashboard's weekly
   chart.
+
+**2 Nov 2026 — Record Payment links to Received Amount (optional); Reverse a payment; "collected" in the invoice's
+month (`crm/components/invoice/PaymentLink.test.ts` 3; server half in B-V2 `CLAUDE.md`):**
+- **`crm/components/invoice/PaymentLink.tsx`:**
+  - `usePaymentOptions(invoiceId)` reads `GET /api/invoices/{id}/payment-options`.
+  - `ReceivedAmountChoice` is the optional section of the Record Payment dialog. It has three cards: **Don't link**
+    (default, as before) · **From a received amount** (radio list of the customer's receipts still on account —
+    date, amount, mode / reference / branch, what is on account) · **Add to Received Amount** (also saves it in the
+    register, mapped to this invoice).
+  - PURE `paymentCap(balance, receipt)` and `linkPayload(kind, receiptId)`.
+  - `ReversePaymentDialog` is a rose `DecisionDialog`: reason ≥ 10 with picks; for a receipt-based payment, an
+    optional "Also remove received amount #N" box with an Open link. It posts
+    `/api/invoices/{id}/payments/{pid}/reverse`.
+- **`Finance.tsx`:**
+  - `RecordPaymentModal`: picking a receipt fills and locks the date / mode / reference and sets the amount to
+    `paymentCap`; the amount may not exceed it. Modes add NEFT · RTGS · IMPS · Wire · Other. The POST merges
+    `linkPayload`, and the toast is the server's message.
+  - Invoice ▸ Payment History gains **Received amount** (#N → `received-amounts?receipt=N`, else "Not linked") and a
+    **Reverse** button for `canWrite` (Finance; Admin / CEO pass).
+- The Revenue report's footnote says Collected is counted in the invoice's month (money on account in the month it
+  arrived).

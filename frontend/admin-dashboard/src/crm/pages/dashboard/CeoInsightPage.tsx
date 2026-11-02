@@ -82,7 +82,7 @@ type Row = Record<string, unknown>;
 type Table = { key: string; title: string; subtitle?: string | null; columns: InsightColumn[]; rows: Row[]; total: number; truncated: boolean };
 export type InsightPayload = {
   metric: string; tab: "finance" | "customer" | "sales" | "people"; title: string; question: string;
-  period: CeoPeriod; as_of: string; filters: { customer_id: number | null; project_id: number | null; scope: string | null };
+  period: CeoPeriod; as_of: string; filters: { customer_id: number | null; project_id: number | null; scope: string | null; branch_id?: number | null };
   kpis: Kpi[]; charts: Chart[]; segments: Segment[]; default_segment: string | null; default_segments?: string[] | null;
   tables: Table[]; related: { metric: string; label: string; scope?: string }[]; notes: string[];
 };
@@ -172,11 +172,14 @@ export function toCsv(columns: InsightColumn[], rows: Row[]): string {
 
 /** The drill-down link a dashboard tile opens — same anchor + zoom, optional scope. */
 export type InsightExtra = { scope?: string; customer_id?: number | null; project_id?: number | null;
+  /** 2 Nov 2026 — customer branch (0 = no branch on record). */
+  branch_id?: number | null;
   /** Opens the page with the main table already narrowed to rows naming this text (a clicked bar). */
   q?: string | null };
 export function insightLink(metric: string, p: { anchor_month: string; kind: string }, extra: InsightExtra = {}): string {
   return `insights/${metric}${qs({ month: p.anchor_month, period: p.kind, scope: extra.scope,
-    customer_id: extra.customer_id ?? undefined, project_id: extra.project_id ?? undefined, q: extra.q || undefined })}`;
+    customer_id: extra.customer_id ?? undefined, branch_id: extra.branch_id ?? undefined,
+    project_id: extra.project_id ?? undefined, q: extra.q || undefined })}`;
 }
 
 /** A chart bucket key → the period it stands for (29 Oct 2026, click a bar):
@@ -216,11 +219,14 @@ function readParams() {
   const kind = p.get("period");
   const cid = Number(p.get("customer_id"));
   const pid = Number(p.get("project_id"));
+  const rawBranch = p.get("branch_id");
+  const bid = Number(rawBranch);
   return {
     month: /^\d{4}-\d{2}$/.test(p.get("month") || "") ? (p.get("month") as string) : thisMonthKey(),
     period: (kind === "month" || kind === "quarter" || kind === "fy" ? kind : "fy") as PeriodKind,
     customer: Number.isFinite(cid) && cid > 0 ? cid : null,
     project: Number.isFinite(pid) && pid > 0 ? pid : null,
+    branch: rawBranch !== null && rawBranch !== "" && Number.isFinite(bid) && bid >= 0 ? bid : null,
     scope: p.get("scope") || "",
     q: (p.get("q") || "").slice(0, 120),
   };
@@ -235,7 +241,7 @@ export function CeoInsightPage() {
     const url = new URL(window.location.href);
     const set = (k: string, v: string | number | null) => (v === null || v === "" ? url.searchParams.delete(k) : url.searchParams.set(k, String(v)));
     set("month", state.month); set("period", state.period);
-    set("customer_id", state.customer); set("project_id", state.project); set("scope", state.scope || null);
+    set("customer_id", state.customer); set("project_id", state.project); set("branch_id", state.branch); set("scope", state.scope || null);
     set("q", state.q || null);
     if (url.toString() !== window.location.href) window.history.replaceState(window.history.state, "", url.toString());
   }, [state]);
@@ -247,7 +253,7 @@ export function CeoInsightPage() {
 
   const url = `/api/dashboard/ceo/drill/${encodeURIComponent(metric)}${qs({
     month: state.month, period: state.period, customer_id: state.customer ?? undefined,
-    project_id: state.project ?? undefined, scope: state.scope || undefined,
+    project_id: state.project ?? undefined, branch_id: state.branch ?? undefined, scope: state.scope || undefined,
   })}`;
   const { data, loading, error, retry } = useDeskData<InsightPayload>(url, { live: 120_000 });
 
@@ -274,17 +280,17 @@ export function CeoInsightPage() {
           <DateStepper month={state.month} period={state.period} atCurrent={atCurrent}
             onShift={(d) => setState((s) => ({ ...s, month: shiftMonthKey(s.month, d) }))}
             onPick={(v) => setState((s) => ({ ...s, month: v }))} />
-          {(state.customer || state.project) && (
+          {(state.customer || state.project || state.branch !== null) && (
             <button type="button" className={`${CONTROL} inline-flex items-center gap-1.5`}
-              onClick={() => setState((s) => ({ ...s, customer: null, project: null }))} title="Show the whole company">
-              One {state.project ? "project" : "customer"} only · <span className="font-semibold text-brand-600 dark:text-brand-300">clear</span>
+              onClick={() => setState((s) => ({ ...s, customer: null, project: null, branch: null }))} title="Show the whole company">
+              One {state.project ? "project" : state.branch !== null ? "branch" : "customer"} only · <span className="font-semibold text-brand-600 dark:text-brand-300">clear</span>
             </button>
           )}
           {data && data.related.length > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-semibold text-muted">Next:</span>
               {data.related.map((r) => (
-                <CrmLink key={r.metric + (r.scope ?? "")} to={insightLink(r.metric, data.period, { scope: r.scope, customer_id: state.customer, project_id: state.project })}
+                <CrmLink key={r.metric + (r.scope ?? "")} to={insightLink(r.metric, data.period, { scope: r.scope, customer_id: state.customer, project_id: state.project, branch_id: state.branch })}
                   className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-semibold text-brand-600 ring-1 ring-inset ring-subtle hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/30">
                   {r.label} →
                 </CrmLink>
@@ -358,7 +364,7 @@ function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
             const common = { label: k.label, tone: TILE_TONE[k.tone] ?? "brand", value: formatValue(k.value, k.format, true), sub: k.sub ?? undefined };
             if (k.go?.metric) {
               return <Tile key={k.key} {...common}
-                to={insightLink(k.go.metric, d.period, { scope: k.go.scope, customer_id: d.filters.customer_id, project_id: d.filters.project_id })} />;
+                to={insightLink(k.go.metric, d.period, { scope: k.go.scope, customer_id: d.filters.customer_id, project_id: d.filters.project_id, branch_id: d.filters.branch_id })} />;
             }
             return <Tile key={k.key} {...common} active={focus?.kpi === k.key}
               onClick={d.tables.length ? () => openKpi(k) : undefined}
