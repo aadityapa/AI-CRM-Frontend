@@ -57,6 +57,9 @@ for (const prefix of apiPrefixes) {
     destination: `${backendUrl}/${prefix}`,
   });
 }
+// Karnex Careers (3 Nov 2026): the public page lives at /careers (static file;
+// its data comes from /api/public/careers, already proxied under "api").
+rewrites.push({ source: "/careers", destination: "/careers.html" });
 rewrites.push({ source: "/admin", destination: "/admin/index.html" });
 rewrites.push({ source: "/admin/", destination: "/admin/index.html" });
 

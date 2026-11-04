@@ -6,8 +6,8 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 2 Nov 2026 (invoice search finds the number on every tab and on Received Amount; Record Payment redesign; branch-wise finance). **State:** `tsc` green; vitest green on the touched files; nothing committed since
-`f807e80`.
+**Last updated:** 3 Nov 2026 (Karnex Careers page at `/careers` + the CRM "Careers link" button). **State:** `tsc` green;
+vitest green on the touched files; nothing committed since `f807e80`.
 
 **Project:** **Karnex Orbit**, Karnex's AI interview platform plus the staffing CRM/ERP. This repo is its two front-ends.
 
@@ -26,6 +26,8 @@
 - History: always `pushAppHistory`; never a bare `pushState` or a `replaceState(null)`.
 - Never `${inputCls} w-N`; use `CONTROL` or `!w-N`.
 - Customer pickers are active-only (`useActiveCustomers`).
+- The public careers page (`frontend/careers.html` + `js/careers.js`) is vanilla, builds every node with
+  `textContent`, and never names a customer.
 - A search never reads "nothing" while the server holds a match: Invoices jumps to the tab that has it
   (`tabsWithMatches`); Received Amount shows the invoice the term names (`InvoiceSearchHits`).
 - The UI never guesses permissions: it follows `/api/me` and the server's `meta.can_*`.
@@ -3932,3 +3934,48 @@ month (`crm/components/invoice/PaymentLink.test.ts` 3; server half in B-V2 `CLAU
     **Reverse** button for `canWrite` (Finance; Admin / CEO pass).
 - The Revenue report's footnote says Collected is counted in the invoice's month (money on account in the month it
   arrived).
+
+**3 Nov 2026 — Karnex Careers: the public page + the CRM careers link (`scripts/tests/careers_logic.test.mjs` 6,
+`crm/lib/careersLink.test.ts` 2, `TaDecision.test.ts` +2; server half + migration 0151 in B-V2 `CLAUDE.md`):**
+the approved mock-up, built for real. (1) **`frontend/careers.html` + `js/careers.js` + `js/careers_logic.js`** (vanilla,
+no build; served at `/careers` by the backend, and by a Vercel rewrite `/careers → /careers.html` in
+`scripts/vercel-build.mjs`): white header (K mark · karnex | Careers · "View all openings (N)"), navy hero with the live
+"We're hiring · N open positions · M openings" pill, a search card with **Job openings by position** (the positions in the
+chosen location, each "city · exp · mode" + openings; picking one opens it) and **Job openings by location** (All + each
+city with its count) dropdowns (Esc / outside click close, ↑ ↓ move), a keyword box (title · code · location · skills ·
+summary, every word must match) and **Popular** chips (the most-asked skills, must-haves weigh double); filter chips +
+Clear all; card grid (code · posted · title · location / exp / mode · summary · 4 skills + "+N more" · openings ·
+Details / Apply); "Didn't find your role?" → a general application (Talent Pool). **Position view** (`?job=<id>`): navy
+title card, **About the role = the RMG JD** drawn by PURE `jdBlocks` (short lines ending ":" are headings, `- * • 1.`
+lines are bullets), Skills we need (★ must-have), share (Copy link · LinkedIn · WhatsApp — the link keeps `?src=`), and
+the apply form (name · email · mobile · experience · notice · current location · expected CTC · résumé drop zone ·
+consent, required and unticked) checked by PURE `applyProblems` (the server's rules) before the POST; then "Application
+received". `?src=linkedin|naukri|whatsapp|indeed` is kept from the posted link and sent with the application; `?loc=` /
+`?q=` stay in the address (replaceState); opening a position pushes history, Back returns. A JobPosting JSON-LD is added on
+the position view (hiring organisation Karnex). The page re-reads `/api/public/careers` every 5 min while visible and on
+return to the tab, so it follows Orbit. ⚠️ Every node is built with `el()` / `textContent` — never put server text in
+`innerHTML`; `el()` skips `false` / `""` / `0` children (the `cond && el(...)` idiom). `robots.txt` allows `/careers`,
+`/careers.html`, `/js/careers.js`, `/api/public/careers`; `sitemap.xml` lists `/careers`. (2) **CRM**:
+`crm/components/CareersLinkModal.tsx` — `CareersLinkButton` (glass "Careers link" in the Opportunities header for
+TA / RMG / Sales / Sales Head / a screener, and on TA's position list header) → `CareersLinkModal` (`GET
+/api/careers/overview`): channel pills (LinkedIn · Naukri · WhatsApp · Indeed · Anywhere → PURE `lib/careersLink.channelUrl` adds
+`?src=`), the link with Copy / Open page, an office-network warning (`base_reach` private), the ready-to-paste post
+(`channelPost` swaps in the channel's link) with Copy post, and **On the page now** — every live position with its
+applications count and, for RMG / GM / Sales Head (`can_edit`), a switch (`PUT /api/careers/positions/{id}`).
+(3) **Applied Candidates**: a self-applied candidate's opening state is `interested` with `via`, so the row offers no
+Opening email and no Interested / Not interested — Technical Screening · Hold · Reject · Self Withdraw as usual
+(`taDecisionsFor` unchanged); the chip reads **"Applied on the careers page · LinkedIn — interested"** / "Applied via
+the application link — interested" (PURE `TaDecision.openingMailText`). Candidate Profiles' Source filter gains
+"Careers page". **Later the same day:** "Open page" in `CareersLinkModal` opens `${window.location.origin}/careers` (the
+server this dashboard runs on — localhost while testing) instead of the public link, with a note when the copied link's
+host differs ("opens only once that site runs this version"); Copy link / Copy post still use the public URL.
+Then the copied `http://localhost:2020` link failed (the app serves HTTPS locally); the server now gives the link the
+dashboard's own origin while no PUBLIC address is set (B-V2 notes) — no client change.
+Then (user ask) the job cards no longer print the JD summary line — title, facts, skills and openings only; the full RMG
+JD stays on the position view (`careers.js` `card`; the keyword search still reads the summary).
+Then (user ask, screenshots) the apply form: choosing **Serving notice** shows an amber **Last working day** date field
+(`#lwdField`, `syncLwd` sets `required` + min / max = today − 30 / + 180 days; PURE `isServingNotice` / `lwdProblem` in
+`careers_logic.js`, the server's rule), plus **Preferred location** (both forms) and **Current CTC** beside Expected CTC
+(sent as "N LPA"). The header's "K + karnex" mark is replaced by the KARNEX wordmark of `assets/karnex-logo.svg` (inline,
+`textLength` pins its width whatever the fallback font; a light copy in the footer). `careers.js?v=2`, and the logic import
+carries `?v=2` too. Logic test now 7.

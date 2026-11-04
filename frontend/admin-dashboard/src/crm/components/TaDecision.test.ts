@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { roundHasStarted } from "./flowButtons";
-import { TA_HOLD, taDecisionsFor } from "./TaDecision";
+import { TA_HOLD, openingMailText, taDecisionsFor } from "./TaDecision";
 
 describe("taDecisionsFor", () => {
   const at = (key: string, extra: Record<string, unknown> = {}) =>
@@ -61,5 +61,21 @@ describe("taDecisionsFor — re-apply (1 Oct 2026)", () => {
     // Joined is closed for actions but not a candidacy to reopen.
     expect(taDecisionsFor({ profile_pipeline_status: "Joined",
       profile_status: { stage: { key: "joined" } } })).toEqual(["withdraw"]);
+  });
+});
+
+describe("a candidate who applied themselves (3 Nov 2026)", () => {
+  it("is already interested: Technical Screening, no Interested / Not interested step", () => {
+    const row = { profile_status: { stage: { key: "sourcing" } }, profile_pipeline_status: "Sourcing",
+      opening_mail: { state: "interested" as const, via: "careers" as const } };
+    expect(taDecisionsFor(row)).toEqual(["screen", "hold", "reject", "withdraw"]);
+  });
+  it("names the door they came through", () => {
+    expect(openingMailText({ state: "interested", via: "careers",
+      note: "Applied through the Karnex careers page (LinkedIn) — already interested" }))
+      .toBe("Applied on the careers page · LinkedIn — interested");
+    expect(openingMailText({ state: "interested", via: "apply_link" }))
+      .toBe("Applied via the application link — interested");
+    expect(openingMailText({ state: "interested" })).toBe("Replied: interested");
   });
 });

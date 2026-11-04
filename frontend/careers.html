@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Careers at Karnex — open positions</title>
+<meta name="description" content="Automotive, embedded and Android engineering roles at Karnex. See every open position, filter by location and apply in two minutes — no login needed.">
+<link rel="canonical" href="https://karnexgroup.com/careers">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Careers at Karnex — engineer what moves next">
+<meta property="og:description" content="Every open automotive, embedded and Android position at Karnex. Apply in two minutes.">
+<meta property="og:url" content="https://karnexgroup.com/careers">
+<meta property="og:image" content="https://karnexgroup.com/assets/brand/icon-512.png">
+<meta name="theme-color" content="#0b1026">
+<link rel="icon" href="/favicon.ico?v=3" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
+<link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png?v=3">
+<style>
+:root{
+  --navy:#0b1026; --brand:#2563eb; --brand-dk:#1d4ed8; --brand-50:#eff6ff; --brand-100:#dbeafe;
+  --ink:#0f172a; --ink-2:#334155; --muted:#475569; --line:#e2e8f0; --line-2:#cbd5e1;
+  --bg:#f6f7fb; --orange:#fb923c; --orange-dk:#c2410c; --ok:#15803d; --bad:#b91c1c;
+  --display:"Space Grotesk","Segoe UI",system-ui,sans-serif;
+  --body:Inter,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--brand-dk)}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+[hidden]{display:none !important}
+
+/* header */
+.top{background:#fff;border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;padding-bottom:12px}
+.logo{display:flex;align-items:center;gap:10px;background:none;border:0;padding:4px;cursor:pointer;min-height:44px;text-decoration:none;color:inherit}
+.logo-mark{height:30px;width:auto;aspect-ratio:156/48;display:block;flex-shrink:0}
+.foot-mark{height:20px;width:auto;aspect-ratio:156/48;display:block}
+.logo-bar{width:1px;height:22px;background:var(--line-2)}
+.logo-c{font-size:15px;font-weight:600;color:var(--muted)}
+.btn{min-height:44px;padding:0 18px;border-radius:10px;font-weight:600;font-size:15px;cursor:pointer;border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.btn-line{background:#fff;color:var(--brand);border-color:var(--brand)}
+.btn-line:hover{background:var(--brand-50)}
+.btn-pri{background:var(--brand);color:#fff}
+.btn-pri:hover{background:var(--brand-dk)}
+.btn-pri:disabled{opacity:.6;cursor:not-allowed}
+.btn-ghost{background:#fff;color:var(--ink);border-color:var(--line-2)}
+.btn-ghost:hover{background:#f8fafc}
+
+/* hero */
+.hero{background:var(--navy);color:#fff}
+.hero .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:40px;padding-top:64px;padding-bottom:150px}
+.hero-copy{flex:1 1 440px;min-width:0;display:flex;flex-direction:column;gap:20px}
+.pill{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);font-size:13px;font-weight:600;color:#e2e8f0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--orange);flex-shrink:0}
+.hero h1{margin:0;font:700 clamp(38px,5vw,60px)/1.04 var(--display);letter-spacing:-.03em}
+.hero p{margin:0;font-size:19px;line-height:1.55;color:#cbd5e1;max-width:540px}
+.points{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:14px;color:#e2e8f0}
+.points span{display:inline-flex;align-items:center;gap:8px}
+.hero-art{flex:1 1 340px;min-width:0;display:flex;justify-content:center}
+.hero-art svg{width:100%;max-width:460px;height:auto}
+
+/* search card */
+.finder{margin:-96px auto 0;max-width:1200px;background:#fff;border-radius:18px;box-shadow:0 20px 50px rgba(11,16,38,.18);padding:28px;display:flex;flex-direction:column;gap:18px;position:relative;z-index:2}
+.finder-wrap{padding:0 24px}
+.finder-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.finder-h h2{margin:0;font:700 26px var(--display);letter-spacing:-.01em}
+.finder-h span{font-size:14px;color:var(--muted)}
+.controls{display:flex;flex-wrap:wrap;gap:12px}
+.dd{flex:1 1 280px;min-width:0;position:relative}
+.dd.loc{flex:1 1 240px}
+.dd-btn{width:100%;min-height:56px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px;border-radius:12px;border:1.5px solid var(--line-2);background:#fff;cursor:pointer;text-align:left}
+.dd-btn[aria-expanded="true"],.dd-btn.on{border-color:var(--brand)}
+.dd-btn .lab{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dd-btn .k{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.dd-btn .v{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-btn svg{flex-shrink:0;transition:transform .15s}
+.dd-btn[aria-expanded="true"] svg{transform:rotate(180deg)}
+.dd-list{position:absolute;top:62px;left:0;right:0;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 40px rgba(15,23,42,.16);padding:8px;max-height:380px;overflow-y:auto;z-index:20}
+.dd-title{padding:8px 10px 6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.opt{width:100%;min-height:50px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border:0;border-radius:10px;background:#fff;cursor:pointer;text-align:left}
+.opt:hover,.opt:focus-visible,.opt.sel{background:var(--brand-50)}
+.opt .t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.opt b{font-size:15px;font-weight:600}
+.opt small{font-size:13px;color:var(--muted)}
+.opt .loc-name{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600}
+.count{flex-shrink:0;font-size:12px;font-weight:600;color:#1e40af;background:var(--brand-50);border-radius:999px;padding:3px 10px}
+.opt .n{font-size:13px;color:var(--muted)}
+.search{flex:2 1 320px;min-width:0;display:flex;border:1.5px solid var(--line-2);border-radius:12px;overflow:hidden;background:#fff}
+.search:focus-within{border-color:var(--brand)}
+.search input{flex:1 1 auto;min-width:0;border:0;padding:0 16px;min-height:56px;font-size:16px;background:transparent;outline:none}
+.search button{width:56px;min-height:56px;border:0;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.popular{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.popular > span{font-size:13px;color:var(--muted);font-weight:600}
+.chip{min-height:34px;padding:0 14px;border-radius:999px;border:0;background:var(--brand-50);color:#1e40af;font-size:13px;font-weight:600;cursor:pointer}
+.chip:hover{background:var(--brand-100)}
+
+/* results */
+.results{padding:40px 0 24px}
+.results-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}
+.results-h h2{margin:0;font:700 24px var(--display)}
+.filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.fchip{min-height:36px;display:inline-flex;align-items:center;gap:6px;padding:0 12px;border-radius:999px;border:1px solid #bfdbfe;background:#fff;color:#1e40af;font-size:13px;font-weight:600;cursor:pointer}
+.linkbtn{min-height:36px;padding:0 10px;border:0;background:none;color:var(--brand-dk);font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px;transition:box-shadow .15s,border-color .15s}
+.card:hover{box-shadow:0 10px 28px rgba(15,23,42,.10);border-color:#bfdbfe}
+.card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.code{font-size:12px;font-weight:700;color:var(--muted);background:#f1f5f9;border-radius:6px;padding:3px 8px;letter-spacing:.04em}
+.posted{font-size:12px;color:var(--muted)}
+.card h3{margin:0;font-size:19px;line-height:1.3;letter-spacing:-.01em}
+.card h3 button{all:unset;cursor:pointer}
+.card h3 button:hover{color:var(--brand-dk)}
+.card h3 button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.facts{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:14px;color:var(--ink-2)}
+.facts span{display:inline-flex;align-items:center;gap:6px}
+.summary{margin:0;font-size:14px;line-height:1.55;color:var(--muted)}
+.skills{display:flex;flex-wrap:wrap;gap:6px}
+.sk{font-size:12px;font-weight:600;color:#1e3a8a;background:var(--brand-50);border-radius:999px;padding:4px 10px}
+.sk.more{background:#f1f5f9;color:var(--muted)}
+.card-foot{margin-top:auto;padding-top:12px;border-top:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.openings{font-size:13px;font-weight:600;color:var(--orange-dk)}
+.card-foot .btns{display:flex;gap:8px}
+.card-foot .btn{font-size:14px;padding:0 14px}
+.empty{background:#fff;border:1px dashed var(--line-2);border-radius:16px;padding:40px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
+.empty h3{margin:0;font-size:18px}
+.empty p{margin:0;color:var(--muted);font-size:15px}
+.skel{background:linear-gradient(90deg,#eef2f7,#f8fafc,#eef2f7);background-size:200% 100%;animation:sh 1.2s infinite;border-radius:16px;height:230px}
+@keyframes sh{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+.band-wrap{padding:24px 0 56px}
+.band{border-radius:18px;background:#e0e7ff;padding:28px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.band div{display:flex;flex-direction:column;gap:6px;flex:1 1 360px}
+.band h2{margin:0;font:700 22px var(--display);color:#1e1b4b}
+.band p{margin:0;font-size:15px;color:#312e81}
+.btn-dark{background:#1e1b4b;color:#fff;min-height:48px;padding:0 22px;border-radius:12px}
+
+/* detail */
+.detail{padding:28px 0 56px}
+.back{min-height:44px;display:inline-flex;align-items:center;gap:8px;padding:0 6px;border:0;background:none;color:var(--brand-dk);font-weight:600;font-size:15px;cursor:pointer;margin-bottom:16px}
+.cols{display:flex;flex-wrap:wrap;align-items:flex-start;gap:28px}
+.main{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:24px}
+.headcard{background:var(--navy);color:#fff;border-radius:18px;padding:28px;display:flex;flex-direction:column;gap:14px}
+.headcard .code{background:rgba(255,255,255,.12);color:#fff}
+.headcard .posted{color:#cbd5e1;font-size:13px}
+.headcard h1{margin:0;font:700 clamp(28px,4vw,40px)/1.1 var(--display);letter-spacing:-.02em}
+.tags{display:flex;flex-wrap:wrap;gap:8px}
+.tag{font-size:14px;background:rgba(255,255,255,.10);border-radius:999px;padding:6px 12px}
+.tag.hot{background:var(--orange);color:#431407;font-weight:600}
+.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.panel h2{margin:0;font-size:19px}
+.panel-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.panel-h span{font-size:13px;color:var(--muted)}
+.jd{font-size:16px;line-height:1.65;color:var(--ink-2)}
+.jd p{margin:0 0 10px}
+.jd h3{margin:16px 0 6px;font-size:16px;color:var(--ink)}
+.jd ul{margin:0 0 10px;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.skc{font-size:14px;font-weight:600;border-radius:999px;padding:6px 12px;background:var(--brand-50);color:#1e3a8a}
+.skc.must{background:#1e3a8a;color:#fff}
+.share{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:20px 24px}
+.share > span{font-size:15px;font-weight:600}
+.share .btns{display:flex;flex-wrap:wrap;gap:8px}
+.btn-li{background:#0a66c2;color:#fff}
+.btn-wa{background:#15803d;color:#fff}
+.apply{flex:1 1 360px;min-width:0;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.06);padding:24px;display:flex;flex-direction:column;gap:14px;position:sticky;top:16px}
+.apply h2{margin:0;font:700 22px var(--display)}
+.apply .sub{margin:0;font-size:14px;color:var(--muted)}
+.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:600}
+.fld input,.fld select{min-height:46px;border:1px solid var(--line-2);border-radius:10px;padding:0 12px;font-size:15px;font-weight:400;background:#fff;min-width:0;width:100%}
+.fld input:focus,.fld select:focus{border-color:var(--brand);outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+.fld .hint{font-size:12px;font-weight:400;color:var(--muted)}
+.req{color:var(--bad)}
+.lwd{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:10px 12px}
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.drop{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px;border:1.5px dashed #93c5fd;border-radius:12px;background:#f8fafc;cursor:pointer;text-align:center}
+.drop:hover,.drop.over{background:var(--brand-50);border-color:var(--brand)}
+.drop b{font-size:15px;color:var(--brand-dk)}
+.drop small{font-size:13px;color:var(--muted)}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.drop.has{border-style:solid;border-color:#86efac;background:#f0fdf4}
+.drop.has b{color:var(--ok)}
+.consent{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.5;color:var(--ink-2);font-weight:400}
+.consent input{width:18px;height:18px;margin-top:1px;flex-shrink:0}
+.err{background:#fef2f2;color:var(--bad);border:1px solid #fecaca;border-radius:10px;padding:10px 12px;font-size:14px}
+.submit{min-height:50px;border-radius:12px;font-weight:700;font-size:16px}
+
+/* done */
+.done{padding:64px 0 80px}
+.done-card{max-width:620px;margin:0 auto;background:#fff;border:1px solid var(--line);border-radius:20px;padding:40px 32px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px}
+.done-card .tick{width:64px;height:64px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center}
+.done-card h1{margin:0;font:700 30px var(--display)}
+.done-card p{margin:0;font-size:16px;line-height:1.6;color:var(--ink-2)}
+
+.foot{background:var(--navy);color:#cbd5e1}
+.foot .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:28px;padding-bottom:28px;font-size:14px}
+.foot a{color:#e2e8f0}
+.foot .links{display:flex;flex-wrap:wrap;gap:18px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+
+@media (max-width:640px){
+  .wrap{padding:0 16px}
+  .top .wrap{flex-wrap:nowrap}
+  .logo{gap:8px}
+  .logo-mark{height:24px}
+  .logo-c{font-size:14px}
+  #allBtn{font-size:13px;padding:0 10px;min-height:38px;white-space:nowrap}
+  .finder-wrap{padding:0 16px}
+  .finder{padding:20px}
+  .hero .wrap{padding-top:40px;padding-bottom:130px;gap:24px}
+  .hero-art{display:none}
+  .two{grid-template-columns:1fr}
+  .apply{position:static}
+  .card-foot{flex-wrap:wrap}
+}
+@media (max-width:480px){
+  /* the page itself is the list, and the position view has "All openings" */
+  #allBtn{display:none}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="/careers" data-home aria-label="Karnex Careers home">
+      <!-- The KARNEX wordmark of assets/karnex-logo.svg; textLength pins the width so it never
+           depends on the font the browser falls back to. -->
+      <svg class="logo-mark" viewBox="0 0 156 48" role="img" aria-label="KARNEX">
+        <defs><linearGradient id="kxCareersBlue" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1a4f8a"/><stop offset="100%" stop-color="#2563eb"/></linearGradient></defs>
+        <text x="1" y="38" textLength="152" lengthAdjust="spacingAndGlyphs" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="40" font-weight="800"><tspan fill="url(#kxCareersBlue)">KARNE</tspan><tspan fill="#f59e0b">X</tspan></text>
+      </svg><span class="logo-bar" aria-hidden="true"></span><span class="logo-c">Careers</span>
+    </a>
+    <a class="btn btn-line" href="/careers" data-home id="allBtn">View all openings</a>
+  </div>
+</header>
+
+<main id="app">
+  <!-- LIST -->
+  <div id="viewList">
+    <section class="hero">
+      <div class="wrap">
+        <div class="hero-copy">
+          <span class="pill"><span class="dot"></span><span id="heroCount">We're hiring</span></span>
+          <h1>Engineer what moves next.</h1>
+          <p>Automotive, embedded and Android roles at Karnex. Find your position and apply in two minutes — no login needed.</p>
+          <div class="points">
+            <span><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Real projects with automotive OEMs and Tier-1s</span>
+            <span><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Apply with your resume, no account</span>
+            <span><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>A recruiter reads every application</span>
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <svg viewBox="0 0 460 360">
+            <circle cx="250" cy="180" r="120" fill="#1e3a8a" opacity=".55"/>
+            <circle cx="250" cy="180" r="165" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 10"/>
+            <circle cx="250" cy="180" r="120" fill="none" stroke="#60a5fa" stroke-width="1.5"/>
+            <ellipse cx="250" cy="180" rx="210" ry="70" fill="none" stroke="#fb923c" stroke-width="2.5" transform="rotate(-18 250 180)"/>
+            <ellipse cx="250" cy="180" rx="190" ry="110" fill="none" stroke="#93c5fd" stroke-width="1.2" opacity=".6" transform="rotate(28 250 180)"/>
+            <rect x="205" y="135" width="90" height="90" rx="16" fill="#0b1026" stroke="#93c5fd" stroke-width="2"/>
+            <rect x="225" y="155" width="50" height="50" rx="8" fill="#2563eb"/>
+            <path d="M220 135v-14M240 135v-14M260 135v-14M280 135v-14M220 239v-14M240 239v-14M260 239v-14M280 239v-14M205 150h-14M205 170h-14M205 190h-14M205 210h-14M309 150h-14M309 170h-14M309 190h-14M309 210h-14" stroke="#93c5fd" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="62" cy="230" r="9" fill="#fb923c"/><circle cx="430" cy="118" r="7" fill="#fb923c"/>
+            <circle cx="372" cy="292" r="10" fill="#60a5fa"/><circle cx="118" cy="66" r="6" fill="#93c5fd"/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <div class="finder-wrap">
+      <section class="finder" aria-labelledby="finderH">
+        <div class="finder-h"><h2 id="finderH">Find your next role</h2><span>Every position open for hiring today</span></div>
+        <div class="controls">
+          <div class="dd" id="ddRole">
+            <button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="roleList">
+              <span class="lab"><span class="k">Job openings by position</span><span class="v" id="roleBtnText">All positions</span></span>
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="dd-list" id="roleList" role="listbox" aria-label="Open positions" hidden></div>
+          </div>
+          <div class="dd loc" id="ddLoc">
+            <button type="button" class="dd-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="locList">
+              <span class="lab"><span class="k">Job openings by location</span><span class="v" id="locBtnText">All locations</span></span>
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="dd-list" id="locList" role="listbox" aria-label="Locations" hidden></div>
+          </div>
+          <form class="search" id="searchForm" role="search">
+            <label for="q" class="sr">Search jobs by keyword</label>
+            <input id="q" type="text" autocomplete="off" placeholder="Search by skill or keyword — e.g. AUTOSAR, Kotlin, CAPL">
+            <button type="submit" aria-label="Search"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
+          </form>
+        </div>
+        <div class="popular" id="popular" hidden><span>Popular:</span></div>
+      </section>
+    </div>
+
+    <section class="results" aria-live="polite">
+      <div class="wrap">
+        <div class="results-h">
+          <h2 id="resultsTitle">Open positions</h2>
+          <div class="filters" id="filters"></div>
+        </div>
+        <div id="listError" class="empty" hidden>
+          <h3>We could not load the openings</h3>
+          <p id="listErrorText">Please check your connection and try again.</p>
+          <button type="button" class="btn btn-line" id="retryBtn">Try again</button>
+        </div>
+        <div id="noResults" class="empty" hidden>
+          <h3>No open position matches that</h3>
+          <p>Try another keyword or location — or send us your resume and we'll reach out when something fits.</p>
+          <button type="button" class="btn btn-line" data-clear>Show all openings</button>
+        </div>
+        <div class="grid" id="grid"></div>
+      </div>
+    </section>
+
+    <section class="band-wrap">
+      <div class="wrap">
+        <div class="band">
+          <div>
+            <h2>Didn't find your role?</h2>
+            <p>Send us your resume once. When a position that fits you opens, a recruiter will contact you.</p>
+          </div>
+          <button type="button" class="btn btn-dark" id="generalBtn">Send your resume</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- DETAIL -->
+  <section id="viewDetail" class="detail" hidden>
+    <div class="wrap">
+      <button type="button" class="back" data-home-btn>
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        All openings
+      </button>
+      <div id="detailError" class="empty" hidden>
+        <h3>This position is no longer open</h3>
+        <p id="detailErrorText">It may have been filled. Have a look at the other openings.</p>
+        <button type="button" class="btn btn-line" data-home-btn>See all openings</button>
+      </div>
+      <div class="cols" id="detailBody" hidden>
+        <div class="main">
+          <div class="headcard">
+            <div class="card-top" style="justify-content:flex-start;gap:10px">
+              <span class="code" id="dCode"></span><span class="posted" id="dPosted"></span>
+            </div>
+            <h1 id="dTitle"></h1>
+            <div class="tags" id="dTags"></div>
+          </div>
+          <div class="panel">
+            <h2 id="dAboutH">About the role</h2>
+            <div class="jd" id="dJd"></div>
+          </div>
+          <div class="panel" id="dSkillsPanel">
+            <div class="panel-h"><h2>Skills we need</h2><span>★ must-have</span></div>
+            <div class="skills" id="dSkills"></div>
+          </div>
+          <div class="panel share" id="dShare">
+            <span>Know someone who fits? Share this role</span>
+            <div class="btns">
+              <button type="button" class="btn btn-ghost" id="copyBtn">Copy link</button>
+              <a class="btn btn-li" id="liBtn" target="_blank" rel="noopener">Share on LinkedIn</a>
+              <a class="btn btn-wa" id="waBtn" target="_blank" rel="noopener">WhatsApp</a>
+            </div>
+          </div>
+        </div>
+
+        <form class="apply" id="applyForm" novalidate>
+          <div>
+            <h2 id="applyTitle">Apply for this position</h2>
+            <p class="sub">Takes about two minutes. No login needed.</p>
+          </div>
+          <label class="fld">
+            <span>Full name <span class="req">*</span></span>
+            <input name="candidate_name" type="text" required maxlength="255" autocomplete="name" placeholder="As on your resume">
+          </label>
+          <label class="fld">
+            <span>Email <span class="req">*</span></span>
+            <input name="email" type="email" required maxlength="255" autocomplete="email" placeholder="you@example.com">
+          </label>
+          <label class="fld">
+            <span>Mobile number <span class="req">*</span></span>
+            <input name="phone" type="tel" required maxlength="20" autocomplete="tel" placeholder="+91 98765 43210">
+          </label>
+          <div class="two">
+            <label class="fld">
+              <span>Experience (yrs) <span class="req" data-pos-only>*</span></span>
+              <input name="experience" type="number" min="0" max="50" step="0.5" placeholder="4.5">
+            </label>
+            <label class="fld" data-pos-only>
+              <span>Notice period <span class="req">*</span></span>
+              <select name="notice_period" id="noticeSel">
+                <option value="">Choose…</option>
+                <option>Immediate</option><option>15 days</option><option>30 days</option>
+                <option>60 days</option><option>90 days</option><option>Serving notice</option>
+              </select>
+            </label>
+          </div>
+          <!-- Shown only for "Serving notice" (careers.js toggles it). -->
+          <label class="fld lwd" id="lwdField" hidden>
+            <span>Last working day <span class="req">*</span></span>
+            <input name="last_working_day" id="lwdInput" type="date">
+            <span class="hint">The last day at your current employer.</span>
+          </label>
+          <div class="two">
+            <label class="fld">
+              <span>Current location <span class="req" data-pos-only>*</span></span>
+              <input name="current_location" type="text" maxlength="120" placeholder="City" autocomplete="address-level2">
+            </label>
+            <label class="fld">
+              <span>Preferred location</span>
+              <input name="preferred_location" type="text" maxlength="120" placeholder="Optional">
+            </label>
+          </div>
+          <div class="two" data-pos-only>
+            <label class="fld">
+              <span>Current CTC</span>
+              <input name="current_ctc" type="number" min="0" step="0.1" placeholder="LPA · optional" aria-label="Current CTC in lakhs per year">
+            </label>
+            <label class="fld">
+              <span>Expected CTC</span>
+              <input name="expected_ctc" type="number" min="0" step="0.1" placeholder="LPA · optional" aria-label="Expected CTC in lakhs per year">
+            </label>
+          </div>
+          <label class="fld" data-general-only hidden>
+            <span>Key skills</span>
+            <input name="skills" type="text" maxlength="500" placeholder="e.g. AUTOSAR, Embedded C, CAN">
+          </label>
+          <label class="drop" id="drop">
+            <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            <b id="dropTitle">Upload your resume *</b>
+            <small id="dropHint">PDF or Word, up to 10 MB</small>
+            <input type="file" name="file" accept=".pdf,.doc,.docx,.rtf,.odt" aria-label="Upload your resume">
+          </label>
+          <label class="consent">
+            <input type="checkbox" name="consent" value="true">
+            <span>Karnex may contact me about this and similar roles. I can ask to be removed at any time.</span>
+          </label>
+          <div class="err" id="applyErr" role="alert" hidden></div>
+          <button type="submit" class="btn btn-pri submit" id="submitBtn">Submit application</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- DONE -->
+  <section id="viewDone" class="done" hidden>
+    <div class="wrap">
+      <div class="done-card">
+        <span class="tick"><svg aria-hidden="true" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+        <h1 id="doneTitle">Application received</h1>
+        <p id="doneText"></p>
+        <button type="button" class="btn btn-pri" data-home-btn>See other openings</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span style="display:flex;align-items:center;gap:10px">
+      <svg class="foot-mark" viewBox="0 0 156 48" role="img" aria-label="KARNEX"><text x="1" y="38" textLength="152" lengthAdjust="spacingAndGlyphs" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="40" font-weight="800"><tspan fill="#f8fafc">KARNE</tspan><tspan fill="#fbbf24">X</tspan></text></svg>
+      <span>© Karnex · Careers</span>
+    </span>
+    <span class="links">
+      <a href="https://karnexgroup.com/">karnexgroup.com</a>
+      <span>Already applied? A recruiter will contact you by email or phone.</span>
+    </span>
+  </div>
+</footer>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="/js/careers.js?v=2"></script>
+</body>
+</html>

@@ -27,6 +27,7 @@ import { InlinePriority, PositionTeamPanel, PriorityPill, type TaAssignment } fr
 import { FilledCell, OppRowActions, TeamCell } from "../components/OpportunityRowParts";
 import { JdSkillsCardForRequirement } from "../components/JdSkillsCard";
 import { ApplyLinkCard } from "../components/ApplyLinkCard";
+import { CareersLinkButton } from "../components/CareersLinkModal";
 import { dueChip, fmtRange, fmtRowDate } from "../lib/positionRows";
 import type { Column, ColumnFilterValue } from "../components/DataTable";
 import { afterListDelete } from "../components/RowActions";
@@ -254,6 +255,10 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
   const [editId, setEditId] = useState<number | null>(null);
   const [applyTo, setApplyTo] = useState<Opportunity | null>(null);
   const [toast, showToast] = useToast();
+  // Careers link (3 Nov 2026): whoever may read the positions (the server gate).
+  const careersRole = useHasRole("TA", "RMG", "Sales", "Sales_Head");
+  const careersScreener = useCanApprove("profile.rmg_screening");
+  const canCareers = careersRole || careersScreener;
   /* Per-column header filters (4 Sep 2026, user request). Server-side —
      the list is paginated, so filtering the page in hand would hide matches
      on other pages. Kept across the status sub-tabs: a user narrowing to one
@@ -476,10 +481,15 @@ export function OpportunitiesListPage({ typeFilter }: { typeFilter?: "T&M" | "SO
           ...(needHm ? [{ label: "need an HM", value: needHm, title: "Positions on this page with no Hiring Manager" }] : []),
           ...(pageOverdue ? [{ label: "past target date", value: pageOverdue }] : []),
         ] : undefined}
-        actions={canWrite ? (
-          <button type="button" className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
-            <Plus size={16} /> New Opportunity
-          </button>
+        actions={(canWrite || canCareers) ? (
+          <>
+            {canCareers && <CareersLinkButton toast={showToast} />}
+            {canWrite && (
+              <button type="button" className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+                <Plus size={16} /> New Opportunity
+              </button>
+            )}
+          </>
         ) : undefined}
       >
         <StagePills tabs={listTabs} active={tab} onChange={switchTab}

@@ -38,7 +38,24 @@ export type OpeningMail = {
   state: "sent" | "interested" | "not_interested";
   at?: string | null;
   note?: string | null;
+  /** Where an "interested" came from when the candidate applied themselves
+   *  (3 Nov 2026): the careers page or the position's application link. */
+  via?: "careers" | "apply_link" | null;
 };
+
+/** PURE — the chip's words for the opening-email state. */
+export function openingMailText(mail: OpeningMail, ago = ""): string {
+  if (mail.state === "sent") return `Opening email sent${ago ? ` · ${ago}` : ""} — awaiting reply`;
+  if (mail.state === "interested") {
+    if (mail.via === "careers") {
+      const ch = mail.note?.match(/careers page \(([^)]+)\)/)?.[1];
+      return `Applied on the careers page${ch ? ` · ${ch}` : ""} — interested`;
+    }
+    if (mail.via === "apply_link") return "Applied via the application link — interested";
+    return "Replied: interested";
+  }
+  return "Replied: not interested";
+}
 
 /** The TA hold value of `budget_status` (mirror of B-V2 `candidate_status.TA_HOLD`). */
 export const TA_HOLD = "TA_Hold";
@@ -195,9 +212,9 @@ export function OpeningMailChip({ mail }: { mail?: OpeningMail | null }) {
   const ago = days == null ? "" : days === 0 ? "today" : `${days} d ago`;
   const look = {
     sent: { cls: "bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800",
-      icon: <Mail size={11} aria-hidden />, text: `Opening email sent${ago ? ` · ${ago}` : ""} — awaiting reply` },
+      icon: <Mail size={11} aria-hidden />, text: openingMailText(mail, ago) },
     interested: { cls: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-800",
-      icon: <ThumbsUp size={11} aria-hidden />, text: "Replied: interested" },
+      icon: <ThumbsUp size={11} aria-hidden />, text: openingMailText(mail, ago) },
     not_interested: { cls: "bg-rose-50 text-rose-800 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-200 dark:ring-rose-800",
       icon: <ThumbsDown size={11} aria-hidden />, text: "Replied: not interested" },
   }[mail.state];

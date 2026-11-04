@@ -1,11 +1,15 @@
 # Karnex Orbit
-# Only the home page is public. The CRM, the API and candidate links
+# Only the home page and the careers page are public. The CRM, the API and candidate links
 # (interviews, applications, slot bookings) are private.
 User-agent: *
 Allow: /$
 Allow: /favicon.ico
 Allow: /favicon.svg
 Allow: /assets/
+Allow: /careers
+Allow: /careers.html
+Allow: /js/careers.js
+Allow: /api/public/careers
 Disallow: /admin
 Disallow: /api/
 Disallow: /auth

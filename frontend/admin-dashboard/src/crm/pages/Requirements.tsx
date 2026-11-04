@@ -27,6 +27,7 @@ import { DialogActions } from "../components/dialogKit";
 // stale private copy without the JD-file drop zone — the Screening Desk had it.
 import { JdSkillsCard } from "../components/JdSkillsCard";
 import { ApplyLinkCard } from "../components/ApplyLinkCard";
+import { CareersLinkButton } from "../components/CareersLinkModal";
 import {
   SalesHeadDecisionModal, SubmitForApprovalModal, type SalesHeadDecision,
 } from "../components/OfferApprovalGate";
@@ -1937,11 +1938,17 @@ export function RequirementsListPage() {
         subtitle={headerSubtitle}
         accent="ocean"
         stats={headerStats}
-        actions={canCreate ? (
-          <button type="button" className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
-            <Plus size={16} /> New Requirement
-          </button>
-        ) : undefined}
+        actions={(
+          <>
+            {/* Careers link (3 Nov 2026) — the one public page for every open position. */}
+            <CareersLinkButton toast={toast} />
+            {canCreate && (
+              <button type="button" className={HERO_BTN_SOLID} onClick={() => setShowCreate(true)}>
+                <Plus size={16} /> New Requirement
+              </button>
+            )}
+          </>
+        )}
       >
         {tabs.length > 0 && (
           <StagePills

@@ -145,6 +145,7 @@ export function ProfileToolbar({
         <option value="">All sources</option>
         <option value="manual">Added by TA</option>
         <option value="apply_link">Apply link</option>
+        <option value="careers">Careers page</option>
         <option value="resume_upload">Resume upload</option>
         <option value="zoho_import">Zoho import</option>
       </select>
