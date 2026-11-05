@@ -12,10 +12,10 @@
  * position appears once RMG approves it and drops off when it is filled, closed or held.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ClipboardCopy, ExternalLink, Globe2, Megaphone } from "lucide-react";
+import { AlertTriangle, BarChart3, Check, ClipboardCopy, ExternalLink, Globe2, Megaphone } from "lucide-react";
 
 import { crmGet, crmPut } from "../api";
-import { channelPost, channelUrl } from "../lib/careersLink";
+import { buildPost, channelPost, channelUrl } from "../lib/careersLink";
 
 export { channelPost, channelUrl };
 import { HERO_BTN } from "./PageHeader";
@@ -45,8 +45,68 @@ export type CareersOverview = {
   positions: CareersPosition[];
   applications_total: number;
   channels: { key: string; label: string }[];
+  direct_channel?: { key: string; label: string };
+  by_channel?: ChannelStat[];
   can_edit: boolean;
 };
+
+/** Where careers applications came from (5 Nov 2026, `services/careers.channel_stats`). */
+export type ChannelStat = {
+  key: string; label: string; applications: number; last_30_days: number;
+  in_process: number; joined: number; closed: number; moved_on_pct: number | null;
+};
+
+const CHANNEL_DOT: Record<string, string> = {
+  linkedin: "bg-[#0a66c2]", naukri: "bg-[#4a90e2]", whatsapp: "bg-[#25d366]", indeed: "bg-[#2164f3]", karnex: "bg-brand-600",
+};
+
+/** The best channel by people who moved on, else by applications; null with none. PURE. */
+export function bestChannel(rows: ChannelStat[]): ChannelStat | null {
+  const used = rows.filter((r) => r.applications > 0);
+  if (!used.length) return null;
+  return [...used].sort((a, b) => (b.in_process + b.joined) - (a.in_process + a.joined) || b.applications - a.applications)[0];
+}
+
+/** "Which platform helps us most" — one bar per channel (5 Nov 2026). */
+function ChannelStats({ rows }: { rows: ChannelStat[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.applications));
+  const best = bestChannel(rows);
+  return (
+    <section className="rounded-card border border-default p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-bold text-primary"><BarChart3 size={16} aria-hidden /> Where applications come from</h3>
+        {best && (
+          <span className="rounded-full bg-success-soft px-2.5 py-0.5 text-xs font-semibold text-success">
+            Most helpful so far: {best.label}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <div key={r.key} className="grid grid-cols-[9rem_minmax(0,1fr)_auto] items-center gap-3 text-sm">
+            <span className="flex items-center gap-2 truncate font-semibold text-primary">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${CHANNEL_DOT[r.key] || "bg-slate-400"}`} aria-hidden />{r.label}
+            </span>
+            <span className="h-2.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+              <span className={`block h-full rounded-full ${CHANNEL_DOT[r.key] || "bg-slate-400"}`} style={{ width: `${(100 * r.applications) / max}%` }} />
+            </span>
+            <span className="whitespace-nowrap text-xs text-secondary tabular-nums">
+              <b className="text-primary">{r.applications}</b> applied
+              {r.last_30_days > 0 && <> · {r.last_30_days} in 30 d</>}
+              {(r.in_process + r.joined) > 0 && <> · {r.in_process + r.joined} moved on</>}
+              {r.joined > 0 && <> · {r.joined} joined</>}
+              {r.moved_on_pct != null && <> · {r.moved_on_pct}%</>}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        “Moved on” = past TA's Sourcing and still in process, or joined. Applications from the plain link (no channel tag)
+        count as Karnex careers page.
+      </p>
+    </section>
+  );
+}
 
 async function copy(text: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
@@ -89,9 +149,11 @@ export function CareersLinkModal({ toast, onClose }: { toast: ToastFn; onClose: 
   const previewUrl = here ? `${here}/careers` : link;
   const linkHost = (() => { try { return new URL(link).origin; } catch { return ""; } })();
   const elsewhere = Boolean(data && here && linkHost && linkHost !== here);
-  const post = data ? channelPost(data.post_text, data.url, src) : "";
   const listed = useMemo(() => (data?.positions || []).filter((p) => p.listed), [data]);
-  const sourceLabel = data?.channels.find((c) => c.key === src)?.label || "Careers page";
+  // The post follows the switches: every position switched on is named (5 Nov 2026).
+  const post = data ? channelPost(buildPost(listed, data.url), data.url, src) : "";
+  const directLabel = data?.direct_channel?.label || "Karnex careers page";
+  const sourceLabel = data?.channels.find((c) => c.key === src)?.label || directLabel;
 
   const doCopy = async (what: "link" | "post") => {
     const ok = await copy(what === "link" ? link : post);
@@ -137,7 +199,7 @@ export function CareersLinkModal({ toast, onClose }: { toast: ToastFn; onClose: 
           <div className="space-y-2">
             <p className="text-sm font-semibold text-secondary">Where will you post it?</p>
             <div className="flex flex-wrap gap-2" role="group" aria-label="Where will you post it">
-              {[...data.channels, { key: "", label: "Anywhere" }].map((c) => (
+              {[...data.channels, { key: "", label: directLabel }].map((c) => (
                 <button key={c.key || "any"} type="button" aria-pressed={src === c.key}
                   onClick={() => { setSrc(c.key); setCopied(null); }}
                   className={`min-h-9 rounded-full px-4 text-sm font-semibold ring-1 ring-inset transition-colors ${
@@ -190,7 +252,7 @@ export function CareersLinkModal({ toast, onClose }: { toast: ToastFn; onClose: 
                 </button>
               </div>
               <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-control bg-surface-2 p-3 font-sans text-sm leading-6 text-secondary">{post}</pre>
-              <p className="text-xs text-muted">The post names the first three positions; the link shows them all. Customer names never appear.</p>
+              <p className="text-xs text-muted">The post names every position switched on at the right — switch one off and it leaves the post. Customer names never appear.</p>
             </section>
 
             <section className="flex min-w-0 flex-col gap-1 rounded-card border border-default p-4">
@@ -226,12 +288,14 @@ export function CareersLinkModal({ toast, onClose }: { toast: ToastFn; onClose: 
             </section>
           </div>
 
+          {data.by_channel && data.by_channel.length > 0 && <ChannelStats rows={data.by_channel} />}
+
           <p className="flex gap-2 rounded-control bg-warning-soft p-3 text-sm text-primary">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" aria-hidden />
             <span>
               A position appears here by itself once RMG approves it (open for sourcing) and drops off when it is filled,
               closed or put on hold. Candidates see the RMG JD. Every application lands in that position's Applied
-              Candidates at Sourcing, marked “Applied on the careers page · {sourceLabel}” — already interested, so no
+              Candidates at Sourcing, marked “Applied via {sourceLabel}” — already interested, so no
               opening email is needed — and the position's TAs are told. TA sends them for Technical Screening.
             </span>
           </p>

@@ -834,7 +834,8 @@ export function CrmDashboardPage() {
       ) : (
         <>
           <StartHereCard />
-          {showCompanyFinance &&<CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets} />}
+          {showCompanyFinance &&<CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets}
+            showOnAccount={(me.roles ?? []).includes("Finance")} />}
           {showHiringTower && <HiringControlTower />}
           {showPoExpiry && <PoExpiryPanel />}
           {showBench && <BenchCard />}

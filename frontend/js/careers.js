@@ -5,7 +5,7 @@
 import {
   applyProblems, cleanSource, isServingNotice, filterPositions, inLocation, jdBlocks, openingsText,
   popularSkills, positionLink, postedText,
-} from "./careers_logic.js?v=2";
+} from "./careers_logic.js?v=3";
 
 const API = "/api/public/careers";
 const REFRESH_MS = 5 * 60 * 1000;

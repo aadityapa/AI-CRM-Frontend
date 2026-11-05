@@ -279,6 +279,14 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
         onClick={() => openReceipt(r, "edit")}>
         <Pencil size={15} />
       </button>
+      {r.branch_id && (
+        <button type="button" className={`${iconBtn} text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30`}
+          title={`Added to ${r.branch_name || "a branch"} by mistake? Move it to another branch`}
+          aria-label="Move to another branch"
+          onClick={() => setAssigning([r])}>
+          <MapPin size={15} />
+        </button>
+      )}
       <button type="button" className={`${iconBtn} text-muted hover:bg-danger-soft hover:!text-danger`}
         title="Remove this receipt and restore the invoice balances" aria-label="Delete receipt"
         onClick={() => setRemoving(r)}>
@@ -501,6 +509,9 @@ function AssignBranchModal({ receipts, onClose, onSaved }: {
       .catch((e: any) => setErr(e?.message || "Could not read the branches"));
   }, [customerId]);
   const total = receipts.reduce((a, r) => a + Number(r.amount || 0), 0);
+  // 5 Nov 2026: the same dialog MOVES a receipt saved on the wrong branch.
+  const current = receipts.length === 1 ? receipts[0].branch_id ?? null : null;
+  const moving = current != null;
   const save = async () => {
     if (!pick) return;
     setBusy(true);
@@ -515,9 +526,9 @@ function AssignBranchModal({ receipts, onClose, onSaved }: {
     }
   };
   return (
-    <Modal title="Set the branch that paid" onClose={onClose} medium
+    <Modal title={moving ? "Move to another branch" : "Set the branch that paid"} onClose={onClose} medium
       hero={<DialogHero icon={MapPin} tone="emerald" eyebrow="Received amount"
-        title="Which branch paid?"
+        title={moving ? `Move from ${receipts[0].branch_name || "this branch"} to…` : "Which branch paid?"}
         person={{ name: receipts[0].customer_name || `Customer #${customerId}`,
                   meta: `${receipts.length} receipt${receipts.length === 1 ? "" : "s"} · ${inr(total)}` }} />}>
       <div className="space-y-3">
@@ -529,7 +540,7 @@ function AssignBranchModal({ receipts, onClose, onSaved }: {
         )}
         {branches && branches.length > 0 && (
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Branch">
-            {branches.map((b) => (
+            {branches.filter((b) => b.id !== current).map((b) => (
               <button key={b.id} type="button" role="radio" aria-checked={pick === b.id} onClick={() => setPick(b.id)}
                 className={`flex min-w-[10rem] items-start gap-2 rounded-card border px-3 py-2 text-left text-sm transition-colors ${pick === b.id ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500 dark:bg-emerald-950/40" : "border-subtle bg-surface-1 hover:bg-surface-2"}`}>
                 <MapPin size={15} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden />
@@ -546,9 +557,15 @@ function AssignBranchModal({ receipts, onClose, onSaved }: {
             </li>
           ))}
         </ul>
+        {moving && (
+          <p className="text-xs text-muted">
+            If this receipt is already mapped to invoices of the old branch, unmap them first (open the receipt ▸ Unmap) —
+            otherwise the move is refused.
+          </p>
+        )}
         {err && <div className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{err}</div>}
       </div>
-      <DialogActions tone="emerald" icon={MapPin} label={`Set branch on ${receipts.length}`} busy={busy}
+      <DialogActions tone="emerald" icon={MapPin} label={moving ? "Move receipt" : `Set branch on ${receipts.length}`} busy={busy}
         disabled={!pick} onCancel={onClose} onConfirm={() => void save()}
         hint={pick ? undefined : "Pick the branch"} />
     </Modal>

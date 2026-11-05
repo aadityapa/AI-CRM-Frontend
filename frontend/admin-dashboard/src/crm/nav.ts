@@ -2,6 +2,7 @@
 import type { ComponentType } from "react";
 import {
   BadgeCheck,
+  ReceiptIndianRupee,
   Briefcase,
   Building2,
   CalendarClock,
@@ -78,6 +79,8 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "e-invoices", label: "E-invoices", icon: BadgeCheck, roles: ["Admin", "Finance", "Sales", "Sales_Head"] },
   // Every customer branch's received amounts in one place (16 Oct 2026).
   { path: "received-amounts", label: "Received Amount", icon: Wallet, roles: ["Finance"] },
+  // Company expenses → net revenue on the CEO dashboard (4 Nov 2026).
+  { path: "expenses", label: "Expenses", icon: ReceiptIndianRupee, roles: ["Admin", "Finance"] },
   // Financial Reports lives INSIDE Reports (Reports → Financial Reports tab)
   // and Payroll INSIDE Timesheets (Timesheets → Payroll tab) since Aug 2026 —
   // no standalone sidebar pages. Their routes stay for deep links.

@@ -30,6 +30,7 @@ import {
 import type { PeriodKind, TileTone } from "../../components/controlTower";
 import { HERO_BTN, PageHeader, type HeroAccent } from "../../components/PageHeader";
 import { useDeskData } from "./DeskWidgets";
+import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
 import { chartPalette, semanticAnchor } from "../../../design-system/tokens/tokens";
 import { fmtDateShort } from "../../../lib/datetime";
 import type { CeoPeriod } from "./CeoDashboard";
@@ -47,20 +48,37 @@ type Kpi = { key: string; label: string; value: number | string | null; format: 
 /** The table narrowing a clicked tile asked for. */
 export type TableFocus = { kpi: string; label: string; where: string | null; sort: string | null; nonce: number;
   /** A clicked chart bar narrows the table to rows mentioning it (29 Oct 2026). */
-  search?: string };
+  search?: string;
+  /** A clicked MONTH bar narrows the table to that month's rows (`month_key`, 5 Nov 2026). */
+  month?: string };
 
 /** What a bar of a drill-page chart does, in this order: open the row's own link ·
  *  zoom the page to that bar's month / quarter / FY · pick the status chip of that
  *  name · narrow the table to rows naming it. PURE (the test pins the order). */
 export type DrillBarAction =
   | { kind: "open"; path: string }
+  | { kind: "month"; month: string; where: string | null; segment: string | null }
   | { kind: "period"; anchor_month: string; period: PeriodKind }
   | { kind: "segment"; key: string }
   | { kind: "search"; text: string };
+/** What a bar does. `opts.series` is the series the bar belongs to; `opts.rows` the main
+ *  table's rows. 5 Nov 2026: a MONTH bar whose table rows carry `month_key` narrows the
+ *  table in place to that month's rows (and to the series' own field / chip) — it used
+ *  to search the table for "Sep 26", which no row contains. A month label is never
+ *  searched. */
 export function drillBarAction(row: Row, segments: { key: string; label: string }[],
-                               current: { month: string; period: PeriodKind }): DrillBarAction | null {
+                               current: { month: string; period: PeriodKind },
+                               opts: { series?: string; rows?: Row[] } = {}): DrillBarAction | null {
   for (const f of ["link", "customer_link"]) {
     if (typeof row[f] === "string" && row[f]) return { kind: "open", path: row[f] as string };
+  }
+  const key = typeof row.key === "string" ? row.key : "";
+  const rows = opts.rows ?? [];
+  if (/^\d{4}-\d{2}$/.test(key) && rows.some((r) => typeof r.month_key === "string")) {
+    const s = opts.series ?? "";
+    const segment = s && segments.some((g) => g.key === s) ? s : null;
+    const where = !segment && s && rows.some((r) => s in r) ? s : null;
+    return { kind: "month", month: key, where, segment };
   }
   const p = bucketPeriod(row.key);
   if (p && !(p.kind === current.period && p.anchor_month === current.month)) {
@@ -71,6 +89,7 @@ export function drillBarAction(row: Row, segments: { key: string; label: string 
   const seg = segments.find((s) => s.label.toLowerCase() === label.toLowerCase() || s.key === label);
   if (seg) return { kind: "segment", key: seg.key };
   if (/^Others/i.test(label)) return null;
+  if (p || /^[A-Z][a-z]{2} \d{2}$/.test(label)) return null;   // a month / bucket label is not text to find
   return { kind: "search", text: label };
 }
 type Series = { key: string; label: string; tone: InsightTone; stack?: string; off?: boolean };
@@ -82,7 +101,9 @@ type Row = Record<string, unknown>;
 type Table = { key: string; title: string; subtitle?: string | null; columns: InsightColumn[]; rows: Row[]; total: number; truncated: boolean };
 export type InsightPayload = {
   metric: string; tab: "finance" | "customer" | "sales" | "people"; title: string; question: string;
-  period: CeoPeriod; as_of: string; filters: { customer_id: number | null; project_id: number | null; scope: string | null; branch_id?: number | null };
+  period: CeoPeriod; as_of: string; filters: { customer_id: number | null; project_id: number | null; scope: string | null; branch_id?: number | null;
+    /** 4 Nov 2026 — Finance pages: every customer / branch / project for the scope pickers. */
+    options?: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] } | null };
   kpis: Kpi[]; charts: Chart[]; segments: Segment[]; default_segment: string | null; default_segments?: string[] | null;
   tables: Table[]; related: { metric: string; label: string; scope?: string }[]; notes: string[];
 };
@@ -136,10 +157,12 @@ export function rowHas(r: Row, field: string): boolean {
 }
 
 /** Rows of a table narrowed by the chosen chips, a clicked tile's field and the search text. */
-export function filterRows(rows: Row[], segs: string[], search: string, where: string | null = null): Row[] {
+export function filterRows(rows: Row[], segs: string[], search: string, where: string | null = null,
+                           month: string | null = null): Row[] {
   const q = search.trim().toLowerCase();
   return rows.filter((r) => {
     if (segs.length && !segs.includes(String(r.segment ?? ""))) return false;
+    if (month && r.month_key !== month) return false;
     if (where && !rowHas(r, where)) return false;
     if (!q) return true;
     return Object.entries(r).some(([k, v]) => !k.endsWith("link") && v !== null && typeof v !== "object"
@@ -258,6 +281,10 @@ export function CeoInsightPage() {
   const { data, loading, error, retry } = useDeskData<InsightPayload>(url, { live: 120_000 });
 
   const look = TAB_LOOK[data?.tab ?? "finance"];
+  // Keep the last picker lists while a new scope loads, so the dropdowns never blink.
+  const lastOptions = useRef<NonNullable<InsightPayload["filters"]["options"]> | null>(null);
+  if (data?.filters.options) lastOptions.current = data.filters.options;
+  const scopeOptions = data?.tab === "finance" || (!data && lastOptions.current) ? lastOptions.current : null;
   const atCurrent = data ? data.period.is_current || data.period.end >= new Date().toISOString().slice(0, 10)
     : state.month >= thisMonthKey();
 
@@ -280,7 +307,7 @@ export function CeoInsightPage() {
           <DateStepper month={state.month} period={state.period} atCurrent={atCurrent}
             onShift={(d) => setState((s) => ({ ...s, month: shiftMonthKey(s.month, d) }))}
             onPick={(v) => setState((s) => ({ ...s, month: v }))} />
-          {(state.customer || state.project || state.branch !== null) && (
+          {!scopeOptions && (state.customer || state.project || state.branch !== null) && (
             <button type="button" className={`${CONTROL} inline-flex items-center gap-1.5`}
               onClick={() => setState((s) => ({ ...s, customer: null, project: null, branch: null }))} title="Show the whole company">
               One {state.project ? "project" : state.branch !== null ? "branch" : "customer"} only · <span className="font-semibold text-brand-600 dark:text-brand-300">clear</span>
@@ -298,6 +325,15 @@ export function CeoInsightPage() {
             </div>
           )}
         </div>
+        {scopeOptions && (
+          <div className="mt-2">
+            <ScopeFilterBar options={scopeOptions} customerId={state.customer} projectId={state.project}
+              branchId={state.branch}
+              onCustomer={(v) => setState((s) => ({ ...s, customer: v, branch: null, project: null, q: "" }))}
+              onBranch={(v) => setState((s) => ({ ...s, branch: v, project: null, q: "" }))}
+              onProject={(v) => setState((s) => ({ ...s, project: v, q: "" }))} />
+          </div>
+        )}
       </PageHeader>
 
       {error && <ErrorBox error={error} onRetry={retry} />}
@@ -342,13 +378,18 @@ function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
   const onAll = () => { setSegs([]); setFocus(null); };
 
   // 29 Oct 2026 — a bar opens the data behind it (see `drillBarAction`).
-  const onBar = (row: Row) => {
-    const a = drillBarAction(row, d.segments, current);
+  const onBar = (row: Row, series?: string, chart?: Chart) => {
+    const a = drillBarAction(row, d.segments, current, { series, rows: d.tables[0]?.rows ?? [] });
     if (!a) return;
     if (a.kind === "open") { openBarLink(a.path); return; }
     if (a.kind === "period") { onPeriod(a.anchor_month, a.period); return; }
     if (d.tables.length === 0) return;
-    if (a.kind === "segment") { setFocus(null); setSegs([a.key]); }
+    if (a.kind === "month") {
+      const sLabel = chart?.series.find((s) => s.key === series)?.label;
+      const label = [String(row.label ?? a.month), sLabel].filter(Boolean).join(" · ");
+      setSegs(a.segment ? [a.segment] : []);
+      setFocus({ kpi: `bar:${a.month}:${series ?? ""}`, label, where: a.where, sort: a.where, nonce: Date.now(), month: a.month });
+    } else if (a.kind === "segment") { setFocus(null); setSegs([a.key]); }
     else {
       setSegs([]);
       setFocus({ kpi: `bar:${a.text}`, label: String(row.label ?? a.text), where: null, sort: null, nonce: Date.now(), search: a.text });
@@ -399,7 +440,7 @@ function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
   );
 }
 
-function ChartPanel({ c, wide = false, onBar }: { c: Chart; wide?: boolean; onBar?: (row: Row) => void }) {
+function ChartPanel({ c, wide = false, onBar }: { c: Chart; wide?: boolean; onBar?: (row: Row, series?: string, chart?: Chart) => void }) {
   const fmt = (v: number) => formatValue(v, c.format, true);
   const stacked = c.series.some((s) => s.stack);
   return (
@@ -408,7 +449,7 @@ function ChartPanel({ c, wide = false, onBar }: { c: Chart; wide?: boolean; onBa
         ? <p className="py-8 text-center text-sm text-muted">Nothing in this period.</p>
         : <FilteredBars data={c.rows} xKey={c.x_key} format={fmt} height={wide ? 300 : 260} layout={c.layout}
             rowFilter={c.rows.length > 4} stacked={stacked}
-            onBarClick={onBar ? (row) => onBar(row) : undefined}
+            onBarClick={onBar ? (row, series) => onBar(row as Row, series, c) : undefined}
             clickHint="Click a bar to see the rows behind it"
             series={c.series.map((s) => ({ key: s.key, label: s.label, color: toneHex(s.tone), stackId: s.stack, defaultOff: s.off }))} />}
     </Panel>
@@ -437,8 +478,9 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
     if (focus) { barSearch.current = focus.search ?? ""; setSearch(focus.search ?? ""); }
     else if (barSearch.current) { setSearch((cur) => (cur === barSearch.current ? "" : cur)); barSearch.current = ""; }
   }, [focus?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
-  const rows = useMemo(() => sortRows(filterRows(t.rows, segs, search, where), sort.key, sort.dir), [t.rows, segs, search, where, sort]);
-  useEffect(() => setShown(PAGE), [segs, search, sort, where]);
+  const month = focus?.month ?? null;
+  const rows = useMemo(() => sortRows(filterRows(t.rows, segs, search, where, month), sort.key, sort.dir), [t.rows, segs, search, where, month, sort]);
+  useEffect(() => setShown(PAGE), [segs, search, sort, where, month]);
   const moneyCols = t.columns.filter((c) => c.format === "money");
   const totals = useMemo(() => Object.fromEntries(moneyCols.map((c) => [c.key, rows.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)])), [rows, moneyCols]);
 
@@ -464,7 +506,7 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
           <Download size={15} aria-hidden />
         </button>
       </div>}>
-      {focus && (focus.where || focus.sort || focus.search) && (
+      {focus && (focus.where || focus.sort || focus.search || focus.month) && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-control border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-800 dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-100">
           <span>
             Showing the rows behind <strong>{focus.label}</strong> · {num(rows.length)} {rows.length === 1 ? "row" : "rows"}

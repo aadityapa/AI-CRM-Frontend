@@ -961,6 +961,8 @@ export default function CrmApp() {
     // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
     // login (Admin / CEO included) reaches received amounts from the customer branch page.
     if (n.path === "received-amounts") return me.roles.includes("Finance");
+    // Expenses (4 Nov 2026): Finance + Admin / CEO by role — the server's gate.
+    if (n.path === "expenses") return me.roles.includes("Finance") || isSuperAdmin(me.roles);
     // E-invoices (21 Oct 2026): Finance + every Sales rung + Admin / CEO, and a
     // templated login only while its template opens Invoices (the server gate).
     if (n.path === "e-invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);

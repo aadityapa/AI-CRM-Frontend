@@ -39,8 +39,19 @@ describe("drillBarAction — a bar on a drill page", () => {
   it("zooms to a month bar, but not to the month already on screen", () => {
     expect(drillBarAction({ label: "Jun 26", key: "2026-06" }, segs, here))
       .toEqual({ kind: "period", anchor_month: "2026-06", period: "month" });
+    // The month already on screen is never searched as text ("Sep 26" matched no row).
     expect(drillBarAction({ label: "Sep 26", key: "2026-09" }, segs, { month: "2026-09", period: "month" }))
-      .toEqual({ kind: "search", text: "Sep 26" });
+      .toBeNull();
+  });
+  it("narrows the table to the month's rows when they carry month_key (5 Nov 2026)", () => {
+    const rows = [{ month_key: "2026-09", received_ex: 10, segment: "paid" }, { month_key: "2026-08", received_ex: 0 }];
+    const cur = { month: "2026-09", period: "month" as const };
+    expect(drillBarAction({ label: "Sep 26", key: "2026-09" }, segs, cur, { series: "received_ex", rows }))
+      .toEqual({ kind: "month", month: "2026-09", where: "received_ex", segment: null });
+    expect(drillBarAction({ label: "Jun 26", key: "2026-06" }, segs, here, { series: "paid", rows }))
+      .toEqual({ kind: "month", month: "2026-06", where: null, segment: "paid" });
+    expect(drillBarAction({ label: "Sep 26", key: "2026-09" }, segs, cur, { series: "predicted", rows }))
+      .toEqual({ kind: "month", month: "2026-09", where: null, segment: null });
   });
   it("picks the status chip of the same name, else searches the table, never for Others", () => {
     expect(drillBarAction({ label: "Overdue" }, segs, here)).toEqual({ kind: "segment", key: "overdue" });

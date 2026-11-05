@@ -68,6 +68,7 @@ import { InterviewRoundsModal } from "../components/InterviewRoundsModal";
 import { AtsBreakdownModal } from "../components/AtsBreakdownModal";
 import { BulkActionBar } from "../components/BulkActionBar";
 import { CallNotesLine, CallNotesModal, type CallNoteSummary } from "../components/CallNotes";
+import { CandidateTypeChip } from "../lib/internalCandidate";
 import { CandidateHoldButton, HoldNote, defaultHoldSide, type CandidateHoldInfo } from "../components/CandidateHold";
 import { REQ_TERMINAL_STATUSES, dueChip, fmtRange } from "../lib/positionRows";
 import { EditApplicantModal, UploadResumeModal } from "../components/UploadResumeModal";
@@ -656,6 +657,9 @@ type ResumeRow = {
   internal_employee?: InternalEmployee | null;
   fast_track_block?: string | null;
   new_results?: NewResult[];
+  /** Internal / External (4 Nov 2026) — TA's choice, else the email / employee record. */
+  candidate_type?: "Internal" | "External" | null;
+  candidate_type_chosen?: boolean;
   /** Availability (1 Oct 2026): the application's notice period, else the
    *  candidate record's; resignation + last working day from the record. */
   notice_period?: string | null;
@@ -2719,6 +2723,10 @@ export function ResumesTab({
           // 10 a page (1 Sep 2026, user request) — the tab is a working list
           // the recruiter acts on row by row, not something to scroll.
           page, limit: 10, search: dq || undefined, applied_by: appliedBy || undefined,
+          // "Me" also keeps the candidates who applied THEMSELVES (careers page /
+          // application link, 5 Nov 2026) — no TA applied them, so they were in
+          // nobody's default list.
+          with_public: appliedBy && appliedBy === myName ? 1 : undefined,
           applied_from: appliedFrom || undefined, applied_to: appliedTo || undefined,
           dismissed: showDismissed ? 1 : undefined,
           phase: bucketPhase(stagePill),
@@ -2733,7 +2741,7 @@ export function ResumesTab({
     } finally {
       setLoading(false);
     }
-  }, [req.id, page, dq, appliedBy, appliedFrom, appliedTo, showDismissed, stagePill, bucket]);
+  }, [req.id, page, dq, appliedBy, myName, appliedFrom, appliedTo, showDismissed, stagePill, bucket]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [dq, appliedBy, appliedFrom, appliedTo, showDismissed, stagePill, bucket]);
   /* Switching bucket drops a stage chip the other list may not hold. */
@@ -3096,6 +3104,9 @@ export function ResumesTab({
           <div>
             <div className="flex flex-wrap items-center gap-1.5 font-semibold text-primary">
               {r.candidate_name}
+              {r.candidate_type === "Internal" && (
+                <CandidateTypeChip type="Internal" chosen={!!r.candidate_type_chosen} />
+              )}
               {/* Persisted duplicate hold — survives the bulk results dialog,
                   so the review queue is always findable from this list. */}
               {r.possible_duplicate_of != null && (
@@ -3290,7 +3301,7 @@ export function ResumesTab({
                 </>
               )}
             {r.over_budget && <OverBudgetChip expected={r.expected_ctc} budget={r.budget_ctc_max} />}
-            <OpeningMailChip mail={r.opening_mail} />
+            <OpeningMailChip mail={r.opening_mail} channel={(r.application_details as any)?.source_channel} />
             <HoldNote hold={r.hold} />
             {/* Why the candidacy was closed, by whom (1 Oct 2026, user rule). */}
             {r.closed_note && <ClosedNoteBox note={r.closed_note} compact />}
@@ -4241,7 +4252,7 @@ export function ResumesTab({
                   title="Filter by the TA who applied the candidate"
                 >
                   <option value="">Applied by — anyone</option>
-                  {taOptions.map((n) => <option key={n} value={n}>{n === myName ? `${n} (me)` : n}</option>)}
+                  {taOptions.map((n) => <option key={n} value={n}>{n === myName ? `${n} (me) + self-applied` : n}</option>)}
                 </select>
                 <div className="inline-flex items-center gap-1 text-xs text-muted" role="group" aria-label="Applied between">
                   <span>Applied</span>

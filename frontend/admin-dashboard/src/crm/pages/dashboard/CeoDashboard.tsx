@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
+import { fmtDateShort } from "../../../lib/datetime";
 import { ErrorBox, SkeletonText, btnSecondary, useToast } from "../../components/ui";
 import { RevenueTargetsModal } from "../../components/RevenueTargetsModal";
 import type { TargetsForModal } from "../../components/RevenueTargetsModal";
@@ -46,6 +47,10 @@ import { useDeskData } from "./DeskWidgets";
 import { BillingTracker } from "./BillingTracker";
 import { bucketLink, insightLink } from "./CeoInsightPage";
 import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
+import {
+  NetRevenuePanel, PredictedRevenuePanel, TdsCollectionPanel,
+  type ForecastData, type NetData, type TdsData,
+} from "./FinanceForecastPanels";
 
 /* ---------- payload (services/executive_dashboard.py) ---------- */
 
@@ -73,7 +78,20 @@ export type FinanceData = {
   efficiency: RevenueReportData["efficiency"];
   alerts: RevenueReportData["alerts"];
   series: RevenueReportData["series"];
-  monthly: (MonthRow & { billed: number; collected: number; cost: number; margin: number })[];
+  monthly: (MonthRow & { billed: number; collected: number; cost: number; margin: number;
+    /** 4 Nov 2026 — predicted (current month on), expenses, net revenue / profit. */
+    predicted?: number | null; expenses?: number; net_revenue?: number; net_profit?: number;
+    /** 4 Nov 2026 — received against the month's invoices, their share before GST. */
+    received_ex?: number;
+    /** 5 Nov 2026 — money by the day it arrived (mapped payments + still on account). */
+    cash_in?: number; cash_mapped?: number; cash_on_account?: number;
+    /** 5 Nov 2026 — money mapped to this month's invoices AFTER the month ended. */
+    mapping_changed_on?: string | null; mapped_later?: number })[];
+  /** 5 Nov 2026 — received amounts still on account (not counted as Collected). */
+  on_account?: OnAccount | null;
+  net?: NetData | null;
+  forecast?: ForecastData | null;
+  tds?: TdsData | null;
   by_type: { label: string; billed: number; invoices: number; share_pct: number | null }[];
   top_customers: { customer_id: number; customer: string; billed: number; share_pct: number | null }[];
   concentration: { top1_share_pct: number | null; top3_share_pct: number | null; risk: boolean; top_customer: string | null };
@@ -316,13 +334,80 @@ function Segmented<T extends string>({ value, options, onChange, label }: {
   );
 }
 
+/* ---------------------------------------------- unmapped money + counting (5 Nov 2026) */
+
+export type OnAccount = {
+  amount: number; receipts: number; oldest: string | null; oldest_days: number | null;
+  customers: { customer_id: number; customer: string; amount: number; receipts: number }[];
+  customers_total?: number; out_of_scope?: boolean;
+};
+
+/** How "How the year unfolded" places money: by the invoice's work month (the
+ *  rule the dashboard counts Collected by) or by the day the cash arrived. */
+export type CountedBy = "work" | "cash";
+export const COUNTED_BY_OPTIONS: { key: CountedBy; label: string }[] = [
+  { key: "work", label: "Work month" }, { key: "cash", label: "Cash received month" },
+];
+
+/** PURE — the months whose Collected moved because money was mapped after the
+ *  month ended (newest change first). */
+export function mappingNotes(rows: { label: string; mapping_changed_on?: string | null; mapped_later?: number }[]) {
+  return rows.filter((r) => !!r.mapping_changed_on)
+    .map((r) => ({ label: r.label, on: r.mapping_changed_on as string, amount: r.mapped_later ?? 0 }))
+    .sort((a, b) => (a.on < b.on ? 1 : a.on > b.on ? -1 : 0));
+}
+
+/** The money in Received Amount that is not on any invoice yet — never counted
+ *  as Collected until Finance maps it. */
+function OnAccountPanel({ oa, collectedLink }: { oa: OnAccount | null | undefined; collectedLink: string }) {
+  if (!oa || oa.out_of_scope) return null;
+  const has = oa.amount > 0;
+  const old = (oa.oldest_days ?? 0) > 30;
+  return (
+    <div className={`rounded-card border p-4 shadow-raised ${has ? "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10" : "border-subtle bg-surface-1"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-secondary">In Received Amount, not mapped yet</p>
+          <p className={`mt-1 text-2xl font-bold tnum ${has ? "text-amber-700 dark:text-amber-300" : "text-primary"}`}>{inrCompact(oa.amount)}</p>
+          <p className="mt-1 text-sm text-secondary">
+            {has
+              ? <>{num(oa.receipts)} received amount{oa.receipts === 1 ? "" : "s"} still on account
+                  {oa.oldest && <> · oldest from {fmtDateShort(oa.oldest)}{oa.oldest_days != null && <span className={old ? "font-semibold text-danger" : ""}> ({num(oa.oldest_days)} days)</span>}</>}.
+                  {" "}Not counted as Collected until Finance maps it to invoices.</>
+              : "Every received amount is mapped to invoices — nothing waiting."}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {has && <CrmLink to={collectedLink} className={btnSecondary}>See the list</CrmLink>}
+          <CrmLink to="received-amounts" className={`${btnSecondary} ${has ? "!border-amber-400 !text-amber-800 dark:!text-amber-200" : ""}`}>Map in Received Amount</CrmLink>
+        </div>
+      </div>
+      {has && oa.customers.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {oa.customers.map((c) => (
+            <CrmLink key={c.customer_id} to={`customers/${c.customer_id}?tab=receipts`}
+                     className="inline-flex items-center gap-1.5 rounded-pill border border-amber-300 bg-surface-1 px-2.5 py-1 text-xs hover:border-amber-500 dark:border-amber-500/40">
+              <span className="font-medium text-primary">{c.customer}</span>
+              <span className="tnum text-amber-700 dark:text-amber-300">{inrCompact(c.amount)}</span>
+              <span className="text-muted">· {num(c.receipts)}</span>
+            </CrmLink>
+          ))}
+          {(oa.customers_total ?? 0) > oa.customers.length && (
+            <span className="self-center text-xs text-muted">+{num((oa.customers_total ?? 0) - oa.customers.length)} more customers</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ZOOM_LABEL: Record<PeriodKind, string> = { month: "Monthly", quarter: "Quarterly", fy: "Yearly" };
 const ZOOM_OPTIONS = (["month", "quarter", "fy"] as PeriodKind[]).map((z) => ({ key: z, label: ZOOM_LABEL[z] }));
 const ZOOM_ROWS: Record<PeriodKind, string> = { month: "Months", quarter: "Quarters", fy: "Years" };
 
 /* ====================================================================== Finance */
 
-function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
+function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; period: CeoPeriod; showOnAccount?: boolean }) {
   const rev = revenueLink(period);
   // 27 Oct 2026 — every tile opens its own drill-down page (same period, same scope).
   const drill = (metric: string, scope?: string) => insightLink(metric, period,
@@ -341,7 +426,17 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
   const gap = target === null ? null : Math.max(0, target - h.billed);
   const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
   const cash = d.cashflow;
-  const monthly = d.monthly.filter((r) => !r.future);
+  // Past + current months, plus the months to come that carry a prediction (4 Nov 2026).
+  const monthly = d.monthly.filter((r) => !r.future || r.predicted != null)
+    .map((r) => ({ ...r, predicted: r.predicted ?? 0 }));
+  // 5 Nov 2026 — "Counted by": the invoice's work month (the dashboard's rule) or
+  // the day the cash arrived (mapped payments + money still on account).
+  const [countedBy, setCountedBy] = useState<CountedBy>("work");
+  const hasCash = d.monthly.some((r) => r.cash_in != null);
+  const byCash = countedBy === "cash" && hasCash;
+  const cashRows = monthly.filter((r) => !r.future).map((r) => ({ ...r, cash_in: r.cash_in ?? 0,
+    cash_mapped: r.cash_mapped ?? 0, cash_on_account: r.cash_on_account ?? 0 }));
+  const changed = mappingNotes(d.monthly.filter((r) => !r.future));
   const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id };
   // 29 Oct 2026 — every bar opens the drill page of its series, zoomed to that bar.
   const monthBar = (r: Record<string, unknown>, s: string) => bucketLink(moneyMetric(s), r.key, scopeIds);
@@ -373,11 +468,42 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
               sub={`${inrCompact(d.pipeline.active_po_balance)} active PO balance`} />
       </div>
 
+      {/* 0 · Money received but not on any invoice yet (5 Nov 2026) — not in Collected. */}
+      {showOnAccount && <OnAccountPanel oa={d.on_account} collectedLink={drill("collected")} />}
+
       {/* 1 · How the year unfolded — the CEO's first question, so the first chart. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint="billed · collected · people cost · margin, month by month — tick what to compare">
-        <FilteredBars data={monthly} rowFilter rowLabel="Months" format={inrCompact} barLink={monthBar}
-                      series={[{ key: "billed", label: "Billed", color: 0 }, { key: "collected", label: "Collected", color: 1 },
-                               { key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2, defaultOff: true }]} />
+      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+             hint={byCash
+               ? "cash by the day it arrived, with GST — money mapped to invoices plus money still in Received Amount; billed stays by work month"
+               : "billed · received · people cost by the invoice's work month, all before GST — received is each invoice's share before GST, so it never stands above billed; predicted = what the deployed team should bill"}
+             action={hasCash ? <Segmented value={countedBy} options={COUNTED_BY_OPTIONS} onChange={setCountedBy} label="Counted by" /> : undefined}>
+        {byCash ? (
+          <FilteredBars key="cash" data={cashRows} rowFilter rowLabel="Months" format={inrCompact}
+                        barLink={(r, s) => monthBar(r, s === "cash_on_account" ? "collected" : s === "billed" ? "billed" : "collected")}
+                        series={[{ key: "billed", label: "Billed (work month)", color: 0, defaultOff: true },
+                                 { key: "cash_in", label: "Cash received", color: 1 },
+                                 { key: "cash_mapped", label: "Mapped to invoices", color: 2 },
+                                 { key: "cash_on_account", label: "Still on account", color: 5 }]} />
+        ) : (
+          <FilteredBars key="work" data={monthly} rowFilter rowLabel="Months" format={inrCompact}
+                        barLink={(r, s) => monthBar(r, s === "predicted" || s === "received_ex" ? "billed" : s)}
+                        // 5 Nov 2026 (user ask): Expenses, Net revenue and Margin left this chart —
+                        // they live in the Net revenue panel and the Gross margin dial.
+                        series={[{ key: "billed", label: "Billed", color: 0 }, { key: "received_ex", label: "Received (excl. GST)", color: 1 },
+                                 { key: "collected", label: "Collected with GST", color: 7, defaultOff: true },
+                                 { key: "cost", label: "People cost", color: 6 },
+                                 { key: "predicted", label: "Predicted", color: 4 }]} />
+        )}
+        {!byCash && changed.length > 0 && (
+          <p className="mt-3 rounded-control border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+            <span className="font-semibold">Collected changed after the month closed:</span>{" "}
+            {changed.slice(0, 4).map((c, i) => (
+              <span key={c.label}>{i > 0 && " · "}{c.label} — {inrCompact(c.amount)} mapped on {fmtDateShort(c.on)}</span>
+            ))}
+            {changed.length > 4 && <> · +{changed.length - 4} more</>}
+            . Money mapped later moves into the month of its invoice's work.
+          </p>
+        )}
       </Panel>
 
       {/* 2 · Where we stand against target, collections and margin — the dials, right under the trend. */}
@@ -413,6 +539,13 @@ function FinanceTab({ d, period }: { d: FinanceData; period: CeoPeriod }) {
             <MiniStat k="Deployed heads" v={num(d.efficiency.deployed_heads)} hint={m.heads_without_ctc ? `${m.heads_without_ctc} without a CTC — cost understated` : undefined} tone={m.heads_without_ctc ? "warn" : undefined} />
           </div>
         </Panel>
+      </div>
+
+      {/* 2b · What is coming (4 Nov 2026): predicted revenue, net revenue, TDS. */}
+      <PredictedRevenuePanel f={d.forecast} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <NetRevenuePanel net={d.net} monthly={d.monthly} />
+        <TdsCollectionPanel tds={d.tds} />
       </div>
 
       {/* 3 · Where the money is — four bar charts, each with its own ticks. */}
@@ -1281,9 +1414,11 @@ export function PeopleTab({ d, period, drill: canDrill = false }: { d: PeopleDat
  * tab alone (the server refuses the others). `canSetTargets` — Finance + Admin / CEO set the revenue targets;
  * Sales only reads them.
  */
-export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
+export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccount = false }: {
   tabs?: CeoTab[];
   canSetTargets?: boolean;
+  /** 5 Nov 2026 (user rule): the "not mapped yet" panel is Finance's work — Finance only, never Admin / CEO. */
+  showOnAccount?: boolean;
 } = {}) {
   const shownTabs = allowed ? TABS.filter((t) => allowed.includes(t.key)) : TABS;
   const single = shownTabs.length === 1;
@@ -1423,7 +1558,7 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true }: {
       {!isBilling && !data && loading && !error && (
         <div className="grid gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="rounded-card border border-subtle bg-surface-1 p-4"><SkeletonText lines={2} /></div>)}</div>
       )}
-      {!isBilling && data && data.tab === "finance" && <FinanceTab d={data.data as FinanceData} period={data.period} />}
+      {!isBilling && data && data.tab === "finance" && <FinanceTab d={data.data as FinanceData} period={data.period} showOnAccount={showOnAccount} />}
       {!isBilling && data && data.tab === "customer" && <CustomerTab d={data.data as CustomerData} period={data.period} />}
       {!isBilling && data && data.tab === "sales" && <SalesTab d={data.data as SalesData} period={data.period} />}
       {!isBilling && data && data.tab === "people" && <PeopleTab d={data.data as PeopleData} period={data.period} drill />}

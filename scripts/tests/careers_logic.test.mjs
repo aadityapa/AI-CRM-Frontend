@@ -76,3 +76,10 @@ test("serving notice needs a last working day in range", async () => {
   assert.deepEqual(applyProblems({ ...base, notice_period: "Serving notice", last_working_day: "2026-11-20" }), []);
   assert.deepEqual(applyProblems({ ...base, notice_period: "30 days" }), []);
 });
+
+test("a position open in two cities shows under each", async () => {
+  const { inLocation } = await import("../../frontend/js/careers_logic.js");
+  const ps = [{ id: 1, city: "Bangalore", cities: ["Bangalore", "Chennai"] }, { id: 2, city: "Pune" }];
+  assert.deepEqual(inLocation(ps, "Chennai").map((p) => p.id), [1]);
+  assert.deepEqual(inLocation(ps, "pune").map((p) => p.id), [2]);
+});

@@ -43,13 +43,23 @@ export type OpeningMail = {
   via?: "careers" | "apply_link" | null;
 };
 
+/** PURE — the careers channel words; the old "Careers page" default reads as the
+ *  Karnex careers page (the plain link with no `?src=`). */
+export function careersChannel(raw: string | null | undefined): string {
+  const s = (raw || "").trim();
+  if (!s || /^careers page$/i.test(s)) return "";
+  return s;
+}
+
 /** PURE — the chip's words for the opening-email state. */
-export function openingMailText(mail: OpeningMail, ago = ""): string {
+export function openingMailText(mail: OpeningMail, ago = "", channel?: string | null): string {
   if (mail.state === "sent") return `Opening email sent${ago ? ` · ${ago}` : ""} — awaiting reply`;
   if (mail.state === "interested") {
     if (mail.via === "careers") {
-      const ch = mail.note?.match(/careers page \(([^)]+)\)/)?.[1];
-      return `Applied on the careers page${ch ? ` · ${ch}` : ""} — interested`;
+      // 5 Nov 2026 — always name where they came from: the row's stored
+      // `source_channel` first, else the note; a plain link = "Karnex careers page".
+      const ch = careersChannel(channel) || careersChannel(mail.note?.match(/careers page \(([^)]+)\)/)?.[1]);
+      return `Applied via ${ch || "Karnex careers page"} — interested`;
     }
     if (mail.via === "apply_link") return "Applied via the application link — interested";
     return "Replied: interested";
@@ -132,6 +142,9 @@ export type ClosedNote = {
  *  Rejected filter shows it. */
 export function ClosedNoteBox({ note, compact }: { note: ClosedNote; compact?: boolean }) {
   const withdrew = note.status === "Self_Withdrawn";
+  /* RMG / GM's Reject at Technical Screening keeps the stage; the server sends the
+     screening note as `RMG_Screening` (4 Nov 2026). */
+  const atScreening = note.status === "RMG_Screening";
   const when = note.at ? new Date(note.at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
   const who = [note.by, when].filter(Boolean).join(" · ");
   return (
@@ -140,10 +153,12 @@ export function ClosedNoteBox({ note, compact }: { note: ClosedNote; compact?: b
       : "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200"}`}
       title={who ? `${withdrew ? "Recorded" : "Rejected"} by ${who}` : undefined}>
       <div className="font-semibold">
-        {withdrew ? "Withdrew" : "Rejected"}{who ? ` — ${who}` : ""}
+        {withdrew ? "Withdrew" : atScreening ? "Rejected at Technical Screening" : "Rejected"}{who ? ` — ${who}` : ""}
       </div>
-      {note.reason && (
+      {note.reason ? (
         <div className={`mt-0.5 leading-relaxed ${compact ? "line-clamp-2" : ""}`}>{note.reason}</div>
+      ) : atScreening && (
+        <div className="mt-0.5 italic opacity-80">No reason was written.</div>
       )}
     </div>
   );
@@ -205,7 +220,7 @@ export function taDecisionsFor(row: {
 
 /** "Opening email sent · 2 d ago" / "Interested" / "Not interested" — the
  *  state of the opening email on a row, under the Status. */
-export function OpeningMailChip({ mail }: { mail?: OpeningMail | null }) {
+export function OpeningMailChip({ mail, channel }: { mail?: OpeningMail | null; channel?: string | null }) {
   if (!mail) return null;
   const when = mail.at ? new Date(mail.at) : null;
   const days = when ? Math.max(0, Math.floor((Date.now() - when.getTime()) / 86_400_000)) : null;
@@ -214,7 +229,7 @@ export function OpeningMailChip({ mail }: { mail?: OpeningMail | null }) {
     sent: { cls: "bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800",
       icon: <Mail size={11} aria-hidden />, text: openingMailText(mail, ago) },
     interested: { cls: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-800",
-      icon: <ThumbsUp size={11} aria-hidden />, text: openingMailText(mail, ago) },
+      icon: <ThumbsUp size={11} aria-hidden />, text: openingMailText(mail, ago, channel) },
     not_interested: { cls: "bg-rose-50 text-rose-800 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-200 dark:ring-rose-800",
       icon: <ThumbsDown size={11} aria-hidden />, text: "Replied: not interested" },
   }[mail.state];

@@ -22,6 +22,7 @@ import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard
 import { SearchableSelect } from "../components/SearchableSelect";
 import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
 import { toDateKey } from "../lib/calendarDates";
+import { ReleaseCell } from "../components/ReleasePlanPanel";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -66,6 +67,8 @@ type PeRow = {
   is_exit?: boolean;
   exit_date?: string | null;
   billing_date?: string | null;
+  /** Planned release the customer gave (0152) — a plan, not an exit. */
+  release_date?: string | null;
   leave_balance_total?: number | null;
   po_status?: "ok" | "warn_80" | "blocked" | string | null;
   po_utilization_pct?: number | null;
@@ -731,7 +734,15 @@ export function ProjectEmployeesPage({ embedded = false }: { embedded?: boolean 
       key: "is_exit", label: "Is exit",
       render: (r) => <StatusBadge status={r.is_exit ? "Exited" : r.is_active ? "Active" : "Inactive"} />,
     },
-  ], [projects, customers]);
+    {
+      key: "release_date", label: "Planned release",
+      render: (r) => (
+        <ReleaseCell peId={r.id} employeeName={r.employee_name || `Employee #${r.employee_id}`}
+          releaseDate={r.release_date} onboardingDate={r.onboarding_date}
+          isExit={!!r.is_exit} onSaved={load} toast={notify} />
+      ),
+    },
+  ], [projects, customers, load, notify]);
 
   return (
     <div>

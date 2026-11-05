@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot, CheckCircle2, ClipboardCheck, FileText, ScanLine, Sparkles,
-  UploadCloud, Users, X, type LucideIcon,
+  UploadCloud, Users, Wand2, X, type LucideIcon,
 } from "lucide-react";
 
 import { crmDelete, crmGet, crmPatch, crmPost, crmUpload } from "../api";
@@ -198,6 +198,32 @@ export function JdSkillsModal({
   };
   const jdFileOnRecord = hasJdFile || jdFiles.length > 0;
 
+  /* The Karnex JD (5 Nov 2026, user ask): drafted on the server from the
+     CUSTOMER's JD on the opportunity + the position's facts, in the Karnex
+     layout, the customer's name removed. RMG takes it as is or edits it; it
+     replaces written text only after asking. */
+  const [drafting, setDrafting] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<{ text: string; note: string } | null>(null);
+  const applyDraft = (text: string, note: string) => {
+    setRmgJdText(text); setReadFrom("Karnex JD draft"); setPendingDraft(null); toast(note);
+  };
+  const buildDraft = async () => {
+    setErr(""); setDrafting(true);
+    try {
+      const res = await crmGet<{ text: string; source: string; has_customer_jd: boolean }>(
+        `/api/requirements/${req.id}/karnex-jd/draft`);
+      const text = res.data?.text || "";
+      const note = res.message || "Karnex JD drafted — check it and change what you need";
+      if (!text.trim()) { setErr("Nothing to draft from yet — add the customer's JD on the opportunity first."); return; }
+      if (rmgJdText.trim() && rmgJdText.trim() !== text.trim()) setPendingDraft({ text, note });
+      else applyDraft(text, note);
+    } catch (e: any) {
+      setErr(e?.message || "Could not draft the Karnex JD");
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     fetchAllMaster<any>("/api/skills").then((rows) => { if (!cancelled) setSkillOpts(rows); }).catch(() => {});
@@ -329,6 +355,27 @@ export function JdSkillsModal({
                   </li>
                 ))}
               </ul>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <Wand2 size={18} className="shrink-0 text-emerald-700 dark:text-emerald-300" aria-hidden />
+              <span className="min-w-0 flex-1 text-xs text-emerald-900 dark:text-emerald-100">
+                <b className="block text-sm">Create the Karnex JD from the customer's JD</b>
+                Copies the responsibilities, skills, experience and education across in the Karnex layout, with the
+                position's facts on top and the customer's name removed. Edit anything before you save.
+              </span>
+              <button type="button" disabled={drafting} onClick={() => void buildDraft()}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-control bg-emerald-600 px-3 py-2 text-xs font-bold text-[#fff] hover:bg-emerald-700 disabled:opacity-60">
+                <Wand2 size={14} aria-hidden /> {drafting ? "Drafting…" : rmgJdText.trim() ? "Build again" : "Build Karnex JD"}
+              </button>
+            </div>
+            {pendingDraft && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                <span className="min-w-0 flex-1">The JD box already has text. Replace it with the Karnex JD draft?</span>
+                <button type="button" onClick={() => applyDraft(pendingDraft.text, pendingDraft.note)}
+                  className="rounded-full bg-amber-600 px-3 py-1 font-bold text-[#fff] hover:bg-amber-700">Replace</button>
+                <button type="button" onClick={() => setPendingDraft(null)}
+                  className="rounded-full px-3 py-1 font-semibold ring-1 ring-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40">Keep mine</button>
+              </div>
             )}
             <div className="mt-3">
               <div className="mb-1.5 flex items-center justify-between gap-2">

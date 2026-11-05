@@ -10,7 +10,8 @@
  * a GM custom role passes through the screener gate exactly like RMG.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Flag, UserCheck, UserPlus, Users } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Flag, Sparkles, UserCheck, UserPlus, Users } from "lucide-react";
 
 import { crmGet, crmPatch, crmPut } from "../api";
 import { useHasRole } from "../CrmApp";
@@ -33,7 +34,53 @@ export type TaAssignment = {
 
 /** `stale` (14 Oct 2026): someone already on the team who is no longer an
  *  active TA login — listed so they can be unticked, never offered fresh. */
-export type TaOption = { id: number; name: string; stale?: boolean };
+export type TaOption = { id: number; name: string; stale?: boolean; workload?: Workload | null; suggested?: boolean };
+
+/** How busy a TA / Hiring Manager is (5 Nov 2026, `services/team_workload.py`). */
+export type Workload = {
+  active_positions: number;
+  open_headcount: number;
+  live_candidates: number;
+  level: "light" | "moderate" | "heavy";
+  last_assigned_at?: string | null;
+  last_activity_at?: string | null;
+  last_activity?: string;
+  recent: { requirement_id: number; req_number?: string; opportunity_id?: number | null; opp_id?: string | null;
+            title?: string | null; customer?: string | null; status?: string; active?: boolean; assigned_at?: string | null }[];
+};
+
+export const LEVEL_LOOK: Record<Workload["level"], { word: string; dot: string; chip: string }> = {
+  light: { word: "Light load", dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:ring-emerald-800" },
+  moderate: { word: "Moderate load", dot: "bg-amber-500", chip: "bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-800" },
+  heavy: { word: "Heavy load", dot: "bg-rose-500", chip: "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-900/40 dark:text-rose-200 dark:ring-rose-800" },
+};
+
+/** "2 positions · 14 candidates" (TA) / "… · 3 waiting for you" (HM). PURE. */
+export function workloadLine(w: Workload | null | undefined, kind: TeamKind = "ta"): string {
+  if (!w) return "";
+  const p = `${w.active_positions} active position${w.active_positions === 1 ? "" : "s"}`;
+  const c = kind === "hm"
+    ? `${w.live_candidates} waiting for review`
+    : `${w.live_candidates} live candidate${w.live_candidates === 1 ? "" : "s"}`;
+  return `${p} · ${c}`;
+}
+
+/** "6 h ago", "3 d ago", "today" — a short "when". PURE. */
+export function agoShort(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return "";
+  const ms = now.getTime() - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "";
+  const h = Math.floor(ms / 3_600_000);
+  if (h < 1) return "just now";
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return d < 60 ? `${d} d ago` : `${Math.floor(d / 30)} mo ago`;
+}
+
+/** The suggested choice not yet picked, or null. PURE. */
+export function suggestedPick(options: TaOption[], picked: Set<number>): TaOption | null {
+  return options.find((o) => o.suggested && !picked.has(o.id)) ?? null;
+}
 
 /** The picker's choices: the active TA logins plus anyone already on the team
  *  who is no longer one (deactivated / TA role removed). Without them the
@@ -172,10 +219,14 @@ export function TaPicker({ options, picked, onToggle, kind = "ta" }: {
 }) {
   const t = TEAM[kind];
   const [q, setQ] = useState("");
+  const [hover, setHover] = useState<{ o: TaOption; rect: DOMRect } | null>(null);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return needle ? options.filter((o) => o.name.toLowerCase().includes(needle)) : options;
   }, [options, q]);
+  const suggestion = suggestedPick(options, picked);
+  const hasLoads = options.some((o) => o.workload);
+  const show = (o: TaOption, el: HTMLElement) => { if (o.workload) setHover({ o, rect: el.getBoundingClientRect() }); };
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
@@ -187,6 +238,24 @@ export function TaPicker({ options, picked, onToggle, kind = "ta" }: {
                  onChange={(e) => setQ(e.target.value)} aria-label={`Find a ${t.word}`} />
         )}
       </div>
+      {/* 5 Nov 2026 — advice only: the least busy person, one click to tick. */}
+      {suggestion && (
+        <div className="flex flex-wrap items-center gap-2 rounded-card border border-purple-200 bg-purple-50 px-3 py-2 text-sm text-purple-900 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-100">
+          <Sparkles size={15} aria-hidden className="shrink-0" />
+          <span className="min-w-0 flex-1">
+            Suggested: <strong>{suggestion.name}</strong>
+            {suggestion.workload && <span className="text-purple-700 dark:text-purple-300"> — lightest load ({workloadLine(suggestion.workload, kind)})</span>}
+            <span className="block text-[11px] text-purple-700/80 dark:text-purple-300/80">Not required — pick whoever fits the position best.</span>
+          </span>
+          <button type="button" onClick={() => onToggle(suggestion.id)}
+            className="rounded-full bg-purple-600 px-3 py-1 text-xs font-bold text-[#fff] hover:bg-purple-700">
+            Pick {suggestion.name.split(/\s+/)[0]}
+          </button>
+        </div>
+      )}
+      {hasLoads && (
+        <p className="text-[11px] text-muted">Hover a name to see how busy they are, their last activity and the 5 positions they got most recently.</p>
+      )}
       {options.length === 0 ? (
         <p className="rounded-card border border-dashed border-subtle px-3 py-2 text-sm text-muted">
           {kind === "hm"
@@ -197,17 +266,31 @@ export function TaPicker({ options, picked, onToggle, kind = "ta" }: {
         <div className="grid max-h-64 grid-cols-1 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
           {shown.map((o) => {
             const on = picked.has(o.id);
+            const w = o.workload;
+            const look = w ? LEVEL_LOOK[w.level] ?? LEVEL_LOOK.light : null;
             return (
               <label key={o.id}
+                onMouseEnter={(e) => show(o, e.currentTarget)} onMouseLeave={() => setHover(null)}
+                onFocus={(e) => show(o, e.currentTarget)} onBlur={() => setHover(null)}
                 className={`flex cursor-pointer items-center gap-2 rounded-card border px-2.5 py-2 text-sm transition ${on
                   ? "border-indigo-300 bg-indigo-50 text-indigo-900 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200"
-                  : "border-subtle bg-surface-1 text-primary hover:bg-surface-2"}`}>
+                  : o.suggested ? "border-purple-300 bg-surface-1 text-primary hover:bg-surface-2 dark:border-purple-700"
+                    : "border-subtle bg-surface-1 text-primary hover:bg-surface-2"}`}>
                 <input type="checkbox" className="h-4 w-4" checked={on} onChange={() => onToggle(o.id)} />
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[10px] font-bold text-secondary">
+                <span className="relative grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-2 text-[10px] font-bold text-secondary">
                   {initials(o.name)}
+                  {look && <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#fff] dark:ring-slate-900 ${look.dot}`} aria-hidden />}
                 </span>
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{o.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate font-medium">{o.name}</span>
+                    {o.suggested && (
+                      <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-900/50 dark:text-purple-200">
+                        Suggested
+                      </span>
+                    )}
+                  </span>
+                  {w && <span className="block truncate text-[11px] text-muted">{workloadLine(w, kind)}</span>}
                   {o.stale && (
                     <span className="block text-[11px] font-semibold text-amber-700 dark:text-amber-300">
                       No longer an active {t.word} — untick to remove
@@ -220,7 +303,64 @@ export function TaPicker({ options, picked, onToggle, kind = "ta" }: {
           {shown.length === 0 && <p className="text-sm text-muted">No {t.word} matches “{q}”.</p>}
         </div>
       )}
+      {hover?.o.workload && <WorkloadCard o={hover.o} w={hover.o.workload} rect={hover.rect} kind={kind} />}
     </div>
+  );
+}
+
+/** The hover card beside a name (5 Nov 2026). Portalled with fixed coordinates
+ *  so the scrolling grid never clips it; flips left / up near the edges. */
+function WorkloadCard({ o, w, rect, kind }: { o: TaOption; w: Workload; rect: DOMRect; kind: TeamKind }) {
+  const W = 320;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const left = rect.right + 8 + W < vw ? rect.right + 8 : Math.max(8, rect.left - W - 8);
+  const top = Math.max(8, Math.min(rect.top, vh - 340));
+  const look = LEVEL_LOOK[w.level] ?? LEVEL_LOOK.light;
+  return createPortal(
+    <div role="tooltip" style={{ position: "fixed", left, top, width: W, zIndex: 1000 }}
+      className="pointer-events-none rounded-card border border-subtle bg-surface-1 p-3 text-xs text-primary shadow-overlay">
+      <div className="flex items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-600 text-[11px] font-bold text-[#fff]">{initials(o.name)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold">{o.name}</div>
+          <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${look.chip}`}>{look.word}</span>
+          {o.suggested && <span className="ml-1 inline-flex rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-900/50 dark:text-purple-200">Suggested</span>}
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
+        {[
+          ["Active positions", w.active_positions],
+          ["Open heads", w.open_headcount],
+          [kind === "hm" ? "Waiting review" : "Live candidates", w.live_candidates],
+        ].map(([l, v]) => (
+          <div key={String(l)} className="rounded-control bg-surface-2 px-1 py-1.5">
+            <div className="text-base font-bold tabular-nums">{v}</div>
+            <div className="text-[10px] text-muted">{l}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-[11px] text-secondary">
+        <strong className="text-primary">Last activity:</strong>{" "}
+        {w.last_activity_at ? <>{w.last_activity || "Activity"} · {agoShort(w.last_activity_at)}</> : "None recorded yet"}
+      </div>
+      <div className="mt-2 text-[10px] font-bold uppercase tracking-wide text-muted">Most recent opportunities</div>
+      {w.recent.length === 0 ? (
+        <p className="mt-1 text-[11px] text-muted">Not on any position yet.</p>
+      ) : (
+        <ul className="mt-1 space-y-1">
+          {w.recent.map((r) => (
+            <li key={r.requirement_id} className="flex items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.active ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden />
+              <span className="shrink-0 font-mono text-[10px] text-muted">{r.opp_id || r.req_number}</span>
+              <span className="min-w-0 flex-1 truncate">{r.title}{r.customer ? ` · ${r.customer}` : ""}</span>
+              <span className="shrink-0 text-[10px] text-muted">{agoShort(r.assigned_at)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>,
+    document.body,
   );
 }
 

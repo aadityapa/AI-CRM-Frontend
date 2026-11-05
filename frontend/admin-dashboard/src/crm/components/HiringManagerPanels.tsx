@@ -165,6 +165,9 @@ const SPEC: Record<HmKind, Record<"approve" | "reject", DecisionSpec>> = {
 };
 
 /** Approve + Reject buttons for one pending HM decision (profile page or a list row). */
+/** 5 Nov 2026: the candidate review / sign-off approvals are gone (server too). */
+export const HM_CANDIDATE_GATES_OFF = true;
+
 export function HmDecisionButton({ profileId, kind, candidateName, toast, onDone, compact }: {
   profileId: number; kind: HmKind; candidateName: string; toast: ToastFn; onDone: () => void; compact?: boolean;
 }) {
@@ -210,7 +213,9 @@ export function HmCandidateGate({ info, profileId, stage, candidateName, toast, 
   const me = useMe();
   const mayReview = useCanApprove("profile.hm_review");
   const maySign = useCanApprove("profile.hm_signoff");
-  if (!info) return null;
+  // 5 Nov 2026 (user decision): the HM's candidate review and sign-off were
+  // removed on the server — the card is no longer shown.
+  if (HM_CANDIDATE_GATES_OFF || !info) return null;
   const mine = isHmOf(me, info.hiring_managers);
   const steps: { kind: HmKind; label: string; step: HmStep; due: boolean; may: boolean }[] = [
     { kind: "review", label: "Review before the customer", step: info.review,

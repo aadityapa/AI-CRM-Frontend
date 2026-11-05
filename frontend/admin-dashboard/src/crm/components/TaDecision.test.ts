@@ -73,7 +73,12 @@ describe("a candidate who applied themselves (3 Nov 2026)", () => {
   it("names the door they came through", () => {
     expect(openingMailText({ state: "interested", via: "careers",
       note: "Applied through the Karnex careers page (LinkedIn) — already interested" }))
-      .toBe("Applied on the careers page · LinkedIn — interested");
+      .toBe("Applied via LinkedIn — interested");
+    // 5 Nov 2026 — the row's stored channel wins; no channel = the Karnex careers page.
+    expect(openingMailText({ state: "interested", via: "careers", note: "" }, "", "Naukri"))
+      .toBe("Applied via Naukri — interested");
+    expect(openingMailText({ state: "interested", via: "careers", note: "" }, "", "Careers page"))
+      .toBe("Applied via Karnex careers page — interested");
     expect(openingMailText({ state: "interested", via: "apply_link" }))
       .toBe("Applied via the application link — interested");
     expect(openingMailText({ state: "interested" })).toBe("Replied: interested");

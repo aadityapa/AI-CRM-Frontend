@@ -6,7 +6,19 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 3 Nov 2026 (Karnex Careers page at `/careers` + the CRM "Careers link" button). **State:** `tsc` green;
+**Last updated:** 5 Nov 2026, last (the unmapped-money panel shows to Finance only, not Admin / CEO; Margin · Expenses ·
+Net revenue removed from "How the year unfolded"). Before that: (CEO Finance tab: "In Received Amount, not mapped yet" panel, "Counted by: Work
+month / Cash received month" switch and a "Collected changed after the month closed" note on "How the year unfolded";
+careers post lists every switched-on position; HM candidate card off; move a receipt's branch). Later 5 Nov: "What
+happened" diagnosis panel on the Integrity row; TA's "Applied by = me" keeps self-applied careers candidates. Earlier
+5 Nov: month bars on drill pages narrow the table to that month; Release date / Extension on the
+green project band; workload hover card + suggested pick in Assign TAs / HM; careers channel on Applied Candidates +
+channel analysis; "Build Karnex JD" + PDF / Word download. Run late on 5 Nov (shell back): `tsc` green, vitest 392 —
+only the two known failures (`brand.test`, `opportunitySchema` "Remote").
+Earlier: 4 Nov 2026, later (Received excl. GST beside billed, Predicted every month, bank / TDS tiles +
+filters on the Finance drill pages, release date on the Project Team tab + Project Employees list + team release).
+Earlier the same day: release / extension panel, Expenses page, predicted revenue · net revenue · TDS on the
+Finance tab, Internal / External candidate, Reopen & resume, clean careers cities. **State:** `tsc` green;
 vitest green on the touched files; nothing committed since `f807e80`.
 
 **Project:** **Karnex Orbit**, Karnex's AI interview platform plus the staffing CRM/ERP. This repo is its two front-ends.
@@ -37,6 +49,8 @@ vitest green on the touched files; nothing committed since `f807e80`.
   `crm/components/invoice/RecordPaymentDialog.tsx`; each credit on account opens its own Map invoices in place.
 - Finance filters have a Branch: `ScopeFilterBar` takes `branchId` / `onBranch` (projects follow the branch); the
   Customer ledger and Who owes us pick a branch per customer.
+- Internal / External: `crm/lib/internalCandidate.tsx` (`isCompanyEmail`, `effectiveType`, `CandidateTypeChip`)
+  is the one client rule; the server decides.
 - Every dashboard chart is clickable: a new `FilteredBars` passes `barLink` (a CRM path) or `onBarClick` (an in-place
   filter).
 
@@ -2645,6 +2659,33 @@ received · due, PURE `hitMessage` ("Nothing received against this invoice yet",
 empty text names what the search reads. (3) My Tasks search (`taskFilters.filterItems`) drops the same wrapping
 punctuation word by word.
 
+**5 Nov 2026 (night) — careers post follows the switches; HM candidate card off; move a receipt's branch (server half
+in B-V2 `CLAUDE.md`; tests run later that night):** `crm/lib/careersLink.buildPost(listed, url)` — the Careers link's ready-to-paste post
+names EVERY position switched on (no "…and N more"). `HiringManagerPanels.HM_CANDIDATE_GATES_OFF = true` hides
+`HmCandidateGate` (the review / sign-off approvals were removed). Received Amount rows with a branch get an amber
+"Move to another branch" icon → `AssignBranchModal` in move mode (current branch left out of the choices).
+
+**5 Nov 2026 (latest) — unmapped money on the Finance tab + "Counted by" switch (`crm/pages/dashboard/
+mappingNotes.test.ts` 2, `WorkMonth.test.ts` re-pinned for `partially_paid`; server half in B-V2 `CLAUDE.md`):**
+`CeoDashboard.tsx` Finance tab: (1) **`OnAccountPanel`** right under the tiles, from the server's `on_account` — amber
+"In Received Amount, not mapped yet ₹x · N received amounts · oldest from <date> (N days, red past 30) · not counted as
+Collected until Finance maps it", **See the list** (drill page Collected, whose on-account table lists them) and **Map in
+Received Amount** (`received-amounts`), plus a chip per top customer → `customers/{id}?tab=receipts`; a green "nothing
+waiting" line when empty; hidden for a single-project scope. (2) **"How the year unfolded"** gets a `Segmented`
+**Counted by: Work month / Cash received month** (`COUNTED_BY_OPTIONS`, shown when rows carry `cash_in`): cash view =
+Cash received · Mapped to invoices · Still on account (Billed off by default), each bar opening the Collected / Billed drill
+page for that month. (3) In the work-month view a sky note "Collected changed after the month closed: Sep 26 — ₹x mapped
+on 30 Oct …" from PURE exported `mappingNotes(rows)` (newest first, max 4 + "+N more").
+
+**5 Nov 2026 (last) — the unmapped-money panel is Finance's only; "How the year unfolded" trimmed (UI only):** user rule
+— (1) `CeoDashboard` gains `showOnAccount` (default false) → `FinanceTab` renders `OnAccountPanel` only then;
+`CrmDashboard` passes `showOnAccount={me.roles.includes("Finance")}` on the Finance / Sales mount, the Admin / CEO mount
+passes nothing. ⚠️ Use `me.roles`, not `useHasRole("Finance")` — `useHasRole` is true for Admin / CEO. (2) The work-month
+"How the year unfolded" chart drops **Margin, Expenses and Net revenue** (they stay in the Gross margin dial and the Net
+revenue panel); series now Billed · Received (excl. GST) · Collected with GST (off) · People cost · Predicted. Customer,
+Sales, People and Billing Tracker have no role-only panel — unchanged. Verified: tsc green, vitest CeoDashboard 4 +
+mappingNotes 2.
+
 ## 2. Orientation map (admin-dashboard/src)
 
 ```
@@ -3979,3 +4020,83 @@ Then (user ask, screenshots) the apply form: choosing **Serving notice** shows a
 (sent as "N LPA"). The header's "K + karnex" mark is replaced by the KARNEX wordmark of `assets/karnex-logo.svg` (inline,
 `textLength` pins its width whatever the fallback font; a light copy in the footer). `careers.js?v=2`, and the logic import
 carries `?v=2` too. Logic test now 7.
+
+**4 Nov 2026 — nine asks in one round (`crm/nov4.test.ts` 4; careers logic test 8; server half + migration 0152 in B-V2
+`CLAUDE.md`):** (1) **Careers locations**: positions carry the server's clean `cities`; `careers_logic.inLocation`
+matches any of them case-insensitively; `careers.js?v=3` and the logic import `?v=3`. (3) **Release / extension**:
+`crm/components/ReleasePlanPanel.tsx` on the project-employee page above the tabs — planned release date, days-left chip
+(sky / amber ≤ 30 / rose ≤ 5), "Extended N×", who recorded it, which reminders are still to go out, the monthly amount
+that stops billing; **Release date** (amber) · **Extension** (emerald) · **Remove** for Sales Manager / Sales Head / RMG /
+GM (`RELEASE_ROLES`), each a dialog-kit pop-up with quick dates (end of this / next month, 30 / 60 / 90 days; +1 / 3 / 6
+months / 1 year for an extension), "when did the customer tell you", note picks and what happens; history list. PURE
+`isoPlus`, `monthEnd`, `remindersLeft`, `releaseDateProblem`; `ProjectEmployeeDetail.monthlyRateOf`. (4) **Internal /
+External**: Upload Resume form gains "Internal or external?" chips (defaults from the email: karnex.in = internal; sent
+as `candidate_type` only when TA chose); Applied Candidates prints a teal **Internal** chip by the name; the profile page
+shows `CandidateTypeControl` (type + why, and a select Auto / Internal / External for TA · RMG · Sales · Sales Head · HR
+→ `PUT …/candidate-type`). (5–7) **Finance tab** (`pages/dashboard/FinanceForecastPanels.tsx`): `PredictedRevenuePanel`
+(Monthly · Quarterly · Yearly; five stats, bars predicted · billed so far · lost to releases · customers · projects, the
+bucket table with customers / projects / people / releasing, planned releases list), `NetRevenuePanel` (billed ·
+expenses · net revenue · net profit, monthly bars, biggest categories) and `TdsCollectionPanel` (deducted · received ·
+pending · oldest, monthly bars → the TDS register), placed after the dials; "How the year unfolded" adds the months to
+come with **Predicted**, plus Expenses / Net revenue series (off by default). New page **Expenses** (`crm/pages/Expenses.tsx`,
+route `expenses`, sidebar for Finance + Admin / CEO): rose header with FY total / shown / GST / biggest category, category
++ date filters, FY month bars and category bars (a bar filters the list), the table (date · category · for · amount ·
+GST · bill · recorded by, edit / delete), and the add / edit dialog (date picks, category with suggestions, amount before
+GST + GST, paid via, reference, bill upload ≤ 15 MB). PURE `expenseProblem`. (8) **RMG screening reason**: `ClosedNoteBox`
+heads a `RMG_Screening` note "Rejected at Technical Screening". (9) **Reopen & resume**: Opportunities' outcome
+button reads "Reopen & resume" on a closed / rejected deal; the close confirmation says how to resume.
+
+**4 Nov 2026 (later) — received beside billed, Predicted every month, bank / TDS + filters on the Billed page, release
+date on the Project page and the PE list (`crm/components/ReleasePlanPanel.test.ts` 2; server half in B-V2
+`CLAUDE.md`):** (1) **CEO Finance tab** "How the year unfolded": the green bar is **Received (excl. GST)**
+(`received_ex`, never above Billed); "Collected with GST" stays as a series, off by default. (2) **Drill pages**
+(`CeoInsightPage.tsx`): the server's new tiles / chart / columns render with no code change; a Finance metric shows the
+**`ScopeFilterBar`** (customer → branch → project) in the header from `filters.options` (last options kept so the
+pickers never blink); the "One customer only · clear" chip shows only when no options came. Predicted bars now show on
+past months too (server). (3) **`ReleasePlanPanel.tsx`** exports `ReleaseDialog`, `ReleaseCell` (date + days-left chip;
+Release date / Change · Extend · Remove for `RELEASE_ROLES`; clicks never reach the row), `TeamReleaseDialog` (one
+date for several people: Release / Extension switch, quick dates, a checklist of the live team — PURE `teamPickBlock`
+greys out who the date does not fit — informed-on, note, `POST /api/projects/{id}/release`) and PURE `daysUntil`.
+**Project ▸ Team** (`Projects.tsx`): a "Planned release" column and a **Team release date** button beside Assign
+employee (with "N of M have a planned release date"); **Project Employees** list: the same column. `TeamMember` /
+`PeRow` carry `release_date` (already on the server rows).
+
+**5 Nov 2026 — month bars, release on the band, team workload, careers channels, Karnex JD (server half in B-V2
+`CLAUDE.md`; `chartClicks.test.ts` +1 / re-pinned, `ReleasePlanPanel.test.ts` +1, new `PositionTeamWorkload.test.ts` 3,
+`TaDecision.test.ts` re-pinned).** ⚠️ Shell was down — tsc / vitest not run for this round.
+(1) **Drill pages** (`CeoInsightPage.tsx`): `drillBarAction(row, segments, current, {series, rows})` returns
+`{kind: "month", month, where, segment}` for a YYYY-MM bar when the main table's rows carry the server's `month_key`:
+the table narrows IN PLACE to that month (and to the bar's series field — e.g. Received → rows with `received_ex` — or its
+chip). A month label is never text-searched any more (that was "Sep 26" → "Nothing here"). `TableFocus.month`,
+`filterRows(..., month)`; the strip reads "Showing the rows behind Sep 26 · Received". `ChartPanel` passes the series key.
+(2) **Project page**: the release buttons moved onto the green band (`PageHeader actions`) — **Release date / Change
+release date** (orange) and **Extension** (green; disabled until a release date exists) for Sales Manager · Sales Head ·
+RMG · GM, both open `TeamReleaseDialog` (new `initialMode`; title follows the mode); a band stat "next release · N of M"
+(`ReleasePlanPanel.releaseSummary`, PURE). The Team tab keeps the per-person Planned release column; its button is gone.
+(3) **Assign TAs / Hiring Manager** (`PositionTeamPanel.TaPicker`): every choice shows a load dot (green / amber / red,
+`LEVEL_LOOK`) and "N active positions · M live candidates" (`workloadLine`); hovering (or focusing) a name opens
+`WorkloadCard` — a portalled fixed card with active positions · open heads · live candidates, last activity (`agoShort`)
+and the 5 most recent opportunities; the server's suggested person carries a "Suggested" badge and a purple strip
+"Suggested: X — lightest load · Pick X" (`suggestedPick`), saying it is not required. Used by the Assign dialog and the
+RMG approval step. ⚠️ Tailwind `violet` is navy here — the new colours use `purple`.
+(4) **Careers channel**: the Applied Candidates chip reads "Applied via LinkedIn — interested", the row's stored
+`application_details.source_channel` first (`OpeningMailChip channel`, `TaDecision.careersChannel` — the old "Careers page"
+= "Karnex careers page"). `CareersLinkModal`: the fifth pill is "Karnex careers page" (the plain link), and a **Where
+applications come from** panel (`ChannelStats`, `bestChannel`) shows per channel applications · last 30 days · moved on ·
+joined · % with a "Most helpful so far" chip.
+(5) **Karnex JD**: `JdSkillsModal` gains a green "Create the Karnex JD from the customer's JD" bar with **Build Karnex JD**
+(`GET …/karnex-jd/draft`); text already in the box is replaced only after "Replace / Keep mine". `JdSkillsCard` shows
+**PDF** / **Word** download chips beside the RMG JD (authFetch blob of `…/rmg-jd.pdf|docx`, named "Karnex JD - <title>").
+
+**5 Nov 2026 (later) — "What happened" on the Integrity row; self-applied candidates in TA's default list (server half
+in B-V2 `CLAUDE.md`).** ⚠️ Shell down — tsc / vitest NOT run. (1) **`components/interview-diagnosis/
+InterviewDiagnosisPanel.tsx`** (`InterviewDiagnosis` type, PURE `factsText`) renders the server's `diagnosis` at the top of
+the open Integrity row (`IntegrityLogs.RowDetail`): toned card with the headline, the explanation lines, **What to do**,
+flag chips ("Opened BEFORE the scheduled time" …), the journey stepper (scheduled → link opened → device check →
+verified → signed in → first question → answers → ended → report → recording; done / missing / bad, `fmtDateTime12`
+times) and collapsible **Technical details** with "Copy for a ticket". `IntegrityRow` gains `not_attempted` / `voided`;
+the AI L1 fact reads "Not attempted — nothing was scored" instead of "0% · Failed". (2) **Applied Candidates**
+(`Requirements.tsx` `ResumesTab`): when "Applied by" is the login's own name (the TA default) the request adds
+`with_public=1`, so careers-page / apply-link candidates (whom no TA applied) are listed; the option reads
+"<name> (me) + self-applied".
+

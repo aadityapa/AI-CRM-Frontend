@@ -23,7 +23,11 @@ export function postedText(iso, now = new Date()) {
 
 /** Positions in the chosen city (blank = all). */
 export function inLocation(positions, city) {
-  return city ? positions.filter((p) => p.city === city) : positions.slice();
+  if (!city) return positions.slice();
+  const want = String(city).toLowerCase();
+  // A position may be open in several cities (`cities`); older payloads carry `city` only.
+  return positions.filter((p) => (Array.isArray(p.cities) && p.cities.length ? p.cities : [p.city])
+    .some((c) => String(c || "").toLowerCase() === want));
 }
 
 /** Keyword search over title · code · location · skills · JD summary. */

@@ -29,6 +29,7 @@ import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../compon
 import { PageHeader, HERO_BTN } from "../crm/components/PageHeader";
 import { onlyActiveNames, useActiveCustomerList } from "../crm/lib/activeCustomers";
 import { LiveJoinPanel } from "../components/interview-live/LiveJoinPanel";
+import { InterviewDiagnosisPanel, type InterviewDiagnosis } from "../components/interview-diagnosis/InterviewDiagnosisPanel";
 
 /* ---------- types (mirror services/interview_integrity.py) ---------- */
 
@@ -68,6 +69,9 @@ interface IntegrityRow {
   scheduled_by_name?: string;
   ai_score?: number | null;
   ai_result?: string | null;
+  /** 5 Nov 2026 — the AI L1 link ended with no scored answer ("Failed" is only the stored result). */
+  not_attempted?: boolean;
+  voided?: boolean;
   level?: string;
   /** 7 Oct 2026 — `/admin/?view=candidateReport&cid=…&iid=…`, only once the session finished. */
   report_link?: string | null;
@@ -220,6 +224,7 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
   const [reason, setReason] = useState(row.reason || "");
   const [error, setError] = useState("");
   const [recording, setRecording] = useState<Recording | null>(null);
+  const [diagnosis, setDiagnosis] = useState<InterviewDiagnosis | null>(null);
   // Bumped when the live stream ends, so the detail re-fetches and the
   // ordinary player takes over with the finalized file.
   const [reloadTick, setReloadTick] = useState(0);
@@ -227,10 +232,11 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
   useEffect(() => {
     let cancelled = false;
     if (!row.invite_token) { setEvents([]); return; }
-    apiGet<{ violations_log: TimelineEvent[]; reason?: string; recording?: Recording }>(`/interview/integrity-logs/${encodeURIComponent(row.invite_token)}`, { force: true })
+    apiGet<{ violations_log: TimelineEvent[]; reason?: string; recording?: Recording; diagnosis?: InterviewDiagnosis | null }>(`/interview/integrity-logs/${encodeURIComponent(row.invite_token)}`, { force: true })
       .then((d) => {
         if (cancelled) return;
         setEvents(Array.isArray(d.violations_log) ? d.violations_log : []);
+        setDiagnosis(d.diagnosis || null);
         if (d.reason) setReason(d.reason);
         // The detail endpoint finalizes a half-uploaded recording on demand
         // (never while the session is live), so this is also what repairs an
@@ -252,7 +258,8 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
     { label: "Device", value: <span className="font-mono text-xs">{row.active_device_id ? row.active_device_id.slice(0, 16) + "…" : "—"}</span> },
     { label: "Scheduled by", value: row.scheduled_by_name || (row.hr_username === "karnex-crm" ? "CRM" : row.hr_username || "—") },
   ];
-  if (row.ai_score != null) facts.push({ label: "AI L1 score", value: `${Math.round(row.ai_score)}% · ${row.ai_result || ""}` });
+  if (row.not_attempted) facts.push({ label: "AI L1", value: <span className="text-warning">Not attempted — nothing was scored</span> });
+  else if (row.ai_score != null) facts.push({ label: "AI L1 score", value: `${Math.round(row.ai_score)}% · ${row.ai_result || ""}${row.voided ? " · voided" : ""}` });
   if (reason) facts.push({ label: "Termination reason", value: <span className="text-danger">{reason}</span> });
 
   const sectionTitle = "text-[11px] font-bold uppercase tracking-wider text-muted";
@@ -265,6 +272,7 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
     <div className="grid gap-4 rounded-card border border-subtle bg-surface-2 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
       {/* ---- left: what happened ---- */}
       <div className="min-w-0 space-y-4">
+        <InterviewDiagnosisPanel diagnosis={diagnosis} />
         {row.shared_with && row.shared_with.length > 0 && (
           <div className="flex items-start gap-2 rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
             <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />

@@ -20,14 +20,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronUp, ClipboardCheck, FileText, FileUp,
+  AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronUp, ClipboardCheck, Download, FileText, FileUp,
   ListChecks, Pencil, Plus, ScanLine, Sparkles, Star, Users,
 } from "lucide-react";
 
+import { authFetch } from "../../api/client";
 import { crmGet, crmUpload } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { useCanAct, useCanApprove } from "../useAccess";
-import { FileLink } from "./FileUpload";
+import { FileLink, downloadFileName } from "./FileUpload";
 import { JdSkillsModal, type JdSkillsReq } from "./JdSkillsModal";
 import { focusRing } from "./ui";
 
@@ -148,6 +149,30 @@ export function JdSkillsCard({ req, canEdit, toast, onSaved, defaultOpen = true 
       toast(e?.message || "Could not upload the customer JD", "err");
     } finally {
       setUploading(false);
+    }
+  };
+
+  /* The RMG JD as a file (5 Nov 2026): the Karnex layout, rendered on the server. */
+  const [downloading, setDownloading] = useState<"pdf" | "docx" | null>(null);
+  const download = async (kind: "pdf" | "docx") => {
+    setDownloading(kind);
+    try {
+      const res = await authFetch(`/api/requirements/${req.id}/rmg-jd.${kind}`);
+      if (!res.ok) {
+        let msg = "Could not download the JD";
+        try { msg = (await res.json())?.detail || msg; } catch { /* not JSON */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = downloadFileName(`Karnex JD - ${req.title || "position"}`, kind);
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+    } catch (e: any) {
+      toast(e?.message || "Could not download the JD", "err");
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -285,6 +310,19 @@ export function JdSkillsCard({ req, canEdit, toast, onSaved, defaultOpen = true 
                 {canEdit && st.hasJd && (
                   <SectionAction onClick={() => setEditing(true)}><Pencil size={11} aria-hidden /> Edit JD</SectionAction>
                 )}
+                {(req.rmg_jd_text || "").trim() && (
+                  <span className={`${canEdit && st.hasJd ? "" : "ml-auto "}inline-flex items-center gap-1`}>
+                    {(["pdf", "docx"] as const).map((k) => (
+                      <button key={k} type="button" disabled={downloading === k} onClick={() => void download(k)}
+                        title={`Download the Karnex JD as ${k === "pdf" ? "PDF" : "Word"}`}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset disabled:opacity-60 ${focusRing} ${
+                          k === "pdf" ? "bg-rose-50 text-rose-700 ring-rose-200 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-200 dark:ring-rose-800"
+                            : "bg-sky-50 text-sky-700 ring-sky-200 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800"}`}>
+                        <Download size={11} aria-hidden /> {downloading === k ? "…" : k === "pdf" ? "PDF" : "Word"}
+                      </button>
+                    ))}
+                  </span>
+                )}
                 {st.files.map((a) => (
                   <span key={a.id} className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
                     <FileUp size={11} aria-hidden /><FileLink url={a.file_url} label={a.file_name || "JD file"} />
@@ -304,7 +342,7 @@ export function JdSkillsCard({ req, canEdit, toast, onSaved, defaultOpen = true 
               ) : st.files.length ? (
                 <p className="text-sm text-muted">The JD is on file (above) — no text could be read from it.{canEdit ? " Paste the text so the ATS can score against it." : ""}</p>
               ) : canEdit ? (
-                <AddTile label="Add the RMG JD" hint="Paste it, or upload a PDF / Word file and the text is read out"
+                <AddTile label="Add the RMG JD" hint="Build the Karnex JD from the customer's JD in one click, paste it, or upload a PDF / Word file"
                   onClick={() => setEditing(true)} />
               ) : (
                 <p className="text-sm text-muted">No RMG JD yet.</p>

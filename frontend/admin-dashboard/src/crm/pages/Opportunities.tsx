@@ -2407,7 +2407,7 @@ export function OpportunityDetailPage() {
             <StatusBadge status={outcomeStage} label={pipelineStageLabel(outcomeStage)} />?
             {outcomeStage.startsWith("Closed_") && (
               <div className="mt-2 text-xs text-muted">
-                Closed deals move to the Closed tab. Use Reactivate on the opportunity if it comes back.
+                Closed deals move to the Closed tab. If the customer starts hiring again, open the opportunity and press Reopen &amp; resume — the position and its candidates come back where they were.
               </div>
             )}
           </div>
@@ -2608,7 +2608,11 @@ function OutcomeButtons({ current, allowed, busy, onPick }: {
   busy: boolean;
   onPick: (stage: string) => void;
 }) {
-  const items = OUTCOME_BUTTONS.filter((b) => b.stage !== current && allowed.includes(b.stage));
+  /* A closed deal comes back with "Reopen & resume" (4 Nov 2026): the server puts its
+     position back at the sourcing step it was closed on, and its candidates return. */
+  const closed = ["Closed_Won", "Closed_Lost", "Closed_Partial", "Rejected"].includes(current);
+  const items = OUTCOME_BUTTONS.filter((b) => b.stage !== current && allowed.includes(b.stage))
+    .map((b) => (b.stage === "Active" && closed ? { ...b, label: "Reopen & resume" } : b));
   if (!items.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Opportunity status">

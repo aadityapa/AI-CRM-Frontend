@@ -36,6 +36,7 @@ import { Timeline } from "../components/Timeline";
 import type { ActivityEntry } from "../components/Timeline";
 import { ProfilesListPage as ProfilesDirectory } from "./profiles/ProfilesListPage";
 import { FastTrackBanner, type InternalEmployee } from "../components/FastTrackToSales";
+import { CandidateTypeControl, type CandidateKind } from "../components/CandidateTypeControl";
 import { GoManualModal } from "../components/InterviewRouteChoice";
 import { SalesHeadApprovalBanner } from "../components/SalesHeadApprovalBanner";
 import { RoundProgress } from "../components/RoundProgress";
@@ -240,6 +241,9 @@ type Offer = {
 type ProfileDetail = ProfileRow & {
   /** Existing Karnex employee this candidate IS (server-derived, 25 Sep 2026). */
   internal_employee?: InternalEmployee | null;
+  /** Internal / External (4 Nov 2026): TA's stored choice + the resolved type. */
+  candidate_type?: string | null;
+  candidate_kind?: CandidateKind | null;
   /** HR's offered CTC (30 Sep 2026) — present for HR / Admin / CEO ONLY. */
   hr_offer?: HrOffer | null;
   /** Why the internal fast-track to Sales is unavailable; null = available. */
@@ -1391,6 +1395,12 @@ export function ProfileDetailPage() {
       <HmCandidateGate info={detail.hiring_manager ?? null} profileId={detail.id} stage={detail.pipeline_status}
         candidateName={detail.candidate?.full_name || detail.candidate_name || "This candidate"}
         toast={showToast} onDone={load} />
+
+      {/* Internal / External (4 Nov 2026). */}
+      <CandidateTypeControl profileId={detail.id} kind={detail.candidate_kind}
+        chosen={detail.candidate_type}
+        onSaved={(msg) => { showToast(msg); load(); }}
+        onError={(msg) => showToast(msg, "err")} />
 
       {/* Internal candidate (25 Sep 2026): an existing employee can skip L1/L2
           and go straight to Sales — only when the server says it applies. */}

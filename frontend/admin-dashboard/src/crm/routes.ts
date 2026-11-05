@@ -30,6 +30,7 @@ const TimesheetsListPage = lazyRetry(() => import("./pages/Timesheets").then((m)
 const TimesheetDetailPage = lazyRetry(() => import("./pages/Timesheets").then((m) => ({ default: m.TimesheetDetailPage })));
 const TalentPoolPage = lazyRetry(() => import("./pages/TalentPool").then((m) => ({ default: m.TalentPoolPage })));
 const EInvoicesPage = lazyRetry(() => import("./components/invoice/EInvoiceRegister").then((m) => ({ default: m.EInvoicesPage })));
+const ExpensesPage = lazyRetry(() => import("./pages/Expenses").then((m) => ({ default: m.ExpensesPage })));
 const ReceivedAmountsPage = lazyRetry(() => import("./pages/CustomerReceipts").then((m) => ({ default: m.ReceivedAmountsPage })));
 const PurchaseOrdersPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
 const PODetailPage = lazyRetry(() => import("./pages/Finance").then((m) => ({ default: m.PODetailPage })));
@@ -104,6 +105,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "pos/:id", element: PODetailPage },
   { pattern: "invoices", element: InvoicesPage },
   { pattern: "received-amounts", element: ReceivedAmountsPage },
+  { pattern: "expenses", element: ExpensesPage },
   { pattern: "e-invoices", element: EInvoicesPage },
   { pattern: "invoices/tax-generator", element: TaxInvoiceGeneratorPage },
   { pattern: "invoices/:id/tax-invoice", element: InvoiceTaxInvoicePage },

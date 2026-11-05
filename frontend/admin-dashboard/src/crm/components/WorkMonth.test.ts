@@ -37,7 +37,8 @@ describe("billing tracker", () => {
   });
   it("has a colour for every server stage", () => {
     expect(Object.keys(STAGE_LOOK)).toEqual([
-      "awaiting_proforma", "returned", "proforma", "awaiting_customer", "irn_pending", "unpaid", "paid",
+      "awaiting_proforma", "returned", "proforma", "awaiting_customer", "irn_pending", "unpaid",
+      "partially_paid", "paid",
     ]);
   });
 });

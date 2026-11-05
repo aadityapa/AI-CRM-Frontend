@@ -19,6 +19,7 @@ import {
 import { InfoChip, SectionHeaderBanner, WizardField } from "../components/wizard";
 import { leaveTimingCaption } from "../components/PeriodTimingPicker";
 import { usePageTab } from "../lib/pageState";
+import { ReleasePlanPanel, type ReleaseInfo } from "../components/ReleasePlanPanel";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
  * (theme-aware body + SectionHeaderBanner) inside the existing Modal.
@@ -170,6 +171,17 @@ type PoSummary = {
   balance_value?: number | null;
 };
 
+/** Monthly equivalent of a billing rate — the server's forecast rule. PURE. */
+export function monthlyRateOf(rate: number | null | undefined, unit: string | null | undefined): number | null {
+  if (!rate) return null;
+  switch ((unit || "").toLowerCase()) {
+    case "yearly": return rate / 12;
+    case "daily": return rate * 21;
+    case "hourly": return rate * 21 * 8;
+    default: return rate;
+  }
+}
+
 type PeDetail = {
   id: number;
   project_id: number;
@@ -192,6 +204,8 @@ type PeDetail = {
   is_exit?: boolean;
   exit_date?: string | null;
   billing_date?: string | null;
+  /** Planned release / extensions (4 Nov 2026). */
+  release?: ReleaseInfo | null;
   leave_balance_total?: number | null;
   leave_details?: LeaveDetail[];
   leave_eligibility?: LeaveEligibilityRow[];
@@ -1165,6 +1179,12 @@ export function ProjectEmployeeDetailPage() {
           </CrmLink>
         )}
       </div>
+
+      {/* Release / extension the customer informed (4 Nov 2026). */}
+      <ReleasePlanPanel peId={pe.id} employeeName={empLabel} onboardingDate={pe.onboarding_date}
+        monthlyRate={monthlyRateOf(pe.billing_rate, pe.billing_unit)} isExit={!!pe.is_exit}
+        info={pe.release} onSaved={load}
+        toast={(m, k) => notify(m, k === "err" ? "err" : "ok")} />
 
       <Tabs tabs={PE_TABS_SHOWN} active={shownTab} onChange={setTab} />
 

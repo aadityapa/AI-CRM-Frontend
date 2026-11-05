@@ -2,7 +2,8 @@
  * PO & Invoices, Communication Matrix) incl. one-click "Create PO". */
 import { lazyRetry } from "../../lib/lazyRetry";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderKanban, Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
+import { CalendarPlus, CalendarX2, FolderKanban, Pencil, Plus, Receipt, Trash2, UserPlus } from "lucide-react";
+import { RELEASE_ROLES, ReleaseCell, TeamReleaseDialog, releaseSummary } from "../components/ReleasePlanPanel";
 import { HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPost, crmPut, qs } from "../api";
 import type { Meta } from "../api";
@@ -76,6 +77,10 @@ type TeamMember = {
   billing_unit: string;
   rates?: import("./ProjectEmployees").RateRowOut[];
   is_active: boolean;
+  is_exit?: boolean;
+  exit_date?: string | null;
+  /** Planned release the customer gave (0152) — a plan, not an exit. */
+  release_date?: string | null;
 };
 
 type CommEntry = {
@@ -481,6 +486,10 @@ export function ProjectDetailPage() {
   const projTabKeys = ["overview", "team", "timesheets", "finance", "comm"].filter((k) => pageSub.allowed(k));
   const shownTab = projTabKeys.includes(tab) ? tab : (projTabKeys[0] || "");
   const [toast, showToast] = useToast();
+  // 5 Nov 2026 — release / extension live on the green band, one click for the
+  // Sales Manager (Sales Manager · Sales Head · RMG · GM, the server's gate).
+  const canRelease = useHasRole(...RELEASE_ROLES);
+  const [releaseMode, setReleaseMode] = useState<"release" | "extension" | null>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -507,6 +516,10 @@ export function ProjectDetailPage() {
     { label: project.name },
   ];
 
+  const liveTeam = (project.team || []).filter((t) => !t.is_exit);
+  const release = releaseSummary(liveTeam);
+  const showRelease = canRelease && project.closure?.state !== "closed" && liveTeam.length > 0;
+
   return (
     <div className="space-y-4">
       <CrmBreadcrumb items={crumbs} />
@@ -519,8 +532,31 @@ export function ProjectDetailPage() {
         stats={[
           { label: "status", value: pretty(project.status || "—") },
           ...(project.team ? [{ label: project.team.length === 1 ? "person on the team" : "people on the team", value: project.team.length }] : []),
+          ...(liveTeam.length ? [{ label: release.label, value: release.value }] : []),
         ]}
+        actions={showRelease ? (
+          <>
+            <button type="button" className={HERO_BTN_RELEASE} onClick={() => setReleaseMode("release")}
+              title="Record the last working day the customer gave — for one person or the whole team">
+              <CalendarX2 size={16} aria-hidden /> {release.planned ? "Change release date" : "Release date"}
+            </button>
+            <button type="button" className={HERO_BTN_EXTEND} onClick={() => setReleaseMode("extension")}
+              disabled={release.planned === 0}
+              title={release.planned === 0 ? "Record a release date first — an extension moves it later" : "The customer extended the team — move the release date later"}>
+              <CalendarPlus size={16} aria-hidden /> Extension
+            </button>
+          </>
+        ) : undefined}
       />
+      {releaseMode && (
+        <TeamReleaseDialog projectId={project.id} projectName={project.name} initialMode={releaseMode}
+          team={liveTeam.map((t) => ({
+            pe_id: t.pe_id ?? t.id, employee_name: t.employee_name || `Employee #${t.employee_id}`,
+            release_date: t.release_date, onboarding_date: t.onboarding_date, is_exit: t.is_exit,
+          }))}
+          onClose={() => setReleaseMode(null)}
+          onDone={(msg) => { setReleaseMode(null); showToast(msg); load(); }} />
+      )}
       <ProjectClosureBanner projectId={project.id} closure={project.closure} onCancelled={load} notify={showToast} />
       <Tabs
         tabs={[
@@ -542,6 +578,17 @@ export function ProjectDetailPage() {
     </div>
   );
 }
+
+/* Release buttons on the project band (5 Nov 2026). Solid, coloured, readable on
+   the teal gradient in both themes (literal hex — the dark theme remaps tokens). */
+const HERO_BTN_RELEASE =
+  "inline-flex items-center gap-1.5 rounded-control bg-[#fff7ed] px-3.5 py-2 text-sm font-bold text-[#c2410c] "
+  + "shadow-raised ring-1 ring-inset ring-[#fdba74] transition-colors hover:bg-[#ffedd5] "
+  + "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50";
+const HERO_BTN_EXTEND =
+  "inline-flex items-center gap-1.5 rounded-control bg-[#ecfdf5] px-3.5 py-2 text-sm font-bold text-[#047857] "
+  + "shadow-raised ring-1 ring-inset ring-[#6ee7b7] transition-colors hover:bg-[#d1fae5] "
+  + "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-60";
 
 /* ---------------------------------------------------------------- Overview */
 
@@ -781,7 +828,6 @@ function TeamTab({
   const [showAssign, setShowAssign] = useState(false);
   const [editRow, setEditRow] = useState<TeamMember | null>(null);
   const [search, setSearch] = useState("");
-
   const filtered = useMemo(() => {
     const rows = project.team || [];
     const q = search.trim().toLowerCase();
@@ -821,6 +867,14 @@ function TeamTab({
         : (r.billing_rate != null ? `${r.billing_rate} / ${pretty(r.billing_unit)}` : "—")),
     },
     { key: "is_active", label: "Active", render: (r) => <StatusBadge status={r.is_active ? "Active" : "Inactive"} /> },
+    {
+      key: "release_date", label: "Planned release",
+      render: (r) => (
+        <ReleaseCell peId={r.pe_id ?? r.id} employeeName={r.employee_name || `Employee #${r.employee_id}`}
+          releaseDate={r.release_date} onboardingDate={r.onboarding_date}
+          isExit={!!r.is_exit} onSaved={reload} toast={showToast} />
+      ),
+    },
     ...(canManage
       ? [{
           key: "actions", label: "",
@@ -839,7 +893,7 @@ function TeamTab({
   return (
     <div className="space-y-3">
       {canManage && project.closure?.state !== "closed" && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
           <button className={btnPrimary} onClick={() => setShowAssign(true)}>
             <UserPlus size={15} /> Assign employee
           </button>

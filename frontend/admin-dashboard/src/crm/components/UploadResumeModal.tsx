@@ -31,6 +31,7 @@ import {
 
 import { crmPut, crmUpload } from "../api";
 import { CrmLink } from "../routerHooks";
+import { CANDIDATE_TYPES, CandidateTypeChip, effectiveType, isCompanyEmail } from "../lib/internalCandidate";
 import { PhoneField } from "./PhoneField";
 import { Modal, btnPrimary, btnSecondary, inputCls, statusLabel } from "./ui";
 
@@ -274,6 +275,9 @@ export function UploadResumeModal({ req, onClose, onUploaded, toast }: {
   const [fromCv, setFromCv] = useState<Set<FieldKey>>(new Set());
   /** Parsed values that are no longer fields — sent quietly (see the module note). */
   const [parsedExtras, setParsedExtras] = useState<Record<string, string>>({});
+  /* Internal / External (4 Nov 2026): "" = follow the email (@karnex.in → Internal). */
+  const [typeChoice, setTypeChoice] = useState("");
+  const candidateType = effectiveType(typeChoice, form.email);
   const [nameErr, setNameErr] = useState("");
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -363,8 +367,9 @@ export function UploadResumeModal({ req, onClose, onUploaded, toast }: {
     put("current_location", form.currentLocation);
     put("preferred_location", form.preferredLocation);
     put("note", form.note.slice(0, NOTE_MAX));
+    put("candidate_type", typeChoice);
     return out;
-  }, [form, parsedExtras]);
+  }, [form, parsedExtras, typeChoice]);
 
   const doUpload = async () => {
     if (!cvFile) { toast("Add the resume file first", "err"); return; }
@@ -566,6 +571,23 @@ export function UploadResumeModal({ req, onClose, onUploaded, toast }: {
             </Field>
             <Field label="Where did you find them?" wide>
               <Chips options={SOURCE_PORTALS} value={form.source} onPick={(v) => set("source", v)} label="Source portal" />
+            </Field>
+            <Field label="Internal or external?" wide>
+              <div className="flex flex-wrap items-center gap-2">
+                <Chips options={CANDIDATE_TYPES} value={typeChoice || candidateType}
+                  onPick={(v) => setTypeChoice(v)} label="Candidate type" />
+                <CandidateTypeChip type={candidateType} chosen={!!typeChoice} className="mt-2" />
+              </div>
+              <p className="mt-1 text-[11px] text-muted">
+                {typeChoice
+                  ? `Marked ${typeChoice} by you.`
+                  : isCompanyEmail(form.email)
+                    ? "A karnex.in email — taken as an internal employee."
+                    : "Follows the email: a karnex.in address means internal."}
+                {candidateType === "Internal"
+                  ? " After the Sales Head approves, they go straight to Pre-Onboarding with their Employees details — no HR rounds."
+                  : ""}
+              </p>
             </Field>
           </Section>
 
