@@ -23,9 +23,10 @@ import {
 import { authFetch } from "../../../api/client";
 import { DESK_CHANGED_EVENT, crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
-import { CONTROL, FilteredBars, ICON_BTN, MiniStat, Panel, STATE_CHIP, Speedometer, Tile, inr, inrCompact, num, pct } from "../../components/controlTower";
+import { CONTROL, FilteredBars, ICON_BTN, MiniStat, Panel, STATE_CHIP, Speedometer, Tile, inr, inrCompact, num, pct, thisMonthKey } from "../../components/controlTower";
 import { semanticAnchor } from "../../../design-system/tokens/tokens";
 import { useSessionState } from "../../lib/pageState";
+import { StoryChart, type StoryRow, type StorySeries } from "./StoryChart";
 import {
   EMPTY_FILTERS, FLAG_LABELS, LATE_LABELS, activeChips, moreFilterCount, trackerQuery, withDefaults,
   type TrackerFilters, type TrackerFlag,
@@ -576,6 +577,13 @@ function FilterField({ label, children }: { label: string; children: React.React
 
 /* ---------- 27 Oct 2026 — the tab reads like the other CEO tabs: tiles, then bars ---------- */
 
+const TRACKER_GROUPS = [{ key: "open", label: "Still open" }, { key: "done", label: "Done" }, { key: "total", label: "Total" }];
+const TRACKER_PRESETS = [
+  { key: "open", label: "Open work", keys: ["to_raise", "with_customer", "due"] },
+  { key: "flow", label: "Every stage", keys: ["to_raise", "with_customer", "due", "paid"] },
+  { key: "paid", label: "Paid vs all", keys: ["paid", "total"] },
+];
+
 const GROUP_COLOR: Record<string, string> = {
   to_raise: semanticAnchor.warning, with_customer: "#0ea5e9", due: semanticAnchor.danger, paid: semanticAnchor.success,
 };
@@ -607,14 +615,19 @@ function TrackerSummary({ s, stage, flags, onStage, onOverdue, onTds, onBar }: {
   const hint = "Click a bar to list those rows below";
   const t = s.tiles;
   const dial = trackerDials(t);
-  const groupSeries = [
-    ...s.groups.map((g) => ({ key: g.key, label: g.label, color: GROUP_COLOR[g.key] })),
-    { key: "total", label: "All work", color: "#64748b", defaultOff: true },
-  ];
   const byMonth = s.by_month.map((r) => ({
     ...r, total: s.groups.reduce((a, g) => a + (Number(r[g.key]) || 0), 0),
   }));
   const tdsOn = flags.includes("tds_pending"), overdueOn = flags.includes("overdue");
+  // 8 Nov 2026 — the story chart's series (one per stage group + the total as a line).
+  const storySeries: StorySeries[] = [
+    ...s.groups.map((g) => ({ key: g.key, label: g.label, color: GROUP_COLOR[g.key] ?? "#64748b",
+      group: g.key === "paid" ? "done" : "open" })),
+    { key: "total", label: "All work", color: "#a855f7", group: "total", line: true },
+  ];
+  const sumKey = (k: string) => byMonth.reduce((a, r) => a + (Number((r as Record<string, unknown>)[k]) || 0), 0);
+  const allWork = sumKey("total"), paidWork = sumKey("paid");
+  const openWork = allWork - paidWork;
   return (
     <div className="space-y-4 border-b border-subtle bg-surface-2 px-5 py-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -634,13 +647,24 @@ function TrackerSummary({ s, stage, flags, onStage, onOverdue, onTds, onBar }: {
           active={tdsOn} title="Show only rows with TDS pending" sub="certificate (Form 16A) pending" />
       </div>
 
-      {/* 1 · How the work moved — the first chart, like Finance's "How the year unfolded". */}
-      <Panel title="How the work moved, month by month" hint="pieces of billed work per work month, by where each stands now — tick what to compare">
-        {byMonth.length ? (
-          <FilteredBars data={byMonth} series={groupSeries} rowFilter rowLabel="Months" format={(v) => num(v)}
-            onBarClick={onBar?.("months")} clickHint={hint} />
-        ) : <p className="text-sm text-muted">Nothing billed for these filters.</p>}
-      </Panel>
+      {/* 1 · How the work moved — 8 Nov 2026: the Finance tab's story chart, in the tracker's colours.
+          A column narrows the table below to that work month (and its stage group). */}
+      <StoryChart theme="billing" rows={byMonth as unknown as StoryRow[]} series={storySeries} groups={TRACKER_GROUPS}
+        presets={TRACKER_PRESETS} storageKey="crm.ceo.billing.months" format={(v) => num(v)} todayKey={thisMonthKey()}
+        stripKeys={["total", "paid"]} leadKey="total"
+        title="How the work moved, month by month"
+        hint="pieces of billed work per work month, by where each stands now — a sheet still to be invoiced has no amount yet, so this counts pieces"
+        stats={[
+          { label: "Pieces of work", value: num(allWork), sub: `${num(byMonth.length)} work months`, dot: "#fecdd3" },
+          { label: "Still open", value: num(openWork), sub: `${num(t.to_raise)} to raise · ${num(t.with_customer)} with the customer`, dot: "#fde68a" },
+          { label: "Paid", value: num(paidWork), sub: `${inrCompact(t.paid_amount)} settled`, dot: "#86efac", ring: allWork ? Math.round((paidWork / allWork) * 100) : null },
+          { label: "Average wait", value: t.avg_wait_days === null ? "—" : `${t.avg_wait_days} d`, sub: "at the current step", dot: "#c4b5fd" },
+        ]}
+        ring={(r) => ({ pct: Number(r.total) ? Math.round((Number(r.paid || 0) / Number(r.total)) * 100) : null, color: semanticAnchor.success })}
+        spotlightSub={(r) => `${num(Number(r.total) || 0)} pieces of work · ${num(Number(r.paid) || 0)} paid`}
+        onOpen={onBar ? (row, sKey) => onBar("months")(row, sKey ?? "total") : undefined}
+        openLabel={(row) => `List the work of ${row.label}`}
+        emptyText="Nothing billed for these filters." />
 
       {/* 2 · The dials: collected · overdue · waiting. */}
       <div className="grid gap-4 lg:grid-cols-3">

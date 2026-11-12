@@ -381,8 +381,11 @@ export function UploadResumeModal({ req, onClose, onUploaded, toast }: {
     setUploading(true);
     setProgress(0);
     try {
-      await crmUpload(`/api/requirements/${req.id}/resumes`, cvFile, fields, setProgress);
-      toast(`${form.name.trim()} added to ${req.title}`);
+      const res = await crmUpload(`/api/requirements/${req.id}/resumes`, cvFile, fields, setProgress);
+      // 12 Nov 2026: a candidate already in Candidates keeps that name; the
+      // server's message says so (and how to change it everywhere).
+      const known = /already in Candidates as/.test(res?.message || "");
+      toast(known ? res.message : `${form.name.trim()} added to ${req.title}`);
       onUploaded();
       onClose();
     } catch (e: any) {
@@ -800,7 +803,13 @@ export function ctcToRupees(v: string): number | null {
   if (!Number.isFinite(n) || n <= 0) return null;
   let rupees: number;
   if (/\bcr\b|crore/.test(text)) rupees = n * 1e7;
-  else if (/lpa|lakh|lacs?\b|\bl\b|\dl\b/.test(text)) rupees = n * 1e5;
+  else if (/lpa|lakh|lacs?\b|\bl\b|\dl\b/.test(text)) {
+    // 6 Nov 2026 (server rule): 10,000+ "LPA" is rupees typed in a lakh box;
+    // 1,000–9,999 cannot be read.
+    if (n >= 10000) rupees = n;
+    else if (n >= 1000) return null;
+    else rupees = n * 1e5;
+  }
   else if (/\bk\b|thousand|\dk\b/.test(text)) rupees = n * 1e3;
   else if (n < 1000) rupees = n * 1e5;   // "12" means 12 LPA
   else rupees = n;                        // already rupees
@@ -987,6 +996,10 @@ export function EditApplicantModal({ row, req, onClose, onSaved, toast }: {
             <Field label="Candidate name" htmlFor="edit-name" required error={nameErr} wide>
               <input id="edit-name" className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)}
                 autoComplete="off" aria-invalid={!!nameErr} />
+              <p className="mt-1 text-xs text-muted">
+                Changing the name, email or phone here updates the candidate everywhere — Candidates,
+                the profile and every other position they are in.
+              </p>
             </Field>
             <Field label="Email" htmlFor="edit-email">
               <input id="edit-email" className={inputCls} type="email" value={form.email}

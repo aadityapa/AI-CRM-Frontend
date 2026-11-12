@@ -3,9 +3,9 @@
 // GET /api/public/careers/positions/{id}; apply → POST …/{id}/apply (multipart).
 // Everything is built with textContent — no server text is ever put into innerHTML.
 import {
-  applyProblems, cleanSource, isServingNotice, filterPositions, inLocation, jdBlocks, openingsText,
+  applyProblems, cleanSource, ctcHint, ctcLakhs, ctcText, isServingNotice, filterPositions, inLocation, jdBlocks, openingsText,
   popularSkills, positionLink, postedText,
-} from "./careers_logic.js?v=3";
+} from "./careers_logic.js?v=4";
 
 const API = "/api/public/careers";
 const REFRESH_MS = 5 * 60 * 1000;
@@ -366,8 +366,12 @@ async function submitApply(ev) {
     err.hidden = false; return;
   }
   err.hidden = true;
-  if (!general && values.expected_ctc) fd.set("expected_ctc", `${values.expected_ctc} LPA`);
-  if (!general && values.current_ctc) fd.set("current_ctc", `${values.current_ctc} LPA`);
+  // 6 Nov 2026: people type rupees ("10,00,000") or lakhs ("10 L"); send lakhs.
+  for (const key of ["expected_ctc", "current_ctc"]) {
+    const lakhs = general ? null : ctcLakhs(values[key]);
+    if (lakhs != null && Number.isFinite(lakhs)) fd.set(key, ctcText(lakhs));
+    else fd.delete(key);
+  }
   if (!isServingNotice(values.notice_period)) fd.delete("last_working_day");
   if (!general && values.experience) fd.set("experience", String(values.experience));
   fd.set("consent", "true");
@@ -458,6 +462,18 @@ function boot() {
   for (const ev of ["dragenter", "dragover"]) $("drop").addEventListener(ev, () => $("drop").classList.add("over"));
   for (const ev of ["dragleave", "drop"]) $("drop").addEventListener(ev, () => $("drop").classList.remove("over"));
   $("applyForm").addEventListener("submit", submitApply);
+  // CTC boxes: say in lakhs what was understood, as the candidate types.
+  for (const input of document.querySelectorAll("input[data-ctc]")) {
+    const hint = document.querySelector(`[data-ctc-hint="${input.name}"]`);
+    const base = hint ? hint.textContent : "";
+    input.addEventListener("input", () => {
+      if (!hint) return;
+      const h = ctcHint(input.value);
+      hint.textContent = h.text || base;
+      hint.classList.toggle("ok", !!h.text && h.ok);
+      hint.classList.toggle("bad", !h.ok);
+    });
+  }
   $("noticeSel").addEventListener("change", () => {
     syncLwd();
     if (!$("lwdField").hidden) $("lwdInput").focus();

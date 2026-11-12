@@ -6,7 +6,14 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 5 Nov 2026, last (the unmapped-money panel shows to Finance only, not Admin / CEO; Margin · Expenses ·
+**Last updated:** 12 Nov 2026 (Edit applicant's name / email / phone now update the candidate everywhere — the
+dialog says so; an upload for a known candidate toasts the name on record; server half in B-V2). Before: 8 Nov 2026,
+last (gross margin / people cost hidden while `track_people_cost` is false — Finance tile
+"Ready to bill", dial "Overdue share"; same on the Customer tab and the Revenue report). Before: 8 Nov 2026, later (Finance tab PO cover says "team bills ₹x / month"; the Revenue report's Coming up panel names the basis; server: cost stops at today, cover by the deployed team — B-V2). Before: 8 Nov 2026 (Customer, Sales, People and the Billing Tracker open with the Finance tab's story chart — `StoryChart`, one gradient per tab; the Finance tab's "Cash received month" view uses it too). Before: 7 Nov 2026 ("How the year unfolded" is the interactive `MoneyStoryChart` — gradient columns,
+Predicted as a dashed line, forecast band, month spotlight, month strip; a month click opens the Billed page carrying
+the ticks; the Billed page redesigned: money board, the same chart, column chooser). Before: 6 Nov 2026, later ("How the year unfolded" speaks the CEO's ten money words with Show presets;
+Finance tiles Revenue (Ex. Tax) · Received (Bank + TDS) · Total Due; no fake "vs last FY"). Earlier 6 Nov: (careers form reads CTC in lakhs — "10 L", "10.5", "10,00,000" — with a live hint;
+new **Careers Applications** tab for TA / RMG / GM). Before: 5 Nov 2026, last (the unmapped-money panel shows to Finance only, not Admin / CEO; Margin · Expenses ·
 Net revenue removed from "How the year unfolded"). Before that: (CEO Finance tab: "In Received Amount, not mapped yet" panel, "Counted by: Work
 month / Cash received month" switch and a "Collected changed after the month closed" note on "How the year unfolded";
 careers post lists every switched-on position; HM candidate card off; move a receipt's branch). Later 5 Nov: "What
@@ -4100,3 +4107,123 @@ the AI L1 fact reads "Not attempted — nothing was scored" instead of "0% · Fa
 `with_public=1`, so careers-page / apply-link candidates (whom no TA applied) are listed; the option reads
 "<name> (me) + self-applied".
 
+**6 Nov 2026 — careers CTC in lakhs + the Careers Applications tab (`crm/pages/CareersApplications.test.ts` 2,
+`scripts/tests/careers_logic.test.mjs` +1; server half + migration 0153 in B-V2 `CLAUDE.md`):** (1) **Careers form**
+(`careers.html`, `careers.js?v=4`, logic import `?v=4`): the Current / Expected CTC boxes are `type="text"
+inputmode="decimal"` with "e.g. 10 L or 10,00,000" and a hint that says what was understood as the candidate types
+("= ₹10 lakh a year", red "Type it in lakhs…" when unreadable; `data-ctc` / `data-ctc-hint`). PURE `ctcLakhs` (mirror of
+the server: 10,000+ = rupees, 1,000–9,999 unreadable, Cr ×100), `ctcText` ("10.25 LPA"), `ctcHint`; `applyProblems`
+refuses an unreadable CTC; submit sends `ctcText(lakhs)` or nothing. `UploadResumeModal.ctcToRupees` follows the same
+lakh-box rule. (2) **`crm/pages/CareersApplications.tsx`** (route `careers-applications`, lazyRetry; sidebar "Careers
+Applications" (Inbox) for Admin · TA · RMG by role, or the requirements grant, or `canApprove("profile.rmg_screening")` —
+a GM): teal `PageHeader` (all · today · 7 / 30 days · over budget; Careers link + Refresh), chip rows Came through
+(Careers page · Application link · Sent a resume) · Channel · Stage now with server counts, search + customer → position
++ date range, Clear all; one card per applicant — avatar, route + channel chips, applied time, email / phone /
+LinkedIn, facts (exp · notice / LWD · CTC current → expected in lakhs · Over budget · locations · skills), the position
+card (title · REQ / OPP · customer → `requirements/{id}`, or "No position — in the Talent Pool"), `CandidateStatusBadge`,
+ATS, TA owner, and Open in Applied Candidates (`path`) · Resume (`fileViewHref`) · Profile · Other matching positions.
+A TA ticks Sourcing rows and sends them for Technical Screening (`POST /api/candidate-profiles/send-for-screening`).
+Filters + page in `useSessionState("careers.apps.*")`. PURE `appsQuery`, `activeFilterCount`, `canSendForScreening`.
+
+**6 Nov 2026 (later) — the CEO money words on the Finance and Customer tabs (`crm/pages/dashboard/moneySeries.test.ts`
+3, `CeoDashboard.test.tsx` re-pinned; server half in B-V2 `CLAUDE.md`):** **`crm/pages/dashboard/moneySeries.ts`** (PURE)
+— `MONEY_SERIES` (Revenue (Ex. Tax) · Revenue (Inc Tax) · Receivable Bank · Receivable TDS · Received Bank · Received
+TDS · Due Bank · Due TDS · Total Due · Predicted revenue (project count); ten explicit hex colours — the palette has
+eight), `MONEY_PRESETS` (Overview · Revenue · Receivable · Received · Due · All), `presetSeries(preset, withPredicted)`
+(every series listed, the preset decides which start ticked), `moneyRows` (falls back to billed / collected for an
+older server), `moneyDrill` (received → collected, due → outstanding, else billed), `moneyTooltipNote` ("12 projects ·
+40 people" on a Predicted bar). `controlTower.FilteredBars` gains `tooltipNote(row, series)`. **Finance tab**: the
+work-month chart is those series with a **Show** segmented control (`key` remounts the ticks); People cost left the
+chart (Gross margin dial). Tiles: **Revenue (Ex. Tax)** (sub "Inc Tax ₹x"; with `headline.comparison_partial` the delta
+becomes "no like-for-like comparison yet", and YoY hides at the FY zoom), **Received (Bank + TDS)** (% of Inc Tax, Bank ·
+TDS), **Total Due** (Bank · TDS; "all open to date ₹x" foot), Gross margin warns "N heads without a CTC". Collection
+rate dial = received ÷ Inc Tax. **Customer tab**: Totals view uses the Overview preset (+ People cost / Margin off);
+tiles Revenue (Ex. Tax) / Received Bank. Revenue report's billed tile follows the same comparison flags.
+
+**7 Nov 2026 — "How the year unfolded" redesigned; the Billed page carries the dashboard's ticks
+(`moneySeries.test.ts` +2, `CeoInsightPage.test.ts` +1, `CeoDashboard.test.tsx` re-pinned; server half in B-V2
+`CLAUDE.md`):** (1) **`crm/pages/dashboard/MoneyStoryChart.tsx`** — ONE chart for the Finance tab and the Billed page:
+gradient header (title · Show presets · "Your pick" when custom · Columns / Trend · `headerExtra` — the Finance tab
+puts `GlassToggle` "Counted by" there) with four period figures (Revenue, Received ring, Total Due, Predicted); series
+chips grouped Revenue · Receivable · Received · Due · Forecast, each with its period total (`moneyTotals`), hover one
+to fade the rest; a recharts `ComposedChart` — gradient columns (or areas in Trend), **Predicted as a dashed fuchsia
+line over a soft area** (so it never dwarfs the actual columns), future months shaded "Forecast" and nulled for actual
+series, a "Today" line, the focused month as a highlighted band + pill tick; a **month spotlight** beside it that
+follows the mouse (collection ring, bank / TDS received-vs-due bars, Total Due, predicted with projects / people,
+an "Open the invoices of …" button); a month strip (mini bars; click to hide / show, All · Actuals only · None).
+Ticks + view survive Back (`storageKey`, sessionStorage). Clicking a month calls `onOpen(row, series|null, ticked, e)`.
+⚠️ Colours are explicit hex in `MONEY_SERIES` (+ `group`, `short`); `MONEY_GROUPS`, PURE `presetKeys`, `presetOf`,
+`parseSeriesParam`, `seriesParam`, `asMoneyKey`, `moneyTotals`, `shareOf`. (2) **Finance tab**: the work-month view is
+the new chart; a month click opens **`insights/billed`** with the dashboard's period + `fmonth` (the month) · `series`
+(the ticks, CSV) · `bar` (the bar clicked) — `insightLink` takes them, `router.CRM_FILTER_KEYS` += `fmonth`, `series`,
+`bar`. The cash view keeps `FilteredBars`. (3) **Billed page** (`CeoInsightPage.tsx`): reads those params; a chart with
+`kind: "money"` renders `MoneyStoryChart` with the dashboard's ticks (`onTickedChange` keeps `series` in the address),
+the month highlighted and the table opened on that month's invoices narrowed to the bar's field (PURE exported
+`moneyMonthFocus`; predicted names no field); clicking another month re-narrows in place and the address follows
+(`fmonth` / `bar`). When the payload carries `money`, **`BilledMoneyBoard.tsx`** replaces the tile grid: Revenue →
+Receivable (bank / TDS share bar) → Received (progress per side) → Due (Total Due big), plus "N fully paid" and
+"Overdue" chips — every figure opens its rows like the tile it replaces. Tables: **column chooser** (`ColumnChooser`,
+server `hidden` columns start off, remembered in `localStorage["crm.insight.cols.<metric>.<table>"]`, a clicked
+figure's column always shows; CSV = shown columns); money-word cells carry their series colour.
+
+**8 Nov 2026 — every CEO tab opens with the Finance tab's story chart (`CeoDashboard.test.tsx` re-pinned; UI only, no
+server change):** CEO ask — "same design as the Finance tab on Customer, Sales, People and the Billing Tracker".
+**`crm/pages/dashboard/StoryChart.tsx`** is the generic twin of `MoneyStoryChart`: the caller gives `series`
+(`{key, label, color, group, hint, line?, agg?: sum | last | max}` — a `line` series is a dashed line over a soft area;
+`agg` makes a stock (headcount, deployed) chip show the latest bucket, a flow the sum), `groups`, `presets`, four header
+`stats` (optional `ring`), `format`, `rowLabel`, `stripKeys`, `ring(row)`, `spotlightSub` / `spotlightExtra` (`SpotLine`)
+and `onOpen(row, series|null, ticked, e)`. `STORY_THEMES` = one gradient per tab (finance · customer sky→teal · sales
+violet→pink · people amber→orange · billing rose→pink); `STORY_PALETTE` / `paletteColor` for series named by the data
+("Others" slate). PURE `storyTotals`, `storyPresetOf`. Ticks + view in sessionStorage (`crm.ceo.customer.<view>`,
+`crm.ceo.deployed.<group>`, `crm.ceo.sales.trend`, `crm.ceo.people.trend`, `crm.ceo.billing.months`). Mounted:
+**Customer** — "How the year unfolded" (Totals = the money words + People cost + Margin, presets Overview · Revenue ·
+Received · Due · Profit · All; By customer = one column per customer, Top 3 · Top 5 · All; `GlassToggle` in the header)
+and "Deployed on customer sites" (Total deployed as a line + customers / locations, By customer / By location ×
+Monthly / Quarterly / Yearly in the header); **Sales** — positions brought in vs onboarded / internal / external /
+unknown (Overview · Internal vs external · All, zoom in the header, internal-share ring); **People** — Headcount (line) ·
+Deployed · Bench · Joiners · Exits (Deployment · Joiners & exits · All, utilisation ring, people / bench cost in the
+spotlight; HR's desk gets the same chart with Employees links); **Billing Tracker** — "How the work moved" (one series
+per stage group + All work as a line; Open work · Every stage · Paid vs all; a column narrows the tracker table as
+before). Every column opens exactly what its old bar opened (`openLink` skips a bucket the server could not read).
+`MoneyStoryChart` now exports `HeadStat` / `Ring` (with label / sub colours) and `GlassToggle` takes `ink`. Tests: the
+chips are buttons (`aria-pressed`), the buckets a strip of buttons in a group named Months / Quarters / Years.
+
+**8 Nov 2026 (later) — "Cash received month" in the same design (UI only):** screenshot report — the Counted by ▸
+Cash received month view of "How the year unfolded" was still the old `Panel` + `FilteredBars`. It is now a
+`StoryChart` (theme finance, `storageKey` `crm.ceo.cash`): `CASH_SERIES` Mapped to invoices (emerald) · Still on account
+(amber) · Cash received (cyan dashed line) · Billed (work month, for comparison), `CASH_GROUPS` Cash in · Compare,
+`CASH_PRESETS` Overview · Mapping · Cash vs billed · All; header stats Cash received · Mapped (% ring of cash) · Still on
+account · Billed; the spotlight ring = mapped ÷ cash in; an amber footer while money is on account. The same
+`GlassToggle` "Counted by" sits in the header of both views. Clicks open what they did before (Collected, or Billed for
+the billed series). Rows now carry `billed` = `revenue_ex`.
+
+**8 Nov 2026 (later still) — DSO tile wording (UI only):** the Finance tab's DSO tile said "paid N days after due on
+average", but the server's `collections.avg_days_to_pay` is measured from the INVOICE date to the payment date
+(amount-weighted, `revenue_report._collections`). The sub-line now reads "paid N days after the invoice date on average".
+
+**8 Nov 2026 (latest) — PO cover tile names its basis (server half in B-V2 `CLAUDE.md`):** the Finance tab's PO cover tile
+gains a foot "team bills ₹x / month" (`pipeline.cover_basis === "team"`, `monthly_burn`) or "at ₹x / month billed"
+(fallback); the Revenue report's Coming up panel adds "Team deployed today bills" and labels the cover accordingly
+(`RevenueReportData.pipeline` gains optional `monthly_burn` / `cover_basis`). Gross margin needs no client change — the
+server now stops people cost at today.
+
+**8 Nov 2026 (last) — gross margin hidden until people cost is tracked (server half in B-V2 `CLAUDE.md`):** user:
+"for now Gross margin — we do not track expense". The Finance / Customer payloads and the Revenue report carry
+`track_people_cost` (absent = shown, so an older server changes nothing). While it is **false** (the default):
+**Finance tab** — the Gross margin tile becomes **Ready to bill** (`pipeline.approved_uninvoiced`, → `timesheets?tab=all`),
+the Gross margin dial becomes **Overdue share** (overdue ÷ all open to date, `invert`, limit 20 %), the cash-flow panel
+drops People cost / Net / "Covers cost" (On agreed terms + Days paid late instead), `NetRevenuePanel showCost={false}`
+drops net profit. **Customer tab** — no People cost / Margin series or Profit preset (`CUSTOMER_*_NO_COST`), the 4th
+header stat is Overdue, "Blended margin" becomes **Overdue share**, no cost / margin bars and no People cost / Margin
+columns in customer → project → person (`EmployeeRows` / `ProjectRows` take `showCost`). **Revenue report** — Gross
+margin tile → Ready to bill, "Gross margin by customer" panel hidden (Forecast goes full width), cost / margin out of the
+cash flow, project and employee charts and tables, no loss-making chip. Settings ▸ Organisation ▸ Billing ▸ **"Show
+people cost & gross margin"** turns it all back on.
+
+**12 Nov 2026 — one candidate name everywhere (server half in B-V2 `CLAUDE.md`):** reported — a name TA corrected with
+Edit applicant never reached the Candidates master. The server now renames the master and every position's row
+(`services/candidate_names`). UI: `UploadResumeModal.EditApplicantModal` prints under Candidate name "Changing the name,
+email or phone here updates the candidate everywhere — Candidates, the profile and every other position they are in";
+Upload resume toasts the server's message when it says "already in Candidates as “X” — use Edit applicant…" (an upload for a
+known candidate keeps the name on record). The Candidates page edit and bulk-ZIP Verify already PUT `/api/candidates/{id}`,
+which now syncs the rows too. tsc green.

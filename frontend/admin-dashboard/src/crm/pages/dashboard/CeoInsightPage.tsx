@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownUp, ArrowLeft, Briefcase, Building2, Download, RefreshCw, Search, Users, Wallet,
+  ArrowDownUp, ArrowLeft, Briefcase, Building2, Columns3, Download, RefreshCw, Search, Users, Wallet,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { qs } from "../../api";
@@ -34,6 +34,9 @@ import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterB
 import { chartPalette, semanticAnchor } from "../../../design-system/tokens/tokens";
 import { fmtDateShort } from "../../../lib/datetime";
 import type { CeoPeriod } from "./CeoDashboard";
+import { MoneyStoryChart, type MoneyChartRow } from "./MoneyStoryChart";
+import { BilledMoneyBoard } from "./BilledMoneyBoard";
+import { asMoneyKey, moneySeriesOf, parseSeriesParam, seriesParam, type MoneyKey } from "./moneySeries";
 
 /* ---------- payload ---------- */
 
@@ -50,7 +53,9 @@ export type TableFocus = { kpi: string; label: string; where: string | null; sor
   /** A clicked chart bar narrows the table to rows mentioning it (29 Oct 2026). */
   search?: string;
   /** A clicked MONTH bar narrows the table to that month's rows (`month_key`, 5 Nov 2026). */
-  month?: string };
+  month?: string;
+  /** 7 Nov 2026 — the money series of the bar clicked (kept in the address as `bar`). */
+  bar?: string | null };
 
 /** What a bar of a drill-page chart does, in this order: open the row's own link ·
  *  zoom the page to that bar's month / quarter / FY · pick the status chip of that
@@ -94,9 +99,13 @@ export function drillBarAction(row: Row, segments: { key: string; label: string 
 }
 type Series = { key: string; label: string; tone: InsightTone; stack?: string; off?: boolean };
 type Chart = { key: string; title: string; subtitle?: string | null; rows: Record<string, unknown>[]; series: Series[];
-  layout: "horizontal" | "vertical"; format: InsightFormat; x_key: string };
+  layout: "horizontal" | "vertical"; format: InsightFormat; x_key: string;
+  /** 7 Nov 2026 — "money": the dashboard's "How the year unfolded" (MoneyStoryChart). */
+  kind?: "money" };
 type Segment = { key: string; label: string; tone: InsightTone; count: number; amount: number | null };
-export type InsightColumn = { key: string; label: string; format: InsightFormat; link?: string; align?: string };
+export type InsightColumn = { key: string; label: string; format: InsightFormat; link?: string; align?: string;
+  /** Off until ticked in the column chooser (7 Nov 2026). */
+  hidden?: boolean };
 type Row = Record<string, unknown>;
 type Table = { key: string; title: string; subtitle?: string | null; columns: InsightColumn[]; rows: Row[]; total: number; truncated: boolean };
 export type InsightPayload = {
@@ -106,6 +115,8 @@ export type InsightPayload = {
     options?: { customers: FilterOption[]; projects: FilterOption[]; branches?: FilterOption[] } | null };
   kpis: Kpi[]; charts: Chart[]; segments: Segment[]; default_segment: string | null; default_segments?: string[] | null;
   tables: Table[]; related: { metric: string; label: string; scope?: string }[]; notes: string[];
+  /** 7 Nov 2026 — the Billed page's period totals in the ten money words. */
+  money?: Partial<Record<MoneyKey | "expected_tds" | "tds_rate_pct" | "invoices", number>> | null;
 };
 
 /* ---------- pure helpers (exported for the test) ---------- */
@@ -198,11 +209,15 @@ export type InsightExtra = { scope?: string; customer_id?: number | null; projec
   /** 2 Nov 2026 — customer branch (0 = no branch on record). */
   branch_id?: number | null;
   /** Opens the page with the main table already narrowed to rows naming this text (a clicked bar). */
-  q?: string | null };
+  q?: string | null;
+  /** 7 Nov 2026 — a clicked month of "How the year unfolded": the month the table opens on,
+   *  the money series ticked on the dashboard (CSV) and the series of the bar clicked. */
+  fmonth?: string | null; series?: string | null; bar?: string | null };
 export function insightLink(metric: string, p: { anchor_month: string; kind: string }, extra: InsightExtra = {}): string {
   return `insights/${metric}${qs({ month: p.anchor_month, period: p.kind, scope: extra.scope,
     customer_id: extra.customer_id ?? undefined, branch_id: extra.branch_id ?? undefined,
-    project_id: extra.project_id ?? undefined, q: extra.q || undefined })}`;
+    project_id: extra.project_id ?? undefined, q: extra.q || undefined,
+    fmonth: extra.fmonth || undefined, series: extra.series || undefined, bar: extra.bar || undefined })}`;
 }
 
 /** A chart bucket key → the period it stands for (29 Oct 2026, click a bar):
@@ -252,6 +267,10 @@ function readParams() {
     branch: rawBranch !== null && rawBranch !== "" && Number.isFinite(bid) && bid >= 0 ? bid : null,
     scope: p.get("scope") || "",
     q: (p.get("q") || "").slice(0, 120),
+    // 7 Nov 2026 — from a month of "How the year unfolded": the ticks, the month, the bar.
+    series: parseSeriesParam(p.get("series")),
+    fmonth: /^\d{4}-\d{2}$/.test(p.get("fmonth") || "") ? (p.get("fmonth") as string) : null,
+    bar: asMoneyKey(p.get("bar")),
   };
 }
 
@@ -266,13 +285,17 @@ export function CeoInsightPage() {
     set("month", state.month); set("period", state.period);
     set("customer_id", state.customer); set("project_id", state.project); set("branch_id", state.branch); set("scope", state.scope || null);
     set("q", state.q || null);
+    set("series", state.series ? seriesParam(state.series) : null);
+    set("fmonth", state.fmonth); set("bar", state.bar);
     if (url.toString() !== window.location.href) window.history.replaceState(window.history.state, "", url.toString());
   }, [state]);
   // The bar a page was opened from (`q`) narrows the first view only — a new period starts clean.
   const firstPeriod = useRef(`${state.month}:${state.period}`);
   useEffect(() => {
-    if (`${state.month}:${state.period}` !== firstPeriod.current && state.q) setState((s) => ({ ...s, q: "" }));
-  }, [state.month, state.period, state.q]);
+    if (`${state.month}:${state.period}` !== firstPeriod.current && (state.q || state.fmonth)) {
+      setState((s) => ({ ...s, q: "", fmonth: null, bar: null }));
+    }
+  }, [state.month, state.period, state.q, state.fmonth]);
 
   const url = `/api/dashboard/ceo/drill/${encodeURIComponent(metric)}${qs({
     month: state.month, period: state.period, customer_id: state.customer ?? undefined,
@@ -340,6 +363,9 @@ export function CeoInsightPage() {
       {loading && !data && <SkeletonText lines={8} />}
       {data && <InsightBody key={`${data.metric}:${data.period.key}`} d={data}
         current={{ month: state.month, period: state.period }} initialSearch={state.q}
+        initialSeries={state.series} initialMonth={state.fmonth} initialBar={state.bar}
+        onSeries={(keys) => setState((s) => ({ ...s, series: keys }))}
+        onFocusMonth={(fmonth, bar) => setState((s) => (s.fmonth === fmonth && s.bar === asMoneyKey(bar) ? s : { ...s, fmonth, bar: asMoneyKey(bar) }))}
         onPeriod={(month, period) => setState((s) => ({ ...s, month, period }))} />}
     </div>
   );
@@ -347,17 +373,40 @@ export function CeoInsightPage() {
 
 const KPI_COLS: Record<number, string> = { 3: "xl:grid-cols-3", 4: "xl:grid-cols-4", 5: "xl:grid-cols-5", 6: "xl:grid-cols-6" };
 
-function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
+/** The table focus a clicked month of the money chart asks for: that month's invoices,
+ *  narrowed to the bar's own field (a predicted bar names no invoice field). PURE. */
+export function moneyMonthFocus(month: string, bar: string | null, chartRows: Row[], tableRows: Row[]): TableFocus {
+  const label = String(chartRows.find((r) => r.key === month)?.label ?? month);
+  const s = bar ? moneySeriesOf(bar) : null;
+  const where = bar && bar !== "predicted" && tableRows.some((r) => bar in r) ? bar : null;
+  return { kpi: `bar:${month}:${bar ?? ""}`, label: [label, s?.label].filter(Boolean).join(" · "),
+    where, sort: where, nonce: Date.now(), month, bar: bar ?? null };
+}
+
+function InsightBody({ d, current, onPeriod, initialSearch = "", initialSeries = null, initialMonth = null, initialBar = null,
+  onSeries, onFocusMonth }: {
   d: InsightPayload; current: { month: string; period: PeriodKind };
   onPeriod: (month: string, period: PeriodKind) => void; initialSearch?: string;
+  initialSeries?: MoneyKey[] | null; initialMonth?: string | null; initialBar?: MoneyKey | null;
+  onSeries?: (keys: MoneyKey[]) => void; onFocusMonth?: (month: string | null, bar: string | null) => void;
 }) {
   // Opened from a dashboard bar with `q`: every chip, the table narrowed to that name.
-  const [segs, setSegs] = useState<string[]>(() => (initialSearch ? []
+  const [segs, setSegs] = useState<string[]>(() => (initialSearch || initialMonth ? []
     : d.default_segments?.length ? d.default_segments : d.default_segment ? [d.default_segment] : []));
   const [first, ...rest] = d.charts;
   const toneOfSeg = useMemo(() => Object.fromEntries(d.segments.map((s) => [s.key, s.tone])), [d.segments]);
-  const [focus, setFocus] = useState<TableFocus | null>(() => (initialSearch
-    ? { kpi: `bar:${initialSearch}`, label: initialSearch, where: null, sort: null, nonce: Date.now(), search: initialSearch } : null));
+  const [focus, setFocus] = useState<TableFocus | null>(() => {
+    if (initialMonth && first?.kind === "money") return moneyMonthFocus(initialMonth, initialBar, first.rows as Row[], d.tables[0]?.rows ?? []);
+    return initialSearch
+      ? { kpi: `bar:${initialSearch}`, label: initialSearch, where: null, sort: null, nonce: Date.now(), search: initialSearch } : null;
+  });
+  // The month in the address follows the table's focus (a copied link opens the same view).
+  useEffect(() => { onFocusMonth?.(focus?.month ?? null, focus?.month ? focus.bar ?? null : null); },
+    [focus?.month, focus?.bar]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Opened from a dashboard month: bring the invoices into view once the page has drawn.
+  useEffect(() => {
+    if (initialMonth) window.setTimeout(() => tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 350);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (k: string) => setSegs((cur) => (cur.length === 1 && cur[0] === k ? [] : [k]));
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -399,7 +448,10 @@ function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
 
   return (
     <>
-      {d.kpis.length > 0 && (
+      {d.money && d.kpis.length > 0 ? (
+        <BilledMoneyBoard kpis={d.kpis} activeKey={focus?.kpi ?? null}
+          onPick={(key) => { const k = d.kpis.find((x) => x.key === key); if (k) openKpi(k); }} />
+      ) : d.kpis.length > 0 && (
         <div className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${KPI_COLS[Math.min(6, Math.max(3, d.kpis.length))]}`}>
           {d.kpis.map((k) => {
             const common = { label: k.label, tone: TILE_TONE[k.tone] ?? "brand", value: formatValue(k.value, k.format, true), sub: k.sub ?? undefined };
@@ -414,7 +466,18 @@ function InsightBody({ d, current, onPeriod, initialSearch = "" }: {
         </div>
       )}
 
-      {first && <ChartPanel c={first} wide onBar={onBar} />}
+      {first && first.kind === "money" ? (
+        <MoneyStoryChart rows={first.rows as MoneyChartRow[]} title={first.title} hint={first.subtitle ?? undefined}
+          ticked={initialSeries} todayKey={thisMonthKey()} highlightMonth={focus?.month ?? null}
+          onTickedChange={onSeries}
+          openLabel={(row) => (focus?.month === row.key ? `Showing ${row.label}'s invoices below` : `Show ${row.label}'s invoices below`)}
+          onOpen={(row, s) => {
+            if (!d.tables.length) return;
+            setSegs([]);
+            setFocus(moneyMonthFocus(row.key, s, first.rows as Row[], d.tables[0].rows));
+            window.requestAnimationFrame(() => tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+          }} />
+      ) : first && <ChartPanel c={first} wide onBar={onBar} />}
       {rest.length > 0 && (
         <div className="grid gap-4 xl:grid-cols-2">
           {rest.map((c) => <ChartPanel key={c.key} c={c} onBar={onBar} />)}
@@ -481,11 +544,28 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
   const month = focus?.month ?? null;
   const rows = useMemo(() => sortRows(filterRows(t.rows, segs, search, where, month), sort.key, sort.dir), [t.rows, segs, search, where, month, sort]);
   useEffect(() => setShown(PAGE), [segs, search, sort, where, month]);
-  const moneyCols = t.columns.filter((c) => c.format === "money");
+  // 7 Nov 2026 — the column chooser: columns the server marks `hidden` start off; the
+  // reader's choice is remembered per page + table (a convenience — try/catch).
+  const colStore = `crm.insight.cols.${fileStem.split("-")[0]}.${t.key}`;
+  const [shownKeys, setShownKeys] = useState<Set<string>>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(colStore) || "null");
+      if (Array.isArray(saved) && saved.length) return new Set(saved.filter((k) => t.columns.some((c) => c.key === k)));
+    } catch { /* storage off */ }
+    return new Set(t.columns.filter((c) => !c.hidden).map((c) => c.key));
+  });
+  const setCols = (next: Set<string>) => {
+    setShownKeys(next);
+    try { window.localStorage.setItem(colStore, JSON.stringify([...next])); } catch { /* storage off */ }
+  };
+  // A clicked figure always shows its own column.
+  const columns = t.columns.filter((c, i) => i === 0 || shownKeys.has(c.key) || c.key === where);
+  const hasHidden = t.columns.some((c) => c.hidden);
+  const moneyCols = columns.filter((c) => c.format === "money");
   const totals = useMemo(() => Object.fromEntries(moneyCols.map((c) => [c.key, rows.reduce((a, r) => a + (Number(r[c.key]) || 0), 0)])), [rows, moneyCols]);
 
   const exportCsv = () => {
-    const blob = new Blob([toCsv(t.columns, rows)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([toCsv(columns, rows)], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${fileStem}.csv`;
@@ -502,6 +582,7 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…"
             aria-label={`Search ${t.title}`} className={`${CONTROL} w-52 pl-8`} />
         </label>
+        {hasHidden && <ColumnChooser columns={t.columns} shown={shownKeys} onChange={setCols} />}
         <button type="button" className={ICON_BTN} onClick={exportCsv} title="Download what is shown as CSV" aria-label="Download CSV">
           <Download size={15} aria-hidden />
         </button>
@@ -538,7 +619,7 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
         <table className="min-w-full">
           <thead>
             <tr>
-              {t.columns.map((c) => (
+              {columns.map((c) => (
                 <th key={c.key} className={`${thCls} ${c.align === "right" ? "text-right" : ""}`}>
                   <button type="button" onClick={() => sortBy(c.key)} className="inline-flex items-center gap-1 hover:text-primary">
                     {c.label}
@@ -551,17 +632,17 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
           <tbody className="divide-y divide-subtle">
             {rows.slice(0, shown).map((r, i) => (
               <tr key={String(r.id ?? r.link ?? i) + ":" + i} className="row-hover">
-                {t.columns.map((c) => <td key={c.key} className={`${tdCls} ${c.align === "right" ? "text-right" : ""}`}><Cell c={c} r={r} toneOfSeg={toneOfSeg} /></td>)}
+                {columns.map((c) => <td key={c.key} className={`${tdCls} ${c.align === "right" ? "text-right" : ""}`}><Cell c={c} r={r} toneOfSeg={toneOfSeg} /></td>)}
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={t.columns.length} className="px-3 py-10 text-center text-sm text-muted">Nothing here.</td></tr>
+              <tr><td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-muted">Nothing here.</td></tr>
             )}
           </tbody>
           {rows.length > 1 && moneyCols.length > 0 && (
             <tfoot>
               <tr className="bg-surface-2 font-semibold">
-                {t.columns.map((c, i) => (
+                {columns.map((c, i) => (
                   <td key={c.key} className={`${tdCls} ${c.align === "right" ? "text-right" : ""}`}>
                     {i === 0 ? `Total · ${num(rows.length)}` : c.format === "money" ? inr(totals[c.key]) : ""}
                   </td>
@@ -585,6 +666,56 @@ function TablePanel({ t, segments, segs, onSeg, onAll, toneOfSeg, fileStem, focu
   );
 }
 
+/** Show / hide the table's columns (7 Nov 2026). The first column always shows. */
+function ColumnChooser({ columns, shown, onChange }: { columns: InsightColumn[]; shown: Set<string>; onChange: (s: Set<string>) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const rest = columns.slice(1);
+  const count = rest.filter((c) => shown.has(c.key)).length + 1;
+  const toggle = (k: string) => { const n = new Set(shown); if (n.has(k)) n.delete(k); else n.add(k); onChange(n); };
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" className={`${CONTROL} inline-flex items-center gap-1.5`} onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <Columns3 size={14} aria-hidden /> Columns <span className="text-muted">{count}/{columns.length}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-64 rounded-card border border-subtle bg-surface-3 p-2 shadow-overlay">
+          <div className="mb-1 flex items-center justify-between px-1 text-[11px] font-semibold">
+            <span className="uppercase tracking-[0.08em] text-muted">Show columns</span>
+            <span className="flex gap-2">
+              <button type="button" className="text-brand-600 hover:underline dark:text-brand-300" onClick={() => onChange(new Set(columns.map((c) => c.key)))}>All</button>
+              <button type="button" className="text-brand-600 hover:underline dark:text-brand-300" onClick={() => onChange(new Set(columns.filter((c) => !c.hidden).map((c) => c.key)))}>Default</button>
+            </span>
+          </div>
+          <ul className="max-h-72 overflow-y-auto">
+            <li><label className="flex items-center gap-2 rounded px-1.5 py-1 text-xs text-muted"><input type="checkbox" checked disabled className="h-3.5 w-3.5" /> {columns[0]?.label} (always)</label></li>
+            {rest.map((c) => {
+              const s = moneySeriesOf(c.key);
+              return (
+                <li key={c.key}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs text-secondary hover:bg-surface-2">
+                    <input type="checkbox" className="h-3.5 w-3.5" checked={shown.has(c.key)} onChange={() => toggle(c.key)} />
+                    {s && <span aria-hidden className="h-2 w-2 rounded-full" style={{ background: s.color }} />}
+                    {c.label}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Cell({ c, r, toneOfSeg }: { c: InsightColumn; r: Row; toneOfSeg: Record<string, InsightTone> }) {
   const v = r[c.key];
   if (c.format === "badge") {
@@ -596,6 +727,11 @@ function Cell({ c, r, toneOfSeg }: { c: InsightColumn; r: Row; toneOfSeg: Record
   const text = formatValue(v, c.format);
   const late = c.key === "days_late" || c.key === "late_by";
   const cls = late && Number(v) > 0 ? (Number(v) > 60 ? "font-semibold text-danger" : "font-semibold text-warning") : "";
+  // 7 Nov 2026 — the money words carry their chart colour (a zero stays quiet).
+  const ms = moneySeriesOf(c.key);
+  if (ms && !c.link) {
+    return Number(v) ? <span className="font-semibold" style={{ color: ms.color }}>{text}</span> : <span className="text-muted">{text}</span>;
+  }
   const to = c.link ? r[c.link] : null;
   if (typeof to === "string" && to && v !== null && v !== undefined && v !== "") {
     return <CrmLink to={to} className={`font-medium text-brand-600 hover:underline dark:text-brand-300 ${cls}`}>{text}</CrmLink>;

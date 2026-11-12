@@ -83,3 +83,24 @@ test("a position open in two cities shows under each", async () => {
   assert.deepEqual(inLocation(ps, "Chennai").map((p) => p.id), [1]);
   assert.deepEqual(inLocation(ps, "pune").map((p) => p.id), [2]);
 });
+
+test("CTC as candidates type it is read in lakhs (6 Nov 2026)", async () => {
+  const { ctcLakhs, ctcText, ctcHint, applyProblems: ap } = await import("../../frontend/js/careers_logic.js");
+  assert.equal(ctcLakhs("10 L"), 10);
+  assert.equal(ctcLakhs("10.2L"), 10.2);
+  assert.equal(ctcLakhs("24.5"), 24.5);
+  assert.equal(ctcLakhs("10,00,000"), 10);
+  assert.equal(ctcLakhs("₹ 7,00,000"), 7);
+  assert.equal(ctcLakhs("1000000 LPA"), 10);
+  assert.equal(ctcLakhs("1.2 Cr"), 120);
+  assert.equal(ctcLakhs(""), null);
+  assert.ok(Number.isNaN(ctcLakhs("2500")));
+  assert.ok(Number.isNaN(ctcLakhs("negotiable")));
+  assert.equal(ctcText(10.25), "10.25 LPA");
+  assert.equal(ctcHint("10,00,000").text, "= ₹10 lakh a year");
+  assert.equal(ctcHint("2500").ok, false);
+  const base = { candidate_name: "Asha", email: "a@b.com", phone: "+91 98765 43210", experience: "4",
+    notice_period: "30 days", current_location: "Pune", file: { name: "cv.pdf", size: 10 }, consent: true };
+  assert.deepEqual(ap({ ...base, expected_ctc: "10 L" }), []);
+  assert.ok(ap({ ...base, expected_ctc: "2500" }).some((m) => m.includes("expected CTC")));
+});

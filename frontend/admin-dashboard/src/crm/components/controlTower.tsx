@@ -557,7 +557,7 @@ export function seriesAt(row: Record<string, unknown>, ticked: string[]): string
 
 export function FilteredBars({ data, series, xKey = "label", format, height = 260, layout = "horizontal",
                                rowFilter = false, rowLabel = "Show", stacked = false, className = "",
-                               barLink, onBarClick, clickHint }: {
+                               barLink, onBarClick, clickHint, tooltipNote }: {
   data: Record<string, unknown>[]; series: BarSeries[]; xKey?: string; format?: (v: number) => string;
   height?: number; layout?: "horizontal" | "vertical"; rowFilter?: boolean; rowLabel?: string;
   stacked?: boolean; className?: string;
@@ -567,6 +567,8 @@ export function FilteredBars({ data, series, xKey = "label", format, height = 26
   onBarClick?: (row: Record<string, unknown>, series: string) => void;
   /** The line under the series ticks that says what a click does. */
   clickHint?: string;
+  /** Extra words after a series' value in the tooltip (6 Nov 2026 — "12 projects · 40 people"). */
+  tooltipNote?: (row: Record<string, unknown>, series: string) => string | null;
 }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
@@ -643,7 +645,10 @@ export function FilteredBars({ data, series, xKey = "label", format, height = 26
                     <YAxis tick={{ fill: axis, fontSize: 11 }} tickFormatter={(v) => fmt(Number(v))} width={56} allowDecimals={false} />
                   </>
                 )}
-                <Tooltip cursor={{ fill: axis, fillOpacity: 0.08 }} contentStyle={tooltipStyle} formatter={(v: number, name: string) => [fmt(Number(v)), name]} />
+                <Tooltip cursor={{ fill: axis, fillOpacity: 0.08 }} contentStyle={tooltipStyle} formatter={(v: number, name: string, item: { dataKey?: unknown; payload?: Record<string, unknown> }) => {
+                  const note = tooltipNote && item?.payload ? tooltipNote(item.payload, String(item.dataKey ?? "")) : null;
+                  return [note ? `${fmt(Number(v))} · ${note}` : fmt(Number(v)), name];
+                }} />
                 {active.map((s) => (
                   <Bar key={s.key} dataKey={s.key} name={s.label} fill={colorOf(s, series.indexOf(s))}
                        stackId={stacked ? (s.stackId ?? "stack") : s.stackId}

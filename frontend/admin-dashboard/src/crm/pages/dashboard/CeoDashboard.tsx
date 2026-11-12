@@ -37,7 +37,7 @@ import { RevenueTargetsModal } from "../../components/RevenueTargetsModal";
 import type { TargetsForModal } from "../../components/RevenueTargetsModal";
 import {
   CONTROL, DateStepper, Delta, FilteredBars, ICON_BTN, MiniStat, Panel, PeriodSwitcher, STATE_CHIP,
-  Speedometer, Tile, inr, inrCompact, num, pct, shiftMonthKey, thisMonthKey,
+  Speedometer, Tile, inr, inrCompact, num, openBarLink, pct, shiftMonthKey, thisMonthKey,
 } from "../../components/controlTower";
 import type { PeriodKind, StateTone } from "../../components/controlTower";
 import type { RevenueReportData } from "../reports/RevenueReport";
@@ -47,6 +47,12 @@ import { useDeskData } from "./DeskWidgets";
 import { BillingTracker } from "./BillingTracker";
 import { bucketLink, insightLink } from "./CeoInsightPage";
 import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
+import {
+  MONEY_GROUPS, MONEY_SERIES, moneyDrill, moneyRows, seriesParam,
+  type MoneyKey, type MoneyRow,
+} from "./moneySeries";
+import { GlassToggle, MoneyStoryChart } from "./MoneyStoryChart";
+import { SpotLine, StoryChart, STORY_THEMES, paletteColor, type StoryRow, type StorySeries } from "./StoryChart";
 import {
   NetRevenuePanel, PredictedRevenuePanel, TdsCollectionPanel,
   type ForecastData, type NetData, type TdsData,
@@ -68,6 +74,9 @@ export type CeoPeriod = {
 type MonthRow = { key: string; label: string; future: boolean };
 
 export type FinanceData = {
+  /** 8 Nov 2026 — false: people cost (CTC) is not tracked yet, so gross margin,
+   *  net profit and the people-cost side of the cash flow are hidden. Absent = shown. */
+  track_people_cost?: boolean;
   headline: RevenueReportData["headline"];
   targets: RevenueReportData["targets"];
   margin: Omit<RevenueReportData["margin"], "by_customer">;
@@ -78,7 +87,7 @@ export type FinanceData = {
   efficiency: RevenueReportData["efficiency"];
   alerts: RevenueReportData["alerts"];
   series: RevenueReportData["series"];
-  monthly: (MonthRow & { billed: number; collected: number; cost: number; margin: number;
+  monthly: (MonthRow & MoneyRow & { billed: number; collected: number; cost: number; margin: number;
     /** 4 Nov 2026 — predicted (current month on), expenses, net revenue / profit. */
     predicted?: number | null; expenses?: number; net_revenue?: number; net_profit?: number;
     /** 4 Nov 2026 — received against the month's invoices, their share before GST. */
@@ -89,6 +98,8 @@ export type FinanceData = {
     mapping_changed_on?: string | null; mapped_later?: number })[];
   /** 5 Nov 2026 — received amounts still on account (not counted as Collected). */
   on_account?: OnAccount | null;
+  /** 6 Nov 2026 — the period's bank / TDS split (services/money_split). */
+  money?: Partial<Record<MoneyKey | "expected_tds", number>> & { tds_rate_pct?: number };
   net?: NetData | null;
   forecast?: ForecastData | null;
   tds?: TdsData | null;
@@ -125,6 +136,8 @@ export type CustomerRowT = {
 };
 type Alert = RevenueReportData["alerts"][number];
 export type CustomerData = {
+  /** 8 Nov 2026 — see FinanceData.track_people_cost. */
+  track_people_cost?: boolean;
   summary: {
     customers: number; customers_billing: number; billed: number; previous: number; change_pct: number | null;
     collected: number; outstanding: number; overdue: number; heads: number; heads_today: number;
@@ -133,7 +146,7 @@ export type CustomerData = {
   };
   donut: { label: string; value: number; customer_id: number | null }[];
   /** Month by month inside the period; `customers` = billed by top customer (+ Others). */
-  monthly: (MonthRow & { billed: number; collected: number; cost: number; customers: Record<string, number> })[];
+  monthly: (MonthRow & MoneyRow & { billed: number; collected: number; cost: number; customers: Record<string, number> })[];
   monthly_series: string[];
   /** Heads deployed at the END of each bucket, by customer and by customer location, at three zooms. */
   deployed_trend: Record<PeriodKind, (MonthRow & { total: number; customers: Record<string, number>; locations: Record<string, number> })[]>;
@@ -405,6 +418,73 @@ const ZOOM_LABEL: Record<PeriodKind, string> = { month: "Monthly", quarter: "Qua
 const ZOOM_OPTIONS = (["month", "quarter", "fy"] as PeriodKind[]).map((z) => ({ key: z, label: ZOOM_LABEL[z] }));
 const ZOOM_ROWS: Record<PeriodKind, string> = { month: "Months", quarter: "Quarters", fy: "Years" };
 
+/* ---------- story-chart series of the Customer / Sales / People tabs (8 Nov 2026) ---------- */
+
+/** Open a bar's link (a bucket the server could not read gives none). */
+const openLink = (link: string | null, e?: React.MouseEvent | null) => { if (link) openBarLink(link, e); };
+const num0 = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+/** Whole percent of part in whole; null when whole is 0. */
+const shareOfPct = (part: number, whole: number): number | null => (whole > 0 ? Math.round((part / whole) * 100) : null);
+
+/* 8 Nov 2026 — the "Cash received month" view of How the year unfolded, in the same
+   story-chart design as the work-month view (it was a plain bar panel). */
+const CASH_SERIES: StorySeries[] = [
+  { key: "cash_mapped", label: "Mapped to invoices", color: "#10b981", group: "cash", hint: "payments recorded against invoices, by the day the money arrived" },
+  { key: "cash_on_account", label: "Still on account", color: "#f59e0b", group: "cash", hint: "money in Received Amount not mapped to any invoice yet — not Collected" },
+  { key: "cash_in", label: "Cash received", color: "#22d3ee", group: "cash", line: true, hint: "everything that arrived that month, with GST (mapped + on account)" },
+  { key: "billed", label: "Billed (work month)", color: "#2563eb", group: "compare", hint: "Revenue (Ex. Tax) by the invoice's work month, for comparison" },
+];
+const CASH_GROUPS = [{ key: "cash", label: "Cash in" }, { key: "compare", label: "Compare" }];
+const CASH_PRESETS = [
+  { key: "overview", label: "Overview", keys: ["cash_mapped", "cash_on_account", "cash_in"] },
+  { key: "mapping", label: "Mapping", keys: ["cash_mapped", "cash_on_account"] },
+  { key: "vsbilled", label: "Cash vs billed", keys: ["cash_in", "billed"] },
+  { key: "all", label: "All", keys: CASH_SERIES.map((s) => s.key) },
+];
+
+const CUSTOMER_GROUPS = [...MONEY_GROUPS.filter((g) => g.key !== "forecast"), { key: "cost", label: "Cost & margin" }];
+const CUSTOMER_TOTAL_PRESETS = [
+  { key: "overview", label: "Overview", keys: ["revenue_ex", "received_bank", "total_due"] },
+  { key: "revenue", label: "Revenue", keys: ["revenue_ex", "revenue_inc"] },
+  { key: "received", label: "Received", keys: ["receivable_bank", "received_bank", "receivable_tds", "received_tds"] },
+  { key: "due", label: "Due", keys: ["due_bank", "due_tds", "total_due"] },
+  { key: "profit", label: "Profit", keys: ["revenue_ex", "cost", "margin"] },
+  { key: "all", label: "All", keys: [...MONEY_SERIES.filter((x) => x.key !== "predicted").map((x) => x.key), "cost", "margin"] },
+];
+/** 8 Nov 2026 — the same, with people cost switched off: no cost / margin anywhere. */
+const CUSTOMER_GROUPS_NO_COST = CUSTOMER_GROUPS.filter((g) => g.key !== "cost");
+const CUSTOMER_TOTAL_PRESETS_NO_COST = CUSTOMER_TOTAL_PRESETS
+  .filter((p) => p.key !== "profit")
+  .map((p) => ({ ...p, keys: p.keys.filter((k) => k !== "cost" && k !== "margin") }));
+
+const SALES_SERIES: StorySeries[] = [
+  { key: "positions_in", label: "Positions brought in", color: "#8b5cf6", group: "demand", hint: "positions on requirements created in the bucket" },
+  { key: "onboardings", label: "Onboarded", color: "#10b981", group: "onboarded", hint: "candidates who joined" },
+  { key: "internal", label: "Internal", color: "#14b8a6", group: "onboarded", hint: "redeployed from the bench or on Karnex rolls 30+ days before" },
+  { key: "external", label: "External", color: "#0ea5e9", group: "onboarded", hint: "hired for the position" },
+  { key: "unknown", label: "Unknown", color: "#94a3b8", group: "onboarded", hint: "no employee record to decide" },
+];
+const SALES_GROUPS = [{ key: "demand", label: "Demand" }, { key: "onboarded", label: "Onboarded" }];
+const SALES_PRESETS = [
+  { key: "overview", label: "Overview", keys: ["positions_in", "onboardings"] },
+  { key: "mix", label: "Internal vs external", keys: ["internal", "external", "unknown"] },
+  { key: "all", label: "All", keys: SALES_SERIES.map((x) => x.key) },
+];
+
+const PEOPLE_STORY_SERIES: StorySeries[] = [
+  { key: "headcount", label: "Headcount", color: "#6366f1", group: "rolls", line: true, agg: "last", hint: "on the rolls at month end" },
+  { key: "deployed", label: "Deployed", color: "#10b981", group: "rolls", agg: "last", hint: "on a customer project at month end" },
+  { key: "bench", label: "On the bench", color: "#f59e0b", group: "rolls", agg: "last", hint: "on the rolls, not on a project" },
+  { key: "joiners", label: "Joiners", color: "#0ea5e9", group: "movement", hint: "joined in the month" },
+  { key: "exits", label: "Exits", color: "#ef4444", group: "movement", hint: "left in the month" },
+];
+const PEOPLE_GROUPS = [{ key: "rolls", label: "On the rolls" }, { key: "movement", label: "Movement" }];
+const PEOPLE_PRESETS = [
+  { key: "deployment", label: "Deployment", keys: ["headcount", "deployed", "bench"] },
+  { key: "movement", label: "Joiners & exits", keys: ["joiners", "exits"] },
+  { key: "all", label: "All", keys: PEOPLE_STORY_SERIES.map((x) => x.key) },
+];
+
 /* ====================================================================== Finance */
 
 function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; period: CeoPeriod; showOnAccount?: boolean }) {
@@ -413,8 +493,24 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const drill = (metric: string, scope?: string) => insightLink(metric, period,
     { scope, customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id });
   const h = d.headline, t = d.targets, m = d.margin, c = d.collections;
-  const collectionState = highGood(h.collection_rate_pct, 90, 75);
+  // 6 Nov 2026 — the bank / TDS split. Received = cash + TDS certificates, compared
+  // with Revenue (Inc Tax) so both sides carry GST (the old rate put cash with GST
+  // over billed before GST). An older server without `money` keeps the old figures.
+  const mo = d.money;
+  const revInc = mo?.revenue_inc ?? h.billed_incl_gst;
+  const received = mo ? (mo.received_bank ?? 0) + (mo.received_tds ?? 0) : h.collected;
+  const receivedPct = mo ? (revInc > 0 ? received / revInc * 100 : null) : h.collection_rate_pct;
+  const totalDue = mo?.total_due ?? h.outstanding;
+  const collectionState = highGood(receivedPct, 90, 75);
   const marginState = highGood(m.gross_margin_pct, 30, 15);
+  // 8 Nov 2026 (user: "for now Gross margin — we do not track expense"): with people
+  // cost switched off (Settings ▸ Organisation ▸ Billing) every cost / margin figure
+  // is hidden; the tile becomes "Ready to bill" and the dial "Overdue share".
+  const showCost = d.track_people_cost !== false;
+  const ready = d.pipeline.approved_uninvoiced;
+  // Overdue ÷ everything still open to date (both from the ageing rule).
+  const overduePct = h.outstanding > 0 ? Math.min(100, (d.ageing.overdue_total / h.outstanding) * 100) : null;
+  const overdueState = lowGood(overduePct, 20, 40);
   // At the FY zoom the target is the FY target; `month_*` is the SELECTED period's
   // figure at month / quarter zoom (the report's naming, kept as-is).
   const isFy = period.kind === "fy";
@@ -427,15 +523,18 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
   const cash = d.cashflow;
   // Past + current months, plus the months to come that carry a prediction (4 Nov 2026).
-  const monthly = d.monthly.filter((r) => !r.future || r.predicted != null)
-    .map((r) => ({ ...r, predicted: r.predicted ?? 0 }));
+  const monthly = moneyRows(d.monthly.filter((r) => !r.future || r.predicted != null));
   // 5 Nov 2026 — "Counted by": the invoice's work month (the dashboard's rule) or
   // the day the cash arrived (mapped payments + money still on account).
   const [countedBy, setCountedBy] = useState<CountedBy>("work");
   const hasCash = d.monthly.some((r) => r.cash_in != null);
   const byCash = countedBy === "cash" && hasCash;
   const cashRows = monthly.filter((r) => !r.future).map((r) => ({ ...r, cash_in: r.cash_in ?? 0,
-    cash_mapped: r.cash_mapped ?? 0, cash_on_account: r.cash_on_account ?? 0 }));
+    cash_mapped: r.cash_mapped ?? 0, cash_on_account: r.cash_on_account ?? 0, billed: r.revenue_ex ?? r.billed ?? 0 }));
+  const cashTot = cashRows.reduce((a, r) => ({ cash_in: a.cash_in + num0(r.cash_in), cash_mapped: a.cash_mapped + num0(r.cash_mapped),
+    cash_on_account: a.cash_on_account + num0(r.cash_on_account), billed: a.billed + num0(r.billed) }),
+    { cash_in: 0, cash_mapped: 0, cash_on_account: 0, billed: 0 });
+  const cashMonths = cashRows.filter((r) => num0(r.cash_in) > 0).length;
   const changed = mappingNotes(d.monthly.filter((r) => !r.future));
   const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id };
   // 29 Oct 2026 — every bar opens the drill page of its series, zoomed to that bar.
@@ -448,63 +547,95 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
       <Alerts alerts={d.alerts} to={rev} where="Reports ▸ Revenue" />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Tile label="Billed (excl. GST)" value={inrCompact(h.billed)} to={drill("billed")} sub={`${num(h.invoices)} invoices`}
-              foot={<><Delta value={h.billed_mom_pct} label={period.comparison_label} /><Delta value={h.billed_yoy_pct} label="YoY" /></>} />
-        <Tile label="Collected" value={inrCompact(h.collected)} tone="success" to={drill("collected")} sub={`${pct(h.collection_rate_pct, 0)} of billed`}
-              foot={<Delta value={h.collected_mom_pct} label={period.comparison_label} />} />
-        <Tile label="Outstanding" value={inrCompact(h.outstanding)} tone={h.outstanding > 0 ? "warning" : "neutral"} to={drill("outstanding")} sub={`${num(h.open_invoices)} open invoices`} />
+        <Tile label="Revenue (Ex. Tax)" value={inrCompact(h.billed)} to={drill("billed")} sub={`Inc Tax ${inrCompact(revInc)} · ${num(h.invoices)} invoices`}
+              foot={h.comparison_partial
+                ? <span className="text-[11px] text-muted" title="The previous period starts before the month Orbit has data from (Settings ▸ Billing ▸ Data starts from), so a % change would compare a full period with a few months.">no like-for-like comparison yet</span>
+                : <><Delta value={h.billed_mom_pct} label={period.comparison_label} />{!h.yoy_same_as_previous && <Delta value={h.billed_yoy_pct} label="YoY" />}</>} />
+        <Tile label="Received (Bank + TDS)" value={inrCompact(received)} tone="success" to={drill("collected")}
+              sub={mo ? `${pct(receivedPct, 0)} of Inc Tax · Bank ${inrCompact(mo.received_bank ?? 0)} · TDS ${inrCompact(mo.received_tds ?? 0)}` : `${pct(receivedPct, 0)} of billed`}
+              foot={h.comparison_partial ? undefined : <Delta value={h.collected_mom_pct} label={period.comparison_label} />} />
+        <Tile label="Total Due" value={inrCompact(totalDue)} tone={totalDue > 0 ? "warning" : "neutral"} to={drill("outstanding")}
+              sub={mo ? `Bank ${inrCompact(mo.due_bank ?? 0)} · TDS ${inrCompact(mo.due_tds ?? 0)}` : `${num(h.open_invoices)} open invoices`}
+              foot={mo ? <span className="text-[11px] text-muted" title="Every open invoice up to the end of the period, including earlier years">all open to date {inrCompact(h.outstanding)}</span> : undefined} />
         <Tile label="Overdue" value={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "danger" : "success"} to={drill("overdue")}
               sub={d.ageing.overdue_90_plus > 0 ? `${inrCompact(d.ageing.overdue_90_plus)} past 90 days` : "nothing past 90 days"} />
-        <Tile label="Gross margin" value={pct(m.gross_margin_pct, 0)} tone={marginState === "ok" ? "success" : marginState === "warn" ? "warning" : "danger"} to={drill("margin")}
-              sub={`${inrCompact(m.gross_margin)} on ${inrCompact(m.cost)} people cost`} />
+        {showCost ? (
+          <Tile label="Gross margin" value={pct(m.gross_margin_pct, 0)} tone={marginState === "ok" ? "success" : marginState === "warn" ? "warning" : "danger"} to={drill("margin")}
+                sub={`${inrCompact(m.gross_margin)} on ${inrCompact(m.cost)} people cost`}
+                foot={m.heads_without_ctc ? <span className="text-[11px] font-semibold text-warning">{num(m.heads_without_ctc)} heads without a CTC — cost understated</span> : undefined} />
+        ) : (
+          <Tile label="Ready to bill" value={inrCompact(ready?.amount ?? 0)} tone={(ready?.amount ?? 0) > 0 ? "warning" : "success"} to="timesheets?tab=all"
+                sub={(ready?.count ?? 0) > 0 ? `${num(ready?.count ?? 0)} approved timesheet${ready?.count === 1 ? "" : "s"} not yet invoiced` : "every approved timesheet is invoiced"} />
+        )}
         <Tile label={`${isFy ? "FY" : "Period"} target`} value={target === null ? "—" : pct(attainment, 0)}
               tone={attainmentState(attainment) === "ok" ? "success" : attainmentState(attainment) === "warn" ? "warning" : "neutral"}
               to={drill("target")} sub={scoped ? "company-wide — clear the customer filter to compare"
                 : target === null ? "no target set — Reports ▸ Revenue ▸ Targets" : `of ${inrCompact(target)}`} />
         <Tile label="DSO" value={c.dso_days === null ? "—" : `${num(c.dso_days)} d`} tone={lowGood(c.dso_days, 45, 60) === "ok" ? "success" : lowGood(c.dso_days, 45, 60) === "warn" ? "warning" : "danger"} to={drill("dso")}
-              sub={c.avg_days_to_pay === null ? "no receipts in the period" : `paid ${num(c.avg_days_to_pay)} days after due on average`} />
+              sub={c.avg_days_to_pay === null ? "no receipts in the period" : `paid ${num(c.avg_days_to_pay)} days after the invoice date on average`} />
         <Tile label="PO cover" value={d.pipeline.po_cover_months === null ? "—" : `${d.pipeline.po_cover_months} mo`} to={drill("po")}
               tone={lowGood(d.pipeline.po_cover_months === null ? null : -d.pipeline.po_cover_months, -2, -1) === "ok" ? "success" : "warning"}
-              sub={`${inrCompact(d.pipeline.active_po_balance)} active PO balance`} />
+              sub={`${inrCompact(d.pipeline.active_po_balance)} active PO balance`}
+              foot={d.pipeline.cover_basis ? <span className="text-[11px] text-muted"
+                title={d.pipeline.cover_basis === "team" ? "PO balance ÷ the monthly billing of everyone deployed today" : "No team on record — PO balance ÷ the last 3 months' invoices"}>
+                {d.pipeline.cover_basis === "team" ? `team bills ${inrCompact(d.pipeline.monthly_burn ?? 0)} / month` : `at ${inrCompact(d.pipeline.avg_monthly_billed ?? 0)} / month billed`}</span> : undefined} />
       </div>
 
       {/* 0 · Money received but not on any invoice yet (5 Nov 2026) — not in Collected. */}
       {showOnAccount && <OnAccountPanel oa={d.on_account} collectedLink={drill("collected")} />}
 
-      {/* 1 · How the year unfolded — the CEO's first question, so the first chart. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
-             hint={byCash
-               ? "cash by the day it arrived, with GST — money mapped to invoices plus money still in Received Amount; billed stays by work month"
-               : "billed · received · people cost by the invoice's work month, all before GST — received is each invoice's share before GST, so it never stands above billed; predicted = what the deployed team should bill"}
-             action={hasCash ? <Segmented value={countedBy} options={COUNTED_BY_OPTIONS} onChange={setCountedBy} label="Counted by" /> : undefined}>
-        {byCash ? (
-          <FilteredBars key="cash" data={cashRows} rowFilter rowLabel="Months" format={inrCompact}
-                        barLink={(r, s) => monthBar(r, s === "cash_on_account" ? "collected" : s === "billed" ? "billed" : "collected")}
-                        series={[{ key: "billed", label: "Billed (work month)", color: 0, defaultOff: true },
-                                 { key: "cash_in", label: "Cash received", color: 1 },
-                                 { key: "cash_mapped", label: "Mapped to invoices", color: 2 },
-                                 { key: "cash_on_account", label: "Still on account", color: 5 }]} />
-        ) : (
-          <FilteredBars key="work" data={monthly} rowFilter rowLabel="Months" format={inrCompact}
-                        barLink={(r, s) => monthBar(r, s === "predicted" || s === "received_ex" ? "billed" : s)}
-                        // 5 Nov 2026 (user ask): Expenses, Net revenue and Margin left this chart —
-                        // they live in the Net revenue panel and the Gross margin dial.
-                        series={[{ key: "billed", label: "Billed", color: 0 }, { key: "received_ex", label: "Received (excl. GST)", color: 1 },
-                                 { key: "collected", label: "Collected with GST", color: 7, defaultOff: true },
-                                 { key: "cost", label: "People cost", color: 6 },
-                                 { key: "predicted", label: "Predicted", color: 4 }]} />
-        )}
-        {!byCash && changed.length > 0 && (
-          <p className="mt-3 rounded-control border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-            <span className="font-semibold">Collected changed after the month closed:</span>{" "}
-            {changed.slice(0, 4).map((c, i) => (
-              <span key={c.label}>{i > 0 && " · "}{c.label} — {inrCompact(c.amount)} mapped on {fmtDateShort(c.on)}</span>
-            ))}
-            {changed.length > 4 && <> · +{changed.length - 4} more</>}
-            . Money mapped later moves into the month of its invoice's work.
-          </p>
-        )}
-      </Panel>
+      {/* 1 · How the year unfolded — the CEO's first question, so the first chart.
+          7 Nov 2026: the interactive MoneyStoryChart; a month click opens the Billed page
+          carrying the ticks chosen here (`series`), the month (`fmonth`) and the bar (`bar`). */}
+      {byCash ? (
+        <StoryChart rows={cashRows as unknown as StoryRow[]} series={CASH_SERIES} groups={CASH_GROUPS} presets={CASH_PRESETS}
+          theme="finance" storageKey="crm.ceo.cash" todayKey={thisMonthKey()} format={inrCompact} leadKey="cash_in"
+          stripKeys={["cash_mapped", "cash_on_account"]}
+          title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+          hint="Cash by the day it arrived, with GST · Mapped = recorded against invoices · On account = in Received Amount, not on an invoice yet · Billed stays by work month"
+          headerExtra={<GlassToggle value={countedBy} options={COUNTED_BY_OPTIONS} onChange={setCountedBy} label="Counted by" />}
+          stats={[
+            { label: "Cash received", value: inrCompact(cashTot.cash_in), sub: `${num(cashMonths)} month${cashMonths === 1 ? "" : "s"} with money in`, dot: "#22d3ee" },
+            { label: "Mapped to invoices", value: inrCompact(cashTot.cash_mapped), sub: `${pct(shareOfPct(cashTot.cash_mapped, cashTot.cash_in), 0)} of cash received`, dot: "#10b981",
+              ring: shareOfPct(cashTot.cash_mapped, cashTot.cash_in) },
+            { label: "Still on account", value: inrCompact(cashTot.cash_on_account), sub: cashTot.cash_on_account > 0 ? "not Collected until Finance maps it" : "everything is mapped", dot: "#f59e0b" },
+            { label: "Billed (work month)", value: inrCompact(cashTot.billed), sub: cashTot.billed > 0 ? `cash in = ${pct(shareOfPct(cashTot.cash_in, cashTot.billed), 0)} of billed` : "nothing billed", dot: "#2563eb" },
+          ]}
+          ring={(r) => ({ pct: shareOfPct(num0(r.cash_mapped), num0(r.cash_in)), color: "#10b981" })}
+          spotlightSub={(r) => (num0(r.cash_in) > 0 ? "of the cash that arrived is on an invoice" : "no money arrived this month")}
+          spotlightExtra={(r) => (
+            <>
+              <SpotLine label="Billed (work month)" value={inrCompact(num0(r.billed))} />
+              <SpotLine label="Cash in ÷ billed" value={pct(shareOfPct(num0(r.cash_in), num0(r.billed)), 0)} />
+            </>
+          )}
+          onOpen={(row, s, _ticked, e) => openLink(monthBar(row, s === "billed" ? "billed" : "collected"), e)}
+          openLabel={(row) => `Open the money received in ${row.label}`}
+          footer={cashTot.cash_on_account > 0 ? (
+            <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <span className="font-semibold">{inrCompact(cashTot.cash_on_account)} is still on account.</span>{" "}
+              It counts as Collected once Finance maps it to invoices in Received Amount — it then moves to the month of each invoice's work.
+            </p>
+          ) : undefined} />
+      ) : (
+        <MoneyStoryChart rows={monthly} storageKey="crm.ceo.money" todayKey={thisMonthKey()}
+          title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+          hint="Every figure by the invoice's work month · Bank = cash, TDS = what the customer withholds · Predicted = the deployed team × the rate in force that month"
+          headerExtra={hasCash ? <GlassToggle value={countedBy} options={COUNTED_BY_OPTIONS} onChange={setCountedBy} label="Counted by" /> : undefined}
+          onOpen={(row, s, ticked, e) => openBarLink(insightLink("billed", period, {
+            ...scopeIds, fmonth: row.key, series: seriesParam(ticked), bar: s }), e)}
+          openLabel={(row) => (row.future ? `Open the Billed page at ${row.label}` : `Open the invoices of ${row.label}`)}
+          footer={changed.length > 0 ? (
+            <p className="rounded-control border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+              <span className="font-semibold">Collected changed after the month closed:</span>{" "}
+              {changed.slice(0, 4).map((c, i) => (
+                <span key={c.label}>{i > 0 && " · "}{c.label} — {inrCompact(c.amount)} mapped on {fmtDateShort(c.on)}</span>
+              ))}
+              {changed.length > 4 && <> · +{changed.length - 4} more</>}
+              . Money mapped later moves into the month of its invoice's work.
+            </p>
+          ) : undefined} />
+      )}
 
       {/* 2 · Where we stand against target, collections and margin — the dials, right under the trend. */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -523,28 +654,43 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
               : <MiniStat k="FY attainment" v={pct(t.fy_attainment_pct, 0)} />}
           </div>
         </Panel>
-        <Panel title="Collection rate" hint="collected ÷ billed in the period" action={<StateChip state={collectionState}>{pct(h.collection_rate_pct, 0)}</StateChip>}>
-          <Speedometer value={h.collection_rate_pct ?? 0} max={100} marker={90} markerLabel="goal" state={collectionState}
-                       label="Collection rate" caption="collected" format={(v) => `${Math.round(v)}%`} />
+        <Panel title="Collection rate" hint={mo ? "received (bank + TDS) ÷ revenue (Inc Tax) of the period's invoices" : "collected ÷ billed in the period"}
+               action={<StateChip state={collectionState}>{pct(receivedPct, 0)}</StateChip>}>
+          <Speedometer value={receivedPct ?? 0} max={100} marker={90} markerLabel="goal" state={collectionState}
+                       label="Collection rate" caption="received" format={(v) => `${Math.round(v)}%`} />
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <MiniStat k="Collected" v={inrCompact(h.collected)} tone="ok" />
-            <MiniStat k="Still owed" v={inrCompact(h.outstanding)} tone={h.outstanding > 0 ? "warn" : "ok"} />
+            <MiniStat k="Received" v={inrCompact(received)} tone="ok" />
+            <MiniStat k="Total due" v={inrCompact(totalDue)} tone={totalDue > 0 ? "warn" : "ok"}
+                      hint={mo ? `Bank ${inrCompact(mo.due_bank ?? 0)} · TDS ${inrCompact(mo.due_tds ?? 0)}` : undefined} />
           </div>
         </Panel>
-        <Panel title="Gross margin" hint="billed − people cost (CTC ÷ 12 × months deployed)" action={<StateChip state={marginState}>{pct(m.gross_margin_pct, 0)}</StateChip>}>
-          <Speedometer value={m.gross_margin_pct ?? 0} max={60} marker={30} markerLabel="goal" state={marginState}
-                       label="Gross margin" caption="margin" format={(v) => `${Math.round(v)}%`} />
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <MiniStat k="People cost" v={inrCompact(m.cost)} />
-            <MiniStat k="Deployed heads" v={num(d.efficiency.deployed_heads)} hint={m.heads_without_ctc ? `${m.heads_without_ctc} without a CTC — cost understated` : undefined} tone={m.heads_without_ctc ? "warn" : undefined} />
-          </div>
-        </Panel>
+        {showCost ? (
+          <Panel title="Gross margin" hint="billed − people cost (CTC ÷ 12 × months deployed)" action={<StateChip state={marginState}>{pct(m.gross_margin_pct, 0)}</StateChip>}>
+            <Speedometer value={m.gross_margin_pct ?? 0} max={60} marker={30} markerLabel="goal" state={marginState}
+                         label="Gross margin" caption="margin" format={(v) => `${Math.round(v)}%`} />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MiniStat k="People cost" v={inrCompact(m.cost)} />
+              <MiniStat k="Deployed heads" v={num(d.efficiency.deployed_heads)} hint={m.heads_without_ctc ? `${m.heads_without_ctc} without a CTC — cost understated` : undefined} tone={m.heads_without_ctc ? "warn" : undefined} />
+            </div>
+          </Panel>
+        ) : (
+          <Panel title="Overdue share" hint="overdue ÷ everything still open to date — lower is better"
+                 action={<StateChip state={overduePct === null ? "none" : overdueState}>{pct(overduePct, 0)}</StateChip>}>
+            <Speedometer value={overduePct ?? 0} max={100} marker={20} markerLabel="limit" state={overduePct === null ? "none" : overdueState} invert
+                         label="Overdue share" caption="overdue" format={(v) => `${Math.round(v)}%`} />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MiniStat k="Overdue" v={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "bad" : "ok"} />
+              <MiniStat k="Ready to bill" v={inrCompact(ready?.amount ?? 0)} tone={(ready?.amount ?? 0) > 0 ? "warn" : "ok"}
+                        hint={`${num(ready?.count ?? 0)} approved timesheet(s) not yet invoiced`} />
+            </div>
+          </Panel>
+        )}
       </div>
 
       {/* 2b · What is coming (4 Nov 2026): predicted revenue, net revenue, TDS. */}
       <PredictedRevenuePanel f={d.forecast} />
       <div className="grid gap-4 xl:grid-cols-2">
-        <NetRevenuePanel net={d.net} monthly={d.monthly} />
+        <NetRevenuePanel net={d.net} monthly={d.monthly} showCost={showCost} />
         <TdsCollectionPanel tds={d.tds} />
       </div>
 
@@ -559,18 +705,24 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
           ) : <p className="text-sm text-muted">No billing in this period.</p>}
         </Panel>
 
-        <Panel title="Cash flow — next 3 months" hint={`as of ${fmtDay(cash.as_of)} · what lands each month vs the people cost that month`}
-               action={<StateChip state={cash.covers_cost ? "ok" : "bad"}>{cash.covers_cost ? "Covers cost" : "Short"}</StateChip>}>
+        <Panel title="Cash flow — next 3 months"
+               hint={showCost ? `as of ${fmtDay(cash.as_of)} · what lands each month vs the people cost that month` : `as of ${fmtDay(cash.as_of)} · what should land each month from open invoices`}
+               action={showCost ? <StateChip state={cash.covers_cost ? "ok" : "bad"}>{cash.covers_cost ? "Covers cost" : "Short"}</StateChip> : undefined}>
           <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={200}
                         barLink={(_r, s) => (s === "people_cost" ? insightLink("margin", period, scopeIds) : insightLink("outstanding", period, scopeIds))}
-                        clickHint="Click a bar: money due → the open invoices · people cost → who it is for"
+                        clickHint={showCost ? "Click a bar: money due → the open invoices · people cost → who it is for" : "Click a bar: the open invoices behind it"}
                         data={cash.months.map((r) => ({ label: r.label, expected: r.expected, at_pace: r.expected_at_pace, people_cost: r.people_cost, net: r.net_at_pace }))}
-                        series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: true },
-                                 { key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }]} />
+                        series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: showCost },
+                                 ...(showCost ? [{ key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }] : [])]} />
           <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
             <MiniStat k="Expected in" v={inrCompact(cash.expected_total_at_pace)} tone="ok" hint={`${inrCompact(cash.expected_total)} on agreed terms`} />
-            <MiniStat k="People cost out" v={inrCompact(cash.people_cost_total)} />
-            <MiniStat k="Net" v={inrCompact(cash.net_total_at_pace)} tone={cash.net_total_at_pace >= 0 ? "ok" : "bad"} />
+            {showCost ? <>
+              <MiniStat k="People cost out" v={inrCompact(cash.people_cost_total)} />
+              <MiniStat k="Net" v={inrCompact(cash.net_total_at_pace)} tone={cash.net_total_at_pace >= 0 ? "ok" : "bad"} />
+            </> : <>
+              <MiniStat k="On agreed terms" v={inrCompact(cash.expected_total)} />
+              <MiniStat k="Days paid late" v={`${num(cash.slip_days ?? 0)} d`} hint="average days past due of last year's receipts" />
+            </>}
             <MiniStat k="Overdue to chase" v={inrCompact(cash.overdue.amount)} tone={cash.overdue.amount > 0 ? "warn" : "ok"} hint={`${cash.overdue.count} invoice(s)`} />
           </div>
           {cash.unbilled_ready.amount > 0 && (
@@ -606,8 +758,8 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
 
 /* ====================================================================== Customer */
 
-function EmployeeRows({ rows }: { rows: EmployeeRow[] }) {
-  if (!rows.length) return <tr><td colSpan={8} className="px-3 py-2 text-xs text-muted">No one was deployed on this project in the period.</td></tr>;
+function EmployeeRows({ rows, showCost = true }: { rows: EmployeeRow[]; showCost?: boolean }) {
+  if (!rows.length) return <tr><td colSpan={showCost ? 8 : 6} className="px-3 py-2 text-xs text-muted">No one was deployed on this project in the period.</td></tr>;
   return (
     <>
       {rows.map((e) => (
@@ -619,8 +771,8 @@ function EmployeeRows({ rows }: { rows: EmployeeRow[] }) {
           </td>
           <td className={tdCls}>{inr(e.billed)}</td>
           <td className={tdCls}><span className="text-xs text-muted">{e.invoices} inv</span></td>
-          <td className={tdCls}>{inr(e.cost)}{!e.has_ctc && <span className="ml-1 text-xs text-warning" title="No CTC on the employee record — cost understated">?</span>}</td>
-          <td className={`${tdCls} ${e.margin < 0 ? "text-danger" : ""}`}>{inr(e.margin)}</td>
+          {showCost && <td className={tdCls}>{inr(e.cost)}{!e.has_ctc && <span className="ml-1 text-xs text-warning" title="No CTC on the employee record — cost understated">?</span>}</td>}
+          {showCost && <td className={`${tdCls} ${e.margin < 0 ? "text-danger" : ""}`}>{inr(e.margin)}</td>}
           <td className={tdCls}><span className="text-xs text-secondary">{inrCompact(e.rate)} / {e.unit}</span></td>
           <td className={tdCls}><span className="text-xs text-secondary">{fmtDay(e.onboarding)}{e.exit ? ` → ${fmtDay(e.exit)}` : ""}</span></td>
           <td className={tdCls}>
@@ -634,7 +786,7 @@ function EmployeeRows({ rows }: { rows: EmployeeRow[] }) {
   );
 }
 
-function ProjectRows({ rows, open, toggle }: { rows: ProjectRow[]; open: Set<string>; toggle: (k: string) => void }) {
+function ProjectRows({ rows, open, toggle, showCost = true }: { rows: ProjectRow[]; open: Set<string>; toggle: (k: string) => void; showCost?: boolean }) {
   return (
     <>
       {rows.map((p) => {
@@ -653,17 +805,17 @@ function ProjectRows({ rows, open, toggle }: { rows: ProjectRow[]; open: Set<str
               </td>
               <td className={tdCls}>{inr(p.billed)}<div><Delta value={p.change_pct} /></div></td>
               <td className={tdCls}><ShareBar value={p.share_pct} /></td>
-              <td className={tdCls}>{inr(p.cost)}</td>
-              <td className={`${tdCls} ${p.margin < 0 ? "text-danger" : ""}`}>{inr(p.margin)} <span className="text-xs text-muted">{pct(p.margin_pct, 0)}</span></td>
+              {showCost && <td className={tdCls}>{inr(p.cost)}</td>}
+              {showCost && <td className={`${tdCls} ${p.margin < 0 ? "text-danger" : ""}`}>{inr(p.margin)} <span className="text-xs text-muted">{pct(p.margin_pct, 0)}</span></td>}
               <td className={tdCls}>{num(p.heads)} <span className="text-xs text-muted">({p.heads_today} live)</span></td>
               <td className={tdCls}><span className="text-xs text-secondary">{p.internal} int · {p.external} ext</span></td>
               <td className={tdCls}>{p.outstanding > 0 ? inr(p.outstanding) : <span className="text-xs text-muted">—</span>}</td>
             </tr>
             {isOpen && (
               <>
-                <EmployeeRows rows={p.employees} />
+                <EmployeeRows rows={p.employees} showCost={showCost} />
                 {p.unlinked_billed > 0 && (
-                  <tr className="bg-surface-2"><td colSpan={8} className="px-3 py-1.5 pl-16 text-xs text-secondary">{inr(p.unlinked_billed)} billed on invoices not linked to a timesheet (manual invoices) — counted on the project, not on a person.</td></tr>
+                  <tr className="bg-surface-2"><td colSpan={showCost ? 8 : 6} className="px-3 py-1.5 pl-16 text-xs text-secondary">{inr(p.unlinked_billed)} billed on invoices not linked to a timesheet (manual invoices) — counted on the project, not on a person.</td></tr>
                 )}
               </>
             )}
@@ -689,9 +841,17 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
   const expandAll = () => setOpen(new Set(d.customers.flatMap((c) => [`c${c.customer_id}`, ...c.projects.map((p) => `p${p.project_id}`)])));
 
   // Dials: concentration (LOW is good), collection rate, blended margin.
-  const collectionPct = s.billed ? (s.collected / s.billed) * 100 : null;
+  // 6 Nov 2026 — received (bank + TDS) over revenue Inc Tax, both with GST, from the
+  // month rows' money split; an older server falls back to cash ÷ billed.
+  const moneyIn = d.monthly.reduce((a, r) => a + (r.received_bank ?? 0) + (r.received_tds ?? 0), 0);
+  const moneyInc = d.monthly.reduce((a, r) => a + (r.revenue_inc ?? 0), 0);
+  const collectionPct = moneyInc > 0 ? (moneyIn / moneyInc) * 100 : s.billed ? (s.collected / s.billed) * 100 : null;
   const collectionState = highGood(collectionPct, 90, 75);
   const concState: StateTone = s.top1_share_pct === null ? "none" : s.top1_share_pct >= 50 ? "bad" : s.top1_share_pct >= 35 ? "warn" : "ok";
+  // 8 Nov 2026 — people cost switched off (Settings ▸ Billing): no cost / margin.
+  const showCost = d.track_people_cost !== false;
+  const overdueSharePct = s.outstanding > 0 ? Math.min(100, (s.overdue / s.outstanding) * 100) : null;
+  const overdueShareState: StateTone = overdueSharePct === null ? "none" : lowGood(overdueSharePct, 20, 40);
   const totalCost = d.customers.reduce((a, c) => a + c.cost, 0);
   const marginPct = s.billed ? ((s.billed - totalCost) / s.billed) * 100 : null;
   const marginState = highGood(marginPct, 30, 15);
@@ -707,34 +867,88 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
   const [unfoldBy, setUnfoldBy] = useState<"totals" | "customers">("totals");
   const pastMonths = d.monthly.filter((r) => !r.future);
   const monthly = unfoldBy === "totals"
-    ? pastMonths.map((r) => ({ label: r.label, key: r.key, billed: r.billed, collected: r.collected, cost: r.cost, margin: r.billed - r.cost }))
+    ? moneyRows(pastMonths).map((r) => ({ ...r, cost: r.cost, margin: r.billed - r.cost, customers: undefined }))
     : pastMonths.map((r) => ({ label: r.label, key: r.key, ...r.customers }));
   // 29 Oct 2026 — every bar opens its data: a customer-named series narrows the drill
   // page to that customer (looked up by name; "Others" opens everyone).
   const idByName = useMemo(() => new Map(d.customers.map((c) => [c.customer, c.customer_id])), [d.customers]);
   const unfoldBar = (r: Record<string, unknown>, s: string) => (unfoldBy === "totals"
-    ? bucketLink(moneyMetric(s), r.key)
+    ? bucketLink(s === "cost" || s === "margin" ? moneyMetric(s) : moneyDrill(s), r.key)
     : bucketLink("billed", r.key, { customer_id: idByName.get(s) ?? null }));
   const deployedBar = (r: Record<string, unknown>, s: string) =>
     bucketLink("deployed", r.key, { customer_id: groupBy === "customers" ? idByName.get(s) ?? null : null });
   const customerBar = (metricOf: (s: string) => string, scopeOf?: (s: string) => string | undefined) =>
     (r: Record<string, unknown>, s: string) => insightLink(metricOf(s), period, { customer_id: rowCid(r), scope: scopeOf?.(s) });
-  const monthSeries = unfoldBy === "totals"
-    ? [{ key: "billed", label: "Billed", color: 0 }, { key: "collected", label: "Collected", color: 1 },
-       { key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2, defaultOff: true }]
-    : d.monthly_series.map((name, i) => ({ key: name, label: name, color: i }));
+  // 8 Nov 2026 — the story chart's series, presets and headline figures.
+  const custNames = d.monthly_series;
+  const unfoldSeries: StorySeries[] = unfoldBy === "totals"
+    ? [...MONEY_SERIES.filter((x) => x.key !== "predicted").map((x) => ({ key: x.key, label: x.label, color: x.color, group: x.group, hint: x.hint })),
+       ...(showCost ? [
+         { key: "cost", label: "People cost", color: "#64748b", group: "cost", hint: "CTC ÷ 12 of the people deployed that month" },
+         { key: "margin", label: "Margin", color: "#14b8a6", group: "cost", hint: "Revenue (Ex. Tax) − people cost" }] : [])]
+    : custNames.map((name, i) => ({ key: name, label: name, color: paletteColor(name, i) }));
+  const named = custNames.filter((x) => !/^Others/i.test(x));
+  const unfoldPresets = unfoldBy === "totals" ? (showCost ? CUSTOMER_TOTAL_PRESETS : CUSTOMER_TOTAL_PRESETS_NO_COST) : [
+    { key: "top3", label: "Top 3", keys: named.slice(0, 3) },
+    { key: "top5", label: "Top 5", keys: named.slice(0, 5) },
+    { key: "all", label: "All", keys: custNames },
+  ];
+  const unfoldRows = monthly as unknown as StoryRow[];
+  const sumOf = (k: string) => unfoldRows.reduce((a, r) => a + num0(r[k]), 0);
+  const unfoldStats = unfoldBy === "totals" ? (() => {
+    const ex = sumOf("revenue_ex"), inc = sumOf("revenue_inc"), recv = sumOf("received_bank") + sumOf("received_tds"), mg = sumOf("margin");
+    return [
+      { label: "Revenue (Ex. Tax)", value: inrCompact(ex), sub: `Inc Tax ${inrCompact(inc)}`, dot: "#7dd3fc" },
+      { label: "Received (Bank + TDS)", value: inrCompact(recv), sub: inc > 0 ? `${pct(shareOfPct(recv, inc), 0)} of Inc Tax` : "nothing billed yet", dot: "#6ee7b7", ring: shareOfPct(recv, inc) },
+      { label: "Total Due", value: inrCompact(sumOf("total_due")), sub: `Bank ${inrCompact(sumOf("due_bank"))} · TDS ${inrCompact(sumOf("due_tds"))}`, dot: "#fca5a5" },
+      showCost
+        ? { label: "Margin", value: inrCompact(mg), sub: `${pct(shareOfPct(mg, ex), 0)} after ${inrCompact(sumOf("cost"))} people cost`, dot: "#5eead4" }
+        : { label: "Overdue", value: inrCompact(s.overdue), sub: s.overdue > 0 ? `${pct(overdueSharePct, 0)} of what is owed, past the due date` : "nothing past the due date", dot: "#fca5a5" },
+    ];
+  })() : (() => {
+    const byName = custNames.map((name) => ({ name, total: sumOf(name) })).sort((a, b) => b.total - a.total);
+    const all = byName.reduce((a, x) => a + x.total, 0);
+    const top = byName.find((x) => !/^Others/i.test(x.name));
+    const last = [...unfoldRows].reverse().find((r) => custNames.some((k) => num0(r[k]) > 0));
+    return [
+      { label: "Revenue (Ex. Tax)", value: inrCompact(all), sub: `${num(named.length)} customers named`, dot: "#7dd3fc" },
+      { label: "Top customer", value: top ? top.name : "—", sub: top ? `${inrCompact(top.total)} · ${pct(shareOfPct(top.total, all), 0)} of revenue` : "no billing", dot: "#fde68a", ring: top ? shareOfPct(top.total, all) : null },
+      { label: "Top 3 share", value: pct(shareOfPct(byName.filter((x) => !/^Others/i.test(x.name)).slice(0, 3).reduce((a, x) => a + x.total, 0), all), 0), sub: "of the period's revenue", dot: "#c4b5fd" },
+      { label: "Latest month", value: last ? inrCompact(custNames.reduce((a, k) => a + num0(last[k]), 0)) : "—", sub: last ? last.label : "no billing", dot: "#6ee7b7" },
+    ];
+  })();
   const active = d.customers.filter((c) => c.billed > 0 || c.previous > 0 || c.outstanding > 0 || c.heads_today > 0);
-  const billing = active.map((c) => ({ label: c.customer, customer_id: c.customer_id, billed: c.billed, previous: c.previous, collected: c.collected, cost: c.cost, margin: c.margin }));
+  const billing = active.map((c) => ({ label: c.customer, customer_id: c.customer_id, billed: c.billed, previous: c.previous, collected: c.collected,
+    ...(showCost ? { cost: c.cost, margin: c.margin } : {}) }));
   const receivables = active.filter((c) => c.outstanding > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, outstanding: c.outstanding, overdue: c.overdue, current: c.outstanding - c.overdue }));
   const runway = active.filter((c) => c.po_balance > 0 || c.monthly_burn > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, po_balance: c.po_balance, burn: c.monthly_burn, cover: c.po_cover_months ?? 0 }));
   const people = active.filter((c) => c.heads > 0 || c.open_positions > 0).map((c) => ({ label: c.customer, customer_id: c.customer_id, deployed: c.heads_today, internal: c.internal, external: c.external, open: c.open_positions }));
   const runwayShort = runway.filter((r) => r.burn > 0 && r.cover < 2).length;
   // Deployed heads over time — rows are buckets, series are customers OR locations (one toggle).
   const deployedRows = d.deployed_trend[zoom].filter((r) => !r.future).map((r) => ({ label: r.label, key: r.key, total: r.total, ...r[groupBy] }));
-  const deployedSeries = [
-    { key: "total", label: "Total deployed", color: 7 },
-    ...d.deployed_series[groupBy].map((name, i) => ({ key: name, label: name, color: i, defaultOff: i >= 4 })),
+  const deployedNames = d.deployed_series[groupBy];
+  const deployedSeries: StorySeries[] = [
+    { key: "total", label: "Total deployed", color: "#0ea5e9", line: true, agg: "last", hint: "everyone deployed at the end of the bucket" },
+    ...deployedNames.map((name, i) => ({ key: name, label: name, color: paletteColor(name, i), agg: "last" as const })),
   ];
+  const deployedPresets = [
+    { key: "top4", label: "Top 4", keys: ["total", ...deployedNames.filter((x) => !/^Others/i.test(x)).slice(0, 4)] },
+    { key: "all", label: "All", keys: ["total", ...deployedNames] },
+    { key: "total", label: "Total only", keys: ["total"] },
+  ];
+  const deployedStats = (() => {
+    const rowsD = deployedRows as unknown as StoryRow[];
+    const lastR = rowsD[rowsD.length - 1], firstR = rowsD[0];
+    const peak = rowsD.reduce<StoryRow | null>((best, r) => (!best || num0(r.total) > num0(best.total) ? r : best), null);
+    const live = lastR ? deployedNames.filter((k) => num0(lastR[k]) > 0).length : 0;
+    const change = lastR && firstR ? num0(lastR.total) - num0(firstR.total) : 0;
+    return [
+      { label: "Deployed now", value: num(num0(lastR?.total)), sub: lastR ? `end of ${lastR.label}` : "nobody", dot: "#7dd3fc" },
+      { label: "Peak", value: num(num0(peak?.total)), sub: peak ? peak.label : "—", dot: "#fde68a" },
+      { label: groupBy === "customers" ? "Customers" : "Locations", value: num(live), sub: "with people on site now", dot: "#6ee7b7" },
+      { label: "Change in the window", value: `${change >= 0 ? "+" : ""}${num(change)}`, sub: firstR ? `since ${firstR.label}` : "—", dot: change >= 0 ? "#86efac" : "#fca5a5" },
+    ];
+  })();
 
   return (
     <div className="space-y-4">
@@ -742,8 +956,8 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <Tile label="Customers billing" value={num(s.customers_billing)} to={drill("customers")} sub={`of ${num(s.customers)} with activity`} />
-        <Tile label="Billed" value={inrCompact(s.billed)} to={drill("billed")} foot={<Delta value={s.change_pct} label={period.comparison_label} />} />
-        <Tile label="Collected" value={inrCompact(s.collected)} tone="success" to={drill("collected")} sub={`${pct(collectionPct, 0)} of billed`} />
+        <Tile label="Revenue (Ex. Tax)" value={inrCompact(s.billed)} to={drill("billed")} foot={<Delta value={s.change_pct} label={period.comparison_label} />} />
+        <Tile label="Received Bank" value={inrCompact(s.collected)} tone="success" to={drill("collected")} sub={`${pct(collectionPct, 0)} received of Inc Tax`} />
         <Tile label="Outstanding" value={inrCompact(s.outstanding)} tone={s.outstanding > 0 ? "warning" : "neutral"} to={drill("outstanding")} />
         <Tile label="Overdue" value={inrCompact(s.overdue)} tone={s.overdue > 0 ? "danger" : "success"} to={drill("overdue")} />
         <Tile label="Heads in period" value={num(s.heads)} to={drill("deployed")} sub={`${num(s.heads_today)} deployed today`} />
@@ -751,28 +965,41 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
         <Tile label="Top customer" value={pct(s.top1_share_pct, 0)} tone={s.concentration_risk ? "warning" : "neutral"} sub={s.top_customer ?? "—"} to={drill("customers")} />
       </div>
 
-      {/* 1 · How the period unfolded, customer by customer. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
-             hint={unfoldBy === "totals" ? "billed · collected · people cost · margin, month by month — tick what to compare"
-               : "billed month by month, one column per customer — tick a customer or a month"}
-             action={<Segmented value={unfoldBy} options={[{ key: "totals", label: "Totals" }, { key: "customers", label: "By customer" }]} onChange={setUnfoldBy} label="Unfolded view" />}>
-        {pastMonths.length && monthSeries.length ? (
-          <FilteredBars key={unfoldBy} data={monthly} rowFilter rowLabel="Months" format={inrCompact} series={monthSeries} barLink={unfoldBar} />
-        ) : <p className="text-sm text-muted">No billing in this period.</p>}
-      </Panel>
+      {/* 1 · How the period unfolded — 8 Nov 2026: the Finance tab's story chart, in the
+          Customer tab's colours. Totals = the money words + people cost + margin; By
+          customer = one column per top customer. A column opens its drill page. */}
+      <StoryChart key={unfoldBy} theme="customer" rows={unfoldRows} series={unfoldSeries} storageKey={`crm.ceo.customer.${unfoldBy}`}
+        groups={unfoldBy === "totals" ? (showCost ? CUSTOMER_GROUPS : CUSTOMER_GROUPS_NO_COST) : undefined} presets={unfoldPresets} format={inrCompact} todayKey={thisMonthKey()}
+        title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+        hint={unfoldBy === "totals"
+          ? `Revenue · Receivable · Received · Due (bank and TDS)${showCost ? " · people cost · margin" : ""}, by the invoice's work month`
+          : "Revenue (Ex. Tax) month by month, one column per customer — the largest are named, the rest are Others"}
+        headerExtra={<GlassToggle value={unfoldBy} ink={STORY_THEMES.customer.ink} label="Unfolded view"
+          options={[{ key: "totals", label: "Totals" }, { key: "customers", label: "By customer" }]} onChange={setUnfoldBy} />}
+        stats={unfoldStats} stripKeys={unfoldBy === "totals" ? ["revenue_ex", "received_bank"] : [unfoldSeries[0]?.key ?? "", unfoldSeries[1]?.key]}
+        ring={unfoldBy === "totals" ? (r) => ({ pct: shareOfPct(num0(r.received_bank) + num0(r.received_tds), num0(r.revenue_inc)), color: "#10b981" }) : undefined}
+        spotlightSub={() => "work month"}
+        spotlightExtra={unfoldBy === "totals" && showCost ? (r) => (
+          <SpotLine label="Margin" value={`${inrCompact(num0(r.margin))} · ${pct(shareOfPct(num0(r.margin), num0(r.revenue_ex)), 0)}`}
+            tone={num0(r.margin) < 0 ? "bad" : "ok"} />
+        ) : undefined}
+        onOpen={(row, sKey, _t, e) => openLink(sKey ? unfoldBar(row, sKey) : bucketLink("billed", row.key), e)}
+        openLabel={(row) => `Open the invoices of ${row.label}`}
+        emptyText="No billing in this period." />
 
-      <Panel title="Deployed on customer sites" hint={`heads deployed at the end of each ${zoom === "month" ? "month" : zoom === "quarter" ? "quarter" : "financial year"} · by ${groupBy === "customers" ? "customer" : "customer location (delivery branch, else the opportunity's work location)"} — tick a series or a period`}
-             action={
-               <div className="flex flex-wrap items-center gap-2">
-                 <Segmented value={groupBy} options={[{ key: "customers", label: "By customer" }, { key: "locations", label: "By location" }]} onChange={setGroupBy} label="Deployed group" />
-                 <Segmented value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} label="Deployed zoom" />
-               </div>
-             }>
-        {d.deployed_series[groupBy].length ? (
-          <FilteredBars key={`${zoom}-${groupBy}`} data={deployedRows} rowFilter rowLabel={ZOOM_ROWS[zoom]} height={220} series={deployedSeries}
-                        barLink={deployedBar} clickHint="Click a bar to see who was deployed in that period" />
-        ) : <p className="text-sm text-muted">Nobody deployed in this window.</p>}
-      </Panel>
+      <StoryChart key={`${zoom}-${groupBy}`} theme="customer" rows={deployedRows} series={deployedSeries} storageKey={`crm.ceo.deployed.${groupBy}`}
+        presets={deployedPresets} format={(v) => num(v)} rowLabel={ZOOM_ROWS[zoom]} todayKey={zoom === "month" ? thisMonthKey() : undefined}
+        title="Deployed on customer sites"
+        hint={`heads deployed at the end of each ${zoom === "month" ? "month" : zoom === "quarter" ? "quarter" : "financial year"} · by ${groupBy === "customers" ? "customer" : "customer location (delivery branch, else the opportunity's work location)"}`}
+        headerExtra={<>
+          <GlassToggle value={groupBy} ink={STORY_THEMES.customer.ink} label="Deployed group"
+            options={[{ key: "customers", label: "By customer" }, { key: "locations", label: "By location" }]} onChange={setGroupBy} />
+          <GlassToggle value={zoom} ink={STORY_THEMES.customer.ink} label="Deployed zoom" options={ZOOM_OPTIONS} onChange={setZoom} />
+        </>}
+        stats={deployedStats} stripKeys={["total", deployedSeries[1]?.key]} leadKey="total"
+        onOpen={(row, sKey, _t, e) => openLink(deployedBar(row, sKey ?? "total"), e)}
+        openLabel={(row) => `See who was deployed in ${row.label}`}
+        emptyText="Nobody deployed in this window." />
 
       {/* 2 · The dials: dependence, collection, margin. */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -783,32 +1010,47 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
             <MiniStat k="Customers billing" v={num(s.customers_billing)} />
           </div>
         </Panel>
-        <Panel title="Collection rate" hint="collected ÷ billed in the period" action={<StateChip state={collectionState}>{pct(collectionPct, 0)}</StateChip>}>
+        <Panel title="Collection rate" hint="received (bank + TDS) ÷ revenue (Inc Tax)" action={<StateChip state={collectionState}>{pct(collectionPct, 0)}</StateChip>}>
           <Speedometer value={collectionPct ?? 0} max={100} marker={90} markerLabel="goal" state={collectionState} label="Collection rate" caption="collected" format={(v) => `${Math.round(v)}%`} />
           <div className="mt-3 grid grid-cols-2 gap-2">
             <MiniStat k="Collected" v={inrCompact(s.collected)} tone="ok" />
             <MiniStat k="Overdue" v={inrCompact(s.overdue)} tone={s.overdue > 0 ? "bad" : "ok"} />
           </div>
         </Panel>
-        <Panel title="Blended margin" hint="billed − people cost across every customer" action={<StateChip state={marginState}>{pct(marginPct, 0)}</StateChip>}>
-          <Speedometer value={marginPct ?? 0} max={60} marker={30} markerLabel="goal" state={marginState} label="Gross margin" caption="margin" format={(v) => `${Math.round(v)}%`} />
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <MiniStat k="People cost" v={inrCompact(totalCost)} />
-            <MiniStat k="Loss-making" v={num(lossMaking.length)} tone={lossMaking.length ? "bad" : "ok"} hint={lossMaking.map((c) => c.customer).join(", ") || undefined} />
-          </div>
-        </Panel>
+        {showCost ? (
+          <Panel title="Blended margin" hint="billed − people cost across every customer" action={<StateChip state={marginState}>{pct(marginPct, 0)}</StateChip>}>
+            <Speedometer value={marginPct ?? 0} max={60} marker={30} markerLabel="goal" state={marginState} label="Gross margin" caption="margin" format={(v) => `${Math.round(v)}%`} />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MiniStat k="People cost" v={inrCompact(totalCost)} />
+              <MiniStat k="Loss-making" v={num(lossMaking.length)} tone={lossMaking.length ? "bad" : "ok"} hint={lossMaking.map((c) => c.customer).join(", ") || undefined} />
+            </div>
+          </Panel>
+        ) : (
+          <Panel title="Overdue share" hint="overdue ÷ everything the customers still owe — lower is better"
+                 action={<StateChip state={overdueShareState}>{pct(overdueSharePct, 0)}</StateChip>}>
+            <Speedometer value={overdueSharePct ?? 0} max={100} marker={20} markerLabel="limit" state={overdueShareState} invert
+                         label="Overdue share" caption="overdue" format={(v) => `${Math.round(v)}%`} />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MiniStat k="Outstanding" v={inrCompact(s.outstanding)} />
+              <MiniStat k="Customers overdue" v={num(d.customers.filter((c) => c.overdue > 0).length)}
+                        tone={d.customers.some((c) => c.overdue > 0) ? "bad" : "ok"}
+                        hint={d.customers.filter((c) => c.overdue > 0).map((c) => c.customer).join(", ") || undefined} />
+            </div>
+          </Panel>
+        )}
       </div>
 
       {/* 3 · Four cuts of the customer book — bar charts with their own ticks. */}
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Customer billing" hint={`billed · ${period.comparison_label} · collected · cost · margin`}
+        <Panel title="Customer billing" hint={`billed · ${period.comparison_label} · collected${showCost ? " · cost · margin" : ""}`}
                action={s.concentration_risk ? <StateChip state="warn">Concentrated</StateChip> : undefined}>
           {billing.length ? (
             <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220} data={billing}
                           barLink={customerBar((s) => moneyMetric(s))}
                           series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: period.comparison_label, color: 7 },
-                                   { key: "collected", label: "Collected", color: 1, defaultOff: true }, { key: "cost", label: "People cost", color: 6, defaultOff: true },
-                                   { key: "margin", label: "Margin", color: 2, defaultOff: true }]} />
+                                   { key: "collected", label: "Collected", color: 1, defaultOff: true },
+                                   ...(showCost ? [{ key: "cost", label: "People cost", color: 6, defaultOff: true },
+                                                   { key: "margin", label: "Margin", color: 2, defaultOff: true }] : [])]} />
           ) : <p className="text-sm text-muted">No billing in this period.</p>}
         </Panel>
 
@@ -843,7 +1085,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
       </div>
 
       {/* 4 · The drill-down the CEO asked for: customer → project → person. */}
-      <Panel title="Customer → project → person" hint="click a row to drill down · revenue is issued Tax invoices by invoice date · cost is CTC ÷ 12 × months deployed"
+      <Panel title="Customer → project → person" hint={`click a row to drill down · revenue is issued Tax invoices by invoice date${showCost ? " · cost is CTC ÷ 12 × months deployed" : ""}`}
              action={
                <div className="flex items-center gap-2">
                  <input className={`${CONTROL} w-44`} placeholder="Find customer / project" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find customer or project" />
@@ -858,15 +1100,15 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                 <th className={thCls}>Customer / project / person</th>
                 <th className={thCls}>Billed</th>
                 <th className={thCls}>Share</th>
-                <th className={thCls}>People cost</th>
-                <th className={thCls}>Margin</th>
+                {showCost && <th className={thCls}>People cost</th>}
+                {showCost && <th className={thCls}>Margin</th>}
                 <th className={thCls}>Heads</th>
                 <th className={thCls}>Internal / external</th>
                 <th className={thCls}>Outstanding</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-subtle">
-              {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-muted">{query ? "No customer or project matches." : "No billing or deployment in this period."}</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={showCost ? 8 : 6} className="px-3 py-6 text-center text-sm text-muted">{query ? "No customer or project matches." : "No billing or deployment in this period."}</td></tr>}
               {rows.map((c) => {
                 const key = `c${c.customer_id}`;
                 const isOpen = open.has(key);
@@ -888,8 +1130,8 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                       </td>
                       <td className={`${tdCls} font-semibold`}>{inr(c.billed)}<div className="font-normal"><Delta value={c.change_pct} label={period.comparison_label} /></div></td>
                       <td className={tdCls}><ShareBar value={c.share_pct} /></td>
-                      <td className={tdCls}>{inr(c.cost)}</td>
-                      <td className={`${tdCls} ${c.margin < 0 ? "text-danger" : ""}`}>{inr(c.margin)} <span className="text-xs text-muted">{pct(c.margin_pct, 0)}</span></td>
+                      {showCost && <td className={tdCls}>{inr(c.cost)}</td>}
+                      {showCost && <td className={`${tdCls} ${c.margin < 0 ? "text-danger" : ""}`}>{inr(c.margin)} <span className="text-xs text-muted">{pct(c.margin_pct, 0)}</span></td>}
                       <td className={tdCls}>{num(c.heads)} <span className="text-xs text-muted">({c.heads_today} live)</span></td>
                       <td className={tdCls}><span className="text-xs text-secondary">{c.internal} int · {c.external} ext</span></td>
                       <td className={tdCls}>
@@ -897,7 +1139,7 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
                         {c.overdue > 0 && <span className="ml-1.5 text-xs font-semibold text-danger">{inrCompact(c.overdue)} overdue</span>}
                       </td>
                     </tr>
-                    {isOpen && <ProjectRows rows={c.projects} open={open} toggle={toggle} />}
+                    {isOpen && <ProjectRows rows={c.projects} open={open} toggle={toggle} showCost={showCost} />}
                   </React.Fragment>
                 );
               })}
@@ -944,6 +1186,16 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
     { label: "On hold", value: f.on_hold, hint: "customer or Sales hold" },
   ].map((s) => ({ label: s.label, positions: s.value }));
   const stages = d.stage_delays.rows.map((r) => ({ label: r.label, waiting: r.count, over_warn: r.over_warn, over_bad: r.over_bad, avg_days: r.avg_days }));
+  const salesStats = (() => {
+    const sum = (k: string) => trend.reduce((a, r) => a + num0((r as Record<string, unknown>)[k]), 0);
+    const pin = sum("positions_in"), onb = sum("onboardings"), int = sum("internal"), ext = sum("external");
+    return [
+      { label: "Positions brought in", value: num(pin), sub: `${num(k.opportunities)} opportunities in the period`, dot: "#c4b5fd" },
+      { label: "Onboarded", value: num(onb), sub: `${num(int)} internal · ${num(ext)} external`, dot: "#6ee7b7" },
+      { label: "Internal share", value: pct(shareOfPct(int, onb), 0), sub: "redeployed, not hired", dot: "#5eead4", ring: shareOfPct(int, onb) },
+      { label: "Onboarded ÷ brought in", value: pct(shareOfPct(onb, pin), 0), sub: `${num(k.active_positions)} still open now`, dot: "#f9a8d4" },
+    ];
+  })();
 
   return (
     <div className="space-y-4">
@@ -961,15 +1213,19 @@ function SalesTab({ d, period }: { d: SalesData; period: CeoPeriod }) {
         <Tile label="Waiting in stages" value={num(d.stage_delays.total_waiting)} tone={d.stage_delays.rows.some((r) => r.state === "bad") ? "danger" : d.stage_delays.rows.some((r) => r.state === "warn") ? "warning" : "neutral"} to={drill("stages")} sub="candidates between stages" />
       </div>
 
-      {/* 1 · How the period unfolded — positions in vs onboarded, internal vs external, at three zooms. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint={`${ZOOM_LABEL[zoom].toLowerCase()} · positions brought in vs candidates onboarded (internal / external) — tick a series or a period`}
-             action={<Segmented value={zoom} options={ZOOM_OPTIONS} onChange={setZoom} label="Onboarding zoom" />}>
-        <FilteredBars key={zoom} data={trend} rowFilter rowLabel={ZOOM_ROWS[zoom]} barLink={trendBar}
-                      series={[{ key: "positions_in", label: "Positions brought in", color: 3 },
-                               { key: "onboardings", label: "Onboarded", color: 1 },
-                               { key: "internal", label: "Internal", color: 2 }, { key: "external", label: "External", color: 0 },
-                               { key: "unknown", label: "Unknown", color: 7, defaultOff: true }]} />
-      </Panel>
+      {/* 1 · How the period unfolded — 8 Nov 2026: the Finance tab's story chart, in the Sales colours. */}
+      <StoryChart key={zoom} theme="sales" rows={trend as unknown as StoryRow[]} series={SALES_SERIES} groups={SALES_GROUPS} presets={SALES_PRESETS}
+        storageKey="crm.ceo.sales.trend" format={(v) => num(v)} rowLabel={ZOOM_ROWS[zoom]} todayKey={zoom === "month" ? thisMonthKey() : undefined}
+        title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+        hint="positions brought in by Sales vs candidates onboarded — internal (redeployed) and external (hired for the position)"
+        headerExtra={<GlassToggle value={zoom} ink={STORY_THEMES.sales.ink} label="Onboarding zoom" options={ZOOM_OPTIONS} onChange={setZoom} />}
+        stats={salesStats} stripKeys={["positions_in", "onboardings"]}
+        ring={(r) => ({ pct: shareOfPct(num0(r.internal), num0(r.onboardings)), color: "#14b8a6" })}
+        spotlightSub={(r) => `${num(num0(r.onboardings))} onboarded of ${num(num0(r.positions_in))} brought in`}
+        spotlightExtra={(r) => <SpotLine label="Internal share" value={pct(shareOfPct(num0(r.internal), num0(r.onboardings)), 0)} />}
+        onOpen={(row, sKey, _t, e) => openLink(trendBar(row, sKey ?? "onboardings"), e)}
+        openLabel={(row) => `Open the onboardings of ${row.label}`}
+        emptyText="No positions or onboardings in this window." />
 
       {/* 2 · The dials: Sales pace · Fulfilment pace · internal share. */}
       <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -1270,7 +1526,16 @@ export function PeopleTab({ d, period, drill: canDrill = false }: { d: PeopleDat
   const attrState = lowGood(h.attrition_pct, 10, 20);
   const benchState = lowGood(h.bench_cost_pct, 10, 20);
   const past = d.monthly.filter((r) => !r.future);
-  const strip = past.map((r) => ({ label: r.label, key: r.key, headcount: r.headcount ?? 0, deployed: r.deployed ?? 0, bench: r.bench ?? 0, joiners: r.joiners, exits: r.exits }));
+  const strip = past.map((r) => ({ label: r.label, key: r.key, headcount: r.headcount ?? 0, deployed: r.deployed ?? 0, bench: r.bench ?? 0, joiners: r.joiners, exits: r.exits, cost: r.cost ?? 0, bench_cost: r.bench_cost ?? 0 }));
+  const peopleStats = (() => {
+    const joined = past.reduce((a, r) => a + r.joiners, 0), left = past.reduce((a, r) => a + r.exits, 0);
+    return [
+      { label: "Headcount", value: num(h.headcount), sub: `${num(h.opening_headcount)} at the start`, dot: "#fde68a" },
+      { label: "Deployed", value: num(h.deployed), sub: `${pct(h.utilisation_pct, 0)} utilisation`, dot: "#86efac", ring: h.utilisation_pct === null ? null : Math.round(h.utilisation_pct) },
+      { label: "Joined / left", value: `+${num(joined)} / −${num(left)}`, sub: `net ${joined - left >= 0 ? "+" : ""}${num(joined - left)} in the window`, dot: "#7dd3fc" },
+      { label: "Bench cost / month", value: inrCompact(h.bench_cost_month), sub: `${num(h.bench)} on the bench · ${pct(h.bench_cost_pct, 0)} of cost`, dot: "#fca5a5" },
+    ];
+  })();
   const costs = past.map((r) => ({ label: r.label, key: r.key, cost: r.cost ?? 0, bench_cost: r.bench_cost ?? 0, deployed_cost: (r.cost ?? 0) - (r.bench_cost ?? 0) }));
   // 29 Oct 2026 — every bar opens the people behind it: the drill page at that month
   // for CEO / Admin; HR (no drill pages) gets the Employees list in the same cut.
@@ -1316,14 +1581,21 @@ export function PeopleTab({ d, period, drill: canDrill = false }: { d: PeopleDat
         <Tile label="Roll-offs next 90 d" value={num(h.rolloffs_90d)} tone={h.rolloffs_90d ? "warning" : "success"} to={go("rolloffs", "project-employees")} sub={`${inrCompact(rateAtRisk)} / month at risk`} />
       </div>
 
-      {/* 1 · How the period unfolded — headcount, deployed, bench, joiners, exits, month by month. */}
-      <Panel title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`} hint="headcount · deployed · bench at month end, joiners and exits in the month — tick what to compare">
-        <FilteredBars data={strip} rowFilter rowLabel="Months" barLink={monthPeopleBar}
-                      clickHint={canDrill ? "Click a bar to see the people in it that month" : "Click a bar to open the Employees list"}
-                      series={[{ key: "deployed", label: "Deployed", color: 2 }, { key: "bench", label: "On the bench", color: 6 },
-                               { key: "headcount", label: "Headcount", color: 0, defaultOff: true }, { key: "joiners", label: "Joiners", color: 1, defaultOff: true },
-                               { key: "exits", label: "Exits", color: 5, defaultOff: true }]} />
-      </Panel>
+      {/* 1 · How the period unfolded — 8 Nov 2026: the Finance tab's story chart, in the People colours. */}
+      <StoryChart theme="people" rows={strip as unknown as StoryRow[]} series={PEOPLE_STORY_SERIES} groups={PEOPLE_GROUPS} presets={PEOPLE_PRESETS}
+        storageKey="crm.ceo.people.trend" format={(v) => num(v)} todayKey={thisMonthKey()} stripKeys={["deployed", "bench"]} leadKey="headcount"
+        title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
+        hint="headcount, deployed and bench at each month end · joiners and exits in the month"
+        stats={peopleStats}
+        ring={(r) => ({ pct: shareOfPct(num0(r.deployed), num0(r.headcount)), color: "#10b981" })}
+        spotlightSub={(r) => `${pct(shareOfPct(num0(r.deployed), num0(r.headcount)), 0)} utilisation at month end`}
+        spotlightExtra={(r) => (<>
+          <SpotLine label="People cost" value={inrCompact(num0(r.cost))} />
+          <SpotLine label="Bench cost" value={inrCompact(num0(r.bench_cost))} tone={num0(r.bench_cost) > 0 ? "warn" : "ok"} />
+        </>)}
+        onOpen={(row, sKey, _t, e) => openLink(monthPeopleBar(row, sKey ?? "headcount"), e)}
+        openLabel={(row) => (canDrill ? `Open the people of ${row.label}` : "Open the Employees list")}
+        emptyText="Nobody on the rolls in this window." />
 
       {/* 1b · Internal vs external placements (29 Sep 2026, HR ask). */}
       {d.placements && <PlacementsPanels p={d.placements} period={period} canDrill={canDrill} />}

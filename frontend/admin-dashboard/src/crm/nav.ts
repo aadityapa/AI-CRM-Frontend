@@ -16,6 +16,7 @@ import {
   Network,
   Receipt,
   Sparkles,
+  Inbox,
   Settings as SettingsIcon,
   Target,
   Mail,
@@ -50,6 +51,10 @@ export const CRM_NAV: CrmNavItem[] = [
   // TA · RMG / GM · Sales Head (user decision); a GM sees it through the
   // screening approval, like the Screening Desk (see CrmApp).
   { path: "talent-pool", label: "Talent Pool", icon: Sparkles, roles: ["Admin", "TA", "RMG", "Sales_Head"] },
+  // Careers applications (6 Nov 2026): every careers-page / apply-link / "send your
+  // resume" candidate — channel, position, facts. TA · RMG by role; a GM through the
+  // screening approval (see CrmApp), like the Screening Desk.
+  { path: "careers-applications", label: "Careers Applications", icon: Inbox, roles: ["Admin", "TA", "RMG"] },
   // My Interviews (7 Oct 2026): the rounds this login takes as the panel. RMG
   // by role; everyone else (the Interviewer custom role, a TA who interviews)
   // through the `my-interviews` tab grant.

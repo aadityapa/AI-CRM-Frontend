@@ -59,6 +59,10 @@ type Headline = {
   billed_yoy: number; billed_yoy_pct: number | null;
   collected_prev: number; collected_mom_pct: number | null;
   months_in_period: number; billed_per_month: number; comparison_label: string;
+  /** 6 Nov 2026 — the previous period starts before the data start month (not like-for-like). */
+  comparison_partial?: boolean;
+  /** 6 Nov 2026 — at the FY zoom "vs last FY" and "YoY" are the same figure. */
+  yoy_same_as_previous?: boolean;
 };
 type SeriesPoint = { month: string; label: string; billed: number; collected: number; invoices: number };
 type CustomerRow = {
@@ -124,6 +128,8 @@ export type { PeriodKind } from "../../components/controlTower";
 
 export type RevenueReportData = {
   month: string; label: string; as_of: string;
+  /** 8 Nov 2026 — false: people cost / margin hidden (CTC not tracked yet). Absent = shown. */
+  track_people_cost?: boolean;
   period: PeriodKind; period_key: string; period_start: string; period_end: string;
   months_in_period: number; short_label: string; comparison_label: string;
   filters: {
@@ -145,6 +151,8 @@ export type RevenueReportData = {
   pipeline: {
     approved_uninvoiced: { count: number; amount: number };
     active_po_balance: number; avg_monthly_billed: number; po_cover_months: number | null;
+    /** 8 Nov 2026 — monthly billing of the team deployed today; cover divides by it. */
+    monthly_burn?: number; cover_basis?: "team" | "billing" | null;
   };
   by_project: {
     rows: ProjectRow[]; projects: number; billed: number; heads_without_ctc: number;
@@ -571,6 +579,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
   const employeeRows = useMemo(() => data?.by_employee.rows ?? [], [data]);
 
   const marginState: StateTone = !data ? "none" : data.margin.gross_margin < 0 ? "bad" : (data.margin.gross_margin_pct ?? 0) < 20 ? "warn" : "ok";
+  // 8 Nov 2026 — people cost (CTC) is not tracked yet: Settings ▸ Organisation ▸
+  // Billing ▸ "Show people cost & gross margin" off hides every cost / margin figure.
+  const showCost = data?.track_people_cost !== false;
   const toneOf = (s: StateTone): "success" | "warning" | "danger" | "neutral" =>
     s === "ok" ? "success" : s === "warn" ? "warning" : s === "bad" ? "danger" : "neutral";
 
@@ -665,7 +676,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               to="invoices"
               sub={`${h!.invoices} invoice${h!.invoices === 1 ? "" : "s"} · ${inr(h!.billed_incl_gst)} incl. GST${
                 h!.months_in_period > 1 ? ` · ${inr(h!.billed_per_month)}/month` : ""}`}
-              foot={<><Delta value={h!.billed_mom_pct} label={h!.comparison_label} /><Delta value={h!.billed_yoy_pct} label="vs last year" /></>}
+              foot={h!.comparison_partial
+                ? <span className="text-[11px] text-muted">no like-for-like comparison — data starts inside the last period</span>
+                : <><Delta value={h!.billed_mom_pct} label={h!.comparison_label} />{!h!.yoy_same_as_previous && <Delta value={h!.billed_yoy_pct} label="vs last year" />}</>}
             />
             <Tile
               label="Cash collected"
@@ -689,12 +702,24 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               tone={data.ageing.overdue_total > 0 ? "danger" : "success"}
               sub={data.ageing.overdue_90_plus > 0 ? `${inr(data.ageing.overdue_90_plus)} past 90 days` : "nothing past 90 days"}
             />
-            <Tile
-              label="Gross margin"
-              value={pct(data.margin.gross_margin_pct, 0)}
-              tone={toneOf(marginState)}
-              sub={<>{inr(data.margin.gross_margin)} on {inr(data.margin.cost)} people cost</>}
-            />
+            {showCost ? (
+              <Tile
+                label="Gross margin"
+                value={pct(data.margin.gross_margin_pct, 0)}
+                tone={toneOf(marginState)}
+                sub={<>{inr(data.margin.gross_margin)} on {inr(data.margin.cost)} people cost</>}
+              />
+            ) : (
+              <Tile
+                label="Ready to bill"
+                value={inrCompact(data.pipeline.approved_uninvoiced.amount)}
+                to="timesheets?tab=all"
+                tone={data.pipeline.approved_uninvoiced.amount > 0 ? "warning" : "success"}
+                sub={data.pipeline.approved_uninvoiced.count > 0
+                  ? `${data.pipeline.approved_uninvoiced.count} approved timesheet(s) not yet invoiced`
+                  : "every approved timesheet is invoiced"}
+              />
+            )}
             <Tile
               label="Target attainment"
               value={data.targets.month_target === null ? "—" : pct(data.targets.month_attainment_pct, 0)}
@@ -756,23 +781,23 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
             <Panel
               title="Cash flow — next 3 months"
               hint={`as of ${fmtDay(data.cashflow.as_of)} · open invoices placed on the calendar by due date`}
-              action={
+              action={showCost ? (
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${data.cashflow.covers_cost ? STATE_CHIP.ok : STATE_CHIP.bad}`}>
                   {data.cashflow.covers_cost ? "Covers payroll" : "Falls short"}
                 </span>
-              }
+              ) : undefined}
             >
-              {data.cashflow.heads_without_ctc > 0 && (
+              {showCost && data.cashflow.heads_without_ctc > 0 && (
                 <Warn>{data.cashflow.heads_without_ctc} deployed head(s) have no CTC on record — the people cost below is understated.</Warn>
               )}
               <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={220}
                             data={data.cashflow.months.map((m) => ({ label: m.label, at_pace: m.expected_at_pace, expected: m.expected, people_cost: m.people_cost, net: m.net_at_pace }))}
-                            series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: true },
-                                     { key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }]} />
-              <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                            series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: showCost },
+                                     ...(showCost ? [{ key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }] : [])]} />
+              <div className={`mt-3 grid grid-cols-2 gap-2 ${showCost ? "lg:grid-cols-4" : ""}`}>
                 <MiniStat k="Expected in, at our pace" v={inrCompact(data.cashflow.expected_total_at_pace)} hint={`${inr(data.cashflow.expected_total)} if everyone paid on terms`} />
-                <MiniStat k="People cost out" v={inrCompact(data.cashflow.people_cost_total)} hint={`${data.cashflow.heads_costed} deployed head(s)`} />
-                <MiniStat k="Net position" v={inrCompact(data.cashflow.net_total_at_pace)} tone={data.cashflow.covers_cost ? "ok" : "bad"} />
+                {showCost && <MiniStat k="People cost out" v={inrCompact(data.cashflow.people_cost_total)} hint={`${data.cashflow.heads_costed} deployed head(s)`} />}
+                {showCost && <MiniStat k="Net position" v={inrCompact(data.cashflow.net_total_at_pace)} tone={data.cashflow.covers_cost ? "ok" : "bad"} />}
                 <MiniStat k="Paid late by" v={data.cashflow.slip_days === 0 ? "On terms" : `${data.cashflow.slip_days} d`} tone={data.cashflow.slip_days > 30 ? "warn" : undefined} hint="amount-weighted, last 12 months" />
               </div>
               {(data.cashflow.overdue.amount > 0 || data.cashflow.unbilled_ready.amount > 0) && (
@@ -842,8 +867,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
           </div>
 
           {/* 4 · Margin beside forecast — bars first, the tables under them. */}
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Panel
+          <div className={`grid gap-4 ${showCost ? "xl:grid-cols-2" : ""}`}>
+            {showCost && <Panel
               title="Gross margin by customer"
               hint={`billed − people cost (annual CTC ÷ 12 × ${data.months_in_period} month${data.months_in_period === 1 ? "" : "s"} for everyone deployed)`}
               action={<span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[marginState]}`}>{pct(data.margin.gross_margin_pct, 0)}</span>}
@@ -864,7 +889,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                               series={[{ key: "billed", label: "Billed", color: 0 }, { key: "cost", label: "People cost", color: 6 },
                                        { key: "margin", label: "Margin", color: 2 }, { key: "heads", label: "Heads", color: 7, defaultOff: true }]} />
               )}
-            </Panel>
+            </Panel>}
 
             <Panel
               title={`Forecast · next ${data.forecast.months.length} months`}
@@ -896,11 +921,11 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
           <Panel
             title="Revenue by project"
             hint={`${data.by_project.projects} project${data.by_project.projects === 1 ? "" : "s"} billed in ${data.label} · tick a project to compare`}
-            action={data.by_project.loss_making.length > 0 ? (
+            action={showCost && data.by_project.loss_making.length > 0 ? (
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.bad}`}>{data.by_project.loss_making.length} loss-making</span>
             ) : undefined}
           >
-            {data.by_project.heads_without_ctc > 0 && (
+            {showCost && data.by_project.heads_without_ctc > 0 && (
               <Warn>{data.by_project.heads_without_ctc} deployed assignment(s) have no CTC on the employee record — their cost shows as zero, so the margin below is optimistic.</Warn>
             )}
             {projectRows.length === 0 ? (
@@ -909,8 +934,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               <>
                 <FilteredBars rowFilter rowLabel="Projects" format={inrCompact}
                               data={topRows(projectRows, "billed", (r) => r.customer ? `${r.project} · ${r.customer}` : r.project, ["billed", "previous", "cost", "margin", "heads"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: data.comparison_label, color: 7, defaultOff: true },
-                                       { key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2 },
+                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: data.comparison_label, color: 7, defaultOff: showCost },
+                                       ...(showCost ? [{ key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2 }] : []),
                                        { key: "heads", label: "Heads", color: 3, defaultOff: true }]} />
                 <div className={`${tableWrapTall} mt-4`}>
                   <table className="w-full">
@@ -921,9 +946,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                       <th className={`${thCls} text-right`}>Share</th>
                       <th className={`${thCls} text-right`} title={data.comparison_label}>Change</th>
                       <th className={`${thCls} text-right`}>Heads</th>
-                      <th className={`${thCls} text-right`}>People cost</th>
-                      <th className={`${thCls} text-right`}>Margin</th>
-                      <th className={`${thCls} text-right`}>%</th>
+                      {showCost && <th className={`${thCls} text-right`}>People cost</th>}
+                      {showCost && <th className={`${thCls} text-right`}>Margin</th>}
+                      {showCost && <th className={`${thCls} text-right`}>%</th>}
                     </tr></thead>
                     <tbody>
                       {projectRows.map((r) => (
@@ -940,9 +965,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                           <td className={tdNum}><ShareCell value={r.share_pct} width="w-12" /></td>
                           <td className={tdNum} title={`${inr(r.previous)} ${data.comparison_label}`}><Delta value={r.change_pct} label="" /></td>
                           <td className={tdNum}>{r.heads}</td>
-                          <td className={tdNum}>{inr(r.cost)}</td>
-                          <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{inr(r.margin)}</td>
-                          <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{pct(r.margin_pct, 0)}</td>
+                          {showCost && <td className={tdNum}>{inr(r.cost)}</td>}
+                          {showCost && <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{inr(r.margin)}</td>}
+                          {showCost && <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{pct(r.margin_pct, 0)}</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -967,11 +992,11 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                 so it cannot be attributed to a person and is NOT in the chart or table below.
               </Warn>
             )}
-            <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <div className={`mb-3 grid grid-cols-2 gap-2 ${showCost ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
               <MiniStat k="Traceable to a person" v={inrCompact(data.by_employee.linked_billed)} />
               <MiniStat k="Avg per billing head" v={inrCompact(data.by_employee.avg_revenue_per_head)} />
               <MiniStat k="Deployed, nothing billed" v={data.by_employee.idle_count} tone={data.by_employee.idle_count > 0 ? "warn" : undefined} />
-              <MiniStat k="Cost of those heads" v={inrCompact(data.by_employee.idle_cost)} tone={data.by_employee.idle_cost > 0 ? "bad" : undefined} />
+              {showCost && <MiniStat k="Cost of those heads" v={inrCompact(data.by_employee.idle_cost)} tone={data.by_employee.idle_cost > 0 ? "bad" : undefined} />}
             </div>
             {employeeRows.length === 0 ? (
               <div className="py-6 text-center text-sm text-muted">No deployments or timesheet-driven invoices in {data.label}.</div>
@@ -979,8 +1004,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               <>
                 <FilteredBars rowFilter rowLabel="Employees" format={inrCompact}
                               data={topRows(employeeRows, "billed", (r) => r.employee, ["billed", "cost", "margin", "billed_per_month"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "cost", label: "People cost", color: 6 },
-                                       { key: "margin", label: "Margin", color: 2 },
+                              series={[{ key: "billed", label: "Billed", color: 0 },
+                                       ...(showCost ? [{ key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2 }] : []),
                                        ...(data.months_in_period > 1 ? [{ key: "billed_per_month", label: "Per month", color: 3, defaultOff: true }] : [])]} />
                 <div className={`${tableWrapTallMid} mt-4`}>
                   <table className="w-full">
@@ -991,9 +1016,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                       <th className={`${thCls} text-right`}>Billed</th>
                       {data.months_in_period > 1 && <th className={`${thCls} text-right`}>Per month</th>}
                       <th className={`${thCls} text-right`}>Invoices</th>
-                      <th className={`${thCls} text-right`}>People cost</th>
-                      <th className={`${thCls} text-right`}>Margin</th>
-                      <th className={`${thCls} text-right`}>%</th>
+                      {showCost && <th className={`${thCls} text-right`}>People cost</th>}
+                      {showCost && <th className={`${thCls} text-right`}>Margin</th>}
+                      {showCost && <th className={`${thCls} text-right`}>%</th>}
                     </tr></thead>
                     <tbody>
                       {employeeRows.map((r) => (
@@ -1013,9 +1038,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                           <td className={tdNum}>{inr(r.billed)}</td>
                           {data.months_in_period > 1 && <td className={tdNum}>{inr(r.billed_per_month)}</td>}
                           <td className={tdNum}>{r.invoices}</td>
-                          <td className={tdNum}>{inr(r.cost)}</td>
-                          <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{inr(r.margin)}</td>
-                          <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{pct(r.margin_pct, 0)}</td>
+                          {showCost && <td className={tdNum}>{inr(r.cost)}</td>}
+                          {showCost && <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{inr(r.margin)}</td>}
+                          {showCost && <td className={`${tdNum} ${r.margin < 0 ? "font-semibold text-danger" : ""}`}>{pct(r.margin_pct, 0)}</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -1024,8 +1049,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               </>
             )}
             <p className="mt-3 text-xs text-muted">
-              Revenue is attributed through the invoice&rsquo;s timesheet; cost is the employee&rsquo;s annual CTC ÷ 12,
-              prorated across every active assignment overlapping {data.label}.
+              Revenue is attributed through the invoice&rsquo;s timesheet{showCost ? <>; cost is the employee&rsquo;s annual CTC ÷ 12,
+              prorated across every active assignment overlapping {data.label}</> : null}.
             </p>
           </Panel>
 
@@ -1045,7 +1070,8 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
                   sub={`${data.pipeline.approved_uninvoiced.count} timesheet${data.pipeline.approved_uninvoiced.count === 1 ? "" : "s"}`} />
                 <Stat k="Active PO balance" v={inr(data.pipeline.active_po_balance)} />
                 <Stat k="Avg billed · last 3 months" v={inr(data.pipeline.avg_monthly_billed)} />
-                <Stat k="PO cover at that pace" v={data.pipeline.po_cover_months === null ? "—" : `${data.pipeline.po_cover_months} months`}
+                {data.pipeline.cover_basis === "team" && <Stat k="Team deployed today bills" v={`${inr(data.pipeline.monthly_burn ?? 0)} / month`} />}
+                <Stat k={data.pipeline.cover_basis === "team" ? "PO cover at the team's billing" : "PO cover at that pace"} v={data.pipeline.po_cover_months === null ? "—" : `${data.pipeline.po_cover_months} months`}
                   tone={data.pipeline.po_cover_months !== null && data.pipeline.po_cover_months < 2 ? "danger" : undefined} />
               </dl>
               {data.pipeline.approved_uninvoiced.count > 0 && (

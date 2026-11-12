@@ -146,11 +146,37 @@ export function PredictedRevenuePanel({ f }: { f: ForecastData | null | undefine
   );
 }
 
-export function NetRevenuePanel({ net, monthly }: {
+export function NetRevenuePanel({ net, monthly, showCost = true }: {
   net: NetData | null | undefined;
   monthly: { key: string; label: string; billed: number; expenses?: number; cost: number; net_revenue?: number; net_profit?: number; future: boolean }[];
+  /** 8 Nov 2026 — false: people cost is not tracked yet, so no net profit. */
+  showCost?: boolean;
 }) {
   if (!net) return null;
+  if (!showCost) {
+    const rowsNoCost = monthly.filter((r) => !r.future).map((r) => ({
+      label: r.label, key: r.key, billed: r.billed, expenses: r.expenses ?? 0,
+      net_revenue: r.net_revenue ?? r.billed - (r.expenses ?? 0),
+    }));
+    return (
+      <Panel title="Net revenue" hint="net revenue = billed − expenses (before GST)">
+        <div className="mb-3 grid grid-cols-3 gap-2">
+          <MiniStat k="Billed" v={inrCompact(net.billed)} />
+          <MiniStat k="Expenses" v={inrCompact(net.expenses)} hint={`${pct(net.expense_ratio_pct, 0)} of billed`} />
+          <MiniStat k="Net revenue" v={inrCompact(net.net_revenue)} tone={net.net_revenue >= 0 ? "ok" : "bad"} />
+        </div>
+        <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={200} data={rowsNoCost}
+          series={[{ key: "billed", label: "Billed", color: 0, defaultOff: true },
+                   { key: "expenses", label: "Expenses", color: 5 },
+                   { key: "net_revenue", label: "Net revenue", color: 2 }]} />
+        {net.by_category.length > 0 ? (
+          <p className="mt-3 text-xs text-secondary">
+            Biggest expenses: {net.by_category.slice(0, 4).map((c) => `${c.category} ${inrCompact(c.amount)}`).join(" · ")}
+          </p>
+        ) : <p className="mt-3 text-xs text-muted">No expenses recorded for this period — Finance adds them under Expenses.</p>}
+      </Panel>
+    );
+  }
   const state: StateTone = net.net_margin_pct === null ? "none" : net.net_margin_pct >= 15 ? "ok" : net.net_margin_pct >= 0 ? "warn" : "bad";
   const rows = monthly.filter((r) => !r.future).map((r) => ({
     label: r.label, key: r.key, billed: r.billed, expenses: r.expenses ?? 0,

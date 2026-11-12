@@ -171,10 +171,16 @@ describe("CEO dashboard", () => {
     expect(screen.getAllByRole("figure").length).toBeGreaterThanOrEqual(3);   // three speedometers
     expect(screen.getByRole("tab", { name: /Finance/ }).getAttribute("aria-selected")).toBe("true");
     // 27 Oct 2026 — every money tile opens its own drill-down page at the SAME anchor + zoom.
-    const billed = screen.getByText("Billed (excl. GST)").closest("a");
+    const billed = screen.getAllByText("Revenue (Ex. Tax)").map((e) => e.closest("a")).find(Boolean);
     expect(billed?.getAttribute("href")).toMatch(/p=insights%2Fbilled&month=2026-09&period=fy/);
     // Bar charts carry tick filters: series chips + a row list with All / None.
-    expect(screen.getAllByRole("checkbox", { name: /People cost/ }).length).toBe(2);   // trend + cash flow
+    expect(screen.getAllByRole("checkbox", { name: /People cost/ }).length).toBe(1);   // cash flow (6 Nov: off the trend)
+    // 6 Nov 2026 — the trend carries the ten money words.
+    // 7 Nov 2026 — they are the MoneyStoryChart's chips (toggle buttons) + a month spotlight.
+    for (const name of ["Revenue (Inc Tax)", "Receivable TDS", "Received Bank", "Due TDS", "Total Due", "Predicted revenue (project count)"]) {
+      expect(screen.getAllByRole("button", { name: new RegExp(`^${name.replace(/[()]/g, "\\$&")}`) }).length).toBeGreaterThan(0);
+    }
+    expect(screen.getAllByRole("button", { name: /^Open the invoices of / }).length).toBe(1);
     expect(screen.getAllByRole("checkbox", { name: /Outstanding/ }).length).toBeGreaterThan(0);   // ageing is a bar chart too
     // Reading order: trend → dials → the four money panels.
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent || "");
@@ -214,11 +220,12 @@ describe("CEO dashboard", () => {
     expect(screen.getByText(/7.2 mo cover/)).toBeTruthy();
     // Deployed on customer sites: by customer / by location, at three zooms.
     expect(at("Deployed on customer sites")).toBeLessThan(at("Concentration"));
-    expect(screen.getAllByRole("checkbox", { name: "APTIV" }).length).toBeGreaterThan(0);
+    // 8 Nov 2026 — the story chart: series are chip buttons, the buckets a strip of buttons.
+    expect(screen.getAllByRole("button", { name: /^APTIV/ }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "By location" }));
-    expect(screen.getByRole("checkbox", { name: "Bengaluru" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /^Bengaluru/ }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Quarterly" }));
-    expect(screen.getByRole("checkbox", { name: "Q4 FY25-26" })).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Quarters" })).getByRole("button", { name: "Q4 FY25-26" })).toBeTruthy();
   });
 
   it("shows positions with internal vs external joiners and the pace dials on the Sales tab", async () => {
@@ -239,21 +246,22 @@ describe("CEO dashboard", () => {
     expect(at("Positions by customer")).toBeLessThan(at("Hiring-stage delays"));
     expect(at("Hiring-stage delays")).toBeLessThan(titles.indexOf("Positions"));
     expect(screen.getByText("1 position(s) open for 30+ days")).toBeTruthy();
-    expect(screen.getAllByRole("checkbox", { name: "Positions brought in" }).length).toBe(1);
+    expect(screen.getAllByRole("button", { name: /^Positions brought in [\d,]+$/ }).length).toBe(1);
     // Onboarded internal vs external at three zooms — the toggle swaps the rows.
     expect(screen.getAllByRole("group", { name: "Months" }).length).toBe(1);
     fireEvent.click(screen.getByRole("button", { name: "Yearly" }));
     expect(screen.getByRole("group", { name: "Years" })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "FY2026-27" })).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Years" })).getByRole("button", { name: "FY2026-27" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Quarterly" }));
-    expect(screen.getByRole("checkbox", { name: "Q1 FY26-27" })).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: "Quarters" })).getByRole("button", { name: "Q1 FY26-27" })).toBeTruthy();
     // Untick a series: its chip goes off (the chart redraws with what is ticked).
     // Grouped columns like the Finance tab (28 Oct 2026): onboarded beside internal / external, nothing stacked.
-    expect(screen.getAllByRole("checkbox", { name: "Onboarded" }).length).toBe(1);
-    const internal = screen.getAllByRole("checkbox", { name: /^Internal$/ })[0] as HTMLInputElement;
-    expect(internal.checked).toBe(true);
+    expect(screen.getAllByRole("button", { name: /^Onboarded [\d,]+$/ }).length).toBe(1);
+    fireEvent.click(within(screen.getByRole("group", { name: "Show" })).getByRole("button", { name: "All" }));
+    const internal = screen.getByRole("button", { name: /^Internal [\d,]+$/ });
+    expect(internal.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(internal);
-    expect(internal.checked).toBe(false);
+    expect(internal.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("reads the People tab in the same order — unfolded → dials → four bar charts → names", async () => {
@@ -277,7 +285,8 @@ describe("CEO dashboard", () => {
     expect(within(directory).getByText("Chitra", { selector: "a" })).toBeTruthy();
     fireEvent.change(within(directory).getByRole("textbox", { name: "Search people" }), { target: { value: "zzz" } });
     expect(within(directory).getByText("Nobody matches that search.")).toBeTruthy();
-    expect(screen.getAllByRole("checkbox", { name: "On the bench" }).length).toBe(3);   // unfolded · by designation · tenure
+    expect(screen.getAllByRole("checkbox", { name: "On the bench" }).length).toBe(2);   // by designation · tenure
+    expect(screen.getAllByRole("button", { name: /^On the bench [\d,]+$/ }).length).toBe(1);   // the unfolded chart's chip
     expect(screen.getByRole("checkbox", { name: "Engineer" })).toBeTruthy();            // designation row tick
     expect(screen.getByText("Asha Rao")).toBeTruthy();                                   // roll-off name
     // On the CEO dashboard the tiles open the drill-down page, bench chip pre-selected

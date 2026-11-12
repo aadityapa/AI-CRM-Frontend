@@ -45,3 +45,18 @@ describe("CEO drill-down helpers", () => {
     expect(csv).toBe("A\n'=SUM(1)\n\"x,y\"");
   });
 });
+
+describe("a month of the money chart opens its invoices (7 Nov 2026)", () => {
+  it("narrows to the month and to the clicked series' own field; predicted names no field", async () => {
+    const { moneyMonthFocus } = await import("./CeoInsightPage");
+    const chart = [{ key: "2026-04", label: "Apr 26" }];
+    const rows = [{ id: 1, month_key: "2026-04", received_bank: 5, total_due: 0 }];
+    const f = moneyMonthFocus("2026-04", "received_bank", chart, rows);
+    expect(f.month).toBe("2026-04");
+    expect(f.where).toBe("received_bank");
+    expect(f.label).toBe("Apr 26 · Received Bank");
+    const p = moneyMonthFocus("2026-04", "predicted", chart, rows);
+    expect(p.where).toBeNull();
+    expect(moneyMonthFocus("2026-04", null, chart, rows).label).toBe("Apr 26");
+  });
+});

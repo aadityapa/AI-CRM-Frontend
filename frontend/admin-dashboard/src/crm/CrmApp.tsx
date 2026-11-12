@@ -958,6 +958,11 @@ export default function CrmApp() {
     if (n.path === "talent-pool") {
       return crmTabVisibleFromMe(me, "talent-pool", roleOk, false) || canApprove(me, "profile.rmg_screening");
     }
+    // Careers Applications: TA · RMG by role, or whoever screens as RMG (GM) — the
+    // server's `screener_or(gated_read("requirements", "TA", "RMG"))`.
+    if (n.path === "careers-applications") {
+      return crmTabVisibleFromMe(me, "requirements", roleOk, false) || canApprove(me, "profile.rmg_screening");
+    }
     // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
     // login (Admin / CEO included) reaches received amounts from the customer branch page.
     if (n.path === "received-amounts") return me.roles.includes("Finance");

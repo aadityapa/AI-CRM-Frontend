@@ -60,6 +60,7 @@ const SupportTicketDetailPage = lazyRetry(() => import("./pages/SupportTickets")
 const CrmReportsPage = lazyRetry(() => import("./pages/CrmReports").then((m) => ({ default: m.CrmReportsPage })));
 const TemplateRequestsPage = lazyRetry(() => import("./pages/TemplateRequests").then((m) => ({ default: m.TemplateRequestsPage })));
 const ProfilePage = lazyRetry(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
+const CareersApplicationsPage = lazyRetry(() => import("./pages/CareersApplications").then((m) => ({ default: m.CareersApplicationsPage })));
 const ScreeningDeskPage = lazyRetry(() => import("./pages/ScreeningDesk").then((m) => ({ default: m.ScreeningDeskPage })));
 const MyInterviewsPage = lazyRetry(() => import("./pages/MyInterviews").then((m) => ({ default: m.MyInterviewsPage })));
 const MyTasksPage = lazyRetry(() => import("./pages/dashboard/WorkDesk").then((m) => ({ default: m.MyTasksPage })));
@@ -80,6 +81,7 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "profiles/:id", element: ProfileDetailPage },
   { pattern: "screening-desk", element: ScreeningDeskPage },
   { pattern: "talent-pool", element: TalentPoolPage },
+  { pattern: "careers-applications", element: CareersApplicationsPage },
   // The panel member's own technical rounds (7 Oct 2026) — the Interviewer
   // role's one page; RMG / TA who take rounds reach it from the sidebar too.
   { pattern: "my-interviews", element: MyInterviewsPage },

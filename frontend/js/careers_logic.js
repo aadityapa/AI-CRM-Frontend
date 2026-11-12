@@ -100,6 +100,41 @@ export function lwdProblem(raw, today = new Date()) {
   return null;
 }
 
+/** CTC as the candidate types it → lakhs a year. "10 L", "10.2L", "24.5", "10 lakh",
+ *  "₹10,00,000", "1000000", "1.2 Cr" → 10 / 10.2 / 24.5 / 10 / 10 / 10 / 120.
+ *  Mirrors services/ctc.parse_ctc_to_rupees (6 Nov 2026): a figure of 10,000+ is
+ *  rupees (even with "L" after it); 1,000–9,999 cannot be read; blank → null;
+ *  unreadable → NaN. */
+export function ctcLakhs(raw) {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (!text) return null;
+  const m = text.replace(/\s+/g, "").match(/(\d+(?:[.,]\d+)*)/);
+  if (!m) return NaN;
+  let num = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(num) || num <= 0) return NaN;
+  let rupees;
+  if (/\bcr\b|crore|\dcr\b/.test(text)) rupees = num * 1e7;
+  else if (num >= 10000) rupees = num;
+  else if (num >= 1000) return NaN;
+  else rupees = num * 1e5;
+  if (rupees > 5e8) return NaN;
+  return Math.round((rupees / 1e5) * 100) / 100;
+}
+
+/** 10.25 → "10.25 LPA" (what is sent and what Orbit prints). */
+export function ctcText(lakhs) {
+  if (lakhs == null || !Number.isFinite(lakhs)) return "";
+  return `${String(Number(lakhs.toFixed(2)))} LPA`;
+}
+
+/** What the hint under a CTC box says — "= ₹10.2 L a year", or the problem. */
+export function ctcHint(raw) {
+  const l = ctcLakhs(raw);
+  if (l == null) return { ok: true, text: "" };
+  if (!Number.isFinite(l)) return { ok: false, text: "Type it in lakhs, e.g. 10 L or 10.5" };
+  return { ok: true, text: `= ₹${String(Number(l.toFixed(2)))} lakh a year` };
+}
+
 export function applyProblems(f, { general = false } = {}) {
   const out = [];
   if (String(f.candidate_name || "").trim().length < 2) out.push("your full name");
@@ -113,6 +148,8 @@ export function applyProblems(f, { general = false } = {}) {
       if (lwd) out.push(lwd);
     }
     if (!String(f.current_location || "").trim()) out.push("your current location");
+    if (Number.isNaN(ctcLakhs(f.current_ctc))) out.push("your current CTC in lakhs (e.g. 7 L)");
+    if (Number.isNaN(ctcLakhs(f.expected_ctc))) out.push("your expected CTC in lakhs (e.g. 10 L)");
   }
   if (!f.file) out.push("your resume");
   else {

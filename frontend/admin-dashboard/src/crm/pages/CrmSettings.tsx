@@ -423,6 +423,8 @@ const ORG_GROUPS: Array<{ title: string; hint: string; fields: Array<{ key: stri
         placeholder: "10" },
       { key: "billing.allow_expired_po", label: "Allow billing an expired PO that still has balance", type: "bool",
         hint: "On: an expired PO is listed with a warning. Off: it is greyed out and refused — the PO must be renewed first." },
+      { key: "finance.track_people_cost", label: "Show people cost & gross margin", type: "bool",
+        hint: "Off (the default until every employee's CTC is on record): the dashboards and the Revenue report hide gross margin, net profit, people cost in the cash flow and the loss-making alerts. On: they show again." },
       { key: "billing.data_start_month", label: "Data starts from (work month)",
         hint: "YYYY-MM, e.g. 2026-03. Timesheets due, the timesheet and invoice lists, every work-desk queue and the billing tracker start at this month; no timesheet can be created before it. Older records stay in the database and in the financial reports.",
         placeholder: "2026-03" },
