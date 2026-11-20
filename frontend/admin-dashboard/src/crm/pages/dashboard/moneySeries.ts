@@ -67,15 +67,28 @@ export function presetSeries(preset: MoneyPreset, withPredicted = true): BarSeri
 
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+/** 12 Nov 2026 — true when the server sent month rows WITHOUT the bank / TDS split
+ *  (a backend older than 6 Nov 2026). The chart then must not pretend: Inc Tax is
+ *  not known, nor TDS or Due. PURE. */
+export function moneySplitMissing(rows: MoneyRow[]): boolean {
+  return rows.length > 0 && rows.every((r) => r.revenue_inc === undefined && r.total_due === undefined);
+}
+
+/** The series an older server can still fill (Revenue Ex. Tax = billed,
+ *  Received Bank = cash collected, the prediction). */
+export const FALLBACK_MONEY_KEYS: MoneyKey[] = ["revenue_ex", "received_bank", "predicted"];
+
 /** Rows ready for the chart. An older server without the split keys still
- *  draws: Revenue (Ex. Tax) = billed, Received Bank = collected. */
+ *  draws Revenue (Ex. Tax) = billed and Received Bank = collected; every other
+ *  money word reads 0 and `moneySplitMissing` tells the chart to hide them
+ *  (12 Nov 2026 — it used to copy Ex. Tax into Inc Tax, which read as a bug). */
 export function moneyRows<T extends MoneyRow>(rows: T[]): (T & Record<MoneyKey, number>)[] {
   return rows.map((r) => {
     const ex = r.revenue_ex ?? n(r.billed);
     const out = {
       ...r,
       revenue_ex: ex,
-      revenue_inc: n(r.revenue_inc ?? ex),
+      revenue_inc: n(r.revenue_inc),
       receivable_bank: n(r.receivable_bank), receivable_tds: n(r.receivable_tds),
       received_bank: n(r.received_bank ?? r.collected),
       received_tds: n(r.received_tds),

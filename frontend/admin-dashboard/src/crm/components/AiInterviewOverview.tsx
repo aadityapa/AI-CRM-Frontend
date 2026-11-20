@@ -23,6 +23,7 @@ import { crmGet } from "../api";
 import { useHasRole } from "../CrmApp";
 import { useCanApprove } from "../useAccess";
 import { ScoreIndicator } from "./ScoreIndicator";
+import { aiDecisionLabel } from "../lib/aiDecision";
 import { InterviewModelChips } from "../../components/AiModelChip";
 
 /** Roles that hold the Interview Platform's Reports tab — mirrors
@@ -208,9 +209,13 @@ export function AiInterviewOverview({
   }
   if (!data) return null;
 
-  const verdict = data.effective_result || data.result;
+  // 18 Nov 2026: the status is a PERSON's decision — "In Review" until RMG / GM
+  // select, reject or hold; the AI's recommendation below is advice.
+  const verdict = aiDecisionLabel({ ai_effective_result: data.effective_result, ai_interview_result: data.result,
+    ai_hr_decision_label: data.hr_decision_label }) || data.result;
   const verdictTone =
-    verdict === "Passed" ? "text-success" : verdict === "Failed" ? "text-danger" : "text-muted";
+    verdict === "Selected" ? "text-success" : verdict === "Rejected" ? "text-danger"
+      : verdict === "In Review" ? "text-info" : verdict === "On Hold" ? "text-warning" : "text-muted";
 
   return (
     <div className="mt-4 rounded-control border border-subtle bg-surface-2 p-4" data-testid="ai-interview-overview">
@@ -221,9 +226,10 @@ export function AiInterviewOverview({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`text-lg font-bold ${verdictTone}`}>{verdict}</span>
-            {data.hr_decision_label && (
-              <span className="rounded-full border border-subtle bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-secondary">
-                {data.hr_decision_label}
+            {verdict === "In Review" && (
+              <span className="rounded-full border border-subtle bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-secondary"
+                title="The AI scores; RMG / GM decide — Select, Reject or Hold">
+                Waiting for RMG / GM
               </span>
             )}
             {data.not_attempted && (
@@ -238,7 +244,7 @@ export function AiInterviewOverview({
             )}
           </div>
           <div className="mt-1 text-sm text-secondary">
-            {data.recommendation && <span className="font-semibold text-primary">{data.recommendation}</span>}
+            {data.recommendation && <span className="font-semibold text-primary">AI suggests: {data.recommendation}</span>}
             {data.recommendation && data.fitment && <span className="text-muted"> · </span>}
             {data.fitment && <span>{data.fitment}</span>}
             {(data.evaluation_model || data.model) && (

@@ -17,12 +17,18 @@
  * "Open candidate report", which goes straight to the report page (questions,
  * answers, scores AND the recording). The server sends `report_link` only once
  * the session finished.
+ *
+ * 13 Nov 2026 — the LOBBY: a row shows where an unfinished interview's page is
+ * right now ("In lobby · On the device check") from the moment the link opens,
+ * and a recruiter can join, call to guide, watch in real time or terminate
+ * before sign-in. The bell's "candidate opened the link" lands here with
+ * `?live=<token>` and opens that row's live panel.
  */
 import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Shield, AlertTriangle, CheckCircle2, XCircle, Clock, Monitor, ChevronDown, ChevronUp,
   Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, RefreshCw,
-  Video, FileText, UserRound, Radio, Eye,
+  Video, FileText, UserRound, Radio, Eye, Hand, Headphones, Lightbulb, BookOpenText, DoorOpen,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
 import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../components/interview-recording/RecordingViewer";
@@ -33,7 +39,8 @@ import { InterviewDiagnosisPanel, type InterviewDiagnosis } from "../components/
 
 /* ---------- types (mirror services/interview_integrity.py) ---------- */
 
-type Family = "tab" | "focus" | "fullscreen" | "keys" | "face" | "clipboard" | "devtools" | "gaze";
+type Family = "tab" | "focus" | "fullscreen" | "keys" | "face" | "clipboard" | "devtools" | "gaze"
+  | "gesture" | "audio" | "light" | "reading";
 
 interface IntegrityRow {
   invite_token: string;
@@ -76,7 +83,15 @@ interface IntegrityRow {
   /** 7 Oct 2026 — `/admin/?view=candidateReport&cid=…&iid=…`, only once the session finished. */
   report_link?: string | null;
   interview_record_id?: string | null;
+  /** 13 Nov 2026 — where the candidate's page is now (unfinished interviews only). */
+  lobby?: { stage: string; words: string; at: number; first_at: number; online: boolean } | null;
+  /** Recruiters watching in real time right now. */
+  watchers?: number;
 }
+
+const FINISHED = new Set(["completed", "terminated"]);
+/** PURE: an unfinished interview — a recruiter may join, watch or end it. */
+export const isOpenInterview = (row: Pick<IntegrityRow, "session_status">) => !FINISHED.has(String(row.session_status || ""));
 
 interface Summary {
   total: number; active: number; pending: number; completed: number; terminated: number;
@@ -86,6 +101,8 @@ interface Summary {
 interface TimelineEvent {
   type: string; label: string; details: string; timestamp: string; question: string;
   ip: string; user_agent: string; is_strike: boolean;
+  /** The proctor channel's copy of a warning already counted (18 Nov 2026). */
+  echo?: boolean;
 }
 
 const isLiveRecording = (row: IntegrityRow) => row.recording_status === "recording" && LIVE_SESSION_STATUSES.has(row.session_status);
@@ -110,8 +127,13 @@ const FAMILY_META: Record<Family, { label: string; icon: React.ReactNode }> = {
   devtools: { label: "Dev tools", icon: <Code2 className="h-3 w-3" /> },
   // 13 Oct 2026 — soft look-away reminders from the camera monitor (the 10th ends the interview).
   gaze: { label: "Looked away", icon: <Eye className="h-3 w-3" /> },
+  // 13 Nov 2026 — the template's anti-cheating checks (soft flags).
+  gesture: { label: "Gesture misses", icon: <Hand className="h-3 w-3" /> },
+  audio: { label: "Headphones / audio", icon: <Headphones className="h-3 w-3" /> },
+  light: { label: "Poor lighting", icon: <Lightbulb className="h-3 w-3" /> },
+  reading: { label: "Reading pattern", icon: <BookOpenText className="h-3 w-3" /> },
 };
-const FAMILY_ORDER: Family[] = ["tab", "focus", "fullscreen", "face", "gaze", "clipboard", "devtools", "keys"];
+const FAMILY_ORDER: Family[] = ["tab", "focus", "fullscreen", "face", "gaze", "reading", "gesture", "audio", "light", "clipboard", "devtools", "keys"];
 
 function scoreTone(score: number, status: string): { ring: string; text: string; word: string } {
   if (status === "terminated") return { ring: "stroke-danger", text: "text-danger", word: "Terminated" };
@@ -219,7 +241,7 @@ function RowActions({ row }: { row: IntegrityRow }) {
 
 /* ---------- detail (timeline + recording) ---------- */
 
-const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
+const RowDetail = memo(function RowDetail({ row, openLive = false }: { row: IntegrityRow; openLive?: boolean }) {
   const [events, setEvents] = useState<TimelineEvent[] | null>(null);
   const [reason, setReason] = useState(row.reason || "");
   const [error, setError] = useState("");
@@ -237,7 +259,9 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
         if (cancelled) return;
         setEvents(Array.isArray(d.violations_log) ? d.violations_log : []);
         setDiagnosis(d.diagnosis || null);
-        if (d.reason) setReason(d.reason);
+        // The detail's reason is the truth (18 Nov 2026): empty = NOT terminated,
+        // even when the list row still carries an older guess.
+        setReason(d.reason || "");
         // The detail endpoint finalizes a half-uploaded recording on demand
         // (never while the session is live), so this is also what repairs an
         // interview that crashed mid-way.
@@ -264,9 +288,11 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
 
   const sectionTitle = "text-[11px] font-bold uppercase tracking-wider text-muted";
   const live = isLiveRecording(row);
-  // A recruiter may join while the candidate is in the interview (11 Oct 2026).
-  const joinable = LIVE_SESSION_STATUSES.has(row.session_status) && row.session_status !== "pending";
-  const [joinOpen, setJoinOpen] = useState<false | "call" | "panel">(false);
+  // A recruiter may join from the moment the link opens (13 Nov 2026 — the
+  // lobby) until the interview finishes.
+  const joinable = isOpenInterview(row);
+  const inLobby = joinable && row.session_status !== "active";
+  const [joinOpen, setJoinOpen] = useState<false | "call" | "panel">(openLive ? "panel" : false);
 
   return (
     <div className="grid gap-4 rounded-card border border-subtle bg-surface-2 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
@@ -308,9 +334,10 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
           ) : (
             <ol className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
               {events.map((v, i) => (
-                <li key={i} className={`flex items-center gap-3 rounded-control border px-3 py-2 text-xs ${v.type === "termination" ? "border-danger/30 bg-danger-soft" : "border-subtle bg-surface-1"}`}>
+                <li key={i} className={`flex items-center gap-3 rounded-control border px-3 py-2 text-xs ${v.type === "termination" ? "border-danger/30 bg-danger-soft" : v.echo ? "border-dashed border-subtle bg-surface-1 opacity-70" : "border-subtle bg-surface-1"}`}>
                   <span className={`w-6 shrink-0 text-right font-bold tabular-nums ${v.is_strike ? "text-danger" : "text-muted"}`}>{i + 1}</span>
                   <span className="w-32 shrink-0 truncate font-semibold text-secondary" title={v.label}>{v.label}</span>
+                  {v.echo && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-muted" title="The candidate's page reports every warning on two channels; this copy is not counted.">Same incident · not counted</span>}
                   <span className="min-w-0 flex-1 truncate text-muted" title={v.details}>{v.details}</span>
                   {v.question && <span className="shrink-0 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold text-secondary">Q{v.question}</span>}
                   <span className="shrink-0 whitespace-nowrap text-muted">{fmtTime(v.timestamp)}</span>
@@ -333,13 +360,17 @@ const RowDetail = memo(function RowDetail({ row }: { row: IntegrityRow }) {
             >
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/20"><Radio className="h-4 w-4" /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-bold">Join this interview now</span>
-                <span className="block text-xs text-white/80">Pauses the AI and calls the candidate — live in a second or two</span>
+                <span className="block text-sm font-bold">{inLobby ? "Call to guide the candidate" : "Join this interview now"}</span>
+                <span className="block text-xs text-white/80">
+                  {inLobby
+                    ? (row.lobby ? `${row.lobby.words} — help them sit right, the light, the headphones` : "They have not opened the link yet")
+                    : "Pauses the AI and calls the candidate — live in a second or two"}
+                </span>
               </span>
             </button>
             <button type="button" onClick={() => setJoinOpen("panel")}
               className="block w-full border-t border-white/20 px-4 py-2 text-left text-xs font-semibold text-white/90 hover:bg-white/10">
-              Open the controls without calling (pause · note · queue a question)
+              {inLobby ? "Open the controls — watch silently in real time · terminate" : "Open the controls — watch in real time · pause · note · question · terminate"}
             </button>
           </div>
         )}
@@ -385,6 +416,12 @@ export function IntegrityLogsPage() {
   const [to, setTo] = useState("");
   const [exporting, setExporting] = useState(false);
   const [tick, setTick] = useState(0);
+  // The bell's "candidate opened the link" (13 Nov 2026): `?live=<token>`
+  // expands that row and opens its live panel.
+  const [liveToken] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("live") || ""; } catch { return ""; }
+  });
+  useEffect(() => { if (liveToken) setExpanded(liveToken); }, [liveToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -399,10 +436,11 @@ export function IntegrityLogsPage() {
   // While an interview is running, keep the list fresh so the "Watch live"
   // chip appears when the first slice lands and the row settles to "recording"
   // when the session ends. Nothing polls when nothing is live.
-  const anyLive = useMemo(() => rows.some((r) => LIVE_SESSION_STATUSES.has(r.session_status) && r.session_status !== "pending"), [rows]);
+  const anyLive = useMemo(() => rows.some((r) => (LIVE_SESSION_STATUSES.has(r.session_status) && r.session_status !== "pending")
+    || (isOpenInterview(r) && r.lobby?.online)), [rows]);
   useEffect(() => {
     if (!anyLive) return;
-    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    const t = setInterval(() => setTick((x) => x + 1), 20000);
     return () => clearInterval(t);
   }, [anyLive]);
 
@@ -556,6 +594,18 @@ export function IntegrityLogsPage() {
                         </span>
                       )}
                       {row.has_recording && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted"><Video className="h-3 w-3" /> recording</span>}
+                      {isOpenInterview(row) && row.lobby && row.session_status !== "active" && (
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ring-subtle ${row.lobby.online ? "bg-info-soft text-info" : "bg-surface-2 text-muted"}`}
+                              title="Where the candidate's page is right now — open the row to guide or watch them">
+                          {row.lobby.online ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" aria-hidden /> : <DoorOpen className="h-3 w-3" />}
+                          In lobby · {row.lobby.words}
+                        </span>
+                      )}
+                      {(row.watchers || 0) > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 ring-1 ring-inset ring-subtle dark:bg-brand-900/30 dark:text-brand-300">
+                          <Eye className="h-3 w-3" /> {row.watchers} watching
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted">
                       {row.candidate_email}
@@ -579,7 +629,7 @@ export function IntegrityLogsPage() {
                 </div>
                 {open && (
                   <div className="px-4 pb-4">
-                    <RowDetail row={row} />
+                    <RowDetail row={row} openLive={!!liveToken && row.invite_token === liveToken} />
                   </div>
                 )}
               </div>

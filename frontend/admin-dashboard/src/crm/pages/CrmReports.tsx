@@ -4,7 +4,7 @@
  * (Admin/CEO ONLY — server-enforced by `GET /api/reports/revenue`). */
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Briefcase, Download, IndianRupee, Landmark, ReceiptText, TrendingUp, UserSearch, type LucideIcon,
+  BarChart3, BookOpen, Briefcase, Download, IndianRupee, Landmark, ReceiptText, TrendingUp, UserSearch, type LucideIcon,
 } from "lucide-react";
 import { InvoiceSummaryReport } from "./reports/InvoiceSummaryReport";
 import { PageHeader } from "../components/PageHeader";
@@ -12,7 +12,7 @@ import { authFetch } from "../../api/client";
 import { qs, crmGet } from "../api";
 import { useHasRole, useMe } from "../CrmApp";
 import { crmTabVisibleFromMe, useSubTabs } from "../useAccess";
-import { FinanceReportsPage } from "./FinanceReports";
+import { CustomerLedgerTab, FinanceReportsPage } from "./FinanceReports";
 import { RevenueReport } from "./reports/RevenueReport";
 import { RecruiterProductivity } from "./reports/RecruiterProductivity";
 import { DataTable } from "../components/DataTable";
@@ -24,7 +24,7 @@ import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import { usePageTab } from "../lib/pageState";
 import { fmtDateShort } from "../../lib/datetime";
 
-type TabKey = "opportunities" | "profiles" | "productivity" | "financial" | "revenue" | "invoice_summary";
+type TabKey = "opportunities" | "profiles" | "productivity" | "financial" | "revenue" | "invoice_summary" | "customer_ledger";
 
 const TABS = [
   { key: "opportunities", label: "Opportunities" },
@@ -45,6 +45,10 @@ const REVENUE_TAB = { key: "revenue", label: "Revenue" };
    paste into a mail. Sales · Sales Manager · Sales Head · Finance by role. */
 const INVOICE_SUMMARY_TAB = { key: "invoice_summary", label: "Invoice Summary" };
 
+/* Customer Ledger (20 Nov 2026) — one customer's statement by financial year,
+   month or custom dates. Finance + Admin / CEO by role. */
+const CUSTOMER_LEDGER_TAB = { key: "customer_ledger", label: "Customer Ledger" };
+
 /** Presentation for the report picker (icon · one line · accent). Keys match
  *  the tab keys above; purely visual. */
 const TAB_LOOK: Record<string, { icon: LucideIcon; blurb: string; tone: string }> = {
@@ -53,17 +57,18 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; blurb: string; tone: string }
   productivity: { icon: TrendingUp, blurb: "Each recruiter's sourcing, pipeline and outcomes in a window.", tone: "from-emerald-500 to-teal-600" },
   financial: { icon: Landmark, blurb: "POs, invoices, payments and TDS in one place.", tone: "from-amber-500 to-orange-600" },
   revenue: { icon: IndianRupee, blurb: "Billed, collected, margin and cash flow.", tone: "from-rose-500 to-pink-600" },
+  customer_ledger: { icon: BookOpen, blurb: "One customer's statement by FY, month or dates.", tone: "from-indigo-500 to-blue-600" },
   invoice_summary: { icon: ReceiptText, blurb: "This month's invoices per customer — copy and send.", tone: "from-teal-500 to-cyan-600" },
 };
 
 /** Tabs that host their own component (no shared DataTable / CSV export). */
-const HOSTED_TABS: ReadonlySet<TabKey> = new Set<TabKey>(["financial", "revenue", "productivity", "invoice_summary"]);
+const HOSTED_TABS: ReadonlySet<TabKey> = new Set<TabKey>(["financial", "revenue", "productivity", "invoice_summary", "customer_ledger"]);
 
 const TEAM_OPTIONS = ["Sales", "RMG", "TA"];
 const OPP_STATUS_OPTIONS = ["Active", "On Hold", "Rejected", "Closed", "Archived"];
 const PROFILE_STATUS_OPTIONS = ["Active", "Rejected", "Joined"];
 
-const CSV_FILENAMES: Record<Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary">, string> = {
+const CSV_FILENAMES: Record<Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary" | "customer_ledger">, string> = {
   opportunities: "opportunities-report.csv",
   profiles: "candidate-profiles-report.csv",
 };
@@ -184,11 +189,17 @@ export function CrmReportsPage() {
   const showRevenue = sub.allowed("revenue", revenueRoleOk);
   // Same roles as Revenue (the server's INVOICE_SUMMARY_READ), its own tick.
   const showInvoiceSummary = sub.allowed("invoice_summary", revenueRoleOk);
+  // Customer Ledger: Finance + Admin / CEO by role (useHasRole adds Admin / CEO);
+  // a template that ticked other report tabs but not this one still gets it
+  // while Financial Reports is open to them (the server gate reads both ticks).
+  const ledgerRoleOk = useHasRole("Finance");
+  const showLedger = ledgerRoleOk && (sub.allowed("customer_ledger", true) || showFinancial);
   const tabs = [
     ...TABS.filter((t) => sub.allowed(t.key)),
     ...(showFinancial ? [FINANCIAL_TAB] : []),
     ...(showRevenue ? [REVENUE_TAB] : []),
     ...(showInvoiceSummary ? [INVOICE_SUMMARY_TAB] : []),
+    ...(showLedger ? [CUSTOMER_LEDGER_TAB] : []),
   ];
   // A deep link to a tab this user cannot see falls back to the first visible tab.
   const tab: TabKey = tabs.some((t) => t.key === requestedTab)
@@ -256,7 +267,7 @@ export function CrmReportsPage() {
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
-      a.download = CSV_FILENAMES[tab as Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary">];
+      a.download = CSV_FILENAMES[tab as Exclude<TabKey, "financial" | "revenue" | "productivity" | "invoice_summary" | "customer_ledger">];
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -426,6 +437,8 @@ export function CrmReportsPage() {
           No report is switched on for your login. Ask Admin / CEO to tick the reports you need
           in Access Control.
         </div>
+      ) : tab === "customer_ledger" ? (
+        showLedger && <CustomerLedgerTab />
       ) : tab === "invoice_summary" ? (
         showInvoiceSummary && <InvoiceSummaryReport />
       ) : tab === "revenue" ? (

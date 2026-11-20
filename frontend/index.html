@@ -7405,12 +7405,15 @@
     .qc-ending-overlay.is-active { display: flex; }
     .qc-ending-overlay .qc-ending-card { padding: 22px 30px; border-radius: 18px; border: 1px solid rgba(129,140,248,.28); background: linear-gradient(180deg, rgba(15,23,42,.96), rgba(7,14,33,.94)); color: #e2e8f0; font-weight: 800; font-size: 15px; box-shadow: 0 24px 70px rgba(2,6,23,.45), 0 0 44px rgba(99,102,241,.18), inset 0 1px 0 rgba(255,255,255,.08); animation: qcEndingFloat 1.5s ease-in-out infinite; }
     @keyframes qcEndingFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+    /* One column only below 640 px (was 1200 px — see "Two columns on every
+       laptop / PC", 18 Nov 2026, at the end of the spoken-question styles). */
     @media (max-width: 1200px) {
-      .qc-grid { grid-template-columns: 1fr; }
-      .qc-right { grid-template-rows: 260px 1fr; }
       .qc-title { font-size: 17px; }
     }
-    @media (max-width: 760px) {
+    @media (max-width: 640px) {
+      .qc-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
       .quantum-shell { padding: 10px; }
       .qc-top { grid-template-columns: 1fr; }
       .qc-metrics { width: 100%; justify-content: space-between; }
@@ -7717,7 +7720,7 @@
     html:not(.kx-dark) #screenCandidate .qc-cam-card { border-color: #e2e8f0; box-shadow: 0 8px 24px rgba(15,23,42,.08); }
 
     /* Phones / narrow windows: one scrolling column, nothing overlaps. */
-    @media (max-width: 760px) {
+    @media (max-width: 640px) {
       body.interview-mode .main, body.interview-mode #screenCandidate { height: auto; min-height: 100vh; overflow: visible; }
       #screenCandidate.quantum-shell, .cand-shell { height: auto; min-height: 100vh; overflow: visible; }
       .qc-layout { height: auto; }
@@ -7732,90 +7735,301 @@
       .qc-cam-card { max-height: 200px; }
       .qc-question-card .cand-question { font-size: 19px; }
     }
+
+    /* --- Send / Skip always on screen (18 Nov 2026) ------------------------------
+       Reported: for some candidates the Send Response / Skip Question buttons were
+       not on the screen, and the camera sat big under the question. Two causes:
+       (1) A window 761–1200 px wide (a 1366 px laptop at 125 % zoom, or a browser
+           window that is not maximised) dropped to ONE column: camera, status and
+           the buttons went BELOW the question + AI stage, while interview mode locks
+           the page to 100vh with overflow hidden — they could not be scrolled to.
+       (2) Two columns on a short screen: the camera (up to 340 px) + status +
+           buttons were taller than the column, so the bottom — the buttons — was
+           cut off.
+       Two columns on EVERY laptop / PC (18 Nov 2026, later — user ask: "this
+       design for all candidates, adjusting to the device"): question + AI stage
+       on the left; camera, status and Skip / Send on the right, from 641 px wide
+       up (CSS px, so browser zoom is handled too — 1366 px at 150 % is 910 px).
+       Sizes follow the window: the camera takes up to 42 % of the height, the
+       question's type scales with the width, the AI stage takes what is left,
+       and short / narrow windows get tighter tiers. The CAMERA is what shrinks
+       (status and buttons never do); a long question scrolls inside its card.
+       Below 640 px (never a real interview — laptops / PCs only) one scrolling
+       column with the buttons right after the question. */
+    #screenCandidate .qc-grid { grid-template-rows: minmax(0, 1fr); }
+    #screenCandidate .qc-left, #screenCandidate .qc-right { min-width: 0; min-height: 0; }
+    #screenCandidate .qc-question-card { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+    #screenCandidate .qc-question-card .cand-question { font-size: clamp(17px, calc(0.7vw + 0.9vh + 5px), 26px); line-height: 1.4; }
+    #screenCandidate .qc-ai-stage { flex: 1 1 0; min-height: 150px; }
+    #screenCandidate .qc-right .qc-cam-card { flex: 1 1 auto; min-height: 110px; max-height: min(64vh, 720px); aspect-ratio: auto; }
+    /* With the live transcript on, camera and transcript share the column. */
+    #screenCandidate .qc-right:has(.qc-transcript-panel.is-visible:not([hidden])) .qc-cam-card { max-height: min(34vh, 380px); }
+    #screenCandidate .qc-right .qc-transcript-panel.is-visible:not([hidden]) { flex: 1 1 0; min-height: 110px; margin-bottom: 0; }
+    #screenCandidate .qc-right .qc-status-tracker,
+    #screenCandidate .qc-right .qc-response-card { flex: 0 0 auto; }
+    /* Tall screens: status + buttons sit at the bottom, level with the AI stage. */
+    #screenCandidate .qc-right .qc-status-tracker { margin-top: auto; }
+
+    /* Big screens: use the width, never stretch the camera past a sensible size. */
+    @media (min-width: 1600px) {
+      #screenCandidate .qc-layout { width: min(1680px, 100%); }
+      #screenCandidate .qc-grid { grid-template-columns: minmax(0, 1.9fr) minmax(360px, 1fr); }
+    }
+
+    /* Narrow laptops / zoomed windows (641–1100 px): the right column keeps room
+       for the camera and both buttons; the header stays on one tidy row. */
+    @media (min-width: 641px) and (max-width: 1100px) {
+      #screenCandidate .qc-grid { grid-template-columns: minmax(0, 1.45fr) minmax(250px, 1fr); gap: 12px; }
+      #screenCandidate .qc-left { gap: 12px; }
+      #screenCandidate.quantum-shell { padding: 12px 14px 14px; }
+      #screenCandidate .qc-chip-row .cand-chip.soft { display: none; }
+      #screenCandidate .qc-ai-center { transform: translate(-50%, -50%) scale(.6); }
+    }
+    @media (min-width: 641px) and (max-width: 860px) {
+      #screenCandidate .qc-top { flex-wrap: wrap; row-gap: 8px; }
+      #screenCandidate .qc-center-timer { position: static; transform: none; order: 3; width: 100%; max-width: none; flex-direction: row; justify-content: center; padding: 6px 12px; }
+      #screenCandidate .qc-end-btn { width: auto; padding: 9px 12px; font-size: 12px; }
+    }
+
+    /* Short screens with two columns (laptops at 125–150 % zoom, the browser's
+       screen-sharing bar): tighter spacing so everything fits without cutting. */
+    @media (min-width: 641px) and (max-height: 800px) {
+      #screenCandidate.quantum-shell { padding: 10px 16px 12px; }
+      #screenCandidate .qc-layout { gap: 10px; }
+      #screenCandidate .qc-grid, #screenCandidate .qc-left { gap: 12px; }
+      #screenCandidate .qc-right { gap: 10px; }
+      #screenCandidate .qc-ai-stage { min-height: 120px; }
+      #screenCandidate .qc-ai-center { transform: translate(-50%, -50%) scale(.55); }
+      #screenCandidate .qc-question-card { padding: 14px 18px 12px; }
+      #screenCandidate .qc-answer-hint { margin-top: 8px; padding: 6px 10px; font-size: 12px; }
+      #screenCandidate .qc-status-tracker { padding: 8px 12px; }
+      #screenCandidate .qc-response-card { padding: 12px; }
+      #screenCandidate .qc-response-card .cand-chat-input { gap: 8px; }
+      #screenCandidate .qc-response-card .cand-skip,
+      #screenCandidate .qc-response-card .cand-send { padding: 9px 14px; min-height: 0; }
+    }
+    /* Very short (≤ 600 px tall — 150 % zoom on a 768 px screen): the AI stage
+       shrinks to a band, its label goes, the camera keeps at least a face. */
+    @media (min-width: 641px) and (max-height: 600px) {
+      #screenCandidate .qc-layout { gap: 8px; }
+      #screenCandidate .qc-grid, #screenCandidate .qc-left, #screenCandidate .qc-right { gap: 8px; }
+      #screenCandidate .qc-ai-stage { min-height: 84px; }
+      #screenCandidate .qc-stage-label { display: none; }
+      #screenCandidate .qc-ai-center { transform: translate(-50%, -50%) scale(.4); }
+      #screenCandidate .qc-right .qc-cam-card { min-height: 90px; }
+      #screenCandidate .qc-question-card { padding: 10px 14px; }
+      #screenCandidate .qc-status-tracker { padding: 6px 10px; }
+      #screenCandidate .qc-response-card { padding: 10px; }
+    }
+
+    /* One column (below 640 px): the page scrolls; the buttons follow the question. */
+    @media (max-width: 640px) {
+      body.interview-mode .main, body.interview-mode #screenCandidate { height: auto; min-height: 100vh; overflow: visible; }
+      #screenCandidate.quantum-shell { height: auto; min-height: 100vh; overflow: visible; }
+      #screenCandidate .qc-layout { height: auto; }
+      #screenCandidate .qc-grid { display: flex; flex-direction: column; flex: none; gap: 14px; }
+      #screenCandidate .qc-left, #screenCandidate .qc-right { display: contents; }
+      #screenCandidate .qc-question-card { order: 1; overflow: visible; }
+      #screenCandidate .qc-response-card { order: 2; position: sticky; bottom: 8px; z-index: 4; }
+      #screenCandidate .qc-status-tracker { order: 3; }
+      #screenCandidate .qc-transcript-panel { order: 4; }
+      #screenCandidate .qc-ai-stage { order: 5; flex: none; height: 160px; min-height: 160px; }
+      #screenCandidate .qc-ai-center { transform: translate(-50%, -50%) scale(.45); }
+      #screenCandidate .qc-right .qc-cam-card,
+      #screenCandidate .qc-right:has(.qc-transcript-panel[hidden]) .qc-cam-card { order: 6; flex: none; aspect-ratio: 16 / 10; max-height: 260px; min-height: 0; }
+    }
     /* =============================================================
-       Interview rules v3 (12 Oct 2026, user ask: "correct the question
-       count and update this page for the current AI interview"). The
-       real format comes from the server (`_interview_format`); the page
-       is a header, a "Your interview" summary on the left and four rule
-       groups on the right; consent + buttons stay pinned at the bottom.
+       Interview rules v4 (18 Nov 2026, user ask with a screenshot:
+       "modify as best as in UI"). v3 showed every rule as its own heavy
+       card in two cut-off columns, the summary was clipped, the icons sat
+       in the corner of their tiles (`.rv-rule span {display:block}` beat
+       the tile's grid) and Back looked like the main button. Now: a
+       summary panel with a warnings meter on the left, the rules as four
+       grouped cards (the rules that END an interview first) that flow in
+       two columns and scroll with a "more below" hint, and a consent bar
+       that turns green when ticked. Every id the JS fills is unchanged.
        ============================================================= */
-    .rules-v3 .rv-card { display: flex; flex-direction: column; gap: 18px; }
-    .rules-v3 .rv-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px; }
-    .rules-v3 .rv-head .rules-title { margin: 10px 0 4px; font-size: clamp(28px, 3.2vw, 42px); }
-    .rules-v3 .rv-head .rules-sub { margin: 0; }
-    .rules-v3 .rv-body { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 20px; flex: 1 1 auto; min-height: 0; }
-    .rules-v3 .rv-aside {
-      align-self: start; position: sticky; top: 0;
-      display: flex; flex-direction: column; gap: 12px;
-      padding: 18px; border-radius: 20px;
-      background: linear-gradient(160deg, rgba(37, 99, 235, 0.22), rgba(79, 70, 229, 0.14) 60%, rgba(14, 165, 233, 0.10));
-      border: 1px solid rgba(147, 197, 253, 0.28);
+    .rules-v4 { --rv-ink: #f1f5f9; --rv-text: #b6c4d6; --rv-mute: #8a9bb2; --rv-line: rgba(148, 163, 184, 0.16); --rv-stop: #f87171; }
+    .rules-v4 [hidden] { display: none !important; }
+    .rules-v4 .rv-card { display: flex; flex-direction: column; gap: clamp(12px, 2vh, 20px); padding: clamp(18px, 2.6vh, 32px) clamp(20px, 2.6vw, 40px); }
+    /* --- header --------------------------------------------------------- */
+    .rules-v4 .rv-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 24px; }
+    .rules-v4 .rv-head-text { min-width: 0; max-width: 760px; }
+    .rules-v4 .rules-chip { display: inline-flex; align-items: center; gap: 8px; }
+    .rules-v4 .rv-head .rules-title { margin: 8px 0 4px; font-size: clamp(26px, 1.8vw + 10px, 40px); line-height: 1.12; }
+    .rules-v4 .rv-head .rules-sub { margin: 0; font-size: 15px; color: var(--rv-text); }
+    .rules-v4 .rv-steps { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 6px; }
+    .rules-v4 .rv-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; color: var(--rv-mute); white-space: nowrap; }
+    .rules-v4 .rv-step-n {
+      width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800; border: 1.5px solid rgba(148, 163, 184, 0.35); color: var(--rv-mute);
     }
-    .rules-v3 .rv-aside-title { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: #bfdbfe; }
-    .rules-v3 .rv-stat { display: flex; gap: 12px; align-items: flex-start; }
-    .rules-v3 .rv-stat-ico, .rules-v3 .rv-ends-ico {
-      flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
-      background: rgba(255, 255, 255, 0.10); color: #dbeafe;
+    .rules-v4 .rv-step-n svg { width: 13px; height: 13px; }
+    .rules-v4 .rv-step--done .rv-step-n { background: rgba(16, 185, 129, 0.18); border-color: rgba(52, 211, 153, 0.6); color: #6ee7b7; }
+    .rules-v4 .rv-step--done { color: #a7f3d0; }
+    .rules-v4 .rv-step--active .rv-step-n { background: linear-gradient(135deg, #2563eb, #4f46e5); border-color: transparent; color: #fff; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.22); }
+    .rules-v4 .rv-step--active { color: #e0e7ff; }
+    .rules-v4 .rv-step-bar { width: clamp(12px, 2vw, 28px); height: 2px; border-radius: 2px; background: rgba(148, 163, 184, 0.25); }
+    .rules-v4 .rv-step-bar--done { background: linear-gradient(90deg, #34d399, #3b82f6); }
+    /* --- body ----------------------------------------------------------- */
+    .rules-v4 .rv-body { display: flex; flex-direction: column; gap: clamp(12px, 1.8vh, 18px); flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px 6px 2px 2px; scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.35) transparent; }
+    .rules-v4 .rv-body:focus-visible { outline: 2px solid rgba(96, 165, 250, 0.6); outline-offset: 2px; border-radius: 12px; }
+    /* The summary: one strip of four tiles. */
+    .rules-v4 .rv-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; flex: 0 0 auto; }
+    .rules-v4 .rv-stat {
+      display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 16px; min-width: 0;
+      background: radial-gradient(120% 90% at 0% 0%, rgba(59, 130, 246, 0.16), transparent 60%), linear-gradient(180deg, rgba(30, 41, 70, 0.72), rgba(17, 25, 43, 0.72));
+      border: 1px solid rgba(147, 197, 253, 0.2);
     }
-    .rules-v3 .rv-stat-label { display: block; font-size: 12px; color: #a5b4cf; font-weight: 600; }
-    .rules-v3 .rv-stat-value { display: block; font-size: 22px; font-weight: 800; color: #f8fafc; line-height: 1.2; }
-    .rules-v3 .rv-stat-hint { display: block; font-size: 12px; color: #9fb3c8; margin-top: 2px; }
-    .rules-v3 .rv-mix { display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 2px 50px; }
-    .rules-v3 .rv-mix-chip {
-      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
-      font-size: 12px; font-weight: 700; color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.18);
+    .rules-v4 .rv-stat--ends { background: radial-gradient(120% 90% at 0% 0%, rgba(16, 185, 129, 0.14), transparent 60%), linear-gradient(180deg, rgba(30, 41, 59, 0.72), rgba(17, 25, 43, 0.72)); border-color: rgba(52, 211, 153, 0.22); }
+    .rules-v4 .rv-stat--ends .rv-ico { background: rgba(16, 185, 129, 0.16); color: #6ee7b7; }
+    .rules-v4 .rv-stat-body { font-size: 13px; line-height: 1.45; color: #dbe4ef; margin-top: 2px; }
+    .rules-v4 .rv-ico {
+      flex: 0 0 auto; width: 36px; height: 36px; border-radius: 11px;
+      display: inline-flex !important; align-items: center; justify-content: center;
+      background: rgba(59, 130, 246, 0.18); color: #bfdbfe;
     }
-    .rules-v3 .rv-mix-chip b { font-size: 13px; }
-    .rules-v3 .rv-mix-chip--spoken { background: rgba(14, 165, 233, 0.30); }
-    .rules-v3 .rv-mix-chip--pseudo { background: rgba(245, 158, 11, 0.32); }
-    .rules-v3 .rv-mix-chip--coding { background: rgba(16, 185, 129, 0.32); }
-    .rules-v3 .rv-skills { margin: 0; font-size: 12.5px; color: #c7d2fe; background: rgba(99, 102, 241, 0.18); border-radius: 12px; padding: 8px 12px; }
-    .rules-v3 .rv-ends {
-      display: flex; gap: 12px; align-items: flex-start; margin-top: 4px; padding: 12px; border-radius: 14px;
-      background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18);
+    .rules-v4 .rv-ico svg { width: 18px; height: 18px; display: block; flex: none; }
+    .rules-v4 .rv-stat-text { min-width: 0; display: flex; flex-direction: column; }
+    .rules-v4 .rv-stat-label { font-size: 11.5px; font-weight: 700; color: var(--rv-mute); text-transform: uppercase; letter-spacing: 0.06em; }
+    .rules-v4 .rv-stat-value { font-size: clamp(17px, 0.6vw + 10px, 21px); font-weight: 800; color: var(--rv-ink); line-height: 1.25; }
+    .rules-v4 .rv-stat-hint { font-size: 12.5px; color: var(--rv-text); line-height: 1.35; }
+    .rules-v4 .rv-mix { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .rules-v4 .rv-mix-chip {
+      display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.16);
     }
-    .rules-v3 .rv-ends strong { display: block; color: #f1f5f9; font-size: 13.5px; }
-    .rules-v3 .rv-ends span { display: block; color: #cbd5e1; font-size: 13px; line-height: 1.45; }
-    .rules-v3 .rv-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-content: start; overflow-y: auto; padding-right: 4px; }
-    .rules-v3 .rv-group { min-width: 0; }
-    .rules-v3 .rv-group-title { margin: 0 0 8px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: #93c5fd; }
-    .rules-v3 .rv-group-title--stop { color: #fca5a5; }
-    .rules-v3 .rv-rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-    .rules-v3 .rv-rule {
-      display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px;
-      background: rgba(30, 41, 59, 0.62); border: 1px solid rgba(148, 163, 184, 0.16);
-      transition: border-color 150ms, transform 150ms;
+    .rules-v4 .rv-mix-chip b { font-size: 13px; }
+    .rules-v4 .rv-mix-chip--spoken { background: rgba(14, 165, 233, 0.28); }
+    .rules-v4 .rv-mix-chip--pseudo { background: rgba(245, 158, 11, 0.30); }
+    .rules-v4 .rv-mix-chip--coding { background: rgba(16, 185, 129, 0.30); }
+    .rules-v4 .rv-skills { margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: #c7d2fe; background: rgba(99, 102, 241, 0.16); border: 1px solid rgba(129, 140, 248, 0.25); border-radius: 10px; padding: 6px 9px; }
+    /* The warnings meter: three warnings, the next one ends it. */
+    .rules-v4 .rv-warn { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 16px; background: rgba(127, 29, 29, 0.16); border-bottom: 1px solid rgba(248, 113, 113, 0.16); }
+    .rules-v4 .rv-warn-meter { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+    .rules-v4 .rv-warn-dot {
+      width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800; color: #fde68a; background: rgba(245, 158, 11, 0.18); border: 1.5px solid rgba(251, 191, 36, 0.55);
     }
-    .rules-v3 .rv-rule[hidden] { display: none; }
-    .rules-v3 .rv-rule:hover { border-color: rgba(147, 197, 253, 0.38); transform: translateY(-1px); }
-    .rules-v3 .rv-rule-ico { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
-    .rules-v3 .rv-rule strong { display: block; color: #f1f5f9; font-size: 14px; font-weight: 700; margin-bottom: 2px; }
-    .rules-v3 .rv-rule span { display: block; color: #a8b6c8; font-size: 13px; line-height: 1.5; }
-    .rules-v3 .rv-rule span span { display: inline; }
-    .rules-v3 .rv-rule b { color: #e2e8f0; }
-    .rules-v3 .rv-rule--stop { background: rgba(127, 29, 29, 0.30); border-color: rgba(248, 113, 113, 0.34); }
-    .rules-v3 .rv-rule--stop .rv-rule-ico { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
-    .rules-v3 .rv-rule--stop b { color: #fecaca; }
-    .rules-v3 .rv-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; justify-content: space-between; padding-top: 4px; border-top: 1px solid rgba(148, 163, 184, 0.14); }
-    .rules-v3 .rv-foot .rules-ack { flex: 1 1 420px; margin: 0; }
-    .rules-v3 .rv-foot .rules-actions { flex: 0 0 auto; }
-    /* One screen: header + summary + rules + pinned consent; only the rules scroll. */
-    @media (min-width: 861px) {
-      .rules-v3 .rv-card { height: calc(100dvh - 2 * clamp(18px, 3vh, 36px)); min-height: 0; }
-      .rules-v3 .rv-body { overflow: hidden; }
-      .rules-v3 .rv-groups { max-height: 100%; }
-      .rules-v3 .rv-aside { max-height: 100%; overflow-y: auto; }
+    .rules-v4 .rv-warn-dot--end { color: #fff; background: #dc2626; border-color: #f87171; }
+    .rules-v4 .rv-warn-dot--end svg { width: 13px; height: 13px; }
+    .rules-v4 .rv-warn-line { flex: 1 1 0; max-width: 18px; height: 2px; background: rgba(251, 191, 36, 0.35); border-radius: 2px; }
+    .rules-v4 .rv-warn-text { flex: 1 1 180px; font-size: 12.5px; line-height: 1.45; color: #fca5a5; }
+    .rules-v4 .rv-warn-text b { color: #fecaca; }
+    /* The rules */
+    .rules-v4 .rv-main { min-width: 0; }
+    /* Named areas, not CSS columns: multi-column in a fixed-height scroller
+       spills into hidden columns, and its balancing left one column empty.
+       The two groups that span both rows never leave a gap. */
+    .rules-v4 .rv-cols {
+      display: grid; gap: 14px; align-items: start;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-areas: "stop setup answer" "stop know answer";
+      grid-template-rows: auto 1fr;
     }
-    .rules-v3 .rules-ack { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; line-height: 1.45; color: #e2e8f0; }
-    .rules-v3 .rules-actions { display: flex; gap: 12px; }
-    .rules-v3 .rules-actions button { white-space: nowrap; width: auto; flex: 0 0 auto; min-width: 120px; padding-left: 22px; padding-right: 22px; }
-    .rules-v3 [hidden] { display: none !important; }
-    @media (max-width: 1100px) { .rules-v3 .rv-groups { grid-template-columns: 1fr; } }
-    @media (max-width: 860px) {
-      .rules-v3 .rv-body { grid-template-columns: 1fr; }
-      .rules-v3 .rv-aside { position: static; }
-      .rules-v3 .rv-foot .rules-actions { width: 100%; }
+    .rules-v4 .rv-g-stop { grid-area: stop; }
+    .rules-v4 .rv-g-setup { grid-area: setup; }
+    .rules-v4 .rv-g-answer { grid-area: answer; }
+    .rules-v4 .rv-g-know { grid-area: know; }
+    .rules-v4 .rv-group {
+      min-width: 0; margin: 0;
+      border-radius: 18px; overflow: hidden;
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.72), rgba(20, 29, 46, 0.72));
+      border: 1px solid var(--rv-line);
     }
+    .rules-v4 .rv-group-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--rv-line); background: rgba(15, 23, 42, 0.35); }
+    .rules-v4 .rv-group-head .rv-ico { width: 30px; height: 30px; border-radius: 9px; }
+    .rules-v4 .rv-group-head .rv-ico svg { width: 16px; height: 16px; }
+    .rules-v4 .rv-group-title { margin: 0; flex: 1 1 auto; font-size: 13px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #dbeafe; }
+    .rules-v4 .rv-group-tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; color: #bfdbfe; background: rgba(59, 130, 246, 0.16); white-space: nowrap; }
+    .rules-v4 .rv-group--stop { border-color: rgba(248, 113, 113, 0.34); }
+    .rules-v4 .rv-group--stop .rv-group-head { background: linear-gradient(90deg, rgba(127, 29, 29, 0.42), rgba(127, 29, 29, 0.14)); border-bottom-color: rgba(248, 113, 113, 0.24); }
+    .rules-v4 .rv-group--stop .rv-group-head .rv-ico { background: rgba(248, 113, 113, 0.2); color: #fecaca; }
+    .rules-v4 .rv-group--stop .rv-group-title { color: #fecaca; }
+    .rules-v4 .rv-group--stop .rv-group-tag { color: #fecaca; background: rgba(220, 38, 38, 0.28); }
+    .rules-v4 .rv-rules { list-style: none; margin: 0; padding: 4px 0; }
+    .rules-v4 .rv-rule { display: flex; gap: 12px; align-items: flex-start; padding: 11px 16px; }
+    .rules-v4 .rv-rule + .rv-rule { border-top: 1px solid rgba(148, 163, 184, 0.09); }
+    .rules-v4 .rv-rule .rv-ico { width: 32px; height: 32px; border-radius: 10px; background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
+    .rules-v4 .rv-rule .rv-ico svg { width: 17px; height: 17px; }
+    .rules-v4 .rv-rule--stop .rv-ico { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
+    .rules-v4 .rv-rule-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .rules-v4 .rv-rule-text > strong { color: var(--rv-ink); font-size: 14px; font-weight: 700; line-height: 1.35; }
+    .rules-v4 .rv-rule-text > span { color: var(--rv-text); font-size: 13px; line-height: 1.5; }
+    .rules-v4 .rv-rule-text b { color: #e2e8f0; font-weight: 700; }
+    .rules-v4 .rv-rule--stop .rv-rule-text b { color: #fecaca; }
+    /* "More below" — shown until the list is scrolled to its end. */
+    .rules-v4 .rv-more {
+      position: sticky; bottom: -2px; flex: 0 0 auto; margin-top: -64px; height: 64px; pointer-events: none;
+      display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px;
+      background: linear-gradient(180deg, transparent, rgba(12, 19, 33, 0.94) 70%);
+      transition: opacity 200ms ease;
+    }
+    .rules-v4 .rv-more button {
+      pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; width: auto; min-height: 0; margin: 0;
+      padding: 6px 14px; border-radius: 999px; font: 700 12px/1.2 inherit; color: #dbeafe; cursor: pointer;
+      background: rgba(37, 99, 235, 0.35); border: 1px solid rgba(147, 197, 253, 0.4); box-shadow: none;
+    }
+    .rules-v4 .rv-more button::after { display: none; }
+    .rules-v4 .rv-more button svg { width: 14px; height: 14px; }
+    .rules-v4 .rv-body.is-at-end .rv-more { opacity: 0; }
+    .rules-v4 .rv-body.is-at-end .rv-more button { pointer-events: none; }
+    /* --- consent + buttons ---------------------------------------------- */
+    .rules-v4 .rv-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding-top: 14px; border-top: 1px solid var(--rv-line); }
+    .rules-v4 .rv-foot .rules-ack {
+      flex: 1 1 440px; margin: 0; display: flex; align-items: center; gap: 12px; cursor: pointer;
+      padding: 13px 16px; border-radius: 14px; text-transform: none; letter-spacing: 0;
+      font-size: 14px; font-weight: 600; line-height: 1.45; color: #e2e8f0;
+      background: rgba(37, 99, 235, 0.1); border: 1px solid rgba(96, 165, 250, 0.3);
+      transition: background 150ms ease, border-color 150ms ease;
+    }
+    .rules-v4 .rv-foot .rules-ack input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: #10b981; cursor: pointer; }
+    .rules-v4 .rv-foot .rules-ack:has(input:checked) { background: rgba(16, 185, 129, 0.12); border-color: rgba(52, 211, 153, 0.5); }
+    .rules-v4 .rv-foot .rules-ack:has(input:focus-visible) { outline: 2px solid #60a5fa; outline-offset: 2px; }
+    .rules-v4 .rules-actions { display: flex; gap: 10px; flex: 0 0 auto; align-items: center; }
+    .rules-v4 .rules-actions button {
+      width: auto; min-height: 48px; margin: 0; padding: 0 22px; border-radius: 14px; white-space: nowrap;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; font-weight: 700;
+    }
+    .rules-v4 .rules-actions button::after { display: none; }
+    .rules-v4 .rules-actions .btn-ghost { background: transparent; color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.35); box-shadow: none; min-width: 96px; }
+    .rules-v4 .rules-actions .btn-ghost:hover { background: rgba(148, 163, 184, 0.12); color: #fff; }
+    .rules-v4 .rules-actions .btn-primary { min-width: 220px; color: #fff; border: 0; background: linear-gradient(135deg, #2563eb, #4f46e5); box-shadow: 0 10px 28px rgba(37, 99, 235, 0.35); }
+    .rules-v4 .rules-actions .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+    .rules-v4 .rules-actions .btn-primary:disabled { opacity: 1; cursor: not-allowed; color: #93a3b8; background: rgba(51, 65, 85, 0.7); box-shadow: none; }
+    .rules-v4 .rules-actions .btn-primary svg { width: 16px; height: 16px; }
+    .rules-v4 .rv-foot-hint { display: none; flex: 1 0 100%; margin: -4px 0 0; font-size: 12.5px; color: var(--rv-mute); }
+    .rules-v4 .rv-foot:has(#interviewRulesAck:checked) .rv-foot-hint { visibility: hidden; }
+    /* One screen on a laptop: header + summary + rules + consent; only the rules (and, if needed, the summary) scroll. */
+    @media (min-width: 900px) and (min-height: 560px) {
+      .rules-v4 .rv-card { height: calc(100dvh - 2 * clamp(18px, 3vh, 36px)); min-height: 0; }
+    }
+    @media (min-width: 900px) and (max-height: 860px) {
+      .rules-v4 .rv-head .rules-title { margin: 6px 0 4px; font-size: clamp(24px, 2vw + 6px, 32px); }
+      .rules-v4 .rv-head .rules-sub { font-size: 14px; }
+      .rules-v4 .rv-stat-hint { display: none; }
+      .rules-v4 .rv-stat { padding: 10px 12px; align-items: center; }
+      .rules-v4 .rv-stat--ends { align-items: flex-start; }
+      .rules-v4 .rv-stat-body { font-size: 12.5px; }
+      .rules-v4 .rv-stat-value { font-size: 17px; }
+      .rules-v4 .rv-rule { padding: 9px 14px; }
+      .rules-v4 .rv-foot .rules-ack { padding: 10px 14px; }
+      .rules-v4 .rules-actions button { min-height: 44px; }
+    }
+    @media (max-width: 1000px) { .rules-v4 .rv-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 1180px) {
+      .rules-v4 .rv-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "stop setup" "stop answer" "know answer"; grid-template-rows: auto auto 1fr; }
+    }
+    @media (max-width: 760px) { .rules-v4 .rv-cols { grid-template-columns: 1fr; grid-template-areas: "stop" "setup" "answer" "know"; grid-template-rows: none; } .rules-v4 .rv-summary { grid-template-columns: 1fr; } }
+    @media (max-width: 899px) {
+      .rules-v4 .rv-body { overflow: visible; }
+      .rules-v4 .rv-more { display: none; }
+      .rules-v4 .rv-steps { flex-wrap: wrap; }
+      .rules-v4 .rules-actions { width: 100%; }
+      .rules-v4 .rules-actions .btn-primary { flex: 1 1 auto; min-width: 0; }
+      .rules-v4 .rv-foot-hint { display: block; }
+    }
+    @media (prefers-reduced-motion: reduce) { .rules-v4 * { transition: none !important; } }
   </style>
 </head>
 <body>
@@ -8384,74 +8598,180 @@
 
     Continue stays disabled until the acknowledgement box is ticked.
   -->
-  <section id="screenInterviewRules" class="startup-screen rules-screen rules-v3" aria-labelledby="interviewRulesTitle" hidden>
+  <section id="screenInterviewRules" class="startup-screen rules-screen rules-v4" aria-labelledby="interviewRulesTitle" hidden>
     <div class="startup-container rules-container">
       <div class="rules-card rv-card">
         <header class="rv-head">
           <div class="rv-head-text">
             <span class="rules-chip">Before you begin</span>
             <h1 id="interviewRulesTitle" class="rules-title">How this interview works</h1>
-            <p class="rules-sub">Please read this once. These rules are applied automatically during the interview.</p>
+            <p class="rules-sub">A two-minute read. Everything below is applied automatically — nothing to remember once you start.</p>
           </div>
-          <div class="device-test-steps rules-steps" aria-label="Setup steps">
-            <span class="dstep dstep--done">1. Welcome</span>
-            <span class="dstep-arrow dstep-arrow--active" aria-hidden="true">⟶</span>
-            <span class="dstep dstep--active">2. Rules</span>
-            <span class="dstep-arrow" aria-hidden="true">⟶</span>
-            <span class="dstep">3. Device Check</span>
-            <span class="dstep-arrow" aria-hidden="true">⟶</span>
-            <span class="dstep">4. Interview</span>
-          </div>
+          <ol class="rv-steps" aria-label="Setup steps">
+            <li class="rv-step rv-step--done"><span class="rv-step-n" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Welcome</li>
+            <li class="rv-step-bar rv-step-bar--done" aria-hidden="true"></li>
+            <li class="rv-step rv-step--active" aria-current="step"><span class="rv-step-n">2</span>Rules</li>
+            <li class="rv-step-bar" aria-hidden="true"></li>
+            <li class="rv-step"><span class="rv-step-n">3</span>Device check</li>
+            <li class="rv-step-bar" aria-hidden="true"></li>
+            <li class="rv-step"><span class="rv-step-n">4</span>Interview</li>
+          </ol>
         </header>
 
-        <div class="rv-body">
-          <aside class="rv-aside" id="interviewRulesFormat" aria-label="Your interview">
-            <div class="rv-aside-title">Your interview</div>
+        <div class="rv-body" id="rulesScroll" tabindex="0" aria-label="Interview rules">
+          <div class="rv-summary" id="interviewRulesFormat" role="group" aria-label="Your interview">
             <div class="rv-stat">
-              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span>
-              <div><span class="rv-stat-label">Time</span><span class="rv-stat-value" id="rulesDuration">—</span><span class="rv-stat-hint" id="rulesDurationHint"></span></div>
+              <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6M12 2v3"/></svg></span>
+              <div class="rv-stat-text"><span class="rv-stat-label">Time</span><span class="rv-stat-value" id="rulesDuration">—</span><span class="rv-stat-hint" id="rulesDurationHint"></span></div>
             </div>
             <div class="rv-stat">
-              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg></span>
-              <div><span class="rv-stat-label">Questions</span><span class="rv-stat-value" id="rulesQuestions">—</span><span class="rv-stat-hint" id="rulesQuestionsHint"></span></div>
+              <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg></span>
+              <div class="rv-stat-text"><span class="rv-stat-label">Questions</span><span class="rv-stat-value" id="rulesQuestions">—</span><span class="rv-stat-hint" id="rulesQuestionsHint"></span><div class="rv-mix" id="rulesMix" hidden></div></div>
             </div>
-            <div class="rv-mix" id="rulesMix" hidden></div>
             <div class="rv-stat">
-              <span class="rv-stat-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></span>
-              <div><span class="rv-stat-label">You answer by</span><span class="rv-stat-value" id="rulesAnswerBy">Speaking</span><span class="rv-stat-hint" id="rulesAnswerHint">The AI reads each question aloud.</span></div>
+              <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></span>
+              <div class="rv-stat-text"><span class="rv-stat-label">You answer by</span><span class="rv-stat-value" id="rulesAnswerBy">Speaking</span><span class="rv-stat-hint" id="rulesAnswerHint">The AI reads each question aloud.</span><p class="rv-skills" id="rulesSkillsNote" hidden></p></div>
             </div>
-            <p class="rv-skills" id="rulesSkillsNote" hidden></p>
-            <div class="rv-ends">
-              <span class="rv-ends-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg></span>
-              <div><strong>How it ends</strong><span id="rulesEndCondition">It submits automatically when the questions run out.</span></div>
+            <div class="rv-stat rv-stat--ends">
+              <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></svg></span>
+              <div class="rv-stat-text"><span class="rv-stat-label">How it ends</span><span class="rv-stat-body" id="rulesEndCondition">It submits automatically when the questions run out.</span></div>
             </div>
-          </aside>
+          </div>
 
-          <div class="rv-groups">
-            <section class="rv-group" aria-label="Your setup">
-              <h2 class="rv-group-title">Your setup</h2>
-              <ul class="rv-rules" role="list">
-              <li class="rv-rule ">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/></svg></span>
-                <div><strong>Laptop or desktop with a camera.</strong><span>Phones and tablets cannot be used. Sit somewhere quiet and well lit.</span></div>
-              </li>
+          <div class="rv-main" id="rulesMain">
+            <div class="rv-groups" id="rulesGroups">
+              <div class="rv-cols">
+              <section class="rv-group rv-group--stop rv-g-stop" aria-labelledby="rvStopTitle">
+                <header class="rv-group-head">
+                  <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M12 8v5M12 16h.01"/></svg></span>
+                  <h2 class="rv-group-title" id="rvStopTitle">Stay in the interview</h2>
+                  <span class="rv-group-tag">Can end it</span>
+                </header>
+                <div class="rv-warn" role="note">
+                  <div class="rv-warn-meter" aria-hidden="true">
+                    <span class="rv-warn-dot">1</span><span class="rv-warn-line"></span>
+                    <span class="rv-warn-dot">2</span><span class="rv-warn-line"></span>
+                    <span class="rv-warn-dot">3</span><span class="rv-warn-line"></span>
+                    <span class="rv-warn-dot rv-warn-dot--end"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+                  </div>
+                  <span class="rv-warn-text"><b>3 warnings, then the interview ends.</b> Each one shows on screen so you always know where you stand.</span>
+                </div>
+                <ul class="rv-rules" role="list">
+                  <li class="rv-rule rv-rule--stop">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/><path d="M9.5 14.5l5 3M14.5 14.5l-5 3"/></svg></span>
+                    <div class="rv-rule-text"><strong>Stay on this page, in full screen.</strong><span>Switching tabs or windows, leaving full screen or stopping the screen share each counts as a warning. <b>After 3 warnings, the next one ends the interview</b> and submits what you have answered.</span></div>
+                  </li>
+                  <li class="rv-rule rv-rule--stop" id="rulesGazeRule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+                    <div class="rv-rule-text"><strong>Keep your eyes on the screen.</strong><span>Looking away for a few seconds — to the side, down at a phone or notes — gives a soft reminder. <b id="rulesGazeLimit">The 10th reminder ends the interview.</b> Looking at the keyboard during a coding question is fine.</span></div>
+                  </li>
+                  <li class="rv-rule rv-rule--stop">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="M18 8l4 4M22 8l-4 4"/></svg></span>
+                    <div class="rv-rule-text"><strong>Only you, on camera, the whole time.</strong><span>No one else in the room or in view, and no phone, notes or other help. Another face on camera counts as a warning.</span></div>
+                  </li>
+                  <li class="rv-rule rv-rule--stop">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>
+                    <div class="rv-rule-text"><strong>The keyboard is switched off.</strong><span id="rulesKeyboardText">You answer by speaking, so typing, copy and paste are off. Use the mouse for the buttons.</span></div>
+                  </li>
+                </ul>
+              </section>
 
-              <li class="rv-rule " id="rulesRecordRule">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
-                <div><strong>Camera, microphone and your whole screen are recorded.</strong><span>You will share your <b>entire screen</b> in the next step. The recording is reviewed by the hiring team.</span></div>
-              </li>
+              <section class="rv-group rv-g-setup" aria-labelledby="rvSetupTitle">
+                <header class="rv-group-head">
+                  <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/></svg></span>
+                  <h2 class="rv-group-title" id="rvSetupTitle">Your setup</h2>
+                </header>
+                <ul class="rv-rules" role="list">
+                  <li class="rv-rule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/></svg></span>
+                    <div class="rv-rule-text"><strong>Laptop or desktop with a camera.</strong><span>Phones and tablets cannot be used. Sit somewhere quiet and well lit.</span></div>
+                  </li>
+                  <li class="rv-rule" id="rulesRecordRule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
+                    <div class="rv-rule-text"><strong>Camera, microphone and your whole screen are recorded.</strong><span>You share your <b>entire screen</b> in the next step. The hiring team reviews the recording.</span></div>
+                  </li>
+                  <li class="rv-rule" id="rulesProctorRule" hidden>
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></span>
+                    <div class="rv-rule-text"><strong>Extra checks for this interview.</strong><span id="rulesProctorText"></span></div>
+                  </li>
+                </ul>
+              </section>
 
-              <li class="rv-rule ">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/><path d="M18 8l4 4M22 8l-4 4"/></svg></span>
-                <div><strong>Only you, on camera, the whole time.</strong><span>No one else in the room or in view, no phone, notes or other help. Another face on camera counts as a warning.</span></div>
-              </li>
+              <section class="rv-group rv-g-answer" aria-labelledby="rvAnswerTitle">
+                <header class="rv-group-head">
+                  <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg></span>
+                  <h2 class="rv-group-title" id="rvAnswerTitle">Answering</h2>
+                </header>
+                <ul class="rv-rules" role="list">
+                  <li class="rv-rule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h3l4 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 9a3 3 0 0 1 0 6M19 6a7 7 0 0 1 0 12"/></svg></span>
+                    <div class="rv-rule-text"><strong>Listen, then answer aloud.</strong><span>Your microphone opens when the AI finishes reading. Speak clearly, then press <b>Send Response</b>. A short introduction comes first — it is not scored.</span></div>
+                  </li>
+                  <li class="rv-rule" id="rulesTypedRule" hidden>
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16"/></svg></span>
+                    <div class="rv-rule-text"><strong>Pseudo-code and coding questions are on screen.</strong><span id="rulesTypedText">Each has its own timer. Choose the right option, or write your code in the editor — the keyboard works inside the editor only.</span></div>
+                  </li>
+                  <li class="rv-rule" id="rulesFollowupRule" hidden>
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span>
+                    <div class="rv-rule-text"><strong>The AI may ask a short follow-up.</strong><span id="rulesFollowupText">Based on your answer — answer it like any other question.</span></div>
+                  </li>
+                  <li class="rv-rule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+                    <div class="rv-rule-text"><strong>One question at a time — no going back.</strong><span>You can skip a question you do not know, but a skipped question scores zero.</span></div>
+                  </li>
+                </ul>
+              </section>
 
-              </ul>
-            </section>
+              <section class="rv-group rv-g-know" aria-labelledby="rvKnowTitle">
+                <header class="rv-group-head">
+                  <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+                  <h2 class="rv-group-title" id="rvKnowTitle">Good to know</h2>
+                </header>
+                <ul class="rv-rules" role="list">
+                  <li class="rv-rule" id="rulesRecruiterRule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11h5M19.5 8.5v5"/></svg></span>
+                    <div class="rv-rule-text"><strong>A recruiter may join live.</strong><span>They can pause the AI, show you a note, ask their own question or call you on video. The clock stops while the interview is paused.</span></div>
+                  </li>
+                  <li class="rv-rule">
+                    <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>
+                    <div class="rv-rule-text"><strong>If your connection drops, reopen the same link.</strong><span>On the same computer you continue from where you left off — answers already sent are saved.</span></div>
+                  </li>
+                </ul>
+              </section>
+              </div>
+            </div>
+          </div>
+          <div class="rv-more" id="rulesMore">
+            <button type="button" id="rulesMoreBtn">More rules below <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          </div>
+        </div>
+
+        <footer class="rv-foot">
+          <label class="rules-ack" for="interviewRulesAck">
+            <input type="checkbox" id="interviewRulesAck">
+            <span>I have read these rules, and I agree to my camera, microphone and screen being recorded and proctored for this interview.</span>
+          </label>
+          <div class="rules-actions">
+            <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
+            <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
+              Continue to device check
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p class="rv-foot-hint">Tick the box to continue.</p>
+        </footer>
+      </div>
+    </div>
+  </section>
 
             <section class="rv-group" aria-label="Stay in the interview">
               <h2 class="rv-group-title rv-group-title--stop">Stay in the interview</h2>
               <ul class="rv-rules" role="list">
+              <li class="rv-rule rv-rule--stop" id="rulesProctorRule" hidden>
+                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></span>
+                <div><strong>Extra checks for this interview.</strong><span id="rulesProctorText"></span></div>
+              </li>
+
               <li class="rv-rule rv-rule--stop" id="rulesGazeRule">
                 <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
                 <div><strong>Keep your eyes on the screen.</strong><span>The camera follows where you look. Looking away — to the side, down at a phone or notes, or out of the camera — for a few seconds gives a soft reminder. <b id="rulesGazeLimit">The 10th reminder ends the interview.</b> Looking down at the keyboard during a coding question is fine.</span></div>
@@ -9322,7 +9642,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=53"></script>
+  <script type="module" src="js/app.js?v=58"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

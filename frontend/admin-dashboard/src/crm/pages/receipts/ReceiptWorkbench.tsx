@@ -26,6 +26,7 @@ import {
 import { DialogActions, DialogFailure, DialogHero, DialogSection } from "../../components/dialogKit";
 import { crmGet, crmPost, crmPut, crmDelete } from "../../api";
 import { CrmLink } from "../../routerHooks";
+import { useHasRole } from "../../CrmApp";
 import { ConfirmModal, Modal, StatusBadge, btnSecondary, inputCls } from "../../components/ui";
 import {
   PAYMENT_MODES, ProofChip, ReceiptProofRow, daysLate, fmtDate, inr, isoDay, pillCls,
@@ -127,6 +128,7 @@ export function ReceiptDetailModal({ receipt, canEdit, startWith, onClose, onCha
 }) {
   const [sub, setSub] = useState<"map" | "edit" | null>(startWith ?? null);
   const [unmapping, setUnmapping] = useState<Receipt["allocations"][number] | null>(null);
+  const isAdmin = useHasRole(); // Admin / CEO undo received TDS in the same step (server rule)
   const [busy, setBusy] = useState(false);
   const r = receipt;
   const applied = Number(r.allocated_amount || 0);
@@ -175,7 +177,10 @@ export function ReceiptDetailModal({ receipt, canEdit, startWith, onClose, onCha
         }>
         <div className="space-y-4">
           <div className="grid gap-2 sm:grid-cols-4">
-            <Stat label="Received" value={inr(r.amount)} tone="sky" />
+            <Stat label="Received" value={inr(r.amount)} tone="sky"
+              hint={Number(r.prior_period_amount || 0) > 0
+                ? `${inr(r.prior_period_amount)} set aside for an earlier financial year${r.prior_period_note ? ` — ${r.prior_period_note}` : ""}`
+                : undefined} />
             <Stat label="Applied to invoices" value={inr(applied)} tone="emerald" />
             <Stat label="TDS withheld" value={inr(tds)} tone="amber"
               hint={Number(r.tds_pending || 0) > 0 ? `${inr(r.tds_pending)} still pending from the client` : undefined} />
@@ -268,7 +273,11 @@ export function ReceiptDetailModal({ receipt, canEdit, startWith, onClose, onCha
       {unmapping && (
         <ConfirmModal
           title={`Unmap ${unmapping.invoice_number || `#${unmapping.invoice_id}`}?`}
-          message={`${inr(unmapping.amount)} goes back on account and the invoice shows its balance again${unmapping.tds_booked_here ? " (the TDS recorded with this receipt on it is removed too)" : ""}. You can map it again any time.`}
+          message={`${inr(unmapping.amount)} goes back on account and the invoice shows its balance again${unmapping.tds_booked_here
+            ? ` (the TDS recorded with this receipt on it is removed too${isAdmin
+              ? " — as Admin, any part of it already marked received (Form 16A) is undone with it"
+              : "; if it is already marked received, undo that first on the TDS chip"})`
+            : ""}. You can map it again any time.`}
           confirmLabel="Unmap"
           danger
           busy={busy}
@@ -610,6 +619,9 @@ export function EditReceiptModal({ receipt, onClose, onSaved }: {
   const [notes, setNotes] = useState(receipt.notes || "");
   const [branchKey, setBranchKey] = useState(receipt.branch_id ? String(receipt.branch_id) : "");
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  // The earlier-financial-year part set aside (20 Nov 2026).
+  const [prior, setPrior] = useState(Number(receipt.prior_period_amount || 0) ? String(receipt.prior_period_amount) : "");
+  const [priorNote, setPriorNote] = useState(receipt.prior_period_note || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -619,12 +631,16 @@ export function EditReceiptModal({ receipt, onClose, onSaved }: {
   }, [receipt.customer_id]);
 
   const amt = Number(amount) || 0;
-  const onAccount = round2(amt - applied);
-  const changed = amt !== Number(receipt.amount) || date !== receipt.received_date.slice(0, 10)
+  const priorAmt = Math.max(0, Number(prior) || 0);
+  const onAccount = round2(amt - applied - priorAmt);
+  const priorChanged = priorAmt !== Number(receipt.prior_period_amount || 0)
+    || priorNote.trim() !== (receipt.prior_period_note || "");
+  const changed = priorChanged || amt !== Number(receipt.amount) || date !== receipt.received_date.slice(0, 10)
     || (mode || "") !== (receipt.payment_mode || "") || reference.trim() !== (receipt.reference_number || "")
     || notes.trim() !== (receipt.notes || "") || branchKey !== (receipt.branch_id ? String(receipt.branch_id) : "");
   const missing = !(amt > 0) ? "Enter the amount received"
     : amt + 0.004 < applied ? `At least ${inr(applied)} — that much is already on invoices (unmap one first)`
+    : onAccount < -0.004 ? `The earlier-year part can be at most ${inr(Math.max(0, amt - applied))} (what is not on invoices)`
     : !date ? "Pick the received date" : !changed ? "Nothing changed yet" : "";
 
   const submit = async () => {
@@ -636,6 +652,7 @@ export function EditReceiptModal({ receipt, onClose, onSaved }: {
         amount: amt, received_date: date, payment_mode: mode || null,
         reference_number: reference.trim() || null, notes: notes.trim() || null,
         branch_id: branchKey ? Number(branchKey) : null,
+        prior_period_amount: priorAmt, prior_period_note: priorAmt > 0 ? (priorNote.trim() || null) : null,
       });
       onSaved(res.message || "Receipt updated", res.data as Receipt);
     } catch (e: any) {
@@ -666,6 +683,25 @@ export function EditReceiptModal({ receipt, onClose, onSaved }: {
             <span className="mb-1 block text-xs font-semibold text-secondary">Received on *</span>
             <input type="date" className={inputCls} value={date} max={isoDay(0)} onChange={(e) => setDate(e.target.value)} />
           </label>
+          <div className="sm:col-span-2 rounded-card border border-dashed border-subtle bg-surface-2 p-3">
+            <span className="block text-xs font-semibold text-secondary">Part for an earlier financial year (not tracked here)</span>
+            <span className="mb-2 block text-[11px] text-muted">
+              Money in this credit that paid invoices from before this financial year. It is set aside — never mapped,
+              never counted. Blank / 0 = the whole amount is for this year.
+            </span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input type="number" min={0} step="0.01" className={`${inputCls} tabular-nums`} value={prior}
+                placeholder="0.00" aria-label="Earlier-year part" onChange={(e) => setPrior(e.target.value)} />
+              <input className={inputCls} value={priorNote} maxLength={1000} placeholder="Which invoices? (optional)"
+                aria-label="Earlier-year note" onChange={(e) => setPriorNote(e.target.value)} />
+            </div>
+            {Math.max(0, amt - applied) > 0 && (
+              <button type="button" className="mt-1 text-[11px] font-semibold text-sky-700 hover:underline dark:text-sky-300"
+                onClick={() => setPrior(String(round2(amt - applied)))}>
+                All that is not on invoices is for an earlier year · {inr(round2(amt - applied))}
+              </button>
+            )}
+          </div>
           <div className="sm:col-span-2">
             <span className="mb-1 block text-xs font-semibold text-secondary">Payment mode</span>
             <div className="flex flex-wrap gap-1.5">

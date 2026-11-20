@@ -65,6 +65,7 @@ import {
   followupQuestionSet,
   isFollowupQuestion,
 } from "../components/candidate-report/ConversationSummary";
+import { ProctoringSummary, liveFromReport, proctoringFromReport } from "../components/candidate-report/ProctoringSummary";
 import { AnswerBlock, QuestionKindChips, SkillBankSummary } from "../components/candidate-report/TypedAnswerView";
 import { CrmMetaLine } from "../components/CrmMetaLine";
 import { InterviewModelChips } from "../components/AiModelChip";
@@ -328,6 +329,15 @@ export function CandidateReportPage({
   const conversation = useMemo(
     () => conversationFromReport((record?.report || null) as Record<string, unknown> | null),
     [record],
+  );
+  // Anti-cheating checks and the recruiter's live actions (13 Nov 2026).
+  const proctoring = useMemo(
+    () => proctoringFromReport((record?.report || null) as Record<string, unknown> | null),
+    [record?.report],
+  );
+  const liveIntervention = useMemo(
+    () => liveFromReport((record?.report || null) as Record<string, unknown> | null),
+    [record?.report],
   );
   const followupSet = useMemo(() => followupQuestionSet(conversation), [conversation]);
 
@@ -1174,10 +1184,12 @@ export function CandidateReportPage({
             { label: "Problem solving", value: prob, reason: scoreReasons.problem_solving?.reason, icon: <Brain className="w-4 h-4" /> },
             { label: "Completion", value: completion, reason: undefined, icon: <BarChart3 className="w-4 h-4" /> },
             {
-              label: "Model recommendation",
+              // 18 Nov 2026: advice only — the status reads "In Review" until
+              // RMG / GM press Shortlist / On Hold / Reject above.
+              label: "AI suggestion (advice)",
               value: null,
               text: modelInterviewVerdict,
-              reason: undefined,
+              reason: c.hr_decision ? undefined : "Not a decision — the candidate is In Review until RMG / GM decide.",
               icon: <Sparkles className="w-4 h-4" />,
             },
           ].map((card) => (
@@ -1197,7 +1209,10 @@ export function CandidateReportPage({
                   ) : null}
                 </>
               ) : (
-                <p className="text-xs font-semibold text-secondary line-clamp-4">{card.text}</p>
+                <>
+                  <p className="text-xs font-semibold text-secondary line-clamp-4">{card.text}</p>
+                  {card.reason ? <p className="mt-1 text-[11px] leading-snug text-muted">{card.reason}</p> : null}
+                </>
               )}
               {card.value != null ? (
                 <div className="mt-2 h-1.5 rounded-full bg-surface-2 overflow-hidden">
@@ -1525,6 +1540,7 @@ export function CandidateReportPage({
                 </details>
               ))}
               <ConversationSummary conv={conversation} />
+              <ProctoringSummary proctoring={proctoring} live={liveIntervention} />
               </>
             )}
           </div>

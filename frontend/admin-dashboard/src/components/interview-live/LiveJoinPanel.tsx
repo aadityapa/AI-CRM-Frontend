@@ -10,16 +10,26 @@
  *  4. Start a live audio/video call (browser to browser, WebRTC). Starting a
  *     call pauses the AI first, so the candidate is never talking to both.
  *
+ * 13 Nov 2026 — from the moment the link opens:
+ *  5. The LOBBY: before the candidate signs in the panel shows where they are
+ *     (rules, device check, gesture check …) and a call guides them — no pause
+ *     (there is nothing to pause yet).
+ *  6. WATCH silently in real time — camera and entire screen, receive-only. The
+ *     candidate sees "A recruiter is watching" (user decision; DPDP Act).
+ *  7. TERMINATE with a reason — the link closes and the report says "Ended by
+ *     the recruiter".
+ *
  * Server: `GET /interview/live/{token}` + `POST /interview/live/{token}/{action}`
  * (backend `services/interview_live.py`). Media never passes through our server.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pause, Play, Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Send, MessageSquare,
-  HelpCircle, Trash2, Clock, Radio, Wifi, WifiOff, History, X,
+  HelpCircle, Trash2, Clock, Radio, Wifi, WifiOff, History, X, Eye, EyeOff, Ban, MonitorUp, DoorOpen,
 } from "lucide-react";
 import { authFetch } from "../../api/client";
 import { Modal } from "../../crm/components/ui";
+import { DecisionDialog, type DecisionSpec } from "../../crm/components/dialogKit";
 
 type LiveQuestion = { id: string; text: string; by?: string; at?: number; index?: number };
 type LiveLog = { at: number; by: string; action: string; text?: string };
@@ -44,7 +54,55 @@ export type LiveState = {
   ice_servers: RTCIceServer[];
   session_status: string;
   candidate_name: string;
+  /** 13 Nov 2026 — this recruiter's silent watch, everyone watching, the lobby, an ended interview. */
+  watch?: { id: string; answered: boolean; answer: string | null } | null;
+  watchers?: { by: string; at: number }[];
+  max_watchers?: number;
+  terminated?: { reason: string; by: string; at: number } | null;
+  lobby?: { stage: string; words: string; at: number; first_at: number; online: boolean } | null;
+  turn_configured?: boolean;
 };
+
+/** PURE: the candidate is still before the interview (the lobby). */
+export function isInLobby(st: Pick<LiveState, "session_status" | "lobby"> | null): boolean {
+  if (!st) return false;
+  const status = String(st.session_status || "").toLowerCase();
+  if (status === "active" || status === "completed" || status === "terminated") return false;
+  return !["signed_in", "room_scan", "interview", "finished"].includes(String(st.lobby?.stage || ""));
+}
+
+/** Reasons a recruiter ends an interview — one tap fills the box. */
+export const TERMINATE_PICKS = [
+  "Another person is helping the candidate",
+  "Reading answers from notes or another screen",
+  "Using a phone during the interview",
+  "Not the person who was invited",
+  "Refused to follow the recruiter's instructions",
+];
+
+/** PURE: the Terminate dialog's words (in the lobby nothing has started yet). */
+export function terminateSpec(lobby: boolean): DecisionSpec {
+  return {
+    tone: "rose",
+    icon: Ban,
+    eyebrow: "Interview Integrity",
+    title: "End this interview now",
+    intro: lobby
+      ? "The candidate has not started yet. Ending it closes the link — they cannot start the interview."
+      : "The interview stops at once. What was answered so far is saved.",
+    flow: { steps: [lobby ? "Lobby" : "Interview running", "Ended by the recruiter"], current: 1 },
+    reason: { label: "Why are you ending it?", required: true, min: 5, picks: TERMINATE_PICKS,
+      placeholder: "What did you see? It goes in the report and on the Integrity timeline." },
+    happens: [
+      { icon: Ban, text: "The link closes — the candidate cannot continue or reopen it." },
+      { icon: History, text: lobby ? "No report is made — the interview had not started." : "The report reads “Ended by the recruiter” with your reason." },
+      { icon: Video, text: "The recording and the Integrity timeline keep everything up to now." },
+      { icon: Phone, text: "To give another chance, send a fresh AI L1 (Reschedule) from Applied Candidates." },
+    ],
+    confirmLabel: "Terminate interview",
+    busyLabel: "Ending…",
+  };
+}
 
 /** Longest ICE wait before the offer goes (12 Oct 2026: 4 s felt like a
  *  buffer). With a STUN-reflected candidate in hand only 250 ms more. */
@@ -113,6 +171,9 @@ const ACTION_WORDS: Record<string, string> = {
   question_removed: "removed a queued question",
   call_started: "started a call",
   call_ended: "ended the call",
+  watch_started: "started watching (real time)",
+  watch_ended: "stopped watching",
+  terminated: "ended the interview",
 };
 
 const BTN = "inline-flex items-center justify-center gap-2 rounded-control px-3.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50";
@@ -144,8 +205,17 @@ export function LiveJoinPanel({
   const selfVideoRef = useRef<HTMLVideoElement | null>(null);
   const callIdRef = useRef<string>("");
   const joinedRef = useRef(false);
+  // Silent watch (13 Nov 2026): a receive-only connection, separate from the call.
+  const watchPcRef = useRef<RTCPeerConnection | null>(null);
+  const watchIdRef = useRef<string>("");
+  const watchCamRef = useRef<HTMLVideoElement | null>(null);
+  const watchScreenRef = useRef<HTMLVideoElement | null>(null);
+  const [watchPhase, setWatchPhase] = useState<"idle" | "starting" | "waiting" | "connected" | "failed">("idle");
+  const [hasScreen, setHasScreen] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
 
-  const finished = st ? ["completed", "terminated"].includes(String(st.session_status || "").toLowerCase()) : false;
+  const finished = st ? ["completed", "terminated"].includes(String(st.session_status || "").toLowerCase()) || !!st.terminated : false;
+  const lobby = isInLobby(st);
 
   /* ---------------- polling ---------------- */
   const refresh = useCallback(async () => {
@@ -258,7 +328,8 @@ export function LiveJoinPanel({
       // The AI must not keep asking while two people talk — the pause and the
       // camera / mic prompt run side by side, not one after the other.
       const [, local] = await Promise.all([
-        st.paused ? Promise.resolve(null) : livePost(token, "pause", { reason: "Recruiter call" }).then(setSt),
+        // In the lobby there is no interview to pause yet (13 Nov 2026).
+        st.paused || isInLobby(st) ? Promise.resolve(null) : livePost(token, "pause", { reason: "Recruiter call" }).then(setSt),
         navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo }),
       ]);
       localRef.current = local;
@@ -336,6 +407,110 @@ export function LiveJoinPanel({
     await act("hangup", {}, "hangup");
   };
 
+  /* ---------------- silent watch (13 Nov 2026) ---------------- */
+  const cleanupWatch = useCallback(() => {
+    try {
+      watchPcRef.current?.close();
+    } catch {
+      /* ignore */
+    }
+    watchPcRef.current = null;
+    watchIdRef.current = "";
+    if (watchCamRef.current) watchCamRef.current.srcObject = null;
+    if (watchScreenRef.current) watchScreenRef.current.srcObject = null;
+    setHasScreen(false);
+  }, []);
+
+  useEffect(() => () => cleanupWatch(), [cleanupWatch]);
+
+  const startWatch = async () => {
+    if (!st) return;
+    if (typeof RTCPeerConnection === "undefined") {
+      setError("This browser cannot watch live. Use the latest Chrome or Edge.");
+      return;
+    }
+    setWatchPhase("starting");
+    setError("");
+    try {
+      fastUntilRef.current = Date.now() + 20_000;
+      const pc = new RTCPeerConnection({ iceServers: st.ice_servers || [] });
+      watchPcRef.current = pc;
+      // Order matters — the candidate's page fills them in this order.
+      const camT = pc.addTransceiver("video", { direction: "recvonly" });
+      const scrT = pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
+      const camStream = new MediaStream();
+      const scrStream = new MediaStream();
+      pc.ontrack = (ev) => {
+        if (ev.transceiver === scrT) {
+          scrStream.addTrack(ev.track);
+          setHasScreen(true);
+          if (watchScreenRef.current && watchScreenRef.current.srcObject !== scrStream) {
+            watchScreenRef.current.srcObject = scrStream;
+            void watchScreenRef.current.play().catch(() => {});
+          }
+        } else {
+          camStream.addTrack(ev.track);
+          if (watchCamRef.current && watchCamRef.current.srcObject !== camStream) {
+            watchCamRef.current.srcObject = camStream;
+            void watchCamRef.current.play().catch(() => {});
+          }
+        }
+        void camT;
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") setWatchPhase("connected");
+        if (pc.connectionState === "failed") setWatchPhase("failed");
+      };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIce(pc);
+      const next = await livePost(token, "watch", { offer: pc.localDescription?.sdp || offer.sdp });
+      watchIdRef.current = next.watch?.id || "";
+      setSt(next);
+      setWatchPhase("waiting");
+    } catch (e: any) {
+      cleanupWatch();
+      setWatchPhase("idle");
+      setError(e?.message || "Watching could not start.");
+    }
+  };
+
+  // The candidate's answer to our watch offer arrives through the poll.
+  useEffect(() => {
+    const pc = watchPcRef.current;
+    const w = st?.watch;
+    if (!pc || !w || w.id !== watchIdRef.current || !w.answered || !w.answer || pc.remoteDescription) return;
+    void pc.setRemoteDescription({ type: "answer", sdp: w.answer }).catch((e) => {
+      setError(e?.message || "The live view could not connect.");
+      setWatchPhase("failed");
+    });
+  }, [st]);
+
+  // The watch ended elsewhere (the interview finished, or the server dropped it).
+  useEffect(() => {
+    if (!watchIdRef.current) return;
+    if (!st?.watch || st.watch.id !== watchIdRef.current || finished) {
+      cleanupWatch();
+      setWatchPhase("idle");
+    }
+  }, [st, finished, cleanupWatch]);
+
+  const stopWatch = async () => {
+    cleanupWatch();
+    setWatchPhase("idle");
+    await act("unwatch", {}, "unwatch");
+  };
+
+  const terminate = async (reason: string) => {
+    const next = await livePost(token, "terminate", { reason });
+    setSt(next);
+    cleanupCall();
+    cleanupWatch();
+    setCallPhase("idle");
+    setWatchPhase("idle");
+  };
+
   const toggleMute = () => {
     const next = !muted;
     localRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
@@ -348,6 +523,8 @@ export function LiveJoinPanel({
   };
 
   const inCall = callPhase !== "idle" && callPhase !== "failed";
+  const watching = watchPhase !== "idle" && watchPhase !== "failed";
+  const otherWatchers = (st?.watchers || []).length - (watching ? 1 : 0);
   const sectionTitle = "mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted";
 
   return (
@@ -355,28 +532,36 @@ export function LiveJoinPanel({
       title={`Live interview · ${candidateName || st?.candidate_name || "Candidate"}`}
       onClose={() => {
         if (inCall) void endCall();
+        if (watching) void stopWatch();
         onClose();
       }}
       xl
     >
       {/* ---------- status strip ---------- */}
       <div className={`mb-4 flex flex-wrap items-center gap-3 rounded-card border px-4 py-3 ${
-        st?.paused ? "border-warning/40 bg-warning-soft" : "border-success/30 bg-success-soft"}`}
+        st?.terminated ? "border-danger/40 bg-danger-soft"
+          : lobby ? "border-info/40 bg-info-soft"
+          : st?.paused ? "border-warning/40 bg-warning-soft" : "border-success/30 bg-success-soft"}`}
       >
-        <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${st?.paused ? "bg-warning text-white" : "bg-success text-white"}`}>
-          {st?.paused ? <Pause className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
+        <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-white ${
+          st?.terminated ? "bg-danger" : lobby ? "bg-info" : st?.paused ? "bg-warning" : "bg-success"}`}>
+          {st?.terminated ? <Ban className="h-4 w-4" /> : lobby ? <DoorOpen className="h-4 w-4" /> : st?.paused ? <Pause className="h-4 w-4" /> : <Radio className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-bold text-primary">
-            {finished ? "This interview has finished"
+            {st?.terminated ? `Ended by ${st.terminated.by}`
+              : finished ? "This interview has finished"
+              : lobby ? (st?.lobby ? `In the lobby · ${st.lobby.words}` : "The candidate has not opened the link yet")
               : st?.paused ? `Paused by ${st.paused_by || "a recruiter"} · ${mmss(st.paused_for_sec)}`
               : "The AI interviewer is running"}
           </div>
           <div className="text-xs text-secondary">
-            {st?.paused
-              ? `The clock is stopped and warnings are not counted. It resumes by itself after ${Math.round((st.max_pause_sec || 1200) / 60)} min.`
-              : "Pause to talk to the candidate or ask your own question."}
-            {st && st.pause_total_sec > 0 ? ` · Paused ${mmss(st.pause_total_sec)} in total` : ""}
+            {st?.terminated ? `Reason: ${st.terminated.reason}`
+              : lobby ? "Call to guide them — how to sit, the light, the headphones. The interview has not started; nothing is paused."
+              : st?.paused
+                ? `The clock is stopped and warnings are not counted. It resumes by itself after ${Math.round((st.max_pause_sec || 1200) / 60)} min.`
+                : "Pause to talk to the candidate or ask your own question."}
+            {st && !lobby && st.pause_total_sec > 0 ? ` · Paused ${mmss(st.pause_total_sec)} in total` : ""}
           </div>
         </div>
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -387,11 +572,18 @@ export function LiveJoinPanel({
         </span>
         {!finished && !inCall && (
           <button type="button" className={`${BTN} bg-gradient-to-r from-brand-600 to-violet-600 text-white shadow-raised hover:opacity-90`}
-                  disabled={!st} onClick={() => void startCall()} title="Pauses the AI and calls the candidate in one click">
-            <Phone className="h-4 w-4" /> Join now · talk to the candidate
+                  disabled={!st} onClick={() => void startCall()}
+                  title={lobby ? "Calls the candidate to guide them before the interview" : "Pauses the AI and calls the candidate in one click"}>
+            <Phone className="h-4 w-4" /> {lobby ? "Call to guide them" : "Join now · talk to the candidate"}
           </button>
         )}
-        {!finished && (st?.paused ? (
+        {!finished && (
+          <button type="button" className={`${BTN} border border-danger/40 bg-surface-1 text-danger hover:bg-danger-soft`}
+                  disabled={!st} onClick={() => setConfirmEnd(true)} title="Ends the interview now — the link closes">
+            <Ban className="h-4 w-4" /> Terminate
+          </button>
+        )}
+        {!finished && !lobby && (st?.paused ? (
           <button type="button" className={`${BTN} bg-success text-white hover:opacity-90`} disabled={!!busy || !st}
                   onClick={() => void act("resume", {}, "resume")}>
             <Play className="h-4 w-4" /> Resume interview
@@ -429,12 +621,58 @@ export function LiveJoinPanel({
                 <span className="text-xs text-white/70">Their page answers by itself within a few seconds.</span>
               </div>
             )}
-            {!inCall && (
-              <div className="bg-surface-1 p-3">{fallbackVideo || (
+            {!inCall && watching && (
+              <div className="bg-black">
+                <div className={`grid gap-px ${hasScreen ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {/* A live view has no caption track. */}
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video ref={watchCamRef} autoPlay playsInline className="aspect-video w-full object-cover" />
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video ref={watchScreenRef} autoPlay playsInline className={`aspect-video w-full object-contain ${hasScreen ? "" : "hidden"}`} />
+                </div>
+                {watchPhase !== "connected" && (
+                  <div className="px-3 py-2 text-center text-xs text-white/80">
+                    {watchPhase === "starting" ? "Starting the live view…" : "Waiting for the candidate's page — it answers within a second or two."}
+                  </div>
+                )}
+              </div>
+            )}
+            {!inCall && !watching && (
+              <div className="bg-surface-1 p-3">{lobby ? (
+                <div className="py-10 text-center text-sm text-muted">
+                  {st?.lobby?.online ? "The candidate's page is open." : "Waiting for the candidate's page."} Watch silently or call to guide them.
+                </div>
+              ) : fallbackVideo || (
                 <div className="py-10 text-center text-sm text-muted">Start a call to see and talk to the candidate in real time.</div>
               )}</div>
             )}
           </div>
+
+          {!finished && !inCall && (
+            <div className="flex flex-wrap items-center gap-2">
+              {!watching ? (
+                <button type="button" className={`${BTN} border border-brand-500/40 bg-surface-1 text-brand-700 hover:bg-surface-2 dark:text-brand-300`}
+                        disabled={!st || (st.watchers || []).length >= (st.max_watchers || 2)} onClick={() => void startWatch()}
+                        title="Camera and entire screen in real time. The candidate sees that a recruiter is watching.">
+                  <Eye className="h-4 w-4" /> Watch live (real time)
+                </button>
+              ) : (
+                <button type="button" className={BTN_SOFT} onClick={() => void stopWatch()}>
+                  <EyeOff className="h-4 w-4" /> Stop watching
+                </button>
+              )}
+              {watching && hasScreen && <span className="inline-flex items-center gap-1 text-xs text-muted"><MonitorUp className="h-3.5 w-3.5" /> camera · screen</span>}
+              {otherWatchers > 0 && <span className="text-xs text-muted">{otherWatchers} other recruiter{otherWatchers > 1 ? "s" : ""} watching</span>}
+              <span className="text-[11px] text-muted">The candidate sees “A recruiter is watching”.</span>
+              {watchPhase === "failed" && <span className="text-xs text-danger">The live view could not connect on this network.</span>}
+            </div>
+          )}
+          {!finished && st && st.turn_configured === false && (
+            <p className="rounded-control border border-warning/40 bg-warning-soft px-3 py-2 text-[11px] text-warning">
+              No TURN relay is set on the server — real-time video may fail on office or strict home networks. The recording
+              view above still works. (Ask the admin to set INTERVIEW_TURN_URLS — see the deployment guide.)
+            </p>
+          )}
 
           {!finished && (
             <div className="flex flex-wrap items-center gap-2">
@@ -561,6 +799,17 @@ export function LiveJoinPanel({
           </section>
         </div>
       </div>
+      {confirmEnd && (
+        <DecisionDialog
+          spec={terminateSpec(lobby)}
+          person={{ name: candidateName || st?.candidate_name || "Candidate" }}
+          onClose={() => setConfirmEnd(false)}
+          onConfirm={async (reason) => {
+            await terminate(reason);
+            setConfirmEnd(false);
+          }}
+        />
+      )}
     </Modal>
   );
 }

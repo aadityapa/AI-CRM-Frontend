@@ -90,7 +90,9 @@ const RESULT_TONE = (r: string | null | undefined): StateTone =>
   !r ? "none" : /hire$/i.test(r) && !/no hire/i.test(r) ? "ok" : /leaning hire/i.test(r) ? "ok" : /leaning no/i.test(r) ? "warn" : "bad";
 
 const AI_TONE = (r: string | null | undefined): StateTone =>
-  !r || r === "Pending" ? "none" : /select|pass|shortlist/i.test(r) ? "ok" : "bad";
+  !r || r === "Pending" ? "none"
+    : /review|hold/i.test(r) ? "warn"   // 18 Nov 2026: done, waiting for a person's decision
+      : /select|pass|shortlist/i.test(r) ? "ok" : "bad";
 
 /* ================================================================== */
 
@@ -191,7 +193,7 @@ export function InterviewLadder({
             chip={aiTaken ? (
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATE_CHIP[AI_TONE(ai?.ai_effective_result)]}`}>
                 {ai?.ai_effective_result && ai.ai_effective_result !== "Pending"
-                  ? `${ai.ai_effective_result}${ai.ai_overall_score_percent != null ? ` · ${Math.round(ai.ai_overall_score_percent)}%` : ""}${ai.ai_is_overridden ? " (override)" : ""}`
+                  ? `${ai.ai_effective_result}${ai.ai_overall_score_percent != null ? ` · ${Math.round(ai.ai_overall_score_percent)}%` : ""}${ai.ai_effective_result === "In Review" ? " — your decision" : ""}`
                   : "Scheduled — waiting for the candidate"}
               </span>
             ) : rounds.ai_requested
@@ -225,7 +227,7 @@ export function InterviewLadder({
                 )}
                 {latestLink && ai?.ai_effective_result && ai.ai_effective_result !== "Pending" && (
                   <button type="button" className={`${btnSecondary} !py-1 text-xs`} onClick={() => setShowAi((v) => !v)}>
-                    {showAi ? "Hide AI verdict" : "AI verdict & report"}
+                    {showAi ? "Hide AI report" : "AI score & report"}
                   </button>
                 )}
               </>

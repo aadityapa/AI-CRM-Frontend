@@ -108,27 +108,35 @@ export function ChooseAiL1Modal({ profileId, candidateName, context, onClose, on
    offers Archive / Re-apply instead of Reschedule AI L1. */
 export type AiL1Decision = "proceed" | "hold" | "release" | "reject";
 
+/** The AI's own read, in words (18 Nov 2026 — advice, never the status). */
+function aiRead(ai: string | null): string {
+  if (ai === "Passed") return "a score above the pass mark";
+  if (ai === "Failed") return "a score below the pass mark";
+  return ai || "no score yet";
+}
+
 const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionSpec> = {
   proceed: (ai) => ({
-    tone: "emerald", icon: StepForward, eyebrow: "After the AI L1", title: "Proceed despite the AI result",
-    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Your decision outranks it: the interview is marked
-      <b> Selected</b> (the AI's score stays on record) and the candidate moves to <b>RMG Review</b>, where you
-      request the <b>L2</b> or <b>submit to Sales</b>.</>,
-    flow: { steps: ["AI L1", "RMG Review", "L2 / Sales"], current: 1 },
-    reason: { label: "Why overrule the AI", required: ai !== "Passed" && ai !== "Selected", min: 5,
+    tone: "emerald", icon: StepForward, eyebrow: "AI L1 — In Review", title: "Select the candidate",
+    intro: <>The AI interview is done; the AI suggests <b>{aiRead(ai)}</b>. The decision is yours: the interview
+      is marked <b>Selected</b> (the AI's score stays on record) and the candidate moves to <b>RMG Review</b>,
+      where you request the <b>L2</b> or <b>submit to Sales</b>.</>,
+    flow: { steps: ["In Review", "Selected", "L2 / Sales"], current: 1 },
+    reason: { label: ai === "Failed" ? "Why select despite the low AI score" : "Note (optional)",
+      required: ai === "Failed", min: 5,
       placeholder: "e.g. Answers were correct — poor audio dragged the score down",
       picks: ["Answers were correct — transcription errors", "Strong CV and experience — AI was too strict",
         "Reviewed the recording — good enough for the L2"] },
     happens: [
-      { icon: Sparkles, text: "The AI report keeps its score; your override is logged beside it." },
-      { icon: BellRing, text: "The candidate lands in RMG Review — the L2 / Submit to Sales buttons open on this row." },
+      { icon: Sparkles, text: "The AI report keeps its score; your decision is logged beside it." },
+      { icon: BellRing, text: "Every screen reads Selected; the candidate lands in RMG Review — the L2 / Submit to Sales buttons open on this row." },
     ],
-    confirmLabel: "Proceed to RMG review", busyLabel: "Moving…",
+    confirmLabel: "Select", busyLabel: "Saving…",
   }),
   hold: (ai) => ({
-    tone: "amber", icon: PauseCircle, eyebrow: "After the AI L1", title: "Put the candidate on hold",
-    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Nothing moves: the row reads <b>On Hold</b> until you
-      proceed, choose a manual L1, send them to Sales or reject.</>,
+    tone: "amber", icon: PauseCircle, eyebrow: "AI L1 — In Review", title: "Put the candidate on hold",
+    intro: <>The AI suggests <b>{aiRead(ai)}</b>. Nothing moves: every screen reads <b>On Hold</b> until you
+      select, choose a manual L1, send them to Sales or reject.</>,
     flow: { steps: ["AI L1", "On hold", "Your decision"], current: 1 },
     reason: { label: "Note (optional)", placeholder: "e.g. Waiting for the customer's view on the budget",
       picks: ["Waiting for the customer", "Compare with other applicants first", "Candidate unsure about the role"] },
@@ -136,18 +144,18 @@ const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionS
     confirmLabel: "Put on hold", busyLabel: "Saving…",
   }),
   release: (ai) => ({
-    tone: "sky", icon: PlayCircle, eyebrow: "After the AI L1", title: "Release the hold",
-    intro: <>The AI verdict <b>{ai || "—"}</b> stands again. Then proceed, choose a manual L1, send to Sales or
-      reject from the row.</>,
-    flow: { steps: ["On hold", "AI verdict stands", "Your decision"], current: 1 },
+    tone: "sky", icon: PlayCircle, eyebrow: "AI L1 — On Hold", title: "Release the hold",
+    intro: <>The AI L1 reads <b>In Review</b> again (the AI suggests {aiRead(ai)}). Then select, choose a manual
+      L1, send to Sales or reject from the row.</>,
+    flow: { steps: ["On hold", "In Review", "Your decision"], current: 1 },
     reason: { label: "Note (optional)", placeholder: "e.g. Customer confirmed the budget" },
     happens: [{ icon: BellRing, text: "The release is logged on the profile." }],
     confirmLabel: "Release hold", busyLabel: "Saving…",
   }),
   reject: (ai) => ({
-    tone: "rose", icon: XCircle, eyebrow: "After the AI L1", title: "Reject the candidate",
-    intro: <>The AI recorded <b>{ai || "no verdict"}</b>. Rejecting marks the interview <b>Rejected</b> and closes
-      this candidacy as <b>RMG Rejected</b>.</>,
+    tone: "rose", icon: XCircle, eyebrow: "AI L1 — In Review", title: "Reject the candidate",
+    intro: <>The AI suggests <b>{aiRead(ai)}</b>. Rejecting marks the interview <b>Rejected</b> on every screen
+      and closes this candidacy as <b>RMG Rejected</b>.</>,
     flow: { steps: ["AI L1", "Rejected", "TA archives"], current: 1 },
     reason: { label: "Why reject", required: true, min: 5,
       placeholder: "e.g. Could not explain the basics of the core skill",

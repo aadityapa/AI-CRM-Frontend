@@ -47,6 +47,28 @@ function _setText(id, text) {
  * whether a recruiter may join. `config` may be partial — an older server
  * sends only timing_mode / time_limit_sec / num_q.
  */
+/** The rules line for the template's anti-cheating checks — hidden when none. */
+function _applyProctoringRule(raw) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  const parts = [];
+  if (p.headphones && p.headphones !== "off") {
+    parts.push(p.headphones === "require" ? "headphones must be connected (we test them)" : "please use headphones (we test them)");
+  }
+  if (p.lighting && p.lighting !== "off") parts.push("sit in good light, facing it — not with a window behind you");
+  if (p.gesture_check) parts.push("show your hands and a gesture we name before you start");
+  if (Number(p.gesture_prompts) > 0) parts.push("now and then a small card asks for a quick hand gesture while you answer");
+  if (p.gaze_calibration) parts.push("a 10-second eye calibration (follow a dot)");
+  if (p.reading_detection) parts.push("eye movements that look like reading are flagged for the reviewer");
+  if (p.room_scan) parts.push("show your room on camera before the first question (recorded)");
+  const li = document.getElementById("rulesProctorRule");
+  const text = document.getElementById("rulesProctorText");
+  if (!li || !text) return;
+  li.hidden = !parts.length;
+  text.textContent = parts.length
+    ? `${parts.map((x, i) => (i ? x : x.charAt(0).toUpperCase() + x.slice(1))).join("; ")}. A recruiter may also watch live — you will see a notice when they do.`
+    : "";
+}
+
 export function applyRulesConfig(config = {}) {
   const timingMode = String(config.timing_mode || "count").toLowerCase();
   const timed = timingMode === "time";
@@ -60,6 +82,9 @@ export function applyRulesConfig(config = {}) {
   const typed = pseudo + coding > 0;
   const varies = !!config.mix_varies;
   const estimate = Number(config.minutes_estimate) || 0;
+
+  // Anti-cheating checks the template turned on (13 Nov 2026).
+  _applyProctoringRule(config.proctoring);
 
   // Time
   if (timed && duration) {
@@ -163,6 +188,35 @@ export function applyRulesConfig(config = {}) {
 }
 
 /**
+ * The "More rules below" hint (18 Nov 2026): shown while the rule list has
+ * more to scroll, gone at the end; its button scrolls one view further.
+ * Returns a function that removes the listeners.
+ */
+function _wireMoreHint() {
+  const list = document.getElementById("rulesScroll");
+  const btn = document.getElementById("rulesMoreBtn");
+  if (!list) return () => {};
+  const update = () => {
+    const atEnd = list.scrollHeight - list.clientHeight - list.scrollTop <= 8;
+    list.classList.toggle("is-at-end", atEnd);
+  };
+  const more = () => {
+    list.scrollBy({ top: Math.max(120, list.clientHeight * 0.8), behavior: "smooth" });
+  };
+  list.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update);
+  if (btn) btn.addEventListener("click", more);
+  list.scrollTop = 0;
+  // After layout (the summary and rules were just filled in).
+  requestAnimationFrame(update);
+  return () => {
+    list.removeEventListener("scroll", update);
+    window.removeEventListener("resize", update);
+    if (btn) btn.removeEventListener("click", more);
+  };
+}
+
+/**
  * Present the rules and wait for a decision.
  * @returns {Promise<boolean>} true = acknowledged, false = went back.
  */
@@ -192,9 +246,11 @@ export function runInterviewRulesGate({ config } = {}) {
     .forEach((s) => s.classList.remove("active"));
   screen.hidden = false;
   screen.classList.add("active");
+  const unwireMore = _wireMoreHint();
 
   return new Promise((resolve) => {
     const finish = (result) => {
+      unwireMore();
       ack.removeEventListener("change", onToggle);
       continueBtn.removeEventListener("click", onContinue);
       if (backBtn) backBtn.removeEventListener("click", onBack);

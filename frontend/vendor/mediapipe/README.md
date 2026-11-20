@@ -11,6 +11,7 @@ our own origin.
 | `wasm/vision_wasm_internal.js` | same package, `wasm/` | `4a97e2520ba506c680ecd6ba6acfb146888afa0e2746d57f205352bc6ebb82eb` |
 | `wasm/vision_wasm_internal.wasm` | same package, `wasm/` | `f00ec4731faa23b3e714d00e88d4d10e2df5c0a427d3a2b4ae6e3526fdd14ef7` |
 | `face_landmarker.task` | `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/` | `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff` |
+| `hand_landmarker.task` (13 Nov 2026 — gesture checks, `js/hand_monitor.js`) | `storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/` | `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1` |
 
 Licence: Apache-2.0 (Google MediaPipe).
 

@@ -209,6 +209,12 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
       render: (r) => (
         <span className="block text-right">
           <span className="font-semibold tabular-nums text-primary">{inr(r.amount)}</span>
+          {Number(r.prior_period_amount || 0) > 0 && (
+            <span className="block text-[11px] tabular-nums text-muted"
+              title={r.prior_period_note ? `Earlier financial year: ${r.prior_period_note}` : "Earlier financial year — not tracked"}>
+              − {inr(r.prior_period_amount)} earlier FY
+            </span>
+          )}
           {Number(r.tds_total || 0) > 0 && (
             <span className={`block text-[11px] tabular-nums ${Number(r.tds_pending || 0) > 0 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300"}`}
               title="TDS the customer withheld on these invoices">
@@ -592,6 +598,11 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
   const pickList = useActiveCustomers(customerId, { includeInactive: showInactive });
   const [receivedDate, setReceivedDate] = useState(() => isoDay(0));
   const [amount, setAmount] = useState("");
+  /* Part of the credit for an earlier financial year (20 Nov 2026, Finance ask):
+     set aside, never mapped — only the current-year part is counted here. */
+  const [priorOn, setPriorOn] = useState(false);
+  const [priorAmount, setPriorAmount] = useState("");
+  const [priorNote, setPriorNote] = useState("");
   const [mode, setMode] = useState("NEFT");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -692,7 +703,10 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
     return () => { alive = false; };
   }, [customerId, presetBranch]);
 
-  const amt = Number(amount) || 0;
+  const gross = Number(amount) || 0;
+  const prior = priorOn ? Math.max(0, Number(priorAmount) || 0) : 0;
+  /** The part counted in Orbit — what is mapped / kept on account. */
+  const amt = Math.max(0, Math.round((gross - prior) * 100) / 100);
   /** What the customer owes in money on an invoice once its TDS is taken off. */
   const tdsFor = (id: number) => tdsMap[id]?.amount ?? 0;
   const dueFor = (o: InvoiceOption) => netDue(o.balance_amount, tdsFor(o.id));
@@ -730,7 +744,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
     setSelected((s) => new Set(s).add(o.id));
     setTdsAsk(null);
   };
-  const missing = !customerId ? "Pick the customer" : needsBranch && !branchKey ? "Pick the branch that paid" : !receivedDate ? "Pick the received date" : !(amt > 0) ? "Enter the amount received" : "";
+  const missing = !customerId ? "Pick the customer" : needsBranch && !branchKey ? "Pick the branch that paid" : !receivedDate ? "Pick the received date" : !(gross > 0) ? "Enter the amount received" : prior >= gross ? "The earlier-year part must be less than the amount received" : "";
 
   const submit = async () => {
     setError("");
@@ -738,7 +752,9 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
     setBusy(true);
     try {
       const res = await crmPost("/api/customer-receipts", {
-        customer_id: Number(customerId), received_date: receivedDate, amount: amt,
+        customer_id: Number(customerId), received_date: receivedDate, amount: gross,
+        prior_period_amount: prior > 0 ? prior : null,
+        prior_period_note: prior > 0 ? (priorNote.trim() || null) : null,
         branch_id: branchKey && branchKey !== "none" ? Number(branchKey) : null,
         payment_mode: mode || null, reference_number: reference.trim() || null,
         notes: notes.trim() || null, invoice_ids: [...selected],
@@ -802,11 +818,41 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                   placeholder="0.00" onChange={(e) => setAmount(e.target.value)} />
                 {selectedBalance > 0 && (
                   <button type="button" className="mt-1 text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
-                    onClick={() => setAmount(String(Math.round(selectedBalance * 100) / 100))}>
+                    onClick={() => setAmount(String(Math.round((selectedBalance + prior) * 100) / 100))}>
                     {tdsTotal > 0 ? "Use the amount to receive (after TDS)" : "Use the ticked balance"} · {inr(selectedBalance)}
                   </button>
                 )}
               </label>
+              <div className="sm:col-span-2 rounded-card border border-dashed border-subtle bg-surface-2 p-3">
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-0.5" checked={priorOn} onChange={(e) => setPriorOn(e.target.checked)} />
+                  <span>
+                    <span className="font-semibold text-primary">Part of this amount pays an earlier financial year</span>
+                    <span className="block text-[11px] text-muted">
+                      e.g. invoices before 1 Apr {new Date().getMonth() + 1 >= 4 ? new Date().getFullYear() : new Date().getFullYear() - 1} that are not in Orbit.
+                      That part is set aside — only the current-year part is mapped or kept on account.
+                    </span>
+                  </span>
+                </label>
+                {priorOn && (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold text-secondary">Earlier-year part (₹)</span>
+                      <input type="number" min={0} step="0.01" className={`${inputCls} tabular-nums`} value={priorAmount}
+                        placeholder="0.00" onChange={(e) => setPriorAmount(e.target.value)} />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-semibold text-secondary">Which invoices? (optional)</span>
+                      <input className={inputCls} value={priorNote} maxLength={1000} placeholder="FY 2025-26 · Feb & Mar invoices"
+                        onChange={(e) => setPriorNote(e.target.value)} />
+                    </label>
+                    <p className="text-xs text-secondary sm:col-span-2">
+                      Counted here: <b className="tabular-nums text-primary">{inr(amt)}</b> of {inr(gross)}
+                      {prior >= gross && gross > 0 ? <span className="ml-1 font-semibold text-danger">— must be less than the amount received</span> : null}
+                    </p>
+                  </div>
+                )}
+              </div>
               <label className="block">
                 <span className="mb-1 block text-xs font-semibold text-secondary">Received on *</span>
                 <input type="date" className={inputCls} value={receivedDate} max={isoDay(0)} onChange={(e) => setReceivedDate(e.target.value)} />

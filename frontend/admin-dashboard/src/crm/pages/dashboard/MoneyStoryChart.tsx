@@ -30,7 +30,8 @@ import { neutral } from "../../../design-system/tokens/tokens";
 import { useTheme } from "../../../theme/ThemeProvider";
 import { inrCompact, num } from "../../components/controlTower";
 import {
-  MONEY_GROUPS, MONEY_PRESETS, MONEY_SERIES, moneyRows, moneySeriesOf, moneyTotals, presetKeys, presetOf, shareOf,
+  FALLBACK_MONEY_KEYS, MONEY_GROUPS, MONEY_PRESETS, MONEY_SERIES, moneyRows, moneySeriesOf, moneySplitMissing,
+  moneyTotals, presetKeys, presetOf, shareOf,
   type MoneyKey, type MoneyPreset, type MoneyRow,
 } from "./moneySeries";
 
@@ -81,7 +82,12 @@ export function MoneyStoryChart({
   const dark = theme === "dark";
   const axis = dark ? neutral[400] : neutral[500];
   const rows = useMemo(() => moneyRows(rawRows) as Full[], [rawRows]);
-  const series = useMemo(() => MONEY_SERIES.filter((s) => withPredicted || s.key !== "predicted"), [withPredicted]);
+  // 12 Nov 2026 — a backend older than 6 Nov sends no bank / TDS split: show only
+  // what it really sent and say why, instead of Inc Tax = Ex. Tax and a row of zeros.
+  const splitMissing = useMemo(() => moneySplitMissing(rawRows), [rawRows]);
+  const series = useMemo(() => MONEY_SERIES
+    .filter((s) => withPredicted || s.key !== "predicted")
+    .filter((s) => !splitMissing || FALLBACK_MONEY_KEYS.includes(s.key)), [withPredicted, splitMissing]);
 
   const stored = useMemo(() => readStore(storageKey), [storageKey]);
   const [ticked, setTicked] = useState<Set<MoneyKey>>(() => new Set(
@@ -134,7 +140,8 @@ export function MoneyStoryChart({
 
   const fade = (k: MoneyKey) => (spot && spot !== k ? 0.18 : 1);
   const received = totals.received_bank + totals.received_tds;
-  const collectedPct = shareOf(received, totals.revenue_inc);
+  const collectedPct = splitMissing ? null : shareOf(received, totals.revenue_inc);
+  const notSent = "not sent — update the server";
 
   return (
     <section className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised" aria-label={title}>
@@ -175,16 +182,28 @@ export function MoneyStoryChart({
         </div>
 
         <div className="relative mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <HeadStat label="Revenue (Ex. Tax)" value={inrCompact(totals.revenue_ex)} sub={`Inc Tax ${inrCompact(totals.revenue_inc)}`} dot="#93c5fd" />
-          <HeadStat label="Received (Bank + TDS)" value={inrCompact(received)}
-            sub={collectedPct === null ? "nothing billed yet" : `${collectedPct}% of Inc Tax`} dot="#6ee7b7" ring={collectedPct} />
-          <HeadStat label="Total Due" value={inrCompact(totals.total_due)} sub={`Bank ${inrCompact(totals.due_bank)} · TDS ${inrCompact(totals.due_tds)}`} dot="#fca5a5" />
+          <HeadStat label="Revenue (Ex. Tax)" value={inrCompact(totals.revenue_ex)}
+            sub={splitMissing ? `Inc Tax ${notSent}` : `Inc Tax ${inrCompact(totals.revenue_inc)}`} dot="#93c5fd" />
+          <HeadStat label={splitMissing ? "Collected (with GST)" : "Received (Bank + TDS)"} value={inrCompact(received)}
+            sub={splitMissing ? `TDS ${notSent}` : collectedPct === null ? "nothing billed yet" : `${collectedPct}% of Inc Tax`}
+            dot="#6ee7b7" ring={collectedPct} />
+          <HeadStat label="Total Due" value={splitMissing ? "—" : inrCompact(totals.total_due)}
+            sub={splitMissing ? notSent : `Bank ${inrCompact(totals.due_bank)} · TDS ${inrCompact(totals.due_tds)}`} dot="#fca5a5" />
           {withPredicted
             ? <HeadStat label="Predicted revenue" value={inrCompact(totals.predicted)}
                 sub={futureRows.length ? `incl. ${futureRows.length} month${futureRows.length === 1 ? "" : "s"} ahead` : "deployed team × rate"} dot="#f0abfc" />
             : <HeadStat label="Receivable TDS" value={inrCompact(totals.receivable_tds)} sub={`received ${inrCompact(totals.received_tds)}`} dot="#c4b5fd" />}
         </div>
       </div>
+
+      {splitMissing && (
+        <div role="status" className="border-b border-subtle bg-warning-soft px-5 py-2.5 text-xs text-primary">
+          <b className="text-warning">The server behind this page has not been updated.</b>{" "}
+          It sent billed and collected only, so Revenue (Inc Tax), Receivable, TDS and Due cannot be shown — and
+          &ldquo;Received&rdquo; here is cash with GST. Deploy the latest backend (pull, then restart the service) and
+          reload: every money word fills in from the invoices.
+        </div>
+      )}
 
       {/* ---------- series chips ---------- */}
       <div className="border-b border-subtle px-5 py-3">

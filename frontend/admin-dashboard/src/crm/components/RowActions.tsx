@@ -43,7 +43,10 @@ export function RowActions({
   deactivateLabel = "Deactivate",
   deactivateSuccessMessage,
   colored = false,
+  deleteNote,
 }: {
+  /** An extra line under the delete question (e.g. what Admin's delete also removes). */
+  deleteNote?: React.ReactNode;
   /** Human entity name for the confirm title, e.g. "project". */
   entity: string;
   /** Optional display name shown in the confirm message. */
@@ -75,9 +78,12 @@ export function RowActions({
   if (!canEdit && !canDelete && !onView) return null;
 
   const article = /^[aeiou]/i.test(entity) ? "an" : "a";
-  const confirmMessage = itemLabel
+  const question = itemLabel
     ? <>Do you want to delete this {entity} (<b>{itemLabel}</b>)? This cannot be undone.</>
     : <>Do you want to delete this {entity}? This cannot be undone.</>;
+  const confirmMessage = deleteNote
+    ? <>{question}<span className="mt-2 block text-xs text-secondary">{deleteNote}</span></>
+    : question;
 
   const doDelete = async () => {
     setBusy(true);

@@ -65,6 +65,17 @@ const INTEGRITY_VIOLATION_TYPES = new Set([
   "screen_share_missing",
   // 13 Oct 2026 — the face / eye monitor could not start on this browser.
   "camera_monitor_unavailable",
+  // 13 Nov 2026 — the template's anti-cheating checks (soft flags, never strikes).
+  "gesture_prompt_ok",
+  "gesture_prompt_missed",
+  "headphones_disconnected",
+  "headphones_reconnected",
+  "audio_device_changed",
+  "low_light",
+  "reading_pattern",
+  "room_scan_started",
+  "room_scan_done",
+  "room_scan_skipped",
 ]);
 
 const VIOLATION_LABELS = {
@@ -94,6 +105,9 @@ const VIOLATION_LABELS = {
 const SILENT_VIOLATION_TYPES = new Set([
   "no_face", "context_menu", "key_escape", "key_f11", "screen_share_stopped", "screen_share_missing",
   "camera_monitor_unavailable",
+  // 13 Nov 2026 — each check shows its own soft notice, never the strike modal.
+  "gesture_prompt_ok", "gesture_prompt_missed", "headphones_disconnected", "headphones_reconnected",
+  "audio_device_changed", "low_light", "reading_pattern", "room_scan_started", "room_scan_done", "room_scan_skipped",
 ]);
 
 /* What the warning modal says for the strike that raised it (13 Oct 2026 —
@@ -567,6 +581,19 @@ export function reportGazeAway(details = "") {
       if (terminateLocally) endWith();
     }
   })();
+}
+
+/**
+ * A recruiter ended the interview from the Integrity tab (13 Nov 2026). The
+ * server already closed the link; this says so and saves what was answered.
+ */
+export function endByRecruiter(message = "") {
+  if (!securityActive && window.__karnexInterviewExitOutcome === "terminated") return;
+  showTerminationWarning(
+    message || "The recruiter has ended this interview. Thank you for your time.",
+    "Ended by the recruiter",
+  );
+  triggerAutoTermination();
 }
 
 function triggerAutoTermination() {

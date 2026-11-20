@@ -31,7 +31,18 @@ import {
   holdForRecruiter,
   releaseRecruiterHold,
 } from "./candidate.js";
-import { startLiveJoinWatch } from "./live_join.js";
+import { pokeLiveJoin, startLiveJoinWatch, startLobbyWatch } from "./live_join.js";
+import {
+  getChecksCameraStream,
+  getProctoringConfig,
+  releaseChecksCamera,
+  restoreGazeCalibration,
+  runProctoringChecks,
+  runRoomScan,
+  setProctoringConfig,
+} from "./proctoring_checks.js";
+import { startInterviewProctoring, stopInterviewProctoring } from "./interview_proctoring.js";
+import { getScreenStream } from "./screen_share.js";
 import {
   downloadLatestReportExcel,
   downloadInterviewQaPdf,
@@ -75,15 +86,26 @@ import {
   getAuthToken,
   getAuthUserRaw,
   isAccessTokenExpired,
+  isInviteAuthScope,
 } from "./auth/session.js";
 import {
   activateInterviewSecurity,
   deactivateInterviewSecurity,
+  endByRecruiter,
+  reportSecurityViolation,
   requireFullscreenBeforeInterview,
 } from "./interview_security.js";
-import { startFaceMonitoring, stopFaceMonitoring } from "./face_detection.js";
+import { isTypedQuestionOpen } from "./skill_bank.js";
+import { state as runtimeState } from "./state.js";
+import { setMonitorOptions, startFaceMonitoring, stopFaceMonitoring } from "./face_detection.js";
 import { startSessionRecording, stopSessionRecording } from "./session_recorder.js";
-import { runDeviceTestGate, hideDeviceTestGate, readPersistedDeviceTestState, getVerifiedMicStream } from "./device_test.js";
+import {
+  getDeviceTestCameraStream,
+  getVerifiedMicStream,
+  hideDeviceTestGate,
+  readPersistedDeviceTestState,
+  runDeviceTestGate,
+} from "./device_test.js";
 import {
   applyRulesConfig,
   bindKeyboardBlockedNotice,
@@ -98,6 +120,40 @@ const hrFocusFromUrl = new URLSearchParams(window.location.search).get("focus") 
  * Empty until the lookup responds; the rules screen degrades to "—" gracefully.
  */
 let _inviteInterviewConfig = {};
+
+/* ------------------------------------------------------------------------- */
+/* The lobby (13 Nov 2026): where the page is, for the recruiter's Integrity  */
+/* tab — from the moment the link opens, before sign-in.                      */
+/* ------------------------------------------------------------------------- */
+let _lobbyStage = "opened";
+
+function setLobbyStage(stage) {
+  if (!stage || stage === _lobbyStage) return;
+  _lobbyStage = stage;
+  pokeLiveJoin();
+}
+
+function startLobby() {
+  if (!inviteTokenFromUrl) return;
+  startLobbyWatch(inviteTokenFromUrl, () => _lobbyStage, {
+    getCameraStream: () => getChecksCameraStream() || getDeviceTestCameraStream() || getProctorStream(),
+    getMicStream: () => getVerifiedMicStream(),
+    getScreenStream: () => getScreenStream(),
+    onTerminated: () => showInviteTerminalState("terminated", {}),
+  });
+}
+
+/** Log a proctoring event before the security watchers are active (room scan). */
+function _reportProctorEvent(type, details) {
+  try {
+    const fd = new FormData();
+    fd.append("violation_type", type);
+    fd.append("details", String(details || "").slice(0, 500));
+    void apiFetch("/interview/violation", { method: "POST", body: fd }).catch(() => {});
+  } catch (_) {
+    /* best-effort */
+  }
+}
 
 // A key that does nothing, with no explanation, reads as a broken page. The
 // security module emits this (throttled) whenever it swallows a keypress.
@@ -132,11 +188,15 @@ async function maybeAutoClearCache(scope) {
       // that locked candidates out as "active on another device" (15 Sep 2026).
       const inviteInProgress = !!inviteTokenFromUrl;
       const keep = new Set([key]);
+      // An interview tab may share the browser with a recruiter's dashboard
+      // (18 Nov 2026): it keeps the device id and leaves every other app's keys
+      // — the staff session, the dashboard's settings — alone.
+      const staffKeys = /^(authToken|authUser|authTokenExpiryIst|karnex(Admin|Theme|UiDark|Accent)|crm\.|app\.)/;
       for (let i = window.localStorage.length - 1; i >= 0; i--) {
         const k = window.localStorage.key(i);
         if (!k) continue;
         if (keep.has(k)) continue;
-        if (inviteInProgress && (k.startsWith("karnexInviteDevice") || k === "authToken" || k === "authUser" || k === "authTokenExpiryIst")) continue;
+        if (inviteInProgress && (k.startsWith("karnexInviteDevice") || staffKeys.test(k))) continue;
         window.localStorage.removeItem(k);
       }
       if (!inviteInProgress) clearAuthSession();
@@ -361,6 +421,7 @@ export function refreshSidebarProfileClock() {
 
 function logoutUser() {
   stopFaceMonitoring();
+  stopInterviewProctoring();
   deactivateInterviewSecurity();
   // No finalize call: logging out is not the end of an interview, and the
   // server joins whatever chunks arrived when the report is built.
@@ -939,6 +1000,7 @@ async function proceedWithInviteLogin() {
         }
         if (q) q.innerText = "Interview starts in: 00:00:00";
         if (aiState) aiState.innerText = "Interview scheduled";
+        setLobbyStage("waiting");
         startInviteCountdown(data.seconds_until_start || 0, () => proceedWithInviteLogin());
         return;
       }
@@ -946,6 +1008,10 @@ async function proceedWithInviteLogin() {
       const token = data.access_token || "";
       if (!token) throw new Error("Access token missing for invite login.");
       _deferCandidateProctoring = true;
+      setLobbyStage("signed_in");
+      // The checks' own camera is closed before the interview feed opens it —
+      // two holders of one webcam freeze one of them on Windows laptops.
+      releaseChecksCamera();
       saveAuthSession(user, token, data.expires_at_ist || "");
       _hideInviteLoadingOverlay();
       revealAppAfterAuth(user);
@@ -1007,6 +1073,18 @@ async function proceedWithInviteLogin() {
       }
       _applyCandidateModelChips(data);
       const resume = data.resume && typeof data.resume === "object" ? data.resume : null;
+      const proctoring = getProctoringConfig();
+      // Room scan (13 Nov 2026): before the first question, RECORDED — the
+      // feed and the recorder start first so the scan is in the recording.
+      if (proctoring.room_scan && !(resume && resume.current > 0)) {
+        _deferCandidateProctoring = false;
+        _hideInviteLoadingOverlay();
+        await initProctoring().catch(() => {});
+        void startSessionRecording(getProctorStream, getVerifiedMicStream).catch(() => {});
+        setLobbyStage("room_scan");
+        await runRoomScan({ getCameraStream: () => getProctorStream(), report: _reportProctorEvent });
+        _setInviteStartupState("Loading first question...");
+      }
       if (resume && resume.current > 0) {
         // Reopened link mid-interview: say so, so the jump to question N
         // does not look like the interview skipped ahead on its own.
@@ -1028,7 +1106,18 @@ async function proceedWithInviteLogin() {
         console.warn("[VAD] Proctoring init deferred", err);
       });
       activateInterviewSecurity();
+      // The template's lighting / reading monitors ride on the face scans, and
+      // a calibration done before sign-in is applied (13 Nov 2026).
+      await restoreGazeCalibration();
+      setMonitorOptions({ lighting: proctoring.lighting, reading: proctoring.reading_detection });
       startFaceMonitoring(() => document.getElementById("proctorCam"));
+      startInterviewProctoring({
+        getVideo: () => document.getElementById("proctorCam"),
+        report: (type, details) => reportSecurityViolation(type, details),
+        isPaused: () => !!runtimeState.liveHold,
+        isTyped: () => isTypedQuestionOpen(),
+        totalQuestions: Number(_inviteInterviewConfig.num_q || _inviteInterviewConfig.num_questions) || 0,
+      });
       setRecordingBadge(true);
       // Whole-session recording (22 Sep 2026). Fire-and-forget on purpose:
       // every failure inside is swallowed, so nothing here can delay or break
@@ -1044,6 +1133,9 @@ async function proceedWithInviteLogin() {
         onResume: () => releaseRecruiterHold(),
         getCameraStream: () => getProctorStream(),
         getMicStream: () => getVerifiedMicStream(),
+        getScreenStream: () => getScreenStream(),
+        // A recruiter ended the interview from the Integrity tab (13 Nov 2026).
+        onTerminated: () => endByRecruiter(),
         // The server's clock says the time limit passed (12 Oct 2026) — end now,
         // whatever the page's own countdown thinks.
         onTimeUp: () => {
@@ -1137,6 +1229,8 @@ function showCandidateWelcome() {
               schedule.num_questions ?? schedule.num_q ?? data.num_questions ?? data.num_q,
           };
           applyRulesConfig(_inviteInterviewConfig);
+          // Anti-cheating checks chosen on the template (13 Nov 2026).
+          setProctoringConfig(schedule.proctoring);
 
           const candidate = String(schedule.candidate_name || "").trim();
           // Redesign 27 Aug 2026: the comma lives in the static "Welcome,"
@@ -1283,6 +1377,10 @@ initUiSettings();
 initBackground();
 initAvatar();
 window.addEventListener("storage", (e) => {
+  // On an interview link the localStorage keys are the RECRUITER's session (the
+  // dashboard in another tab). Their sign-out must never reload the interview
+  // (18 Nov 2026 — that closed live interviews when a TA joined).
+  if (isInviteAuthScope()) return;
   if ((e.key === "authToken" || e.key === "authUser") && e.oldValue && !e.newValue) {
     try {
       window.location.reload();
@@ -1368,19 +1466,29 @@ async function bootstrapInviteFlow() {
     showDesktopRequiredScreen();
     return;
   }
+  // The lobby (13 Nov 2026): the recruiter's Integrity tab sees the candidate
+  // from now on and may call to guide them, or watch.
+  startLobby();
   while (true) {
+    setLobbyStage("opened");
     await showCandidateWelcome();
 
     // Rules BEFORE the device test: the candidate should know what they are
     // consenting to before they start granting camera and microphone access.
+    setLobbyStage("rules");
     const acknowledged = await runInterviewRulesGate({ config: _inviteInterviewConfig });
     if (!acknowledged) continue; // "Back" — return to the welcome screen
 
+    setLobbyStage("device_check");
     const passed = await runDeviceTestGate();
     if (!passed) {
       // Candidate hit "Back" — return to welcome screen instead of redirecting.
       continue;
     }
+    // The template's anti-cheating checks (13 Nov 2026): headphones, light,
+    // gesture, eye calibration. Nothing when the template turned none on.
+    const checked = await runProctoringChecks({ onStage: setLobbyStage });
+    if (!checked) continue;
     // Defense-in-depth (May 2026):
     // Even if the UI path returns "passed", require persisted mandatory checks
     // before starting invite login.
@@ -1395,6 +1503,7 @@ async function bootstrapInviteFlow() {
       console.warn("[device-test] Mandatory checks not verified; re-running gate.");
       continue;
     }
+    setLobbyStage("verify");
     await autoLoginFromInviteToken();
     return;
   }

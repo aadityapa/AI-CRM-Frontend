@@ -6,7 +6,26 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 12 Nov 2026 (Edit applicant's name / email / phone now update the candidate everywhere — the
+**Last updated:** 20 Nov 2026, later (Reports ▸ **Customer Ledger** for Finance / Admin / CEO with
+Financial year · Month · Custom dates · All time; **Settle in full** on a partly paid invoice; "Part of this amount pays an
+earlier financial year" on Add / Edit received amount; server half + migration 0154 in B-V2). Before: 20 Nov 2026 (TDS chip pop-up: **Undo "received"** with a reason; Admin unmaps / deletes an invoice with received TDS in one step, the dialogs say so; server half in B-V2). Before: 18 Nov 2026, latest (an AI L1 reads **In Review** on every screen until RMG / GM Select / Reject /
+Hold — `crm/lib/aiDecision.ts`; the Integrity tab's "What happened" lists each warning, the one that ended the
+interview, why it happened and what to tell the candidate (Copy message); closing / reloading the interview page no
+longer submits it; `app.js?v=58`; server half in B-V2). Before: 18 Nov 2026, very last (a live interview closed when a TA joined from the same browser: the
+interview tab and the dashboard shared one set of localStorage auth keys — an interview link now keeps its own
+session in sessionStorage (`kxInvite.*`, `auth/session.js`); the Rules page redesigned (`rules-v4`); `app.js?v=57`).
+Earlier the same evening: (candidate interview screen: the two-column layout — question + AI stage left,
+camera · status · Skip / Send right — on EVERY laptop / PC from 641 px wide, sizes follow the window (camera up to
+64 % of the height, question type scales, tiers for narrow / short / very short / big screens); `app.js?v=56`).
+Earlier 18 Nov: (Send Response / Skip Question were off-screen on 761–1200 px wide or short windows — the camera now
+shrinks instead of the buttons; `app.js?v=55`). Earlier 18 Nov: (no frontend
+change — the AI Costs "password authentication failed" error was the
+backend building its database URL without encoding the password; fixed in B-V2, restart the backend). Before:
+13 Nov 2026 (anti-cheating checks per template on the candidate page — headphone beep test,
+lighting, gesture check, eye calibration, room scan, random gesture prompts, headphone / light / reading monitors —
+and the Integrity lobby, real-time silent watch and Terminate; `app.js?v=54`; server half in B-V2). Before: 12 Nov 2026, later ("How the year unfolded" no longer fakes Inc Tax = Ex. Tax and zeros when the
+backend is older than 6 Nov — it shows only billed / collected / predicted and an amber "update the server" notice).
+Before: 12 Nov 2026 (Edit applicant's name / email / phone now update the candidate everywhere — the
 dialog says so; an upload for a known candidate toasts the name on record; server half in B-V2). Before: 8 Nov 2026,
 last (gross margin / people cost hidden while `track_people_cost` is false — Finance tile
 "Ready to bill", dial "Overdue share"; same on the Customer tab and the Revenue report). Before: 8 Nov 2026, later (Finance tab PO cover says "team bills ₹x / month"; the Revenue report's Coming up panel names the basis; server: cost stops at today, cover by the deployed team — B-V2). Before: 8 Nov 2026 (Customer, Sales, People and the Billing Tracker open with the Finance tab's story chart — `StoryChart`, one gradient per tab; the Finance tab's "Cash received month" view uses it too). Before: 7 Nov 2026 ("How the year unfolded" is the interactive `MoneyStoryChart` — gradient columns,
@@ -33,7 +52,7 @@ vitest green on the touched files; nothing committed since `f807e80`.
 **Stack:**
 - **Admin dashboard:** `/admin`, React 18 + Vite 5 + TypeScript + Tailwind 3 + recharts. It has its own query-param
   router (`?view=` / `?p=`).
-- **Candidate interview runtime:** `/`, vanilla ES modules in `frontend/js`, cache-busted by `app.js?v=N` (now 53).
+- **Candidate interview runtime:** `/`, vanilla ES modules in `frontend/js`, cache-busted by `app.js?v=N` (now 58).
   MediaPipe is self-hosted under `frontend/vendor`.
 - The backend is FastAPI on the same origin (see B-V2).
 
@@ -60,6 +79,10 @@ vitest green on the touched files; nothing committed since `f807e80`.
   is the one client rule; the server decides.
 - Every dashboard chart is clickable: a new `FilteredBars` passes `barLink` (a CRM path) or `onBarClick` (an in-place
   filter).
+
+- Anti-cheating checks live in `js/proctoring_logic.js` (PURE, node-tested) + `proctoring_checks.js` (screens) +
+  `interview_proctoring.js` (during the interview); every candidate overlay builds nodes with `textContent` and
+  draws icons as SVG, never emoji (a missing-glyph box on PCs without an emoji font).
 
 **Remaining (front-end):**
 - Commit; add `.gitattributes`.
@@ -4227,3 +4250,189 @@ email or phone here updates the candidate everywhere — Candidates, the profile
 Upload resume toasts the server's message when it says "already in Candidates as “X” — use Edit applicant…" (an upload for a
 known candidate keeps the name on record). The Candidates page edit and bulk-ZIP Verify already PUT `/api/candidates/{id}`,
 which now syncs the rows too. tsc green.
+
+**12 Nov 2026 (later) — "How the year unfolded" stops faking figures from an older backend (`moneySeries.test.ts`
+now 6; no server change):** screenshot — Revenue (Inc Tax) equal to Ex. Tax in every month, Receivable / TDS / Due all
+₹0, Received Bank above revenue, "0 invoices" / "0 projects" in the tooltip. That is the client fallback: the backend
+answering the page was older than 6 Nov 2026 (no `revenue_inc`, `total_due`, `invoices`, `predicted_projects` on the
+month rows), and `moneyRows` copied billed into BOTH revenue words and collected (cash with GST) into Received Bank.
+The current server sends every key (re-checked against a seeded book: Inc Tax 1.18 × Ex. Tax, TDS expected at 10 %,
+Due = receivable − received). Now PURE `moneySplitMissing(rows)` + `FALLBACK_MONEY_KEYS` (revenue_ex · received_bank ·
+predicted): `moneyRows` no longer copies Ex. Tax into Inc Tax, and `MoneyStoryChart` on such rows shows only those three
+series, the header reads "Collected (with GST)" / "Inc Tax not sent — update the server" / Total Due "—", and an amber
+notice says to deploy the backend and reload. Fix for the numbers themselves = deploy the current backend.
+
+**13 Nov 2026 — anti-cheating checks per template + the Integrity lobby, silent watch and Terminate
+(`scripts/tests/proctoring_logic.test.mjs` 7, `components/interview-template/ProctoringSettings.test.ts` 2; server
+half in B-V2 `CLAUDE.md`; `app.js?v=54`):** all 7 decisions taken with the recommendations — random gesture prompts
+(not hands-on-camera all interview), "Required" blocks / "Recommended" records before the interview and nothing ends
+it during, headphones wired or Bluetooth, room scan included as a switch, the candidate is ALWAYS told when watched,
+per template, TURN set up by ops (B-V2 `docs/TURN_SETUP.md`).
+**Candidate runtime.** `js/proctoring_logic.js` (PURE): `normalizeProctoring`; headphones — `goertzelPower`,
+`dbAbove`, `headphonePlan` (2–4 beeps at 1250–2750 Hz), `headphoneVerdict` (wrong count → `wrong_count`; the raw
+microphone hearing a tone ≥ `SPEAKER_LEAK_DB`=10 dB above the room → `speaker_leak`), `outputLabelHint` (device names,
+a hint only); lighting — `meanLuma`, `lightingVerdict` (`LIGHT`: face < 55 dark; background ≥ 45 brighter and face
+< 100 backlit), `LightMonitor` (bad 8 s → one `low_light`, 60 s cooldown); hands — `extendedFingers` / `fingerCount` /
+`isOpenPalm` / `isThumbsUp` (wrist-distance rule, rotation-proof), `GESTURES`, `PALMS`, `randomGesture`,
+`gestureMatches`, `GestureHold` (held 0.8 s), `gestureFailReason`, `pickPromptTurns` (never question 1); gaze —
+`CALIBRATION_DOTS` (centre + 4 corners), `calibrate` (the candidate's own range × 1.35, clamped); reading —
+`ReadingDetector` (≥ 3 quick return sweeps against the drift within 12 s → one `reading_pattern`, 30 s cooldown). ⚠️
+Sentinels are `null`, never 0 — `now = 0` is a real time in the tests. `js/mediapipe_loader.js` is the ONE vision
+loader (bundle + fileset once; `modelBytes(urls)`) — `face_detection.js` now uses it. `js/hand_monitor.js` — Hand
+Landmarker (2 hands, VIDEO, GPU→CPU), self-hosted `vendor/mediapipe/hand_landmarker.task` (README has the hash),
+loaded only when a gesture is asked. `face_detection.js`: `setMonitorOptions({lighting, reading})`,
+`setGazeCalibration(cal)` (the look-away rule starts from the calibrated base + thresholds), `measureLight(video,
+face)`, `detectFacesOnce(video)` (the lighting check and the calibration, outside the interview), lighting + reading
+ride on the 400 ms scans (`_softNotice` for light); `camera_monitor_logic.faceMetrics` adds `box`.
+**`js/proctoring_checks.js`** — `setProctoringConfig` (from the lookup's `schedule.proctoring`),
+`runProctoringChecks({onStage})` after the Device Check (one overlay, step chips, Back / Try again / Continue;
+Headphones: Play test → "How many beeps did you hear?" 1–5; Lighting: live preview + meter, passes after 2 s good;
+Gesture: both palms, then a random gesture, 20 s each; Eye calibration: full-screen dot; never a dead end — two
+failed calibrations or no model → "Continue anyway"), `reportCheck` → `/candidate/invite/{token}/device-check`,
+`runRoomScan` (after sign-in, BEFORE question 1 — `app.js` starts the feed + recorder first so it is recorded; the
+clock has not started; 12–40 s), `runHeadphoneTest({blocking})` (mid-interview), `getChecksCameraStream` /
+`releaseChecksCamera` (released at sign-in — two webcam holders freeze one on Windows), `restoreGazeCalibration`.
+`.kxpc` theme (light / `html.kx-dark`), `:where(.kxpc)` reset of the global button rules, `.kxpc [hidden]` forced.
+**`js/interview_proctoring.js`** — `startInterviewProctoring({getVideo, report, isPaused, isTyped,
+totalQuestions})`, `onQuestionShownForProctoring` (called by `candidate.js` per question; a prompt card 4–9 s into a
+planned spoken question, 10 s, `gesture_prompt_ok/missed`; a paused / typed turn defers it), `devicechange` watch
+(headset gone → `headphones_disconnected` + `runHeadphoneTest`, blocking when "require"; else
+`audio_device_changed`), `stopInterviewProctoring` (submit + logout). `interview_security.js`: the new types are
+SILENT (no strike modal) and `endByRecruiter(message)`. `candidate.js`: `code: "recruiter_terminated"` from /next or
+/answer → `endByRecruiter`. **`live_join.js`**: `startLobbyWatch(token, getStage, hooks)` (POST presence;
+`pokeLiveJoin()` reports a new stage now), `startLiveJoinWatch` switches transport when already running (lobby →
+interview), silent WATCH (`_answerWatch`: the offer's three recvonly m-lines get clones of camera · screen · mic,
+`sendonly`; ended by `watch_ids`), the red **"<name> from Karnex is watching"** badge (`#kxWatchBadge`), a lobby
+call opens its own camera / mic, `hooks.onTerminated`. `app.js`: lobby from STEP-1 (`setLobbyStage` at welcome ·
+rules · device check · checks · verify · waiting · signed in · room scan), `runProctoringChecks` after the Device
+Check, room scan before the first question, monitors after STEP-5. Rules page: `#rulesProctorRule` lists the checks
+(`interview_rules._applyProctoringRule`). Rendered in headless Chromium with a fake camera / mic: headphone test,
+lighting, room scan, headphone card, light + dark, no page errors.
+**Dashboard.** `components/interview-template/ProctoringSettings.tsx` (PURE `proctoringFromWeights` /
+`proctoringToWeights` / `proctoringCount` / `proctoringSetupMinutes`, Off · Recommended · Required pickers, switches,
+prompts 1–5, "Use recommended" / "Turn all off") under Two-way conversation in `TemplateForm` (`weights.proctoring`).
+`LiveJoinPanel.tsx`: lobby state strip ("In the lobby · On the device check", a call guides without pausing —
+PURE `isInLobby`), **Watch live (real time)** (recvonly camera · screen · audio, side by side; max 2 watchers; the
+candidate is told), **Terminate** (`DecisionDialog`, PURE `terminateSpec`, `TERMINATE_PICKS`), amber "No TURN relay"
+note. `IntegrityLogs.tsx`: every unfinished row is joinable (PURE `isOpenInterview`), "In lobby · <stage>" chip
+(pulsing when online), "N watching" chip, families gesture · audio · light · reading, `?live=<token>` (the bell)
+expands the row with the panel open, auto-refresh every 20 s while anything is live or in the lobby.
+`components/candidate-report/ProctoringSummary.tsx` on the report (pre-checks, gesture prompts, reading, headphones,
+light, room scan, flags, recruiter watch / Terminate; PURE `proctoringVerdict`). tsc green, eslint clean on the new
+files, vitest 2/2, `vite build` green.
+
+**18 Nov 2026 — Send Response / Skip Question always on screen (`app.js?v=55`; CSS only, `index.html`; no server
+change):** screenshot report — for some candidates the spoken-question screen showed the question, the AI stage and a
+big full-width camera, and NO Send / Skip buttons. ⚠️ Cause: interview mode locks the page (`body.interview-mode .main`
+= 100vh, `overflow: hidden`). (1) `@media (max-width: 1200px)` dropped `.qc-grid` to ONE column, so in any window
+761–1200 px wide (a 1366 px laptop at 125 % zoom ≈ 1093 px, or a window that is not maximised) `.qc-right` — camera,
+status, Skip / Send — went below the question + stage, past the bottom, with no way to scroll. (2) In two columns on a
+short screen (≈ 620 px tall, plus Chrome's screen-sharing bar) the camera (max 340 px) + status + buttons were taller
+than the column and the buttons were cut. Reproduced in headless Chromium: Send at y 852–1035 in a 526–800 px viewport.
+Fix (block "Send / Skip always on screen", after the phone block): one column only ≤ 900 px; `.qc-grid
+grid-template-rows: minmax(0,1fr)`; in `.qc-right` the CAMERA flexes (`flex: 1 1 auto`, min 110, max 300 / 340, no
+aspect-ratio) while status + response card never shrink; `.qc-ai-stage` `flex: 1 1 0` (min 150) and a long question
+scrolls inside `.qc-question-card`; `(min-width: 901px) and (max-height: 800px)` tightens padding / gaps / fonts;
+≤ 900 px the page scrolls, `.qc-left` / `.qc-right` become `display: contents` and the order is question → buttons
+(sticky to the bottom edge) → status → transcript → stage → camera. Checked at 1093×526 · 1280×650 · 1366×620 ·
+1100×800 · 1440×820 · 860×700: Skip + Send inside the viewport every time. Every id / class hook unchanged.
+
+
+**18 Nov 2026 (last) — the two-column interview layout on every laptop / PC, sized to the window (`app.js?v=56`; CSS
+only, `index.html`; no server change):** user ask with a screenshot of the fixed layout — "this design for all
+candidates, automatically adjusting to the device". Block "Two columns on every laptop / PC" (replaces the morning's
+"Send / Skip always on screen" block, same place): two columns (question + AI stage | camera · status · Skip / Send)
+from **641 px** wide up — CSS px, so browser zoom is covered (1366 px at 150 % = 910 px); one scrolling column only
+below 640 px (the old 760 / 900 px cut-offs moved to 640). Sizes follow the window: camera `max-height: min(64vh,
+720px)` (shares the column, `min(34vh, 380px)`, while the live transcript `.is-visible` — the transcript then flexes),
+question type `clamp(17px, 0.7vw + 0.9vh + 5px, 26px)`, the AI stage takes what is left, status + buttons sit at the
+bottom (`margin-top: auto` on the status) level with the AI stage. Tiers: ≥ 1600 px wide (layout up to 1680 px, right
+column ≥ 360 px) · 641–1100 px (columns 1.45fr / ≥ 250 px, tighter padding, the soft chip hidden) · 641–860 px (timer
+on its own row) · height ≤ 800 px (tighter) · height ≤ 600 px (AI stage a band, its label hidden, camera ≥ 90 px).
+Checked in headless Chromium at 700×560 · 800×600 · 911×512 · 1093×526 · 1280×650 · 1366×620 · 1440×820 · 1920×1080 ·
+2560×1300, light and dark, transcript on and off: two columns and Skip + Send inside the viewport every time, no
+sideways scroll. ⚠️ Never give `.cand-skip` / `.cand-send` a flex-basis — `.qc-response-card .cand-chat-input` is a
+COLUMN, so a basis becomes the button's height. Every id / class hook unchanged.
+
+**18 Nov 2026 (very last) — a live interview closed when a TA joined; the Rules page redesigned (`app.js?v=57`;
+`scripts/tests/auth_session_scope.test.mjs` 1, node tests 27 pass; no server change):** (1) ⚠️ **Root cause of "TA
+joins → the candidate's interview closes and they must open the link again"**: the candidate runtime and the
+/admin dashboard used the SAME localStorage keys (`authToken` / `authUser` / `authTokenExpiryIst`). With both in one
+browser (every local test, or a TA trying the link) the candidate's sign-in overwrote the recruiter's token; the
+dashboard's next call (bell poll, /api/me refresh, the live-join action) answered 401, `authFetch` cleared the keys,
+and the candidate page's `storage` listener (`app.js`) saw `authToken` removed and RELOADED the page — the interview
+was gone. A TA logging back in overwrote the candidate's token the other way (`/candidate/live/state` → 404 with an
+HR token, `/answer` → no session). **`js/auth/session.js`** now has two scopes: `isInviteAuthScope()` = the address
+carries `?invite=`; an interview tab reads / writes / clears ONLY sessionStorage keys `kxInvite.authToken` etc. (this
+tab, survives a reload); every other page keeps localStorage as before (an HR login on `/` still carries into /admin).
+`app.js`: the `storage` listener ignores everything in an interview tab; the version-change sweep
+(`maybeAutoClearCache`) leaves the staff keys and the dashboard's settings (`authToken…`, `karnexAdmin/Theme/UiDark/
+Accent`, `crm.*`, `app.*`) alone during an invite. ⚠️ A candidate mid-interview at deploy time re-enters through the
+link once (the old localStorage token is no longer read; the bound device passes `/verify` as `already_verified`).
+⚠️ Testing on ONE computer is still not the real setup: clicking into the dashboard window takes focus from the
+candidate's window, which the interview counts as a warning (window blur) until the pause reaches the page — test
+with two devices or two browser profiles. (2) **Rules page v4** (`#screenInterviewRules.rules-v4`, CSS block
+"Interview rules v4", every id `interview_rules.js` fills unchanged): v3's icons sat in the tile corner
+(`.rv-rule span {display:block}` beat the tile's grid — icon tiles are now `.rv-ico`, inline-flex `!important`), the
+summary column was clipped on a 768-px laptop and Back looked like the main button. Now: header with a numbered
+stepper (Welcome ✓ · 2 Rules · 3 Device check · 4 Interview); a strip of four summary tiles (Time · Questions with
+the mix chips · You answer by with the skills note · How it ends); the rules as four group cards in a grid with named
+areas (`stop setup answer` / `stop know answer`; 2 columns ≤ 1180 px, 1 ≤ 760 px) — ⚠️ not CSS columns: multi-column
+in a fixed-height scroller spills into hidden columns and its balancing left one empty. "Stay in the interview" comes
+first, red header + "Can end it" tag and a warnings meter (1 · 2 · 3 · ✕). Summary + rules scroll together in
+`#rulesScroll`; a sticky "More rules below" button (`#rulesMoreBtn`, scrolls 80 % of a view) hides at the end
+(`_wireMoreHint` toggles `.is-at-end`); consent bar turns green when ticked (`:has`), Back is a ghost button,
+Continue a gradient; one screen from 900 px wide and 560 px tall, tighter ≤ 860 px tall (stat hints hidden).
+Checked in headless Chromium at 1100×700 · 1280×600 · 1280×650 · 1366×768 · 1920×1080 · 2560×1300 and 420 px.
+
+**18 Nov 2026 (latest) — AI L1 "In Review" until RMG / GM decide; the Integrity tab's real reason + advice; a reload
+no longer ends an interview (`crm/lib/aiDecision.test.ts` 3; `app.js?v=58`; server half in B-V2 `CLAUDE.md`):**
+(1) **`crm/lib/aiDecision.ts`** is the ONE client rule: `aiDecisionLabel(row)` → In Review / Selected / Rejected / On
+Hold / Pending (an older payload's raw Passed / Failed / Completed reads In Review), `aiIsDecided`, `aiSuggestion`
+("AI suggests: above / below the pass mark" — advice only), `aiDecisionTone` (In Review = sky), `AI_DECISION_WORDS`.
+Used by `AiInterviewCell` (rewritten: the chip is the status, the AI's read under it), Applied Candidates' Interview
+column + Rounds chip + `rescheduleSeed` / new `aiCountsAsPass` (Selected, or an undecided AI pass — the server's
+reschedule refusal), the profile header chip + `AiResultBadges`, `AiInterviewOverview` ("Waiting for RMG / GM", "AI
+suggests: …"), `RoundProgress` (green / red only for Selected / Rejected), `InterviewLadder` (In Review = warn, "— your
+decision"). RMG / GM's buttons read **Select · Put on hold · Reject** (was "Proceed to review"); `AiL1DecisionModal`
+copy speaks "In Review" / "the AI suggests" and asks a reason only to Select over a low AI score (the modal gets the
+AI's raw read via `ai_suggestion`). TA sees "AI L1 In Review — with RMG / GM". **Screening Desk**: `AiL1DecisionCard`
+(Select · Hold / Release · Reject + Open AI report) under the next step when it is `ai_review` / `ai_on_hold`; the AI
+outcome filter gains "In Review — waiting for your decision", Selected / Rejected words. **Interview Reports**
+(`pages/InterviewReports.tsx`): `ReviewStatus` + `reviewStatusOf` + `STATUS_LOOK` — the pills and row chip are the
+STATUS (In Review · Selected · Rejected · On Hold · Not attempted · Terminated · Report pending), the AI's read moved to
+an "AI suggestion" column; stats "Selected" / "In Review — your decision". Report page: "AI suggestion (advice)" card
+with "Not a decision" until decided. `roundResultTone("In Review")` = info.
+(2) **Integrity** (`InterviewDiagnosisPanel.tsx`): `warnings` → "Warnings — N of M allowed" with a meter and each
+warning (time, question, the one that "Ended the interview" in red); `causes` → "Why it happened · what to tell the
+candidate" cards + **Copy message for the candidate** (PURE `candidateGuidance`, `endingWarning`). `IntegrityLogs`:
+the Termination reason tile follows the detail (empty = not terminated); a proctor echo shows dashed with "Same incident
+· not counted".
+(3) ⚠️ **`candidate.js` no longer submits the interview on `pagehide`** — the keepalive /submit on any close / reload
+ended the interview as "ended early" and closed the link. Reopening the same link resumes; an abandoned session is
+closed by the server's recovery job after 35 idle minutes.
+
+**20 Nov 2026 — Undo "received" TDS; Admin unmaps / deletes in one step (server half in B-V2 `CLAUDE.md`):**
+`invoice/TdsDeduction.TdsDetailModal` (the TDS chip pop-up, for Finance / Admin — `canMark`) gains a rose
+**Undo "received"** section whenever anything is marked received: reason ≥ `UNDO_MIN`=10 →
+`POST /api/invoices/{id}/tds-payments/undo`; the TDS reads Pending from client again (the deduction stays), so the
+invoice can then be unmapped or deleted. `ReceiptWorkbench` unmap confirm says what happens to received TDS
+(Admin: undone with it; Finance: undo it first on the TDS chip) — `useHasRole()` from `CrmApp`. `RowActions` gains
+`deleteNote` (an extra line under the delete question); the Invoices list passes it for Admin / CEO (payments and TDS
+go with the invoice, Received Amount cash goes back on account, credit notes still block).
+
+**20 Nov 2026 (later) — Customer Ledger tab, Settle in full, the earlier-year part of a receipt (`crm/lib/ledgerPeriod.test.ts`
+3; server half + migration 0154 in B-V2 `CLAUDE.md`):** (1) **`crm/lib/ledgerPeriod.ts`** (PURE): `LedgerPeriod` {mode fy ·
+month · custom · all}, `ledgerRange` (FY = 1 Apr → 31 Mar; month = 1st → last day, local dates), `ledgerRangeProblem`,
+`fyChoices`, `defaultLedgerPeriod` (current FY). `FinanceReports.CustomerLedgerTab` (now exported) replaces its From / To
+with `LedgerPeriodPicker` (segmented Financial year / Month / Custom dates / All time + an FY select / month input / two
+dates), prints "Period: FY 2026-27 · opening balance = everything before …", names the CSV after the period, and colours the
+new "Adjustment" line violet. `CrmReports.tsx`: tab **Customer Ledger** (`customer_ledger`, BookOpen, HOSTED) for
+`useHasRole("Finance")` (Admin / CEO pass) when its sub-tab is allowed or Financial Reports is shown. (2)
+**`crm/components/invoice/SettleInFull.tsx`** — `SettleInFullDialog` (`DecisionDialog`: emerald settle / rose undo, reason ≥ 10
+with picks, posts `…/settle-in-full[/undo]`). Invoice page Amounts card: TDS and "Settled (adjusted)" rows, a violet "Settled in
+full by … — reason" line, and **Settle in full (₹x)** / **Undo settlement** when the server sends `can_settle` /
+`can_undo_settlement`. (3) **Add received amount**: a dashed box under the amount — "Part of this amount pays an earlier
+financial year" → Earlier-year part + which invoices; "Counted here ₹x of ₹y"; the allocation preview uses the counted part;
+posts `prior_period_amount / prior_period_note`. **Edit receipt** has the same two fields + "All that is not on invoices is for
+an earlier year". The list's Amount cell shows "− ₹x earlier FY"; the workbench's Received tile names it.

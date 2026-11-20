@@ -37,7 +37,8 @@ import {
 } from "./interview_auto_advance.js";
 import { createQuestionProvider, InterviewEngine } from "./interview_engine.js";
 import { stopSessionRecording } from "./session_recorder.js";
-import { deactivateInterviewSecurity, setSecurityPaused } from "./interview_security.js";
+import { deactivateInterviewSecurity, endByRecruiter, setSecurityPaused } from "./interview_security.js";
+import { onQuestionShownForProctoring, stopInterviewProctoring } from "./interview_proctoring.js";
 import { stopFaceMonitoring } from "./face_detection.js";
 import { enterPausedFromServer, isPausedByRecruiter, stopLiveJoinWatch } from "./live_join.js";
 import { startWarmupCountdown, stopWarmupCountdown } from "./warmup_timer.js";
@@ -623,6 +624,10 @@ async function _expireWarmupTurn(turn, limit) {
         enterPausedFromServer(blocked.live || {});
         return;
       }
+      if (blocked?.code === "recruiter_terminated") {
+        endByRecruiter(blocked.message);
+        return;
+      }
       throw new Error(blocked?.error || `Request failed with status ${res.status}`);
     }
     const resp = await handleJson(res);
@@ -1014,24 +1019,18 @@ async function _graceCapturePendingAnswer() {
   return _collectPendingAnswerText();
 }
 
+/**
+ * 18 Nov 2026: closing or reloading the page NO LONGER submits the interview.
+ * It used to fire a keepalive /submit whenever an answer was half-spoken, so a
+ * reload (or a crash, or the old shared-login reload) ended the interview as
+ * "the candidate ended it early" and closed the link — the candidate could not
+ * come back. Now the session stays open: reopening the same link resumes at
+ * the same question, and if they never return the server's recovery job
+ * closes it after 35 idle minutes and scores what was answered.
+ */
 function _ensureInterviewUnloadGuard() {
   if (_unloadGuardInstalled) return;
   _unloadGuardInstalled = true;
-  window.addEventListener("pagehide", () => {
-    if (_submitInterviewInFlight || state.endingInterview || _interviewFlowStopped) return;
-    const pending = _collectPendingAnswerText();
-    if (!pending) return;
-    try {
-      postInterviewFinalizeKeepalive({
-        pendingAnswer: pending,
-        timeExpired: false,
-        finalizeVia: "unload",
-        boundaryAutoSaved: true,
-      });
-    } catch (_) {
-      /* ignore */
-    }
-  });
 }
 
 /**
@@ -1672,6 +1671,11 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
     enterPausedFromServer(data.live || {});
     return;
   }
+  // A recruiter ended the interview from the Integrity tab (13 Nov 2026).
+  if (data && data.code === "recruiter_terminated") {
+    endByRecruiter(data.message);
+    return;
+  }
 
   stopAutoAdvanceTurn();
   stopWarmupCountdown();
@@ -1744,6 +1748,8 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   // Skill-wise interview (12 Oct 2026): every question on a strip, by kind.
   renderStageStrip(data);
   showFollowupChip(!!data.is_followup);
+  // Random gesture prompts on spoken questions (13 Nov 2026; off unless the template asks).
+  onQuestionShownForProctoring({ isWarmup: !!data.is_warmup, typed: isTypedPayload(data) });
 
   // Skill-wise question bank (10 Oct 2026): a pseudo-code or coding question is
   // READ on screen — no voice, no microphone — in its own panel with a timer.
@@ -2058,6 +2064,10 @@ async function _submitTypedAnswer(result) {
         enterPausedFromServer(data.live || {});
         return {};
       }
+      if (data?.code === "recruiter_terminated") {
+        endByRecruiter(data.message);
+        return {};
+      }
       _setInterviewPhase("waiting_for_answer");
       return { retry: true, message: data?.error || `Could not save (status ${res.status}). Please try again.` };
     }
@@ -2367,6 +2377,10 @@ export async function submitCandidateAnswer(forceSkip = false, _retryAfterTransc
         enterPausedFromServer(blocked.live || {});
         return;
       }
+      if (blocked?.code === "recruiter_terminated") {
+        endByRecruiter(blocked.message);
+        return;
+      }
       if (blocked?.speech_blocked) {
         // The server heard speech evidence: the answer must be sent, not
         // skipped. Re-arming the silence timer here looped skip→409→skip
@@ -2495,6 +2509,7 @@ export async function submitInterview(options = {}) {
   try {
     stopLiveJoinWatch();
     stopFaceMonitoring();
+    stopInterviewProctoring();
     deactivateInterviewSecurity();
   } catch (_) {
     /* teardown is best-effort */

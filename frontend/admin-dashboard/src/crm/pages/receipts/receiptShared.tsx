@@ -29,6 +29,8 @@ export type Receipt = {
   unallocated_amount: number; allocated_amount: number; created_at?: string | null;
   /** TDS withheld on the invoices of this receipt, and what is still pending from the client. */
   tds_total?: number; tds_pending?: number;
+  /** 20 Nov 2026 — the part set aside for an earlier financial year (never mapped). */
+  prior_period_amount?: number; prior_period_note?: string | null; counted_amount?: number;
   /** Proof of the credit (19 Oct 2026) — screenshot / remittance advice. */
   proof_url?: string | null; proof_name?: string | null;
   created_by?: number | null;

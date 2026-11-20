@@ -12,8 +12,9 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, PauseCircle, Pencil, PlayCircle, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, StepForward, Trash2, UserPlus, Users, UsersRound, Wallet, Wrench, X,
+  Activity, AlertTriangle, Archive, ArrowLeft, Bot, Briefcase, Building2, CalendarClock, CalendarDays, CalendarPlus, Check, ClipboardCheck, ClipboardList, Copy, ExternalLink, FileText, FileUp, GraduationCap, Layers, Link2, Mail, MapPin, Megaphone, Pause, PauseCircle, Pencil, PlayCircle, Plus, RefreshCw, RotateCcw, ScanLine, Send, Sparkles, StepForward, Trash2, UserCheck, UserPlus, Users, UsersRound, Wallet, Wrench, X,
 } from "lucide-react";
+import { AI_DECISION_WORDS, aiDecisionLabel, aiDecisionTone, aiIsDecided, aiSuggestion } from "../lib/aiDecision";
 import type { LucideIcon } from "lucide-react";
 import { HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
 import { crmDelete, crmGet, crmPatch, crmPost, crmPut, crmUpload, qs } from "../api";
@@ -620,6 +621,8 @@ type ResumeRow = {
   ai_hr_decision?: string | null;
   ai_hr_decision_label?: string | null;
   ai_effective_result?: string | null;
+  /** The AI's own Passed / Failed — advice beside the "In Review" status (18 Nov 2026). */
+  ai_suggestion?: string | null;
   ai_is_overridden?: boolean;
   /** The AI L1 ran but no scored question was answered (7 Oct 2026) — "never happened", not "failed". */
   ai_not_attempted?: boolean;
@@ -736,8 +739,17 @@ export function reschedulableAi(r: Pick<ResumeRow,
   const finished = r.ai_overall_score_percent != null
     || (!!r.ai_interview_status && !["Scheduled", "Pending", "In_Progress", "Not_Scheduled"].includes(r.ai_interview_status));
   if (!finished) return false;
-  const effective = r.ai_effective_result || r.ai_interview_result || "";
-  return !["Passed", "Selected"].includes(effective);
+  return !aiCountsAsPass(r);
+}
+
+/** A pass that blocks a plain reschedule: RMG / GM's Selected, or a finished
+ *  AI L1 still In Review whose AI read was a pass (18 Nov 2026 — the server's
+ *  rule; the AI's read alone moves nobody, but it is not redone unasked). PURE. */
+export function aiCountsAsPass(r: Pick<ResumeRow, "ai_effective_result" | "ai_interview_result">): boolean {
+  const effective = r.ai_effective_result || "";
+  if (effective === "Selected") return true;
+  if (["Rejected", "On Hold"].includes(effective)) return false;
+  return r.ai_interview_result === "Passed";
 }
 
 /** A PASSED AI L1 that may be redone because it was not a fair test — it ran
@@ -748,22 +760,21 @@ export function redoableAi(r: Pick<ResumeRow,
   "ai_interview_status" | "ai_overall_score_percent" | "ai_effective_result" | "ai_interview_result" | "profile_pipeline_status">): boolean {
   const finished = r.ai_overall_score_percent != null
     || (!!r.ai_interview_status && !["Scheduled", "Pending", "In_Progress", "Not_Scheduled"].includes(r.ai_interview_status));
-  const effective = r.ai_effective_result || r.ai_interview_result || "";
-  return finished && ["Passed", "Selected"].includes(effective)
+  return finished && aiCountsAsPass(r)
     && ["Sourcing", "Technical_Screening", "RMG_Review"].includes(r.profile_pipeline_status || "");
 }
 
 /** The previous outcome the reschedule dialog prints. PURE. */
 export function rescheduleSeed(r: Pick<ResumeRow,
   "ai_not_attempted" | "ai_effective_result" | "ai_interview_result" | "ai_overall_score_percent">): RescheduleSeed {
-  if (r.ai_not_attempted && !["On Hold", "Pending Review"].includes(r.ai_effective_result || "")) {
+  if (r.ai_not_attempted && !["On Hold", "Pending Review", "Selected", "Rejected"].includes(r.ai_effective_result || "")) {
     return { previous: "Not attempted", notAttempted: true };
   }
-  const effective = r.ai_effective_result || r.ai_interview_result || "Finished";
+  const effective = aiDecisionLabel(r) || "Finished";
   const score = r.ai_overall_score_percent;
   return {
     previous: score != null ? `${effective} (${Number(score) % 1 === 0 ? Number(score) : Number(score).toFixed(1)}%)` : effective,
-    passed: ["Passed", "Selected"].includes(effective),
+    passed: aiCountsAsPass(r),
   };
 }
 
@@ -3327,7 +3338,9 @@ export function ResumesTab({
         const rawStatus = r.ai_interview_status && r.ai_interview_status !== "Not_Scheduled"
           ? r.ai_interview_status
           : score != null ? "Completed" : "Not_Scheduled";
-        const status = r.ai_hr_decision_label || rawStatus;
+        // 18 Nov 2026: a finished AI L1 reads "In Review" until RMG / GM decide.
+        const decisionWord = aiDecisionLabel(r);
+        const status = decisionWord && AI_DECISION_WORDS.has(decisionWord) ? decisionWord : rawStatus;
         /* MANUAL ROUTE (1 Sep 2026): RMG chose a human L1 for this candidate,
            so "Not Scheduled" is not a gap waiting to be filled — it is the
            decision. Say so, and show the manual round's own state instead. */
@@ -3377,7 +3390,12 @@ export function ResumesTab({
                 </span>
               ) : (
                 <>
-                  <StatusBadge status={status} />
+                  {AI_DECISION_WORDS.has(status) ? (
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${aiDecisionTone(status)}`}
+                      title={aiIsDecided(r) ? `RMG / GM marked this ${status}` : "The AI interview is done. RMG / GM read the report and decide — Select, Reject or Hold."}>
+                      {aiIsDecided(r) ? <UserCheck size={11} /> : <Bot size={11} />} {status}
+                    </span>
+                  ) : <StatusBadge status={status} />}
                   {score != null && Number.isFinite(Number(score)) && (
                     <span
                       className="inline-flex items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-xs font-bold tabular-nums text-primary"
@@ -3397,12 +3415,10 @@ export function ResumesTab({
                 {fmtDateTime(r.ai_interview_scheduled_at)}
               </span>
             )}
-            {r.ai_is_overridden && (
-              <span
-                className="text-[11px] text-muted"
-                title={`A recruiter marked this ${r.ai_hr_decision_label}. The AI recorded ${r.ai_interview_result}.`}
-              >
-                AI: {r.ai_not_attempted ? "Not attempted" : r.ai_interview_result}
+            {!aiIsDecided(r) && aiSuggestion(r) && (
+              <span className="text-[11px] text-muted"
+                title="The AI's own read of its score — advice only. RMG / GM decide.">
+                {aiSuggestion(r)}
               </span>
             )}
             {showReport && (
@@ -3431,7 +3447,7 @@ export function ResumesTab({
         const done = r.rounds_done ?? 0;
         const chips: { label: string; result: string | null | undefined; scheduled: boolean; requested: boolean }[] = [
           { label: "AI L1", result: r.ai_overall_score_percent != null
-            ? (r.ai_not_attempted && !r.ai_is_overridden ? "Not attempted" : (r.ai_effective_result || r.ai_interview_result || "Done")) : null,
+            ? (r.ai_not_attempted && !aiIsDecided(r) ? "Not attempted" : (aiDecisionLabel(r) || "Done")) : null,
             scheduled: !!r.ai_interview_status && r.ai_interview_status !== "Not_Scheduled", requested: !!r.ai_l1_requested },
           { label: "L1", result: r.l1_manual_result, scheduled: !!r.l1_manual_scheduled, requested: !!r.l1_manual_requested },
           { label: "L2", result: r.l2_result, scheduled: !!r.l2_scheduled, requested: !!r.l2_requested },
@@ -3856,20 +3872,22 @@ export function ResumesTab({
                   {!finished && doneChip(
                     r.ai_interview_scheduled_at ? `AI L1 ${fmtDateTime12(r.ai_interview_scheduled_at)}` : "AI L1 scheduled",
                     "The AI interview has not finished yet — switch to a manual L1 or send the candidate on if you do not want to wait")}
+                  {/* 18 Nov 2026: a finished AI L1 is In Review until YOU decide —
+                      Select · Hold · Reject. The AI's pass / fail is advice only. */}
                   {finished && !onHold && (
                     <button className={FLOW_BTN.success} onClick={() => open("proceed")} disabled={busy}
-                      title={`The AI recorded ${effective || "no verdict"} — your call outranks it: move the candidate to RMG Review for the L2 / Submit to Sales`}>
-                      <StepForward size={13} /> Proceed to review
+                      title={`${aiSuggestion(r) || "The AI L1 is done"} — Select moves the candidate to RMG Review for the L2 / Submit to Sales`}>
+                      <StepForward size={13} /> Select
                     </button>
                   )}
                   {finished && onHold && (
                     <>
                       <button className={FLOW_BTN.success} onClick={() => open("proceed")} disabled={busy}
-                        title="Lift the hold and move the candidate to RMG Review for the L2 / Submit to Sales">
-                        <StepForward size={13} /> Proceed to review
+                        title="Lift the hold and select — the candidate moves to RMG Review for the L2 / Submit to Sales">
+                        <StepForward size={13} /> Select
                       </button>
                       <button className={FLOW_BTN.view} onClick={() => open("release")} disabled={busy}
-                        title="Release the hold — the AI verdict stands again">
+                        title="Release the hold — the AI L1 is In Review again">
                         <PlayCircle size={13} /> Release hold
                       </button>
                     </>
@@ -3902,9 +3920,13 @@ export function ResumesTab({
                 read the row as stuck. The L2 booking button below appears once
                 RMG asks for it. */}
             {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && !r.l2_requested
-              && !r.l2_scheduled && (r.ai_effective_result === "Selected" || r.ai_effective_result === "Passed")
+              && !r.l2_scheduled && r.ai_effective_result === "Selected"
               && doneChip("AI L1 selected — with RMG / GM",
                 "RMG / GM now request the Technical L2 or submit the candidate to Sales. You book the L2 once they ask.")}
+            {/* 18 Nov 2026: finished, nobody has decided yet. */}
+            {isTA && !isRmg && preReview && aiDecisionLabel(r) === "In Review" && !r.ai_not_attempted
+              && doneChip("AI L1 In Review — with RMG / GM",
+                "The AI interview is done. RMG / GM read the report and Select, Reject or Hold — you are told when they decide.")}
             {/* TA schedules the rounds RMG asked for. The manual L1 comes
                 first; the L2 button is the one that already existed. */}
             {isTA && !isRmg && r.profile_pipeline_status === "RMG_Review" && r.profile_id != null
@@ -4564,7 +4586,7 @@ export function ResumesTab({
           context={req.title}
           candidateName={aiAfterRow.row.candidate_name}
           decision={aiAfterRow.decision}
-          aiResult={aiAfterRow.row.ai_effective_result || aiAfterRow.row.ai_interview_result || null}
+          aiResult={aiAfterRow.row.ai_suggestion || aiAfterRow.row.ai_interview_result || null}
           onClose={() => setAiAfterRow(null)}
           onDone={(msg) => { setAiAfterRow(null); toast(msg); load(); }}
         />

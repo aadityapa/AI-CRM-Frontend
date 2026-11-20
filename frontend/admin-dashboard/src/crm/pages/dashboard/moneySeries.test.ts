@@ -17,6 +17,7 @@ describe("money series (6 Nov 2026)", () => {
     const [r] = moneyRows([{ key: "2026-04", label: "Apr 26", billed: 10, collected: 4 }]);
     expect(r.revenue_ex).toBe(10);
     expect(r.received_bank).toBe(4);
+    expect(r.revenue_inc).toBe(0); // never a copy of Ex. Tax (12 Nov 2026)
     expect(moneyDrill("received_tds")).toBe("collected");
     expect(moneyDrill("total_due")).toBe("outstanding");
     expect(moneyDrill("revenue_inc")).toBe("billed");
@@ -25,6 +26,15 @@ describe("money series (6 Nov 2026)", () => {
   it("the predicted bar names its projects and people", () => {
     expect(moneyTooltipNote({ predicted_projects: 12, predicted_heads: 40 }, "predicted")).toBe("12 projects · 40 people");
     expect(moneyTooltipNote({ predicted_projects: 12 }, "revenue_ex")).toBeNull();
+  });
+});
+
+describe("an older server without the split (12 Nov 2026)", () => {
+  it("is detected, so the chart shows only what it sent", async () => {
+    const { moneySplitMissing } = await import("./moneySeries");
+    expect(moneySplitMissing([{ key: "2026-06", label: "Jun 26", billed: 899, collected: 949 }])).toBe(true);
+    expect(moneySplitMissing([{ key: "2026-06", label: "Jun 26", revenue_inc: 1060, total_due: 0 }])).toBe(false);
+    expect(moneySplitMissing([])).toBe(false);
   });
 });
 

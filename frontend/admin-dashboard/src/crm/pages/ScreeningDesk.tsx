@@ -40,7 +40,8 @@ import { crmGet, crmPost, qs } from "../api";
 import { FilePreviewPane } from "../components/FileUpload";
 import { CONTROL, ICON_BTN, STATE_CHIP, type StateTone } from "../components/controlTower";
 import { DirectToSalesButton, FastTrackButton, InternalChip, type InternalEmployee } from "../components/FastTrackToSales";
-import { InterviewRouteChoice, type InterviewRoute } from "../components/InterviewRouteChoice";
+import { AiL1DecisionModal, InterviewRouteChoice, type AiL1Decision, type InterviewRoute } from "../components/InterviewRouteChoice";
+import { aiSuggestion, type AiDecisionFields } from "../lib/aiDecision";
 import { InterviewLadder, type AiL1, type LadderRounds } from "../components/InterviewLadder";
 import { JdSkillsModal } from "../components/JdSkillsModal";
 import { FLOW_BTN } from "../components/flowButtons";
@@ -223,7 +224,7 @@ const FILTER_WORDS: Partial<Record<keyof Filters, Record<string, string>>> = {
   // 27 Oct 2026: the chips say the same band as the dropdown ("16–30", not "≤ 30").
   notice: { serving: "Serving notice / LWD given", "15": "Notice 0–15 days", "30": "Notice 16–30 days",
             "60": "Notice 31–60 days", "90": "Notice > 60 days", unknown: "Notice not recorded" },
-  ai_result: { passed: "AI L1 passed", failed: "AI L1 failed", on_hold: "AI L1 on hold",
+  ai_result: { in_review: "AI L1 In Review", passed: "AI L1 selected", failed: "AI L1 rejected", on_hold: "AI L1 on hold",
                not_attempted: "AI L1 not attempted", pending: "AI L1 pending", none: "No AI L1" },
   l1_result: { hire: "L1: hire", no_hire: "L1: no hire", awaiting: "L1 awaiting verdict", none: "No manual L1" },
 };
@@ -737,8 +738,9 @@ function Desk() {
               <FilterField label="AI L1 outcome">
                 <select className={`${CONTROL} w-full`} value={filters.ai_result} onChange={(e) => setFilter("ai_result", e.target.value)}>
                   <option value="">Any</option>
-                  <option value="passed">Passed</option>
-                  <option value="failed">Failed</option>
+                  <option value="in_review">In Review — waiting for your decision</option>
+                  <option value="passed">Selected</option>
+                  <option value="failed">Rejected</option>
                   <option value="on_hold">On hold</option>
                   <option value="not_attempted">Not attempted (TA reschedules)</option>
                   <option value="pending">Scheduled / not finished</option>
@@ -1111,6 +1113,50 @@ const STEP_OWNER: Record<NextStep["owner"], string> = {
 };
 
 /** The one-line "what now" banner (server `next_step`). */
+/** Select · Hold · Reject on a finished AI L1 (18 Nov 2026, user rule: the AI
+ *  scores, RMG / GM decide). The same `ai-l1-decision` route as Applied
+ *  Candidates; every screen then reads Selected / Rejected / On Hold. */
+function AiL1DecisionCard({ row, onDone }: { row: DeskRow; onDone: (message: string) => void }) {
+  const [pick, setPick] = useState<AiL1Decision | null>(null);
+  const ai = (row as any).ai_l1 as AiDecisionFields & { ai_overall_score_percent?: number | null; ai_report_link?: string | null } | null;
+  const onHold = row.next_step?.key === "ai_on_hold";
+  const score = ai?.ai_overall_score_percent;
+  const suggestion = ai ? aiSuggestion(ai) : null;
+  return (
+    <div className="mt-3 rounded-card border border-sky-300/60 bg-sky-50 p-3 dark:border-sky-800/60 dark:bg-sky-950/30">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm">
+          <b className="text-primary">AI L1 — {onHold ? "On Hold" : "In Review"}</b>
+          {score != null && <span className="ml-2 font-bold tabular-nums text-primary">{Math.round(Number(score))}%</span>}
+          <p className="text-xs text-secondary">
+            {suggestion ? `${suggestion}. ` : ""}The AI's score is advice — read the report, then decide.
+          </p>
+        </div>
+        {ai?.ai_report_link && (
+          <a href={ai.ai_report_link} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300">
+            <ExternalLink size={12} /> Open AI report
+          </a>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <button type="button" className={FLOW_BTN.success} onClick={() => setPick("proceed")}>Select</button>
+        {onHold
+          ? <button type="button" className={FLOW_BTN.view} onClick={() => setPick("release")}>Release hold</button>
+          : <button type="button" className={FLOW_BTN.warn} onClick={() => setPick("hold")}>Put on hold</button>}
+        <button type="button" className={FLOW_BTN.danger} onClick={() => setPick("reject")}>Reject</button>
+      </div>
+      {pick && (
+        <AiL1DecisionModal profileId={row.profile_id} candidateName={row.candidate_name}
+          context={row.position_title} decision={pick}
+          aiResult={ai?.ai_suggestion || ai?.ai_interview_result || null}
+          onClose={() => setPick(null)}
+          onDone={(msg) => { setPick(null); onDone(msg); }} />
+      )}
+    </div>
+  );
+}
+
 function NextStepBanner({ step, override }: { step: NextStep | null | undefined; override?: NextStep }) {
   const s = override || step;
   if (!s || s.key === "wait") return null;
@@ -1213,6 +1259,11 @@ function DetailPane({ row, positionSkills, position, onPositionChanged, roundRes
         <ResultsReviewBanner profileId={row.profile_id} results={row.new_results} onReviewed={(msg) => onChanged(msg)} onError={onError} />
 
         <NextStepBanner step={row.next_step} override={shortlistedMsg ? { key: "route", label: "Choose the interview route — AI L1 or manual L1", owner: "you", tone: "warn" } : undefined} />
+
+        {/* 18 Nov 2026: a finished AI L1 is In Review until YOU decide. */}
+        {(row.next_step?.key === "ai_review" || row.next_step?.key === "ai_on_hold") && (
+          <AiL1DecisionCard row={row} onDone={onDecided} />
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Fact k="Experience" v={years(row.experience_years)}

@@ -17,6 +17,7 @@ import { BudgetFlagModal, BudgetReplyModal, SubmitForApprovalModal } from "../co
 import { CrmApiError, crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { fetchAllMaster } from "../lib/fetchAllMaster";
 import { realEmail } from "../lib/candidateEmail";
+import { aiDecisionLabel } from "../lib/aiDecision";
 import { useHasRole, useMe } from "../CrmApp";
 import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
 import { RmgVerdictHero } from "../components/ScreeningDecisionModal";
@@ -1211,24 +1212,22 @@ export function ProfileDetailPage() {
                           ? "bg-success-soft text-success"
                           : (aiLatest.hr_decision || "").toLowerCase() === "rejected"
                             ? "bg-danger-soft text-danger"
-                            : aiLatest.hr_decision
+                            : (aiLatest.hr_decision || "").toLowerCase() === "on_hold"
                               ? "bg-warning-soft text-warning"
-                              : aiLatest.result === "Passed"
-                                ? "bg-success-soft text-success"
-                                : "bg-danger-soft text-danger"
+                              : "bg-info-soft text-info"   /* 18 Nov 2026: In Review until RMG / GM decide */
                       }`}
                       title={
-                        aiLatest.is_overridden
-                          ? `Recruiter marked this ${aiLatest.hr_decision_label}` +
+                        aiLatest.hr_decision && aiLatest.hr_decision !== "pending_review"
+                          ? `RMG / GM marked this ${aiLatest.hr_decision_label}` +
                             (aiLatest.hr_decision_by ? ` (${aiLatest.hr_decision_by})` : "") +
-                            `. The AI scored ${aiLatest.overall_score_percent}% and recorded ${aiLatest.result}.`
-                          : `AI L1 ${aiLatest.result} at ${aiLatest.overall_score_percent}%`
+                            `. AI score ${aiLatest.overall_score_percent}%.`
+                          : `The AI interview is done (${aiLatest.overall_score_percent}%). It is In Review until RMG / GM ` +
+                            "select, reject or hold it — the AI's pass / fail is only a suggestion."
                       }
                     >
-                      {aiLatest.hr_decision_label ? <UserCheck size={12} /> : <Bot size={12} />}
-                      {aiLatest.hr_decision_label
-                        ? <>AI L1 {aiLatest.hr_decision_label} · {aiLatest.overall_score_percent}%</>
-                        : <>AI L1 {aiLatest.result} · {aiLatest.overall_score_percent}%</>}
+                      {aiLatest.hr_decision && aiLatest.hr_decision !== "pending_review" ? <UserCheck size={12} /> : <Bot size={12} />}
+                      AI L1 {aiDecisionLabel({ ai_hr_decision_label: aiLatest.hr_decision_label,
+                        ai_effective_result: aiLatest.effective_result, ai_interview_result: aiLatest.result })} · {aiLatest.overall_score_percent}%
                     </span>
                   ) : aiPendingCount > 0 ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2.5 py-0.5 text-xs font-semibold text-warning">
@@ -3985,7 +3984,21 @@ function AiResultBadges({ link }: { link: AiInterviewLink }) {
   const decision = (link.hr_decision || "").toLowerCase();
   const label = link.hr_decision_label;
 
-  if (!decision || !label) return <StatusBadge status={link.result} />;
+  // 18 Nov 2026: undecided + finished = "In Review" (the AI's pass / fail is advice).
+  if (!decision || !label) {
+    if (link.result === "Pending") return <StatusBadge status={link.result} />;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${HR_DECISION_TONE.pending_review}`}
+          title="The AI interview is done — RMG / GM read the report and Select, Reject or Hold">
+          In Review
+        </span>
+        <span className="text-[11px] font-medium text-muted">
+          AI suggests {link.result === "Passed" ? "pass" : "below the pass mark"} · {fmtScore(link.overall_score_percent)}
+        </span>
+      </span>
+    );
+  }
 
   const tone = HR_DECISION_TONE[decision] ?? HR_DECISION_TONE.pending_review;
   const who = link.hr_decision_by ? ` by ${link.hr_decision_by}` : "";
@@ -4003,9 +4016,9 @@ function AiResultBadges({ link }: { link: AiInterviewLink }) {
       {link.is_overridden && (
         <span
           className="text-[11px] font-medium text-muted"
-          title={`The AI scored this interview ${fmtScore(link.overall_score_percent)} and recorded "${link.result}". A recruiter overrode that${who}${when}.`}
+          title={`The AI scored this interview ${fmtScore(link.overall_score_percent)}; the decision was made${who}${when}.`}
         >
-          (AI: {link.result} {fmtScore(link.overall_score_percent)})
+          (AI score {fmtScore(link.overall_score_percent)})
         </span>
       )}
     </span>

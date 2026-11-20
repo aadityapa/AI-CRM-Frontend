@@ -31,6 +31,13 @@ import {
   type ConversationConfig,
 } from "../components/interview-template/ConversationSettings";
 import {
+  PROCTORING_OFF,
+  ProctoringSettings,
+  proctoringFromWeights,
+  proctoringToWeights,
+  type ProctoringConfig,
+} from "../components/interview-template/ProctoringSettings";
+import {
   SKILL_BANK_DEFAULTS,
   SkillBankReview,
   bankProblems,
@@ -213,6 +220,8 @@ export function TemplateFormPage({
   const [autoAdvanceEnabled, setAutoAdvanceEnabled] = useState(false);
   // Two-way conversation (9 Oct 2026) — weights.conversation; all off by default.
   const [conversation, setConversation] = useState<ConversationConfig>(CONVERSATION_OFF);
+  // Anti-cheating checks (13 Nov 2026) — weights.proctoring; all off by default.
+  const [proctoring, setProctoring] = useState<ProctoringConfig>(PROCTORING_OFF);
   // Skill-wise question bank (10 Oct 2026) — weights.skillBank; off by default.
   const [skillBank, setSkillBank] = useState<SkillBankConfig>(SKILL_BANK_DEFAULTS);
   // JD upload (Aug 2026): dynamic templates generate questions from the
@@ -628,6 +637,7 @@ export function TemplateFormPage({
     setWarn30Sec(Math.max(10, Math.min(120, Number(tw["30sec"] ?? 30) || 30)));
     setAutoAdvanceEnabled(toBoolean(w.autoAdvanceEnabled ?? w.auto_advance_enabled, true));
     setConversation(conversationFromWeights(w));
+    setProctoring(proctoringFromWeights(w));
     setSkillBank(skillBankFromWeights(w));
     setInitialResponseWaitSec(clampInt(w.initialResponseWaitSec ?? w.initial_response_wait_sec ?? 5, 2, 30));
     setNoResponseExtraWaitSec(
@@ -1165,6 +1175,7 @@ export function TemplateFormPage({
         speechEnergyThreshold,
         speechConfirmMs,
         conversation: conversationToWeights(conversation),
+        proctoring: proctoringToWeights(proctoring),
         skillBank: skillBankToWeights(finalizeBank(skillBank, requiredSkills.split(",")[0]?.trim() || "")),
       };
       fd.append("weights", JSON.stringify(mergedWeights));
@@ -1675,6 +1686,8 @@ export function TemplateFormPage({
             </div>
 
             <ConversationSettings value={conversation} onChange={setConversation} />
+
+            <ProctoringSettings value={proctoring} onChange={setProctoring} />
 
           </div>
         ) : step === 2 ? (

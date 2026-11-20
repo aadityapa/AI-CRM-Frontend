@@ -101,7 +101,8 @@ export function RoundProgress({
       <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Rounds</span>
 
       {hasAi && (() => {
-        const cls = `${chip} ${toneFor(aiResult === "Passed" ? "Hire" : aiResult === "Failed" ? "No Hire" : null).cls}`;
+        // 18 Nov 2026: green / red only for RMG / GM's Selected / Rejected — "In Review" stays neutral.
+        const cls = `${chip} ${toneFor(aiResult === "Selected" ? "Hire" : aiResult === "Rejected" ? "No Hire" : null).cls}`;
         const title = `AI L1${aiScore != null ? ` — ${aiScore}%` : ""}${aiResult ? ` (${aiResult})` : ""}`;
         const body = (
           <>

@@ -1067,6 +1067,12 @@ export function runDeviceTestGate() {
   });
 }
 
+/** The Device Check's camera preview while it is open (13 Nov 2026: a recruiter
+ *  guiding the candidate from the lobby sees it). */
+export function getDeviceTestCameraStream() {
+  return _webcamStream && _webcamStream.active ? _webcamStream : null;
+}
+
 /** Hide gate immediately (cleanup helper used by app.js on emergency errors). */
 export function hideDeviceTestGate() {
   const screen = document.getElementById("screenDeviceTest");

@@ -45,12 +45,30 @@ export const VERDICT_LOOK: Record<Verdict, { label: string; chip: string; dot: s
   pending: { label: "Report pending", chip: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800", dot: "bg-sky-500" },
 };
 
-const DECISION_LOOK: Record<string, string> = {
-  Selected: "text-emerald-700 dark:text-emerald-300",
-  Rejected: "text-rose-700 dark:text-rose-300",
-  "On Hold": "text-amber-700 dark:text-amber-300",
-  "Pending Review": "text-muted",
+/** The STATUS of an interview (18 Nov 2026, user rule): the AI scores, a person
+ *  decides — "In Review" until RMG / GM press Selected / Rejected / On Hold.
+ *  The AI's own read (`verdictOf`) is shown beside it as a suggestion. */
+export type ReviewStatus = "in_review" | "selected" | "rejected" | "on_hold" | "not_attempted" | "terminated" | "pending";
+
+export const STATUS_LOOK: Record<ReviewStatus, { label: string; chip: string; dot: string }> = {
+  in_review: { label: "In Review", chip: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800", dot: "bg-sky-500" },
+  selected: { label: "Selected", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-800", dot: "bg-emerald-500" },
+  rejected: { label: "Rejected", chip: "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950 dark:text-rose-200 dark:ring-rose-800", dot: "bg-rose-500" },
+  on_hold: { label: "On Hold", chip: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800", dot: "bg-amber-500" },
+  not_attempted: VERDICT_LOOK.not_attempted,
+  terminated: VERDICT_LOOK.terminated,
+  pending: VERDICT_LOOK.pending,
 };
+
+/** PURE: the decision status — never taken from the AI's recommendation. */
+export function reviewStatusOf(r: Pick<Row, "status">, v: Verdict): ReviewStatus {
+  const s = String(r.status || "").toLowerCase();
+  if (s === "selected") return "selected";
+  if (s === "rejected") return "rejected";
+  if (s === "on hold") return "on_hold";
+  if (v === "terminated" || v === "not_attempted" || v === "pending") return v;
+  return "in_review";
+}
 
 /** PURE: the AI's verdict for one interview — the recommendation when the
  *  report has one, else read from the score. */
@@ -132,7 +150,7 @@ export function InterviewReportsPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
-  const [verdict, setVerdict] = useState<"all" | Verdict>("all");
+  const [verdict, setVerdict] = useState<"all" | ReviewStatus>("all");
   const [customer, setCustomer] = useState("");
   const [position, setPosition] = useState("");
   const [since, setSince] = useState<Since>("all");
@@ -162,7 +180,10 @@ export function InterviewReportsPage({
   }, [load]);
 
   const rows = useMemo(() => flattenInterviews(candidates), [candidates]);
-  const withVerdict = useMemo(() => rows.map((r) => ({ r, v: verdictOf(r) })), [rows]);
+  const withVerdict = useMemo(() => rows.map((r) => {
+    const v = verdictOf(r);
+    return { r, v, s: reviewStatusOf(r, v) };
+  }), [rows]);
 
   const activeCustomers = useActiveCustomerList();   // the dropdown lists ACTIVE customers (23 Oct 2026)
   const customers = useMemo(
@@ -200,12 +221,12 @@ export function InterviewReportsPage({
 
   const counts = useMemo(() => {
     const out: Record<string, number> = { all: base.length };
-    base.forEach(({ v }) => { out[v] = (out[v] || 0) + 1; });
+    base.forEach(({ s }) => { out[s] = (out[s] || 0) + 1; });
     return out;
   }, [base]);
 
   const shown = useMemo(() => {
-    const list = verdict === "all" ? base : base.filter(({ v }) => v === verdict);
+    const list = verdict === "all" ? base : base.filter(({ s }) => s === verdict);
     const sorted = [...list];
     sorted.sort((a, b) => {
       if (sortBy === "score_high") return (Number(b.r.score) || 0) - (Number(a.r.score) || 0);
@@ -225,8 +246,8 @@ export function InterviewReportsPage({
     return {
       total: base.length,
       avg,
-      hire: base.filter(({ v }) => v === "hire").length,
-      toDecide: base.filter(({ r, v }) => (r.status === "Pending Review" || !r.status) && v !== "not_attempted" && v !== "pending").length,
+      hire: base.filter(({ s }) => s === "selected").length,
+      toDecide: base.filter(({ s }) => s === "in_review").length,
       week: base.filter(({ r }) => (r.date || "") >= weekKey).length,
     };
   }, [base]);
@@ -270,9 +291,9 @@ export function InterviewReportsPage({
 
   const verdictTabs = [
     { key: "all", label: `All · ${counts.all || 0}` },
-    ...(["hire", "consider", "reject", "not_attempted", "terminated", "pending"] as Verdict[])
-      .filter((v) => counts[v])
-      .map((v) => ({ key: v, label: `${VERDICT_LOOK[v].label} · ${counts[v]}` })),
+    ...(["in_review", "selected", "rejected", "on_hold", "not_attempted", "terminated", "pending"] as ReviewStatus[])
+      .filter((s) => counts[s])
+      .map((s) => ({ key: s, label: `${STATUS_LOOK[s].label} · ${counts[s]}` })),
   ];
 
   return (
@@ -298,8 +319,8 @@ export function InterviewReportsPage({
         stats={[
           { label: "Interviews", value: stats.total },
           { label: "Average score", value: stats.total ? `${stats.avg}` : "—", title: "Across interviews that were scored" },
-          { label: "Recommended", value: stats.hire },
-          { label: "Waiting for your decision", value: stats.toDecide },
+          { label: "Selected", value: stats.hire },
+          { label: "In Review — your decision", value: stats.toDecide },
           { label: "Last 7 days", value: stats.week },
         ]}
         actions={(
@@ -309,7 +330,7 @@ export function InterviewReportsPage({
         )}
       >
         <div className="space-y-3">
-          <StagePills tabs={verdictTabs} active={verdict} onChange={(k) => { setVerdict(k as "all" | Verdict); setLimit(PAGE); }} label="AI verdict" />
+          <StagePills tabs={verdictTabs} active={verdict} onChange={(k) => { setVerdict(k as "all" | ReviewStatus); setLimit(PAGE); }} label="Status" />
           <div className="flex flex-wrap items-center gap-2">
             <label className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
@@ -388,11 +409,11 @@ export function InterviewReportsPage({
                 </div>
               ) : (
                 <div className="hidden grid-cols-[minmax(0,2.2fr)_minmax(0,2fr)_minmax(0,1.1fr)_64px_minmax(0,1.3fr)_minmax(0,1fr)_120px] gap-3 border-b border-subtle bg-surface-2 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-muted lg:grid">
-                  <span>Candidate</span><span>Position</span><span>When</span><span>Score</span><span>AI verdict</span><span>Your decision</span><span className="text-right">Report</span>
+                  <span>Candidate</span><span>Position</span><span>When</span><span>Score</span><span>Status</span><span>AI suggestion</span><span className="text-right">Report</span>
                 </div>
               )}
               <ul className="divide-y divide-subtle">
-                {g.rows.map(({ r, v }) => (
+                {g.rows.map(({ r, v, s }) => (
                   <li key={`${r.candidateId}:${r.id}`}>
                     <div
                       role="button"
@@ -420,8 +441,9 @@ export function InterviewReportsPage({
                       </div>
                       <div><ScoreBadge score={r.score} verdict={v} /></div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${VERDICT_LOOK[v].chip}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${VERDICT_LOOK[v].dot}`} aria-hidden /> {VERDICT_LOOK[v].label}
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ring-1 ring-inset ${STATUS_LOOK[s].chip}`}
+                          title={s === "in_review" ? "The AI interview is done — RMG / GM open the report and decide" : undefined}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_LOOK[s].dot}`} aria-hidden /> {STATUS_LOOK[s].label}
                         </span>
                         {r.recruiter_joined ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-200" title="A recruiter joined this interview">
@@ -429,8 +451,8 @@ export function InterviewReportsPage({
                           </span>
                         ) : null}
                       </div>
-                      <div className={`text-xs font-semibold ${DECISION_LOOK[r.status] || "text-muted"}`}>
-                        {r.status === "Pending Review" || !r.status ? "To decide" : r.status}
+                      <div className="text-xs text-muted" title="The AI's own read of the score — advice, not a decision">
+                        {["hire", "consider", "reject"].includes(v) ? <>AI: <b className="font-semibold text-secondary">{VERDICT_LOOK[v].label}</b></> : "—"}
                       </div>
                       <div className="flex items-center justify-end gap-1">
                         <button type="button" onClick={(e) => { e.stopPropagation(); open(r); }}

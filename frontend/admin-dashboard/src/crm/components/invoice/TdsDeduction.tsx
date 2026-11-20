@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { BadgeCheck, CalendarClock, FileCheck2, Hourglass, Landmark, Percent, Receipt } from "lucide-react";
+import { BadgeCheck, CalendarClock, FileCheck2, Hourglass, Landmark, Percent, Receipt, RotateCcw } from "lucide-react";
 
 import { crmGet, crmPost } from "../../api";
 import { CrmLink } from "../../routerHooks";
@@ -280,6 +280,9 @@ export function TdsDeductionModal({
 
 /* ------------------------------------------------ the detail pop-up */
 
+/** Same minimum as the server's `services/tds.MIN_UNDO_REASON`. */
+const UNDO_MIN = 10;
+
 type TdsReceipt = { id: number; payment_date: string | null; amount: number; transaction_id?: string | null; notes?: string | null };
 
 /**
@@ -314,6 +317,21 @@ export function TdsDetailModal({ tds, invoiceNumber, canMark, onClose, onChanged
       .catch(() => { if (alive) setHistory([]); });
     return () => { alive = false; };
   }, [tds.invoice_id]);
+
+  const [undoReason, setUndoReason] = useState("");
+  const received = Number(tds.tds_paid || 0) > 0 || (history?.length ?? 0) > 0;
+  const undoReceived = async () => {
+    if (undoReason.trim().length < UNDO_MIN) return;
+    setBusy(true);
+    setError("");
+    try {
+      const r = await crmPost(`/api/invoices/${tds.invoice_id}/tds-payments/undo`, { reason: undoReason.trim() });
+      onChanged?.(r.message || `TDS received on ${num} undone`);
+    } catch (e: any) {
+      setError(e?.message || "Could not undo");
+      setBusy(false);
+    }
+  };
 
   const amt = Number(amount);
   const problem = !(amt > 0) ? "Enter the TDS amount received" : amt > pending + 0.001 ? `More than the pending ${inr(pending)}` : "";
@@ -397,6 +415,30 @@ export function TdsDetailModal({ tds, invoiceNumber, canMark, onClose, onChanged
                 <input className={inputCls} value={notes} maxLength={255} placeholder="e.g. Q2 FY26-27, seen in 26AS" onChange={(e) => setNotes(e.target.value)} />
               </label>
             </div>
+          </section>
+        )}
+        {canMark && received && (
+          <section className="rounded-card border border-rose-200 bg-rose-50 p-3 dark:border-rose-900 dark:bg-rose-950/40">
+            <h3 className="mb-1 flex items-center gap-1.5 text-sm font-bold text-rose-800 dark:text-rose-200">
+              <RotateCcw size={14} aria-hidden /> Undo “received”
+            </h3>
+            <p className="mb-2 text-xs text-secondary">
+              Marked received by mistake, or you need to unmap / delete this invoice? This takes back every
+              “received” entry above — the TDS reads <b>Pending from client</b> again. The TDS deduction itself stays.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input className={`${inputCls} !w-auto min-w-0 flex-1`} value={undoReason} maxLength={500}
+                placeholder="Why? e.g. marked on the wrong invoice" aria-label="Reason for undoing"
+                onChange={(e) => setUndoReason(e.target.value)} />
+              <button type="button" disabled={busy || undoReason.trim().length < UNDO_MIN}
+                onClick={() => void undoReceived()}
+                className="inline-flex h-9 items-center gap-1.5 rounded-control bg-rose-600 px-3 text-sm font-semibold text-[#fff] hover:bg-rose-700 disabled:opacity-50">
+                <RotateCcw size={14} aria-hidden /> Undo received
+              </button>
+            </div>
+            {undoReason.trim().length > 0 && undoReason.trim().length < UNDO_MIN && (
+              <p className="mt-1 text-[11px] text-warning">At least {UNDO_MIN} characters</p>
+            )}
           </section>
         )}
         {error && <DialogFailure message={error} />}

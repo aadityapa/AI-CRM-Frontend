@@ -83,10 +83,14 @@ export function faceMetrics(landmarks, blendshapes, frameWidth, frameHeight) {
   const H = Math.max(1, Number(frameHeight) || 1);
   let minX = 1;
   let maxX = 0;
+  let minY = 1;
+  let maxY = 0;
   for (const p of landmarks) {
     if (!p) continue;
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
   }
   const px = (p) => ({ x: p.x * W, y: p.y * H });
   const eR = px(landmarks[33]);
@@ -104,6 +108,8 @@ export function faceMetrics(landmarks, blendshapes, frameWidth, frameHeight) {
   const inR = score(blendshapes, "eyeLookInRight");
   return {
     width: Math.max(0, maxX - minX),
+    // The face's box (0..1) — the lighting check measures brightness inside it (13 Nov 2026).
+    box: { x: Math.max(0, minX), y: Math.max(0, minY), w: Math.max(0, maxX - minX), h: Math.max(0, maxY - minY) },
     yaw: (nose.x - eyeMid.x) / iod,
     pitch: (nose.y - eyeMid.y) / eyeToMouth,
     // + = both eyes turned toward the candidate's left, − = toward their right.

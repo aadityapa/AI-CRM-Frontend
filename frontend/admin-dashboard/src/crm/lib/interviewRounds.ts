@@ -70,6 +70,7 @@ export function roundResultTone(result: string | null | undefined): string {
   const v = (result || "").toLowerCase();
   if (!v) return "bg-info-soft text-info";
   if (v.includes("not attempted")) return "bg-warning-soft text-warning";   // never happened ≠ failed (7 Oct 2026)
+  if (v.includes("in review")) return "bg-info-soft text-info";              // AI L1 done, nobody decided (18 Nov 2026)
   if (v.includes("no hire") || v.includes("not recommend") || v === "drop" || v.includes("fail") || v.includes("reject")) {
     return "bg-danger-soft text-danger";
   }

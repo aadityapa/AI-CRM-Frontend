@@ -25,6 +25,9 @@ import { usePageTab } from "../lib/pageState";
 import { useSubTabs } from "../useAccess";
 import { NO_BRANCH, ScopeFilterBar, type FilterOption } from "../components/ScopeFilterBar";
 import { CrmLink } from "../routerHooks";
+import {
+  defaultLedgerPeriod, fyChoices, fyName, ledgerRange, ledgerRangeProblem, type LedgerMode, type LedgerPeriod,
+} from "../lib/ledgerPeriod";
 
 /** Full rupees with paise — for ledgers, where every paisa has to reconcile. */
 const inr2 = (v?: number | null) =>
@@ -708,7 +711,62 @@ const LEDGER_TYPE_TONE: Record<string, string> = {
   TDS: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
   "Credit Note": "bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
   "On account": "bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300",
+  Adjustment: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",
 };
+
+const LEDGER_MODES: { key: LedgerMode; label: string }[] = [
+  { key: "fy", label: "Financial year" },
+  { key: "month", label: "Month" },
+  { key: "custom", label: "Custom dates" },
+  { key: "all", label: "All time" },
+];
+
+/** Financial year / Month / Custom dates / All time — the ledger's period. */
+function LedgerPeriodPicker({ value, onChange }: { value: LedgerPeriod; onChange: (p: LedgerPeriod) => void }) {
+  const set = (patch: Partial<LedgerPeriod>) => onChange({ ...value, ...patch });
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+        Period
+        <div role="group" aria-label="Ledger period" className="inline-flex h-9 overflow-hidden rounded-control border border-subtle">
+          {LEDGER_MODES.map((m) => (
+            <button key={m.key} type="button" aria-pressed={value.mode === m.key} onClick={() => set({ mode: m.key })}
+              className={`px-3 text-xs font-semibold transition-colors duration-micro ${value.mode === m.key
+                ? "bg-brand-600 text-white" : "bg-surface-1 text-secondary hover:bg-surface-2"}`}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {value.mode === "fy" && (
+        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+          Financial year
+          <select className={`${CONTROL} !w-40`} value={value.fy} onChange={(e) => set({ fy: Number(e.target.value) })}>
+            {fyChoices().map((y) => <option key={y} value={y}>{fyName(y)}</option>)}
+          </select>
+        </label>
+      )}
+      {value.mode === "month" && (
+        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+          Month
+          <input type="month" className={`${CONTROL} !w-44`} value={value.month} onChange={(e) => set({ month: e.target.value })} />
+        </label>
+      )}
+      {value.mode === "custom" && (
+        <>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+            From
+            <input type="date" className={`${CONTROL} !w-40`} value={value.from} onChange={(e) => set({ from: e.target.value })} />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
+            To
+            <input type="date" className={`${CONTROL} !w-40`} value={value.to} onChange={(e) => set({ to: e.target.value })} />
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
 /** One branch's totals over the whole ledger (to the To date). */
 export type LedgerBranch = {
   branch_id: number; branch_name: string; invoices: number; debit: number; credit: number; balance: number;
@@ -750,14 +808,17 @@ function BranchCard({ name, sub, balance, active, onClick }: {
   );
 }
 
-function CustomerLedgerTab() {
+export function CustomerLedgerTab() {
   const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
   const [customerId, setCustomerId] = useState("");
   // "" = every branch; "0" = no branch on record; else a branch id.
   const [branchId, setBranchId] = useState("");
   const [branches, setBranches] = useState<LedgerBranch[]>([]);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [period, setPeriod] = useState<LedgerPeriod>(() => defaultLedgerPeriod());
+  const range = ledgerRange(period);
+  const rangeProblem = ledgerRangeProblem(period);
+  const dateFrom = rangeProblem ? "" : range.from;
+  const dateTo = rangeProblem ? "" : range.to;
   const [data, setData] = useState<LedgerData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -799,7 +860,7 @@ function CustomerLedgerTab() {
   const exportCsv = () => {
     if (!data) return;
     downloadCsv(
-      `ledger-${data.customer_name}${branchLabel ? `-${branchLabel}` : ""}.csv`,
+      `ledger-${data.customer_name}${branchLabel ? `-${branchLabel}` : ""}-${range.label.replace(/[^A-Za-z0-9-]+/g, "_")}.csv`,
       ["Date", "Branch", "Type", "Reference", "Note", "Debit", "Credit", "Balance"],
       [
         ["", "", "Opening balance", "", "", "", "", data.opening_balance],
@@ -830,14 +891,7 @@ function CustomerLedgerTab() {
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
-          From
-          <input type="date" className={`${inputCls} !w-40`} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
-          To
-          <input type="date" className={`${inputCls} !w-40`} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-        </label>
+        <LedgerPeriodPicker value={period} onChange={setPeriod} />
         {data && (
           <button className={btnSecondary} onClick={exportCsv}>
             <FileDown size={15} /> Export CSV
@@ -845,6 +899,14 @@ function CustomerLedgerTab() {
         )}
       </div>
 
+      {rangeProblem && <p className="text-xs font-semibold text-danger">{rangeProblem} — showing all time until it is fixed.</p>}
+      {customerId && data && (
+        <p className="text-xs text-muted">
+          Period: <b className="text-secondary">{range.label}</b>
+          {dateFrom ? ` · opening balance = everything before ${fmtDay(dateFrom)}` : ""}
+          {" · "}money set aside for an earlier financial year is not on this statement.
+        </p>
+      )}
       {customerId && branches.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">
@@ -867,7 +929,7 @@ function CustomerLedgerTab() {
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : !customerId ? (
-        <EmptyState message="Pick a customer — the complete ledger shows every invoice, payment, TDS deduction, credit note and money on account with a running balance, branch by branch." />
+        <EmptyState message="Pick a customer — the complete ledger shows every invoice, payment, TDS deduction, credit note, settled balance and money on account with a running balance, branch by branch, for the period you choose." />
       ) : loading ? (
         <Spinner label="Building ledger…" />
       ) : data ? (

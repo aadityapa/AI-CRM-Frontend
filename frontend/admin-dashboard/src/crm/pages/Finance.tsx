@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
   IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Search, Undo2,
-  FileSpreadsheet, Landmark, ScrollText, Bell, XCircle,
+  FileSpreadsheet, Landmark, ScrollText, Bell, XCircle, CheckCircle2,
 } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { DecisionDialog } from "../components/dialogKit";
@@ -39,6 +39,7 @@ import {
   ReversePaymentDialog, type PaymentRow,
 } from "../components/invoice/PaymentLink";
 import { RecordPaymentDialog } from "../components/invoice/RecordPaymentDialog";
+import { SettleInFullDialog } from "../components/invoice/SettleInFull";
 import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
@@ -2109,6 +2110,11 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("Finance");
   const canWrite = useCanAct("invoices", "edit", canWriteRole);
+  /* Admin / CEO delete an invoice with whatever is recorded on it (server rule, 20 Nov 2026). */
+  const isAdminUser = useHasRole();
+  const invoiceDeleteNote = isAdminUser
+    ? "As Admin, payments and TDS recorded on it (even TDS marked received) are removed with it, and money that came from a Received Amount goes back on account. Invoices with a credit note still cannot be deleted."
+    : undefined;
   /* The E-invoice tab is for Finance + every Sales rung + Admin / CEO (the server's rule). */
   const canSeeEInvoices = useHasRole("Finance", "Sales", "Sales_Head");
   /* Each list is a sub-tab a template / custom role can switch off (22 Oct 2026);
@@ -2431,6 +2437,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
                 onView={() => crmNavigate(`invoices/${r.id}`)}
                 onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
                 deleteUrl={`/api/invoices/${r.id}`}
+                deleteNote={invoiceDeleteNote}
                 onDeleted={() => afterListDelete(r.id, setRows, load)}
                 notify={showToast}
                 canEdit={canWrite}
@@ -2477,6 +2484,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
             onView={() => crmNavigate(`invoices/${r.id}`)}
             onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
             deleteUrl={`/api/invoices/${r.id}`}
+            deleteNote={invoiceDeleteNote}
             onDeleted={() => afterListDelete(r.id, setRows, load)}
             notify={showToast}
             canEdit={canWrite}
@@ -3068,6 +3076,7 @@ export function InvoiceDetailPage() {
   const [showPayment, setShowPayment] = useState(false);
   const [reversing, setReversing] = useState<PaymentRow | null>(null);
   const [showTds, setShowTds] = useState(false);
+  const [settleMode, setSettleMode] = useState<"settle" | "undo" | null>(null);
   // The list's pencil lands here with ?edit=1 (11 Sep 2026) — open the editor
   // straight away, then drop the flag so Back/refresh does not reopen it.
   const [showEdit, setShowEdit] = useState<boolean>(() => {
@@ -3144,7 +3153,8 @@ export function InvoiceDetailPage() {
   const paid = Number(inv.paid_amount || 0);
   // Balance vs the same grand total shown in the header / GST banner — the TDS
   // the customer withheld settles the invoice too (16 Oct 2026).
-  const displayBalance = Math.max(0, displayGrand - paid - Number(inv.tds_deducted || 0));
+  const settledAdj = Number(inv.settled_adjustment || 0);
+  const displayBalance = Math.max(0, displayGrand - paid - Number(inv.tds_deducted || 0) - settledAdj);
   const paymentBalance = Number(inv.balance_amount || 0);
 
   // Auto-resolved buyer state for display. Prefer explicit API fields; fall back to
@@ -3458,11 +3468,44 @@ export function InvoiceDetailPage() {
               <>
                 <dt className="text-muted">Paid</dt>
                 <dd className="text-right font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{inr(paid)}</dd>
+                {Number(inv.tds_deducted || 0) > 0 && (
+                  <>
+                    <dt className="text-muted">TDS</dt>
+                    <dd className="text-right font-semibold tabular-nums text-amber-700 dark:text-amber-300">{inr(inv.tds_deducted)}</dd>
+                  </>
+                )}
+                {settledAdj > 0 && (
+                  <>
+                    <dt className="text-muted" title={inv.settlement?.reason || ""}>Settled (adjusted)</dt>
+                    <dd className="text-right font-semibold tabular-nums text-violet-700 dark:text-violet-300">{inr(settledAdj)}</dd>
+                  </>
+                )}
                 <dt className="font-semibold text-primary">Balance</dt>
                 <dd className="text-right text-base font-extrabold tabular-nums text-primary">{formatGstInr(displayBalance)}</dd>
               </>
             )}
           </dl>
+          {!isProforma && inv.settlement && (
+            <p className="mx-4 mb-2 rounded-control bg-violet-50 px-2.5 py-1.5 text-[11px] text-violet-800 dark:bg-violet-900/30 dark:text-violet-200">
+              Settled in full{inv.settlement.by_name ? ` by ${inv.settlement.by_name}` : ""}
+              {inv.settlement.at ? ` on ${new Date(inv.settlement.at).toLocaleDateString("en-IN")}` : ""}
+              {inv.settlement.reason ? ` — ${inv.settlement.reason}` : ""}
+            </p>
+          )}
+          {!isProforma && (inv.can_settle || inv.can_undo_settlement) && (
+            <div className="border-t border-subtle px-4 py-3">
+              {inv.can_settle ? (
+                <button type="button" className={btnSecondary} onClick={() => setSettleMode("settle")}
+                  title="Adjust the small balance left and mark the invoice Paid (not counted as cash)">
+                  <CheckCircle2 size={15} /> Settle in full ({inr(paymentBalance)})
+                </button>
+              ) : (
+                <button type="button" className={btnSecondary} onClick={() => setSettleMode("undo")}>
+                  <RotateCcw size={15} /> Undo settlement
+                </button>
+              )}
+            </div>
+          )}
           {!isProforma && displayGrand > 0 && (
             <div className="px-4 pb-3">
               <div className="h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
@@ -3532,6 +3575,12 @@ export function InvoiceDetailPage() {
           onClose={() => setReversing(null)}
           onDone={(msg) => { setReversing(null); showToast(msg); load(); }}
         />
+      )}
+      {settleMode && (
+        <SettleInFullDialog mode={settleMode} invoiceId={inv.id} invoiceNumber={inv.invoice_number}
+          balance={paymentBalance} settlement={inv.settlement}
+          onClose={() => setSettleMode(null)}
+          onDone={(msg) => { setSettleMode(null); showToast(msg); load(); }} />
       )}
       {showTds && !tds && (
         <TdsDeductionModal

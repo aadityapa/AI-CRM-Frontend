@@ -12,8 +12,17 @@
  *              never a second permission prompt). The recruiter's voice plays on
  *              this page and is mixed into the session recording.
  *
- * Nothing here can end or break the interview: every failure is logged and the
- * AI interview simply carries on.
+ * 13 Nov 2026 — from the moment the link opens:
+ *  - LOBBY mode: before sign-in the page reports where it is (rules, device
+ *    check, gesture check …) to `POST /candidate/invite/{token}/presence` and
+ *    gets the same view back, so a recruiter can call to guide the candidate.
+ *  - WATCH: a recruiter may watch silently (receive-only) — the page sends
+ *    CLONES of the camera, the shared screen and the microphone, and shows
+ *    "A recruiter is watching" (the candidate is always told).
+ *  - TERMINATED: a recruiter ended the interview — `hooks.onTerminated`.
+ *
+ * Nothing here can break the interview: every failure is logged and the AI
+ * interview simply carries on (only the recruiter's Terminate ends it).
  */
 import { apiFetch, escapeHtml } from "./core.js";
 import { mirrorStreamToRecording, ensureMixRunning } from "./recording_mix.js";
@@ -35,8 +44,13 @@ let _callId = "";
 let _remoteStream = null;
 let _mixHandle = null;
 let _localClones = [];
+/** Camera / microphone opened for a lobby call (stopped when the call ends). */
+let _localOwn = null;
 let _pollMs = DEFAULT_POLL_MS;
 let _failures = 0;
+/** watch id -> { pc, clones } — receive-only streams for watching recruiters. */
+const _watches = new Map();
+let _terminatedSeen = false;
 
 /**
  * @param {object} hooks
@@ -47,12 +61,49 @@ let _failures = 0;
  * @param {() => void} [hooks.onTimeUp]   the server says the time limit passed
  */
 export function startLiveJoinWatch(hooks) {
+  // Switching from the lobby to the interview replaces the hooks and the
+  // transport; the poll loop keeps running.
   _hooks = hooks || {};
-  if (_running) return;
+  _ensureStyles();
+  if (_running) {
+    _schedule(300);
+    return;
+  }
   _running = true;
   _failures = 0;
-  _ensureStyles();
+  _terminatedSeen = false;
   _schedule(600);
+}
+
+/**
+ * The lobby (13 Nov 2026): before sign-in the invite token is the credential.
+ * `getStage()` says where the page is now ("rules", "device_check" …).
+ */
+export function startLobbyWatch(token, getStage, hooks = {}) {
+  const tok = encodeURIComponent(String(token || ""));
+  if (!tok) return;
+  startLiveJoinWatch({
+    ...hooks,
+    mode: "lobby",
+    transport: {
+      poll: () => fetch(`/candidate/invite/${tok}/presence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: String((typeof getStage === "function" && getStage()) || "opened") }),
+        cache: "no-store",
+      }),
+      answer: (body) => fetch(`/candidate/invite/${tok}/live/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    },
+  });
+}
+
+/** Report a new lobby stage now instead of on the next poll. */
+export function pokeLiveJoin() {
+  if (_running) _schedule(50);
 }
 
 export function stopLiveJoinWatch() {
@@ -60,8 +111,23 @@ export function stopLiveJoinWatch() {
   if (_timer) clearTimeout(_timer);
   _timer = null;
   _endCall();
+  _endAllWatches();
+  _setWatchedBadge(false, []);
   _hideCard();
   _paused = false;
+}
+
+const _interviewTransport = {
+  poll: () => apiFetch("/candidate/live/state", { method: "GET", cache: "no-store" }, { timeoutMs: 8000 }),
+  answer: (body) => apiFetch("/candidate/live/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }),
+};
+
+function _transport() {
+  return _hooks?.transport || _interviewTransport;
 }
 
 export function isPausedByRecruiter() {
@@ -82,7 +148,7 @@ function _schedule(ms) {
 async function _poll() {
   if (!_running) return;
   try {
-    const res = await apiFetch("/candidate/live/state", { method: "GET", cache: "no-store" }, { timeoutMs: 8000 });
+    const res = await _transport().poll();
     if (res.status === 401 || res.status === 403 || res.status === 404) {
       // Not an invite session (an HR demo) or the session ended — stop quietly.
       if (res.status !== 403) {
@@ -127,6 +193,34 @@ async function _poll() {
 }
 
 async function _applyState(data) {
+  if (data.finished || data.terminated) {
+    if (data.terminated && !_terminatedSeen) {
+      _terminatedSeen = true;
+      _running = false;
+      _endCall();
+      _endAllWatches();
+      _setWatchedBadge(false, []);
+      _hideCard();
+      try {
+        _hooks?.onTerminated?.(data);
+      } catch (err) {
+        console.warn("[live-join] terminate hook failed:", err?.message || err);
+      }
+    } else if (data.finished) {
+      _running = false;
+    }
+    return;
+  }
+  // Silent watch (13 Nov 2026): answer new watch offers, close ended ones.
+  const liveIds = new Set((Array.isArray(data.watch_ids) ? data.watch_ids : []).map(String));
+  for (const id of [..._watches.keys()]) {
+    if (!liveIds.has(id)) _endWatch(id);
+  }
+  for (const w of Array.isArray(data.watch) ? data.watch : []) {
+    if (w && w.id && w.offer && !_watches.has(String(w.id))) await _answerWatch(w, data.ice_servers || []);
+  }
+  _setWatchedBadge(!!data.watched, Array.isArray(data.watchers) ? data.watchers : []);
+  if (_hooks?.mode === "lobby" && data.paused) data = { ...data, paused: false };
   const wantPaused = !!data.paused;
   const call = data.call || null;
   if (wantPaused && !_paused) {
@@ -219,8 +313,20 @@ async function _answerCall(call, iceServers) {
   try {
     const pc = new RTCPeerConnection({ iceServers: Array.isArray(iceServers) ? iceServers : [] });
     _pc = pc;
-    const cam = _hooks?.getCameraStream?.() || null;
-    const mic = _hooks?.getMicStream?.() || null;
+    let cam = _hooks?.getCameraStream?.() || null;
+    let mic = _hooks?.getMicStream?.() || null;
+    // In the lobby nothing may be open yet: a recruiter's call to guide the
+    // candidate opens the camera and microphone for the call itself.
+    if (_hooks?.mode === "lobby" && (!cam || !mic) && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const own = await navigator.mediaDevices.getUserMedia({ audio: !mic, video: !cam && call.video !== false });
+        _localOwn = own;
+        if (!cam) cam = own;
+        if (!mic) mic = own;
+      } catch (err) {
+        console.warn("[live-join] could not open the camera / microphone for the call", err?.message || err);
+      }
+    }
     const audio = _cloneTracks(mic, "audio").concat(mic ? [] : _cloneTracks(cam, "audio"));
     const video = call.video === false ? [] : _cloneTracks(cam, "video");
     _localClones = audio.concat(video);
@@ -241,11 +347,7 @@ async function _answerCall(call, iceServers) {
     await pc.setLocalDescription(answer);
     await _waitForIce(pc);
     if (_pc !== pc) return;
-    const res = await apiFetch("/candidate/live/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ call_id: _callId, answer: pc.localDescription?.sdp || answer.sdp }),
-    });
+    const res = await _transport().answer({ kind: "call", call_id: _callId, answer: pc.localDescription?.sdp || answer.sdp });
     if (!res.ok) {
       console.warn("[live-join] call answer refused", res.status);
       _endCall();
@@ -299,6 +401,12 @@ function _endCall() {
   });
   _localClones = [];
   try {
+    _localOwn?.getTracks().forEach((t) => t.stop());
+  } catch (_) {
+    /* ignore */
+  }
+  _localOwn = null;
+  try {
     _mixHandle?.release();
   } catch (_) {
     /* ignore */
@@ -313,6 +421,96 @@ function _endCall() {
     videoEl.hidden = true;
   }
   document.getElementById("kxLiveCard")?.classList.remove("kx-live-oncall");
+}
+
+/* ------------------------------------------------------------------------- */
+/* Silent watch (13 Nov 2026)                                                 */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The recruiter's offer has three receive-only m-lines in this order:
+ * camera video, screen video, audio. Each gets a CLONE of our track (or
+ * nothing when we do not have it), sent one way.
+ */
+async function _answerWatch(w, iceServers) {
+  if (typeof RTCPeerConnection === "undefined") return;
+  const id = String(w.id);
+  const clones = [];
+  try {
+    const pc = new RTCPeerConnection({ iceServers: Array.isArray(iceServers) ? iceServers : [] });
+    _watches.set(id, { pc, clones });
+    await pc.setRemoteDescription({ type: "offer", sdp: String(w.offer || "") });
+    const cam = _hooks?.getCameraStream?.() || null;
+    const screen = _hooks?.getScreenStream?.() || null;
+    const mic = _hooks?.getMicStream?.() || null;
+    const wanted = { video: [_cloneTracks(cam, "video")[0], _cloneTracks(screen, "video")[0]], audio: [_cloneTracks(mic, "audio")[0]] };
+    const used = { video: 0, audio: 0 };
+    for (const t of pc.getTransceivers()) {
+      const kind = t.receiver?.track?.kind;
+      if (kind !== "video" && kind !== "audio") continue;
+      const track = wanted[kind][used[kind]] || null;
+      used[kind] += 1;
+      if (track) {
+        clones.push(track);
+        await t.sender.replaceTrack(track);
+        t.direction = "sendonly";
+      } else {
+        t.direction = "inactive";
+      }
+    }
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await _waitForIce(pc);
+    if (!_watches.has(id)) return;
+    const res = await _transport().answer({ kind: "watch", watch_id: id, answer: pc.localDescription?.sdp || answer.sdp });
+    if (!res.ok) {
+      console.warn("[live-join] watch answer refused", res.status);
+      _endWatch(id);
+    }
+  } catch (err) {
+    console.warn("[live-join] could not share the stream with the recruiter:", err?.message || err);
+    _endWatch(id);
+  }
+}
+
+function _endWatch(id) {
+  const w = _watches.get(id);
+  _watches.delete(id);
+  if (!w) return;
+  try { w.pc.close(); } catch (_) { /* ignore */ }
+  w.clones.forEach((t) => {
+    try { t.stop(); } catch (_) { /* ignore */ }
+  });
+}
+
+function _endAllWatches() {
+  for (const id of [..._watches.keys()]) _endWatch(id);
+}
+
+/** The candidate is ALWAYS told a recruiter is watching (user decision, DPDP Act). */
+function _setWatchedBadge(on, names) {
+  let el = document.getElementById("kxWatchBadge");
+  if (!on) {
+    if (el) el.hidden = true;
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "kxWatchBadge";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    const dot = document.createElement("span");
+    dot.className = "kx-watch-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.id = "kxWatchText";
+    el.append(dot, text);
+    document.body.appendChild(el);
+  }
+  const who = (names || []).filter(Boolean);
+  const t = document.getElementById("kxWatchText");
+  if (t) t.textContent = who.length ? `${who.join(" and ")} from Karnex ${who.length > 1 ? "are" : "is"} watching` : "A recruiter is watching";
+  el.hidden = false;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -361,11 +559,15 @@ function _showCard(data) {
   if (title) {
     title.innerHTML = onCall ? `You are on a call with ${by}` : `${by} from Karnex has paused the interview`;
   }
+  const lobby = _hooks?.mode === "lobby";
   if (sub) {
-    sub.textContent = onCall
-      ? "Speak normally — they can see and hear you. The AI interviewer is waiting."
-      : "Please wait a moment. You may be asked a question by the recruiter.";
+    sub.textContent = lobby
+      ? "They can help you get set up — how to sit, the light, your headphones. Speak normally."
+      : onCall
+        ? "Speak normally — they can see and hear you. The AI interviewer is waiting."
+        : "Please wait a moment. You may be asked a question by the recruiter.";
   }
+  card.querySelector(".kx-live-points")?.toggleAttribute("hidden", lobby);
   const msg = document.getElementById("kxLiveMsg");
   if (msg) {
     const text = String(data.message || "").trim();
@@ -413,6 +615,11 @@ function _ensureStyles() {
   #kxLiveCard{position:fixed;inset:0;z-index:2147482000;display:none;align-items:center;justify-content:center;
     padding:16px;background:rgba(15,23,42,.55);backdrop-filter:blur(3px)}
   #kxLiveCard.is-visible{display:flex}
+  #kxWatchBadge{position:fixed;top:12px;right:12px;z-index:2147481900;display:flex;align-items:center;gap:8px;padding:7px 12px;
+    border-radius:999px;background:rgba(127,29,29,.92);color:#fff;font:700 12px/1.2 Inter,system-ui,sans-serif;
+    box-shadow:0 8px 24px rgba(15,23,42,.35)}
+  #kxWatchBadge[hidden]{display:none}
+  #kxWatchBadge .kx-watch-dot{width:9px;height:9px;border-radius:50%;background:#f87171;animation:kxLivePulse 1.6s ease-in-out infinite}
   #kxLiveCard.kx-live-callonly{inset:auto 16px 16px auto;background:transparent;backdrop-filter:none;padding:0}
   #kxLiveCard.kx-live-callonly .kx-live-points{display:none}
   .kx-live-panel{width:min(520px,100%);background:#fff;color:#0f172a;border-radius:16px;

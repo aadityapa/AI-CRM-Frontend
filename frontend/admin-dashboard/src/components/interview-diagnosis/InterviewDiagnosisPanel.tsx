@@ -28,6 +28,26 @@ export interface DiagnosisStep {
   detail: string;
 }
 
+/** One counted warning, oldest first (18 Nov 2026). */
+export interface DiagnosisWarning {
+  n: number;
+  type: string;
+  label: string;
+  family: string;
+  at: string | null;
+  question: string;
+  details: string;
+}
+
+/** One warning family: what the page saw and what to tell the candidate. */
+export interface DiagnosisCause {
+  family: string;
+  count: number;
+  label: string;
+  cause: string;
+  advice: string;
+}
+
 export interface InterviewDiagnosis {
   headline: string;
   tone: DiagnosisTone;
@@ -36,6 +56,29 @@ export interface InterviewDiagnosis {
   steps: DiagnosisStep[];
   flags: string[];
   facts: Record<string, unknown>;
+  warnings?: DiagnosisWarning[];
+  causes?: DiagnosisCause[];
+  max_warnings?: number;
+  terminated?: boolean;
+  terminated_by_recruiter?: boolean;
+}
+
+/** "Tell the candidate" text for a WhatsApp / email, from the causes. PURE. */
+export function candidateGuidance(d: InterviewDiagnosis): string {
+  const causes = (d.causes || []).filter((c) => c.advice);
+  if (!causes.length) return "";
+  return [
+    "Before your next interview, please:",
+    ...causes.map((c) => `• ${c.advice}`),
+    "• Keep the interview tab in full screen until you see the Thank-you page.",
+  ].join("\n");
+}
+
+/** The warning that ended the interview (the (max + 1)th), or null. PURE. */
+export function endingWarning(d: InterviewDiagnosis): DiagnosisWarning | null {
+  const max = d.max_warnings ?? 3;
+  const list = d.warnings || [];
+  return d.terminated && !d.terminated_by_recruiter && list.length > max ? list[max] : null;
 }
 
 const TONE: Record<DiagnosisTone, { box: string; icon: React.ReactNode; title: string }> = {
@@ -61,8 +104,21 @@ export function InterviewDiagnosisPanel({ diagnosis }: { diagnosis: InterviewDia
   const [showJourney, setShowJourney] = useState(true);
   const [showFacts, setShowFacts] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [guideCopied, setGuideCopied] = useState(false);
   if (!diagnosis) return null;
   const tone = TONE[diagnosis.tone] || TONE.info;
+  const warnings = diagnosis.warnings || [];
+  const causes = diagnosis.causes || [];
+  const ending = endingWarning(diagnosis);
+  const max = diagnosis.max_warnings ?? 3;
+  const guidance = candidateGuidance(diagnosis);
+  const copyGuide = async () => {
+    try {
+      await navigator.clipboard.writeText(guidance);
+      setGuideCopied(true);
+      setTimeout(() => setGuideCopied(false), 1500);
+    } catch { /* clipboard blocked */ }
+  };
 
   const copy = async () => {
     try {
@@ -105,6 +161,62 @@ export function InterviewDiagnosisPanel({ diagnosis }: { diagnosis: InterviewDia
           )}
         </div>
       </div>
+
+      {warnings.length > 0 && (
+        <div className="mt-3 rounded-control border border-subtle bg-surface-1 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-muted">
+              Warnings — {warnings.length} of {max} allowed
+            </div>
+            <div className="flex gap-1" aria-hidden>
+              {Array.from({ length: Math.max(max + 1, warnings.length) }, (_, i) => (
+                <span key={i}
+                  className={`h-2 w-5 rounded-full ${i < warnings.length ? (i >= max ? "bg-danger" : "bg-warning") : "bg-surface-2"}`} />
+              ))}
+            </div>
+          </div>
+          <ol className="mt-2 space-y-1">
+            {warnings.map((w) => {
+              const isEnd = ending && ending.n === w.n;
+              return (
+                <li key={w.n}
+                  className={`flex items-center gap-2 rounded-control px-2 py-1 text-xs ${isEnd ? "bg-danger-soft ring-1 ring-inset ring-danger/30" : ""}`}>
+                  <span className={`w-5 shrink-0 text-right font-bold tabular-nums ${w.n > max ? "text-danger" : "text-warning"}`}>{w.n}</span>
+                  <span className="font-semibold text-primary">{w.label}</span>
+                  {w.question && <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold text-secondary">Q{w.question}</span>}
+                  {isEnd && <span className="rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold text-[#fff]">Ended the interview</span>}
+                  <span className="ml-auto shrink-0 tabular-nums text-muted">{w.at ? fmtDateTime12(w.at) : ""}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+
+      {causes.length > 0 && (
+        <div className="mt-3 rounded-control border border-subtle bg-surface-1 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-muted">Why it happened · what to tell the candidate</div>
+            {guidance && (
+              <button type="button" onClick={copyGuide}
+                className="inline-flex items-center gap-1 rounded-control border border-subtle px-2 py-0.5 text-[11px] font-semibold text-secondary hover:bg-surface-2">
+                <Copy className="h-3 w-3" /> {guideCopied ? "Copied" : "Copy message for the candidate"}
+              </button>
+            )}
+          </div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {causes.map((c) => (
+              <div key={c.family} className="rounded-control border border-subtle bg-surface-2 p-2.5 text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-primary">
+                  {c.label} <span className="rounded-full bg-warning-soft px-1.5 text-[10px] text-warning">×{c.count}</span>
+                </div>
+                {c.cause && <p className="mt-1 text-secondary">{c.cause}</p>}
+                {c.advice && <p className="mt-1 font-semibold text-success">Tell them: {c.advice}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 rounded-control border border-subtle bg-surface-1">
         <button type="button" onClick={() => setShowJourney((v) => !v)}
