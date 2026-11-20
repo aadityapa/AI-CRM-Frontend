@@ -472,8 +472,9 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
 /**
  * "Set branch" (23 Oct 2026, user ask): name the branch that paid on one or
  * several receipts of ONE customer. The customer's branches come from the same
- * read the Add dialog uses (`invoice-options` meta). A receipt already mapped to
- * another branch's invoices is skipped by the server and named in the toast.
+ * read the Add dialog uses (`invoice-options` meta). 20 Nov 2026: a receipt
+ * already mapped to the old branch's invoices MOVES too (mapped across
+ * branches, each invoice keeps its own branch); another customer is refused.
  */
 function AssignBranchModal({ receipts, onClose, onSaved }: {
   receipts: Receipt[];
@@ -544,9 +545,9 @@ function AssignBranchModal({ receipts, onClose, onSaved }: {
           ))}
         </ul>
         {moving && (
-          <p className="text-xs text-muted">
-            If this receipt is already mapped to invoices of the old branch, unmap them first (open the receipt ▸ Unmap) —
-            otherwise the move is refused.
+          <p className="rounded-control bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-100">
+            The receipt moves to the branch you pick. Invoices it already pays stay mapped and keep their own branch —
+            nothing to unmap. The move is written on the customer's Activity Log.
           </p>
         )}
         {err && <div className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">{err}</div>}

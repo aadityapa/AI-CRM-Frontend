@@ -903,7 +903,7 @@ export function EditReceiptModal({ receipt, onClose, onSaved }: {
                 {branches.map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
               </select>
               {receipt.allocations.length > 0 && (
-                <span className="mt-1 block text-[11px] text-muted">Mapped invoices must belong to the branch you pick.</span>
+                <span className="mt-1 block text-[11px] text-muted">Mapped invoices stay mapped and keep their own branch.</span>
               )}
             </label>
           )}
