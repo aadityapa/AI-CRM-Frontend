@@ -22,6 +22,7 @@ import {
   inrCompact, pct, periodMeta, shiftMonthKey, thisMonthKey, type PeriodKind,
 } from "../components/controlTower";
 import { usePageTab } from "../lib/pageState";
+import { useDataChanged } from "../lib/useDataChanged";
 import { useSubTabs } from "../useAccess";
 import { NO_BRANCH, ScopeFilterBar, type FilterOption } from "../components/ScopeFilterBar";
 import { CrmLink } from "../routerHooks";
@@ -130,8 +131,8 @@ function ProfitTab() {
   const [branchId, setBranchId] = useState<number | null>(null);
   const [projectId, setProjectId] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) { setLoading(true); setError(""); }
     try {
       const res = await crmGet<ProfitData>(`/api/reports/revenue${qs({
         month, period, customer_id: customerId ?? undefined, branch_id: branchId ?? undefined,
@@ -139,12 +140,14 @@ function ProfitTab() {
       })}`);
       setData(res.data);
     } catch (e: any) {
-      setError(e?.message || "Could not load the profit figures");
+      if (!quiet) setError(e?.message || "Could not load the profit figures");
     } finally {
       setLoading(false);
     }
   }, [month, period, customerId, branchId, projectId]);
   useEffect(() => { void load(); }, [load]);
+  // 20 Nov 2026 — follows Finance's mapping / payments without a reload.
+  useDataChanged(() => { void load(true); });
 
   const options = data?.filters?.options;
   const pickCustomer = (id: number | null) => {
@@ -201,7 +204,7 @@ function ProfitTab() {
           onPick={setMonth}
         />
         {data && <span className="text-sm font-semibold text-primary">{data.label}</span>}
-        <button type="button" className={`${ICON_BTN} ml-auto`} onClick={load} aria-label="Refresh" title="Refresh">
+        <button type="button" className={`${ICON_BTN} ml-auto`} onClick={() => void load()} aria-label="Refresh" title="Refresh">
           <RefreshCw className="h-4 w-4" aria-hidden />
         </button>
       </div>
@@ -212,7 +215,7 @@ function ProfitTab() {
         </div>
       )}
 
-      {error ? <ErrorBox error={error} onRetry={load} /> : loading && !data ? <Spinner label="Working out the profit…" /> : data && m ? (
+      {error ? <ErrorBox error={error} onRetry={() => void load()} /> : loading && !data ? <Spinner label="Working out the profit…" /> : data && m ? (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Tile label="Billed" value={inrCompact(m.billed)} sub={`${data.headline.invoices} tax invoices · excl. GST`} />
@@ -417,8 +420,8 @@ function ReceivablesTab() {
       .catch(() => setCustomerNames([]));
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError("");
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) { setLoading(true); setError(""); }
     try {
       const res = await crmGet<ReceivablesData>(`/api/finance/reports/receivables${qs({
         as_of: asOf || undefined, customer_id: customerId || undefined,
@@ -431,14 +434,15 @@ function ReceivablesTab() {
         const row = res.data.customers.find((r) => String(r.customer_id) === customerId);
         setBranchOptions(row?.branches || []);
       }
-      if (customerId) setOpen(new Set([Number(customerId)]));
+      if (customerId && !quiet) setOpen(new Set([Number(customerId)]));
     } catch (e: any) {
-      setError(e?.message || "Could not load the receivables");
+      if (!quiet) setError(e?.message || "Could not load the receivables");
     } finally {
       setLoading(false);
     }
   }, [asOf, customerId, branchId]);
   useEffect(() => { void load(); }, [load]);
+  useDataChanged(() => { void load(true); });
 
   const pickCustomer = (v: string) => { setCustomerId(v); setBranchId(""); setBranchOptions([]); };
 
@@ -508,7 +512,7 @@ function ReceivablesTab() {
         )}
       </div>
 
-      {error ? <ErrorBox error={error} onRetry={load} /> : loading && !data ? <Spinner label="Working out who owes us…" /> : data ? (
+      {error ? <ErrorBox error={error} onRetry={() => void load()} /> : loading && !data ? <Spinner label="Working out who owes us…" /> : data ? (
         <>
           <div className="flex gap-2 rounded-card border border-subtle bg-surface-2 px-4 py-3 text-xs leading-relaxed text-secondary">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" aria-hidden />
@@ -829,9 +833,9 @@ export function CustomerLedgerTab() {
       .catch((e) => setError(e?.message || "Could not load the customer list"));
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!customerId) return;
-    setLoading(true); setError("");
+    if (!quiet) { setLoading(true); setError(""); }
     try {
       const res = await crmGet<LedgerData>(
         `/api/finance/reports/customer-ledger${qs({
@@ -844,13 +848,14 @@ export function CustomerLedgerTab() {
       // while one branch is open.
       setBranches(res.data.branches || []);
     } catch (e: any) {
-      setError(e?.message || "Failed to load ledger");
+      if (!quiet) setError(e?.message || "Failed to load ledger");
     } finally {
       setLoading(false);
     }
   }, [customerId, branchId, dateFrom, dateTo]);
 
   useEffect(() => { void load(); }, [load]);
+  useDataChanged(() => { void load(true); });
 
   const pickCustomer = (v: string) => { setCustomerId(v); setBranchId(""); setBranches([]); setData(null); };
   const oneBranch = branchId !== "";
@@ -927,7 +932,7 @@ export function CustomerLedgerTab() {
       )}
 
       {error ? (
-        <ErrorBox error={error} onRetry={load} />
+        <ErrorBox error={error} onRetry={() => void load()} />
       ) : !customerId ? (
         <EmptyState message="Pick a customer — the complete ledger shows every invoice, payment, TDS deduction, credit note, settled balance and money on account with a running balance, branch by branch, for the period you choose." />
       ) : loading ? (

@@ -26,14 +26,106 @@ import {
 import { DialogActions, DialogFailure, DialogHero, DialogSection } from "../../components/dialogKit";
 import { crmGet, crmPost, crmPut, crmDelete } from "../../api";
 import { CrmLink } from "../../routerHooks";
+import { crmUrl } from "../../router";
 import { useHasRole } from "../../CrmApp";
 import { ConfirmModal, Modal, StatusBadge, btnSecondary, inputCls } from "../../components/ui";
 import {
-  PAYMENT_MODES, ProofChip, ReceiptProofRow, daysLate, fmtDate, inr, isoDay, pillCls,
+  PAYMENT_MODES, ProofChip, ReceiptProofRow, blockNote, daysLate, fmtDate, inr, isoDay, pillCls,
   type BranchOption, type InvoiceOption, type Receipt,
 } from "./receiptShared";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** 20 Nov 2026 (Finance report): an invoice searched for in Map invoices read
+ *  "No invoice matches" — it was billed to another branch / customer record than
+ *  the receipt. `GET /{id}/find-invoices` searches EVERY invoice and says why
+ *  each is not in the list and what mapping it would do. */
+export type InvoiceFit = "here" | "other_branch" | "other_customer" | "paid" | "proforma";
+export type FoundInvoice = InvoiceOption & {
+  customer_id: number | null; customer_name: string | null; proforma_number?: string | null;
+  fit: InvoiceFit; can_map: boolean; move_receipt: boolean; reason: string | null; likely_match?: boolean;
+};
+
+/** PURE: the flags the allocate call needs for the ticked invoices, and a
+ *  problem to show instead of saving. A ticked invoice of another customer
+ *  moves the (unmapped) receipt there; ticked invoices all of ONE other branch
+ *  move it to that branch; mixed with the receipt's own branch they are mapped
+ *  across branches and the receipt stays. */
+export function searchMapFlags(selectedIds: number[], extra: Record<number, FoundInvoice>, receiptCustomerId: number) {
+  const picked = selectedIds.map((id) => extra[id]).filter((p): p is FoundInvoice => !!p && p.fit !== "here");
+  const cross = picked.filter((p) => p.fit === "other_customer");
+  const other = picked.filter((p) => p.fit === "other_branch");
+  const customers = new Set(selectedIds.map((id) => extra[id]?.customer_id ?? receiptCustomerId));
+  if (cross.length && customers.size > 1) {
+    return { move_receipt: false, other_branches: false, problem: "Tick invoices of one customer only — a received amount pays one customer" };
+  }
+  const otherBranches = new Set(other.map((o) => o.branch_id));
+  const allOneOther = other.length > 0 && other.length === selectedIds.length && otherBranches.size === 1
+    && other.every((o) => o.move_receipt);
+  const move = cross.length > 0 || allOneOther;
+  return { move_receipt: move, other_branches: other.length > 0 && !move, problem: "" };
+}
+
+const FIT_LOOK: Record<InvoiceFit, { chip: string; text: string; label: string }> = {
+  here: { chip: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200", text: "text-emerald-700 dark:text-emerald-300", label: "This branch" },
+  other_branch: { chip: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200", text: "text-amber-700 dark:text-amber-300", label: "Another branch" },
+  other_customer: { chip: "bg-purple-50 text-purple-800 dark:bg-purple-950/40 dark:text-purple-200", text: "text-purple-700 dark:text-purple-300", label: "Another customer" },
+  paid: { chip: "bg-surface-2 text-secondary", text: "text-muted", label: "Fully paid" },
+  proforma: { chip: "bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200", text: "text-muted", label: "Proforma" },
+};
+
+function FoundElsewhere({ rows, searching, term, onPick }: {
+  rows: FoundInvoice[]; searching: boolean; term: string; onPick: (f: FoundInvoice) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-card border border-dashed border-sky-300 bg-sky-50/50 p-3 dark:border-sky-800 dark:bg-sky-950/20">
+      <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-sky-800 dark:text-sky-200">
+        <span>Every invoice matching “{term}” — whatever branch or customer it is billed to</span>
+        {searching && <span className="font-normal text-muted">Searching…</span>}
+      </div>
+      {!searching && rows.length === 0 && (
+        <p className="text-xs text-muted">No other invoice matches — check the number, or search by employee / project / PO.</p>
+      )}
+      <ul className="space-y-1.5">
+        {rows.map((f) => {
+          const look = FIT_LOOK[f.fit] || FIT_LOOK.here;
+          const label = !f.can_map ? "Can't map" : f.fit === "here" ? "Tick" : f.move_receipt ? "Move receipt & tick" : "Map anyway";
+          return (
+            <li key={f.id} className="rounded-control border border-subtle bg-surface-1 px-3 py-2">
+              <div className="flex flex-wrap items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-primary">
+                    <span>{f.invoice_number || f.proforma_number || `#${f.id}`}</span>
+                    <span className="text-xs font-normal text-muted">· {fmtDate(f.invoice_date)}</span>
+                    {f.month_label && <span className="rounded-full bg-teal-50 px-1.5 py-px text-[11px] font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-200">{f.month_label}</span>}
+                    <span className={`rounded-full px-1.5 py-px text-[11px] font-semibold ${look.chip}`}>{look.label}</span>
+                    {f.likely_match && <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">Likely match</span>}
+                  </div>
+                  <div className="truncate text-xs text-secondary">
+                    {[f.customer_name, f.branch_name || "no branch on record", f.employee_name, f.project_name].filter(Boolean).join(" · ")}
+                  </div>
+                  {f.reason && <div className={`mt-0.5 text-[11px] ${look.text}`}>{f.reason}</div>}
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-xs text-muted tabular-nums">Balance {inr(f.balance_amount)}</div>
+                  <div className="mt-1 flex items-center justify-end gap-2">
+                    <a href={crmUrl(`invoices/${f.id}`)} target="_blank" rel="noopener noreferrer"
+                      className="text-[11px] font-semibold text-sky-600 hover:underline">Open</a>
+                    <button type="button" disabled={!f.can_map} onClick={() => onPick(f)}
+                      className={`rounded-control px-2.5 py-1 text-xs font-semibold ${f.can_map
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700" : "cursor-not-allowed bg-surface-2 text-muted"}`}>
+                      {label}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 /** Partly paid: some money in, a balance still due (PURE). */
 export function isPartlyPaid(o: Pick<InvoiceOption, "paid_amount" | "balance_amount"> & { tds_deducted?: number }): boolean {
@@ -251,6 +343,25 @@ export function ReceiptDetailModal({ receipt, canEdit, startWith, onClose, onCha
             )}
           </section>
 
+          {/* 20 Nov 2026: the Received TDS entries that go with this money. */}
+          <section>
+            <h3 className="mb-1 text-sm font-bold text-primary">TDS received for these invoices</h3>
+            {(r.tds_receipts || []).length === 0 ? (
+              <p className="text-xs text-muted">No Received TDS entry yet — add the Form 16A / 26AS credit in{" "}
+                <CrmLink to="received-tds" className="font-semibold text-brand-600 hover:underline">Received TDS</CrmLink>.</p>
+            ) : (
+              <ul className="flex flex-wrap gap-1.5">
+                {(r.tds_receipts || []).map((t) => (
+                  <li key={t.id}>
+                    <CrmLink to={`received-tds?entry=${t.id}`}
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-300 hover:underline dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800">
+                      TDS #{t.id} · {fmtDate(t.received_date)} · {inr(t.amount)}{t.certificate_number ? ` · 16A ${t.certificate_number}` : ""}
+                    </CrmLink>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
           {r.notes && (
             <section>
               <h3 className="mb-1 text-sm font-bold text-primary">Notes</h3>
@@ -325,6 +436,27 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
   const [month, setMonth] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [found, setFound] = useState<FoundInvoice[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [extra, setExtra] = useState<Record<number, FoundInvoice>>({});
+  const term = query.trim();
+
+  /* 20 Nov 2026: every search also asks the server for EVERY invoice matching
+     the term — another branch's or customer record's invoice used to read
+     "No invoice matches" with no reason. */
+  useEffect(() => {
+    if (term.length < 3) { setFound([]); setSearching(false); return; }
+    let alive = true;
+    setSearching(true);
+    const branchParam = !receipt.branch_id && branchKey && branchKey !== "none" ? `&branch_id=${branchKey}` : "";
+    const t = window.setTimeout(() => {
+      crmGet<FoundInvoice[]>(`/api/customer-receipts/${receipt.id}/find-invoices?q=${encodeURIComponent(term)}${branchParam}`)
+        .then((res) => { if (alive) setFound(res.data || []); })
+        .catch(() => { if (alive) setFound([]); })
+        .finally(() => { if (alive) setSearching(false); });
+    }, 350);
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [term, receipt.id, receipt.branch_id, branchKey]);
 
   useEffect(() => {
     let alive = true;
@@ -362,12 +494,27 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
     .map((o) => [o.month as string, o.month_label || o.month])).entries()].sort((a, b) => b[0].localeCompare(a[0])), [branchOptions]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return branchOptions.filter((o) => selected.includes(o.id) || (
+    const inList = new Set(branchOptions.map((o) => o.id));
+    // Invoices ticked from the search (another branch / customer) sit on top.
+    const picks = Object.values(extra).filter((e) => selected.includes(e.id) && !inList.has(e.id));
+    return [...picks, ...branchOptions.filter((o) => selected.includes(o.id) || (
       (!month || o.month === month)
-      && (!q || [o.invoice_number, o.employee_name, o.project_name, o.month_label].filter(Boolean).join(" ").toLowerCase().includes(q))));
-  }, [branchOptions, query, month, selected]);
+      && (!q || [o.invoice_number, o.employee_name, o.project_name, o.month_label].filter(Boolean).join(" ").toLowerCase().includes(q))))];
+  }, [branchOptions, query, month, selected, extra]);
+  const outside = useMemo(() => found.filter((f) => !visible.some((v) => v.id === f.id)), [found, visible]);
+  const flags = useMemo(() => searchMapFlags(selected, extra, receipt.customer_id), [selected, extra, receipt.customer_id]);
+  const moveTo = useMemo(() => {
+    if (!flags.move_receipt) return null;
+    const p = selected.map((id) => extra[id]).find((e) => e && e.fit !== "here");
+    return p ? [p.customer_name, p.branch_name].filter(Boolean).join(" · ") : null;
+  }, [flags, selected, extra]);
+  const pickFound = (f: FoundInvoice) => {
+    if (!f.can_map) return;
+    setExtra((x) => ({ ...x, [f.id]: f }));
+    if (!selected.includes(f.id)) toggle(f);
+  };
 
-  const byId = useMemo(() => new Map(options.map((o) => [o.id, o])), [options]);
+  const byId = useMemo(() => new Map([...options, ...Object.values(extra)].map((o) => [o.id, o])), [options, extra]);
   const dueOf = (o: InvoiceOption) => netDue(o.balance_amount, tdsMap[o.id]?.amount ?? 0);
   const ordered = useMemo(() => [...selected].sort((a, b) => {
     const A = byId.get(a); const B = byId.get(b);
@@ -381,7 +528,6 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
   const tdsTotal = ordered.reduce((t, id) => t + (tdsMap[id]?.amount ?? 0), 0);
 
   const toggle = (o: InvoiceOption) => {
-    if (o.payment_block) return;
     if (selected.includes(o.id)) {
       setSelected((s) => s.filter((x) => x !== o.id));
       setTyped((t) => { const n = { ...t }; delete n[o.id]; return n; });
@@ -392,7 +538,8 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
     setTdsAsk(o);
   };
 
-  const missing = needsBranch && !branchKey ? "Pick the branch that paid"
+  const missing = flags.problem ? flags.problem
+    : needsBranch && !branchKey && !flags.move_receipt ? "Pick the branch that paid"
     : !selected.length ? "Tick the invoices this payment covers"
     : plan.over ? plan.over
     : !(mapping > 0) && !(tdsTotal > 0) ? "Nothing to map — the ticked invoices are already paid" : "";
@@ -403,7 +550,9 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
     setError("");
     try {
       const res = await crmPost<Receipt>(`/api/customer-receipts/${receipt.id}/allocate`, {
-        branch_id: !lockedBranch && branchKey && branchKey !== "none" ? Number(branchKey) : null,
+        branch_id: !lockedBranch && !flags.move_receipt && branchKey && branchKey !== "none" ? Number(branchKey) : null,
+        move_receipt: flags.move_receipt,
+        other_branches: flags.other_branches,
         items: ordered.map((id) => ({ invoice_id: id, amount: plan.take[id] > 0 ? plan.take[id] : null })),
         tds: ordered.filter((id) => tdsMap[id]).map((id) => ({
           invoice_id: id, tds_rate: tdsMap[id]!.rate, tds_base: tdsMap[id]!.base, section: tdsMap[id]!.section || null,
@@ -470,13 +619,11 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
               </div>
             ) : undefined}>
             {loading ? <p className="text-xs text-muted">Loading invoices…</p>
-              : needsBranch && !branchKey ? <p className="text-xs text-muted">Pick the branch that paid to see its invoices.</p>
-              : branchOptions.length === 0 ? <p className="text-xs text-muted">No open invoices for this {lockedBranch ? "branch" : "customer"} — nothing to map yet.</p>
               : (
                 <>
                   <div className="mb-2 flex flex-wrap gap-2">
                     <input className={`${inputCls} !w-auto min-w-[14rem] flex-1 text-sm`} value={query}
-                      placeholder="Search invoice no., employee, project or month…" aria-label="Search invoices"
+                      placeholder="Search any invoice no., PO, employee, project or month…" aria-label="Search invoices"
                       onChange={(e) => setQuery(e.target.value)} />
                     {months.length > 1 && (
                       <select className={`${inputCls} !w-40 text-sm`} value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Invoice month">
@@ -485,11 +632,25 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
                       </select>
                     )}
                   </div>
+                  {needsBranch && !branchKey && !visible.length
+                    ? <p className="text-xs text-muted">Pick the branch that paid to see its invoices — or search an invoice number above.</p>
+                    : branchOptions.length === 0 && !visible.length
+                    ? <p className="text-xs text-muted">No open invoices for this {lockedBranch ? "branch" : "customer"}. Search an invoice number above — it finds invoices billed to any branch or customer.</p>
+                    : (
                   <ul className="max-h-[26rem] space-y-1.5 overflow-y-auto pr-1">
-                    {visible.length === 0 && <li className="px-1 py-2 text-xs text-muted">No invoice matches.</li>}
+                    {visible.length === 0 && (
+                      <li className="px-1 py-2 text-xs text-muted">
+                        {term.length >= 3
+                          ? searching ? "Not in this branch's open invoices — searching every invoice…"
+                            : outside.length ? `Not in ${branchName || "this list"} — found below, with why and how to map it.`
+                            : "No invoice matches anywhere."
+                          : "No invoice matches."}
+                      </li>
+                    )}
                     {visible.map((o) => {
                       const on = selected.includes(o.id);
-                      const locked = !!o.payment_block;
+                      const ex = extra[o.id] && extra[o.id].fit !== "here" ? extra[o.id] : null;
+                      const locked = false; // 20 Nov 2026: every issued tax invoice takes money
                       const late = daysLate(o.due_date);
                       return (
                         <li key={o.id} className={`rounded-control border transition-colors ${locked ? "border-subtle bg-surface-2 opacity-70"
@@ -524,7 +685,12 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
                                       <Clock size={10} aria-hidden /> {late} d late</span>
                                   : <span>· due {fmtDate(o.due_date)}</span>)}
                               </span>
-                              {locked && <span className="block text-[11px] text-warning">{o.payment_block}</span>}
+                              {blockNote(o.payment_block) && <span className="block text-[11px] text-amber-700 dark:text-amber-300">{blockNote(o.payment_block)}</span>}
+                              {ex && (
+                                <span className={`mt-0.5 block text-[11px] font-semibold ${FIT_LOOK[ex.fit].text}`}>
+                                  {FIT_LOOK[ex.fit].label}{ex.customer_name ? ` · ${ex.customer_name}` : ""}{ex.branch_name ? ` · ${ex.branch_name}` : ""} — {ex.reason}
+                                </span>
+                              )}
                             </button>
                             <span className="shrink-0 text-right">
                               <span className="block text-xs text-muted tabular-nums">Balance {inr(o.balance_amount)}</span>
@@ -561,6 +727,10 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
                       );
                     })}
                   </ul>
+                    )}
+                  {term.length >= 3 && (outside.length > 0 || searching || visible.length === 0) && (
+                    <FoundElsewhere rows={outside} searching={searching} term={term} onPick={pickFound} />
+                  )}
                 </>
               )}
           </DialogSection>
@@ -584,6 +754,16 @@ export function MapInvoicesModal({ receipt, onClose, onSaved }: {
             )}
             <div className="flex justify-between"><dt className="text-muted">Left on account</dt><dd className={`font-semibold tabular-nums ${plan.left < 0 ? "text-danger" : "text-primary"}`}>{inr(plan.left)}</dd></div>
           </dl>
+          {moveTo && (
+            <p className="rounded-control bg-purple-50 px-2.5 py-2 text-[11px] font-semibold text-purple-800 dark:bg-purple-950/40 dark:text-purple-200">
+              This receipt moves to {moveTo} — it was recorded there by mistake. Logged on the customer's Activity Log.
+            </p>
+          )}
+          {flags.other_branches && (
+            <p className="rounded-control bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              Mapped across branches — the receipt stays on {branchName || "its branch"}; each invoice keeps its own branch.
+            </p>
+          )}
           <p className="text-[11px] text-muted">Unmapping an invoice later puts its money back on account. Nothing here changes the amount received.</p>
         </aside>
       </div>

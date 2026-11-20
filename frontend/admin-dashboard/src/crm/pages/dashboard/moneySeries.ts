@@ -10,12 +10,12 @@
 import type { BarSeries } from "../../components/controlTower";
 
 export type MoneyKey =
-  | "revenue_ex" | "revenue_inc" | "receivable_bank" | "receivable_tds" | "received_bank"
+  | "revenue_ex" | "revenue_inc" | "received_ex" | "due_ex" | "receivable_bank" | "receivable_tds" | "received_bank"
   | "received_tds" | "due_bank" | "due_tds" | "total_due" | "predicted";
 
 export type MoneyRow = {
   key: string; label: string; future?: boolean;
-  billed?: number; collected?: number; received_ex?: number;
+  billed?: number; collected?: number;
   predicted?: number | null; predicted_projects?: number; predicted_heads?: number; predicted_customers?: number;
 } & Partial<Record<MoneyKey, number>>;
 
@@ -26,6 +26,10 @@ export type MoneyGroup = "revenue" | "receivable" | "received" | "due" | "foreca
 export const MONEY_SERIES: { key: MoneyKey; label: string; color: string; hint: string; group: MoneyGroup; short: string }[] = [
   { key: "revenue_ex", label: "Revenue (Ex. Tax)", short: "Ex. Tax", color: "#2563eb", group: "revenue", hint: "invoice value before GST" },
   { key: "revenue_inc", label: "Revenue (Inc Tax)", short: "Inc Tax", color: "#6366f1", group: "revenue", hint: "invoice value with GST" },
+  // 20 Nov 2026 (CEO ask) — on Revenue (Ex. Tax)'s own basis: Received + Due = Revenue (Ex. Tax);
+  // a paid invoice counts its whole value before GST, a partly paid one its share.
+  { key: "received_ex", label: "Received (Ex. Tax)", short: "Ex. Tax", color: "#059669", group: "received", hint: "paid / partly paid invoices, value before GST — moves with Revenue (Ex. Tax)" },
+  { key: "due_ex", label: "Due (Ex. Tax)", short: "Ex. Tax", color: "#dc2626", group: "due", hint: "still open, value before GST — Received + Due = Revenue (Ex. Tax)" },
   { key: "receivable_bank", label: "Receivable Bank", short: "Bank", color: "#06b6d4", group: "receivable", hint: "Inc Tax − TDS: the cash the customer should send" },
   { key: "receivable_tds", label: "Receivable TDS", short: "TDS", color: "#8b5cf6", group: "receivable", hint: "TDS the customer deducts (booked, else expected at the Settings rate)" },
   { key: "received_bank", label: "Received Bank", short: "Bank", color: "#10b981", group: "received", hint: "cash recorded against the invoices" },
@@ -48,11 +52,11 @@ export const moneySeriesOf = (k: string) => MONEY_SERIES.find((s) => s.key === k
 export type MoneyPreset = "overview" | "revenue" | "receivable" | "received" | "due" | "all";
 
 export const MONEY_PRESETS: { key: MoneyPreset; label: string; keys: MoneyKey[] }[] = [
-  { key: "overview", label: "Overview", keys: ["revenue_ex", "received_bank", "total_due", "predicted"] },
+  { key: "overview", label: "Overview", keys: ["revenue_ex", "received_ex", "due_ex", "predicted"] },
   { key: "revenue", label: "Revenue", keys: ["revenue_ex", "revenue_inc", "predicted"] },
   { key: "receivable", label: "Receivable", keys: ["revenue_inc", "receivable_bank", "receivable_tds"] },
-  { key: "received", label: "Received", keys: ["receivable_bank", "received_bank", "receivable_tds", "received_tds"] },
-  { key: "due", label: "Due", keys: ["due_bank", "due_tds", "total_due"] },
+  { key: "received", label: "Received", keys: ["revenue_ex", "received_ex", "received_bank", "received_tds"] },
+  { key: "due", label: "Due", keys: ["due_ex", "due_bank", "due_tds", "total_due"] },
   { key: "all", label: "All", keys: MONEY_SERIES.map((s) => s.key) },
 ];
 
@@ -76,7 +80,7 @@ export function moneySplitMissing(rows: MoneyRow[]): boolean {
 
 /** The series an older server can still fill (Revenue Ex. Tax = billed,
  *  Received Bank = cash collected, the prediction). */
-export const FALLBACK_MONEY_KEYS: MoneyKey[] = ["revenue_ex", "received_bank", "predicted"];
+export const FALLBACK_MONEY_KEYS: MoneyKey[] = ["revenue_ex", "received_ex", "due_ex", "received_bank", "predicted"];
 
 /** Rows ready for the chart. An older server without the split keys still
  *  draws Revenue (Ex. Tax) = billed and Received Bank = collected; every other
@@ -89,6 +93,9 @@ export function moneyRows<T extends MoneyRow>(rows: T[]): (T & Record<MoneyKey, 
       ...r,
       revenue_ex: ex,
       revenue_inc: n(r.revenue_inc),
+      received_ex: n(r.received_ex),
+      // An older server sends received_ex only — the rest of the value before GST is due.
+      due_ex: r.due_ex !== undefined ? n(r.due_ex) : Math.max(0, ex - n(r.received_ex)),
       receivable_bank: n(r.receivable_bank), receivable_tds: n(r.receivable_tds),
       received_bank: n(r.received_bank ?? r.collected),
       received_tds: n(r.received_tds),

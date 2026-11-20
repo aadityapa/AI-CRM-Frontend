@@ -140,7 +140,9 @@ export function MoneyStoryChart({
 
   const fade = (k: MoneyKey) => (spot && spot !== k ? 0.18 : 1);
   const received = totals.received_bank + totals.received_tds;
-  const collectedPct = splitMissing ? null : shareOf(received, totals.revenue_inc);
+  // 20 Nov 2026 (CEO ask) — Received / Due on Revenue (Ex. Tax)'s own basis, so a paid
+  // invoice moves its whole value before GST from Due to Received.
+  const collectedPct = shareOf(totals.received_ex, totals.revenue_ex);
   const notSent = "not sent — update the server";
 
   return (
@@ -184,11 +186,13 @@ export function MoneyStoryChart({
         <div className="relative mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
           <HeadStat label="Revenue (Ex. Tax)" value={inrCompact(totals.revenue_ex)}
             sub={splitMissing ? `Inc Tax ${notSent}` : `Inc Tax ${inrCompact(totals.revenue_inc)}`} dot="#93c5fd" />
-          <HeadStat label={splitMissing ? "Collected (with GST)" : "Received (Bank + TDS)"} value={inrCompact(received)}
-            sub={splitMissing ? `TDS ${notSent}` : collectedPct === null ? "nothing billed yet" : `${collectedPct}% of Inc Tax`}
+          <HeadStat label="Received (Ex. Tax)" value={inrCompact(totals.received_ex)}
+            sub={collectedPct === null ? "nothing billed yet"
+              : splitMissing ? `${collectedPct}% of Revenue (Ex. Tax)`
+              : `${collectedPct}% of Ex. Tax · with GST ${inrCompact(received)}`}
             dot="#6ee7b7" ring={collectedPct} />
-          <HeadStat label="Total Due" value={splitMissing ? "—" : inrCompact(totals.total_due)}
-            sub={splitMissing ? notSent : `Bank ${inrCompact(totals.due_bank)} · TDS ${inrCompact(totals.due_tds)}`} dot="#fca5a5" />
+          <HeadStat label="Due (Ex. Tax)" value={inrCompact(totals.due_ex)}
+            sub={splitMissing ? `Total Due ${notSent}` : `Total Due ${inrCompact(totals.total_due)} · Bank ${inrCompact(totals.due_bank)} · TDS ${inrCompact(totals.due_tds)}`} dot="#fca5a5" />
           {withPredicted
             ? <HeadStat label="Predicted revenue" value={inrCompact(totals.predicted)}
                 sub={futureRows.length ? `incl. ${futureRows.length} month${futureRows.length === 1 ? "" : "s"} ahead` : "deployed team × rate"} dot="#f0abfc" />
@@ -437,8 +441,7 @@ function MiniTooltip({ active, row, keys, canOpen }: { active?: boolean; row?: F
 function Spotlight({ row, live, pinned = false, withPredicted, openLabel, onOpen }: {
   row: Full; live: boolean; pinned?: boolean; withPredicted: boolean; openLabel: string | null; onOpen?: (e: React.MouseEvent) => void;
 }) {
-  const received = row.received_bank + row.received_tds;
-  const pct = shareOf(received, row.revenue_inc);
+  const pct = shareOf(row.received_ex, row.revenue_ex);
   const predPct = shareOf(row.revenue_ex, row.predicted);
   return (
     <aside className="flex flex-col rounded-card border border-subtle bg-surface-2 p-4" aria-live="polite">
@@ -455,6 +458,16 @@ function Spotlight({ row, live, pinned = false, withPredicted, openLabel, onOpen
         <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#dbeafe]">Revenue (Ex. Tax)</div>
         <div className="tnum text-2xl font-bold">{inrCompact(row.revenue_ex)}</div>
         <div className="text-[11px] text-[#e0e7ff]">Inc Tax {inrCompact(row.revenue_inc)}</div>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="rounded-lg bg-[#ffffff1f] px-2 py-1">
+            <div className="text-[#d1fae5]">Received (Ex. Tax)</div>
+            <div className="tnum text-sm font-bold">{inrCompact(row.received_ex)}</div>
+          </div>
+          <div className="rounded-lg bg-[#ffffff1f] px-2 py-1">
+            <div className="text-[#fee2e2]">Due (Ex. Tax)</div>
+            <div className="tnum text-sm font-bold">{inrCompact(row.due_ex)}</div>
+          </div>
+        </div>
       </div>
 
       <div className="mt-3 space-y-3">

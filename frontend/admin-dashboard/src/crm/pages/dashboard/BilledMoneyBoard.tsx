@@ -82,6 +82,7 @@ export function BilledMoneyBoard({ kpis, activeKey, onPick }: {
         </Stage>
         <Arrow />
         <Stage icon={Wallet} title="Received" color="#10b981" note={recPct === null ? "nothing billed" : `${recPct}% of Inc Tax came in`}>
+          {fig("received_ex", true)}
           <Progress label="Bank" got={v("received_bank")} of={v("receivable_bank")} color="#10b981" />
           {fig("received_bank")}
           <Progress label="TDS" got={v("received_tds")} of={v("receivable_tds")} color="#84cc16" />
@@ -89,7 +90,8 @@ export function BilledMoneyBoard({ kpis, activeKey, onPick }: {
         </Stage>
         <Arrow />
         <Stage icon={Clock} title="Due" color="#ef4444" note="still to come">
-          {fig("total_due", true)}
+          {fig("due_ex", true)}
+          {fig("total_due")}
           <div className="grid grid-cols-2 gap-2">
             {fig("due_bank")}
             {fig("due_tds")}

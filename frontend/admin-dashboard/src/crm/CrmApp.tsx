@@ -934,9 +934,11 @@ export default function CrmApp() {
   // customer tab replaces, so the global entry stays for everyone.
   // "projects" is deliberately NOT here any more: it became the project hub
   // (PE / Timesheets / POs / Invoices tabs) replacing the Timesheets entry.
+  // "invoices" left the set on 20 Nov 2026 (user ask): it is its own entry under
+  // Projects for everyone who reads invoices.
   const HUB_COVERED = new Set([
     "project-employees", "holidays",
-    "pos", "invoices",
+    "pos",
   ]);
   const customersRoleOk = isSuperAdmin(me.roles)
     || (NAV.find((n) => n.path === "customers")?.roles || []).some((r) => me.roles.includes(r));
@@ -965,12 +967,12 @@ export default function CrmApp() {
     }
     // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
     // login (Admin / CEO included) reaches received amounts from the customer branch page.
-    if (n.path === "received-amounts") return me.roles.includes("Finance");
+    if (n.path === "received-amounts" || n.path === "received-tds") return me.roles.includes("Finance");
     // Expenses (4 Nov 2026): Finance + Admin / CEO by role — the server's gate.
     if (n.path === "expenses") return me.roles.includes("Finance") || isSuperAdmin(me.roles);
     // E-invoices (21 Oct 2026): Finance + every Sales rung + Admin / CEO, and a
     // templated login only while its template opens Invoices (the server gate).
-    if (n.path === "e-invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);
+    if (n.path === "e-invoices" || n.path === "invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (

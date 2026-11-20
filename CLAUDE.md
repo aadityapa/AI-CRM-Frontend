@@ -6,7 +6,11 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 20 Nov 2026, later (Reports ▸ **Customer Ledger** for Finance / Admin / CEO with
+**Last updated:** 20 Nov 2026, latest (Employees list: "Employment Type" column + filter; New Employee asks Full-Time · Part-Time · Contract / Consultant · Intern). Before: 20 Nov 2026, closing (Invoices list: tick invoices of one customer / press **Map** on a row / "Map money to these N" on a customer group → `MapMoneyDialog` puts cash from Received Amount and TDS from Received TDS on them in one step; the CEO money board reads **Received (Ex. Tax) · Due (Ex. Tax)** beside Revenue (Ex. Tax); server half in B-V2). Before: 20 Nov 2026, latest-final (Admin / CEO delete an employee in one step from the Employees list; the delete dialog says what goes with them; server half in B-V2). Before: 20 Nov 2026, after final (Invoices opens on an **All** tab with a Stage filter + every other filter; **Invoices** in the sidebar right under Projects; `stage` takes a CSV; no migration, restart). Before: 20 Nov 2026, final (Map invoices: searching any invoice number shows it even when it is billed to another branch or customer, with why and a Move receipt & tick / Map anyway button; server half in B-V2). Before: 20 Nov 2026, very last (CEO Finance tab: the cash view shows **Paid this period's invoices · Paid earlier invoices · Still on account** with a line tying it to the work-month Received; Total Due says "₹x received, not mapped · really owed ≈ ₹y" and how much TDS is expected; the cash ÷ billed ratio is gone; the CEO dashboard, drill pages, Revenue report and Financial Reports re-read every minute and at once after a change — `crm/lib/useDataChanged.ts`). Before: 20 Nov 2026, last (invoice step 4 is **Admin / CEO approval** — payment + TDS checklist, Approve &
+close / Undo; Dashboard tab **Invoice approvals** for Admin / CEO with a ready-count badge; server half + migration 0156
+in B-V2). Before: 20 Nov 2026, latest (**Received TDS** page + customer tab; "Invoices settled" column gone from
+Received Amount; the invoice's Record payment / Record TDS replaced by links; amount per invoice on Add received amount;
+"Settle small balances…" on the Partially paid tab; server half + migration 0155 in B-V2). Before: 20 Nov 2026, later (Reports ▸ **Customer Ledger** for Finance / Admin / CEO with
 Financial year · Month · Custom dates · All time; **Settle in full** on a partly paid invoice; "Part of this amount pays an
 earlier financial year" on Add / Edit received amount; server half + migration 0154 in B-V2). Before: 20 Nov 2026 (TDS chip pop-up: **Undo "received"** with a reason; Admin unmaps / deletes an invoice with received TDS in one step, the dialogs say so; server half in B-V2). Before: 18 Nov 2026, latest (an AI L1 reads **In Review** on every screen until RMG / GM Select / Reject /
 Hold — `crm/lib/aiDecision.ts`; the Integrity tab's "What happened" lists each warning, the one that ended the
@@ -4436,3 +4440,130 @@ full by … — reason" line, and **Settle in full (₹x)** / **Undo settlement*
 financial year" → Earlier-year part + which invoices; "Counted here ₹x of ₹y"; the allocation preview uses the counted part;
 posts `prior_period_amount / prior_period_note`. **Edit receipt** has the same two fields + "All that is not on invoices is for
 an earlier year". The list's Amount cell shows "− ₹x earlier FY"; the workbench's Received tile names it.
+
+
+**20 Nov 2026 (latest) — Received TDS, a lighter Received Amount list, bulk settle (`crm/pages/ReceivedTds.test.ts` 3;
+server half + migration 0155 in B-V2 `CLAUDE.md`):** (1) **Received Amount list** (`CustomerReceipts.tsx`, every home —
+sidebar, customer, branch): the "Invoices settled" column is gone; an **On account** column (amber amount / "Fully mapped")
+takes its place; the receipt's invoices, TDS and the new **"TDS received for these invoices"** links (`receipt.tds_receipts`
+→ `received-tds?entry=`) live in the workbench. `?q=` pre-fills the search. (2) **`crm/pages/ReceivedTds.tsx`** —
+`ReceivedTdsPage({scope?, standalone?})`: sidebar **Received TDS** (`received-tds`, Percent icon, Finance only like Received
+Amount) and Customers ▸ customer ▸ **Received TDS** tab (after Received Amount, Invoices grant). List: date · customer ·
+branch · TDS amount · certificate / quarter / section / proof · mapped ("₹x to map" / fully mapped) · received amount links.
+**Add received TDS** (`TdsMapDialog`, amber): customer, date, amount ("Use the ticked TDS"), Form 16A no., quarter (PURE
+`quarterOf`, Indian FY), section, reference, "Goes with the received amount" (optional select), proof (same upload as
+receipts), then the invoices with an editable **TDS on this invoice ₹** per row (PURE `tdsPlan` = the server's
+`plan_tds`). `TdsEntryModal`: three stats, mapped invoices with **Unmap** ("booked here" chip), linked received amounts +
+"Name the received amount" select, **Map to invoices**, Delete. `?entry=<id>` opens one (`entry` in `CRM_FILTER_KEYS`).
+(3) **Invoice page step 4** (`InvoiceJourney`): Record payment / Record TDS are gone — **Map in Received Amount** /
+**Received TDS** links (`?q=<invoice number>`) and, when TDS exists, the TDS chip button (details / undo). (4) **Every issued
+invoice is mappable**: `receiptShared.blockNote(payment_block)` turns the approval / IRN note into amber information
+("Customer approval pending — you can still map it"); no lock in Add received amount or Map invoices. **Add received
+amount** takes **Amount on this invoice ₹** per ticked invoice (`typed`, preview through `mapPlan`, posts `items`).
+(5) **Invoices ▸ Partially paid**: **Settle small balances…** (Finance by role) → `SettleInFull.BulkSettleDialog` (every
+partly paid invoice, balances ≤ ₹100 pre-ticked — PURE `smallBalances`, a limit box, search, reason with picks) →
+`POST /api/invoices/settle-in-full/bulk`.
+
+
+**20 Nov 2026 (last) — invoice step 4 = Admin / CEO approval; the "Invoice approvals" Dashboard tab
+(`crm/pages/dashboard/InvoiceApprovals.test.ts` 2; server half + migration 0156 in B-V2 `CLAUDE.md`):** user ask with a
+screenshot — the Payment step replaced by an Admin / CEO approval once payment and TDS are collected, and a tab on their
+Dashboard. (1) **`InvoiceJourney`** (title now "From invoice to approval"): step 4 **Admin / CEO approval** reads the
+server's `closure` block (types `Closure` / `ClosureCheck`): a checklist Payment collected · TDS collected (✓ / dashed amber
+with the server's detail; an older server falls back to balance / TDS), the collected bar, then "Approved — invoice closed"
+(who · when · note), a rose "Approved — but the money changed since" for `changed`, or "Everything is done — waiting for
+Admin / CEO". Buttons from the flags: **Approve & close** / **Re-approve** (`DecisionDialog` → `POST …/closure-approval`),
+**Undo approval** (reason ≥ 10 → `…/closure-approval/undo`); Finance keeps Map in Received Amount (balance > 0), Received
+TDS (TDS pending) and TDS details until approved. Step 4 is "done" only when approved (`journeyStates` 3rd flag).
+(2) **`crm/pages/dashboard/InvoiceApprovals.tsx`** — `InvoiceApprovals` (emerald → sky header, "Approve N selected"), five
+`Tile`s (Ready for your approval · Oldest waiting · Changed after approval · Approved this month · Not ready yet — each
+switches the state), state pills with counts (Ready · Changed · Not ready · Approved · All), search / customer / work-month
+filters (`useSessionState("dash.invoiceApprovals")`), "Still to do" chips on Not ready, and the table: checkbox (ready /
+re-approvable rows), invoice link + date, customer · branch · employee · period, total, how it was collected (PURE
+`collectedLine`), five `CheckDots`, where it stands (waiting days, next step, approved by), Approve / Re-approve / Undo /
+Open; paged 25, re-reads on `DESK_CHANGED_EVENT`. Exports PURE `approvable`, `approveSpec`, `undoSpec`, `STATE_LOOK`.
+(3) **`CeoDashboard`**: tab `approvals` "Invoice approvals" (BadgeCheck, after Billing Tracker; `OWN_TABS` = billing ·
+approvals — no period controls), shown to Admin / CEO only (the Finance / Sales mounts pass their own `tabs`), with a
+green count badge of ready invoices (`useApprovalsBadge`, `meta.counts.ready`, every 60 s while visible); 6 tabs →
+`xl:grid-cols-6`.
+
+**20 Nov 2026 (very last) — the Finance tab's two views reconcile, and every money page follows Finance's mapping
+(server half in B-V2 `CLAUDE.md`; `CeoDashboard.test.tsx` re-pinned — it picks the `/api/dashboard/ceo` call, the
+Invoice approvals badge reads first):** (1) **Cash received month** (`CeoDashboard.tsx`): `CASH_SERIES` = Paid this
+period's invoices (`cash_this_period`, emerald) · Paid earlier invoices (`cash_earlier`, purple) · Still on account ·
+Cash received (line) · Revenue (Inc Tax) for comparison (cash carries GST, so it is never compared with Ex. Tax);
+presets Overview · Mapping · Cash vs revenue · All; stats Cash received · Mapped · Paid earlier invoices · Still on
+account; the spotlight drops "Cash in ÷ billed" (it read 1366 % on a month with one small invoice); `CashReconcile`
+footer: "Mapped ₹x = ₹y for this FY's invoices (Received Bank there: ₹z) + ₹w for invoices from before this FY". An
+older server (no split) reads all mapped cash as this period's. (2) **Total Due tile**: sub "Bank · TDS (₹x expected)",
+foot "₹x received, not mapped · really owed ≈ ₹y" from `money.on_account` / `total_due_net` / `due_tds_expected`; the
+work-month chart footer says the same. (3) **Live**: `useDeskData(url, {live: 60_000})` on the CEO dashboard, drill
+pages 60 s (was 120 s); **`crm/lib/useDataChanged.ts`** (`DESK_CHANGED_EVENT` + storage at once, focus / visibility
+throttled 15 s, a timer while visible) drives quiet re-reads in the Revenue report (`quietRef`) and Financial Reports
+(Profit · Who owes us · Customer ledger — `load(quiet)`; Refresh / Retry call `load()` so the click is never `quiet`).
+
+**20 Nov 2026 (final) — Map invoices finds every invoice (`crm/pages/receipts/searchMapFlags.test.ts` 3; server half in
+B-V2 `CLAUDE.md`):** screenshot — an IRN-added Unpaid invoice read "No invoice matches" in a receipt's Map invoices
+because it is billed to another branch / customer record. `ReceiptWorkbench.MapInvoicesModal`: the search box always
+shows (also before a branch is picked or when the branch has no open invoices); from 3 characters it also calls
+`GET /api/customer-receipts/{id}/find-invoices` (debounced 350 ms) and lists the matches not already in the list in
+**`FoundElsewhere`** (dashed sky panel: number · date · month · fit chip This branch / Another branch / Another
+customer / Fully paid / Proforma · customer · branch · employee · project · balance · the server's reason · Open (new
+tab) · **Tick / Move receipt & tick / Map anyway / Can't map**). A picked one joins the list on top (`extra`) with its
+reason line; PURE exported **`searchMapFlags(selected, extra, receiptCustomerId)`** decides the POST: another customer's
+invoice → `move_receipt` (only with no invoice of the receipt's own customer — else "Tick invoices of one customer
+only"); every ticked invoice from ONE other branch → `move_receipt`; mixed with the receipt's branch →
+`other_branches`. The aside says "This receipt moves to …" or "Mapped across branches". Types `FoundInvoice`,
+`InvoiceFit`, `FIT_LOOK`.
+
+**20 Nov 2026 (after) — Invoices opens on an All tab; Invoices in the sidebar under Projects (`invoiceStages.test.ts`
+now 4; server half in B-V2 `CLAUDE.md`):** user ask with a screenshot. (1) `lib/invoiceStages.ts`: `ALL_INVOICES_TAB_KEY`
+"All" is the FIRST tab and the default (`?tab=Unpaid` etc. still work); `invoiceTabParams(tab, stages)` sends no stage
+on All, or the picked stages as CSV; `INVOICE_STAGE_FILTERS`, `OPEN_STAGES`, PURE `allInvoicesCount` (the tab count =
+every stage added up), `toggleStage`, `stageWords`. (2) `Finance.InvoicesPage` on All: a **Stage** pill row
+(`StageFilterPills`: All stages · Still open · each stage with its count, several at once, kept in
+`useSessionState("inv.stages")`), the Status pills follow the stages picked (reset when they change), a **Stage**
+column before Status (`StageChip`, one colour per stage), every other filter as on the other tabs; the "found in
+another tab" jump is off on All (it already lists everything). (3) Sidebar: `nav.ts` `invoices` moved right under
+Projects, roles Admin · Finance · Sales · Sales Head (the server's `INV_READ`); `CrmApp` drops it from `HUB_COVERED` and
+shows it like E-invoices (role + the Invoices grant), so Admin sees it too. Same page as Projects ▸ Invoices.
+
+
+**20 Nov 2026 (latest-final) — Admin deletes an employee in one step (server half in B-V2 `CLAUDE.md`):**
+`Employees.tsx` `EmployeesListPage`: the row's delete dialog carries a `deleteNote` — for Admin / CEO (`useHasRole()`) it
+says their project assignments, timesheets, leave applications, leave ledger and balances go too and a tax invoice must be
+deleted first; for HR that a person with history cannot be deleted (deactivate instead). The toast is the server's message.
+
+**20 Nov 2026 (closing) — map money from the Invoices list; Received / Due (Ex. Tax) on the CEO dashboard
+(`crm/components/invoice/MapMoneyDialog.test.ts` 3, `moneySeries.test.ts` re-pinned; server half in B-V2 `CLAUDE.md`):**
+(1) **Invoices list** (`Finance.InvoicesPage`, Finance's write right): the flat table is `selectable` — only issued
+invoices with money open count (PURE `mappableInvoice`), ticked ones kept as `MapPick`s across pages; an emerald sticky
+bar "N ticked · ₹ open · customer · Clear · **Map money…**" (disabled with "Tick invoices of one customer — now: A, B",
+PURE `pickCustomers`); a green **Map** button on every open row (beside the row actions); in the By-customer view each
+customer group has "**Map money to these N…**" (first 100). A hint line on Unpaid / Partially paid says so. Selection
+clears on a tab change and after mapping. (2) **`crm/components/invoice/MapMoneyDialog.tsx`** (`Modal wide`, emerald
+`DialogHero` with the customer + open total): **1 Where is the cash from?** — cards for each received amount on account
+(Likely match chip, date, mode / UTR, branch), **Record a new received amount** (date · amount — blank = the cash typed,
+more stays on account · mode · UTR) or **No cash now**; **2 TDS** — No TDS · Deducted, certificate pending · each Received
+TDS entry not mapped · **Record new Received TDS (Form 16A)** (date · TDS · 16A no. · quarter); **3 How much on each
+invoice** — per invoice open / pending TDS, Cash ₹ and TDS ₹ inputs, "After" (Paid tick), "Fill cash oldest first" (PURE
+`fillCash`: oldest first up to balance − TDS, out of what is on account) and "TDS at N% before GST" (the server's
+`tds_open`); aside totals + left on account + what happens; footer hint from PURE `mapProblem` (the server's rules); one
+POST `/api/receipt-mapping`, Ctrl+Enter. (3) **Money words**: `moneySeries` gains `received_ex` "Received (Ex. Tax)" and
+`due_ex` "Due (Ex. Tax)" (12 series now; an older server: due = revenue − received_ex); **Overview** preset = Revenue
+(Ex. Tax) · Received (Ex. Tax) · Due (Ex. Tax) · Predicted, Received / Due presets include them. `MoneyStoryChart` header:
+Received (Ex. Tax) with a % of Revenue (Ex. Tax) ring ("with GST ₹x" under it) and Due (Ex. Tax) ("Total Due ₹x · Bank ·
+TDS"); the spotlight shows both under Revenue. Finance tab tile **Received (Ex. Tax)** (falls back to Bank + TDS on an older
+server), Total Due's sub adds "Ex. Tax ₹x"; Customer tab Totals view and its presets follow; the Billed page's money board
+shows Received (Ex. Tax) and Due (Ex. Tax) first in their stages. A paid invoice moves its whole value before GST from Due
+to Received; the dashboards re-read within a minute and at once after the mapping (`DESK_CHANGED_EVENT`).
+
+
+**20 Nov 2026 (latest) — Employment Type on the Employees list and the New Employee form (`employeeFields.test.ts` 6;
+server half in B-V2 `CLAUDE.md`):** `lib/employeeFields.ts` `EMPLOYMENT_TYPES` = Full-Time · Part-Time · Contract /
+Consultant · Intern (keys Full_Time · Part_Time · Contract · Intern) + PURE `employmentTypeLabel`. `Employees.tsx`: the list's
+"Type" column (Internal / External) is now **Employment Type** (`EmploymentTypeBadge`, one colour per type, "Not set" when
+blank) and the "All types" filter is **All employment types** (four + Not set → `employment_type`); the employee header shows
+the badge beside Internal / External; **New Employee** has a required four-button "Employment type" choice (`role="radio"`),
+sent as `employment_type` (Edit keeps it optional). Profile type (Internal / External) stays on the form and the Job details
+card.

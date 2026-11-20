@@ -24,6 +24,8 @@ import { BranchRateCardEditor } from "./RateCards";
    with its proof — the same store as the branch page and Finance's page. */
 const LazyCustomerReceipts = lazyRetry(() =>
   import("./CustomerReceipts").then((m) => ({ default: m.CustomerReceiptsPage })));
+const LazyReceivedTds = lazyRetry(() =>
+  import("./ReceivedTds").then((m) => ({ default: m.ReceivedTdsPage })));
 const LazyCustomerActivityLog = lazyRetry(() =>
   import("../components/CustomerActivityLog").then((m) => ({ default: m.CustomerActivityLog })));
 const LazyNewOpportunityForm = lazyRetry(() =>
@@ -1996,6 +1998,8 @@ export function CustomerDetailPage() {
     // Received Amount after Project Employees (19 Oct 2026) — the money
     // tabs follow the Invoices grant (Finance works it, Sales reads it).
     ...(canSeeInvoices ? [{ key: "receipts", label: "Received Amount" }] : []),
+    // Received TDS (20 Nov 2026) — the TDS credits, linked with Received Amount.
+    ...(canSeeInvoices ? [{ key: "tds-receipts", label: "Received TDS" }] : []),
     // Everything that happened with this customer, from the start (21 Oct 2026).
     { key: "activity", label: "Activity Log" },
   ].filter((t) => sub.allowed(t.key));
@@ -2071,6 +2075,11 @@ export function CustomerDetailPage() {
         {tab === "receipts" && canSeeInvoices && (
           <React.Suspense fallback={<Spinner label="Loading received amounts…" />}>
             <LazyCustomerReceipts scope={{ customerId, customerName: customer.name }} />
+          </React.Suspense>
+        )}
+        {tab === "tds-receipts" && canSeeInvoices && (
+          <React.Suspense fallback={<Spinner label="Loading received TDS…" />}>
+            <LazyReceivedTds scope={{ customerId, customerName: customer.name }} />
           </React.Suspense>
         )}
         {tab === "activity" && (

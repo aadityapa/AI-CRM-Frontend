@@ -164,8 +164,10 @@ describe("CEO dashboard", () => {
   it("opens on Finance for the financial year and renders the money", async () => {
     render(<ThemeProvider><CeoDashboard /></ThemeProvider>);
     await waitFor(() => expect(screen.getByText(/FY 2026-27 \(Apr 2026/)).toBeTruthy());
-    expect(crmGet.mock.calls[0][0]).toMatch(/period=fy/);
-    expect(crmGet.mock.calls[0][0]).toMatch(/tab=finance/);
+    // The Invoice approvals badge also reads; pick the dashboard's own call.
+    const ceoCall = crmGet.mock.calls.map((c: unknown[]) => String(c[0])).find((u: string) => u.startsWith("/api/dashboard/ceo"));
+    expect(ceoCall).toMatch(/period=fy/);
+    expect(ceoCall).toMatch(/tab=finance/);
     expect(screen.getAllByText("₹46.0L").length).toBeGreaterThan(0);   // billed tile
     expect(screen.getByText("Behind target")).toBeTruthy();     // alert chip
     expect(screen.getAllByRole("figure").length).toBeGreaterThanOrEqual(3);   // three speedometers

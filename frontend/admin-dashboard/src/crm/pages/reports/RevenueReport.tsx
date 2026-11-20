@@ -48,6 +48,7 @@ import type { PeriodKind, StateTone } from "../../components/controlTower";
 import { PlacementsPanel } from "./PlacementsPanel";
 import { RevenueTargetsModal, monthLabelOf } from "../../components/RevenueTargetsModal";
 import { ScopeFilterBar as FilterBar, type FilterOption } from "../../components/ScopeFilterBar";
+import { useDataChanged } from "../../lib/useDataChanged";
 
 /* ---------- Wire shape (services/revenue_report.py) ---------- */
 
@@ -498,6 +499,9 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
+  // 20 Nov 2026 — a quiet re-read when Finance maps money / records a payment.
+  const quietRef = React.useRef(false);
+  useDataChanged(() => { quietRef.current = true; setTick((t) => t + 1); });
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [dim, setDim] = useState<DimKey>("by_type");
@@ -537,11 +541,12 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError("");
+    const quiet = quietRef.current;
+    quietRef.current = false;
+    if (!quiet) { setLoading(true); setError(""); }
     crmGet<RevenueReportData>(`/api/reports/revenue${qs(query)}`)
       .then((r) => { if (!cancelled) setData(r.data); })
-      .catch((e: any) => { if (!cancelled) setError(e?.message || "Could not load the revenue report"); })
+      .catch((e: any) => { if (!cancelled && !quiet) setError(e?.message || "Could not load the revenue report"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [query, tick]);

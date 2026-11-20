@@ -35,6 +35,9 @@ export type Receipt = {
   proof_url?: string | null; proof_name?: string | null;
   created_by?: number | null;
   allocations: Allocation[];
+  /** 20 Nov 2026 — Received TDS entries that go with this money. */
+  tds_receipts?: { id: number; received_date: string | null; amount: number;
+    certificate_number?: string | null; quarter?: string | null; named?: boolean }[];
 };
 export type InvoiceOption = {
   id: number; invoice_number: string; invoice_date: string | null; project_name?: string | null;
@@ -138,3 +141,13 @@ export function ReceiptProofRow({ receipt, canEdit, onSaved, onError }: {
 export const pillCls = (on: boolean) => `rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${on
   ? "border-emerald-500 bg-emerald-600 text-white shadow-raised"
   : "border-subtle bg-surface-1 text-secondary hover:border-emerald-300 hover:text-primary"}`;
+
+
+/** The approval / IRN step an invoice is still waiting for, as a short note —
+ *  information only (20 Nov 2026: every issued tax invoice can take money). */
+export function blockNote(block?: string | null): string | null {
+  if (!block) return null;
+  return /approval/i.test(block)
+    ? "Customer approval pending — you can still map it"
+    : "IRN not added yet — you can still map it";
+}

@@ -56,10 +56,10 @@ import {
   ConfirmModal, ErrorBox, Modal, btnPrimary, inputCls, useToast,
 } from "../components/ui";
 import {
-  PAYMENT_MODES, ProofChip, daysLate, fmtDate, inr, isoDay, pillCls,
+  PAYMENT_MODES, ProofChip, blockNote, daysLate, fmtDate, inr, isoDay, pillCls,
   type BranchOption, type BranchScope, type InvoiceOption, type Receipt,
 } from "./receipts/receiptShared";
-import { ReceiptDetailModal, isLikelyMatch, isPartlyPaid, orderByLikelyMatch } from "./receipts/ReceiptWorkbench";
+import { ReceiptDetailModal, isLikelyMatch, isPartlyPaid, mapPlan, orderByLikelyMatch } from "./receipts/ReceiptWorkbench";
 import { InvoiceSearchHits, type InvoiceHit } from "./receipts/InvoiceSearchHits";
 
 export { daysLate };
@@ -83,7 +83,10 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  // `?q=` (20 Nov 2026) — the invoice page's "Map in Received Amount" link.
+  const [search, setSearch] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("q") || ""; } catch { return ""; }
+  });
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState<{ by: string; dir: "asc" | "desc" }>({ by: "received_date", dir: "desc" });
   const [colFilters, setColFilters] = useState<Record<string, ColumnFilterValue>>({});
@@ -232,36 +235,13 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           : <span className="text-[11px] text-muted">No proof</span>}
       </span>
     ) },
-    { key: "invoices", label: "Invoices settled", render: (r) => (
-      <div className="flex max-w-[320px] flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
-        {r.allocations.length === 0 && <span className="text-muted">— (on account)</span>}
-        {r.allocations.map((a) => (
-          <span key={a.invoice_id} className="inline-flex flex-wrap items-center gap-1">
-            <CrmLink to={`invoices/${a.invoice_id}`}
-              className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-primary ring-1 ring-inset ring-subtle hover:underline"
-              title={`${a.invoice_number || `#${a.invoice_id}`}${a.month_label ? ` · ${a.month_label}` : ""} — ${inr(a.amount)} applied`}>
-              {a.employee_name || a.invoice_number || `#${a.invoice_id}`}
-              {a.month_label && <span className="text-teal-700 dark:text-teal-300">{a.month_label}</span>}
-              <span className="text-muted">{inr(a.amount)}</span>
-            </CrmLink>
-            {a.tds && (
-              <TdsChip tds={a.tds} compact onClick={() => setTdsOpen({ tds: a.tds as TdsInfo, invoiceNumber: a.invoice_number })} />
-            )}
-          </span>
-        ))}
-        {r.unallocated_amount > 0 && (canEdit ? (
-          <button type="button" onClick={() => openReceipt(r, "map")}
-            className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-sm hover:bg-amber-600"
-            title="Received but not applied to any invoice — map it to the invoices it pays">
-            <Link2 size={11} aria-hidden /> Map {inr(r.unallocated_amount)}
-          </button>
-        ) : (
-          <span className="inline-flex items-center rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning"
-            title="Received but not applied to any invoice">
-            Unallocated {inr(r.unallocated_amount)}
-          </span>
-        ))}
-      </div>
+    // 20 Nov 2026 (user ask): the "Invoices settled" column is gone from every
+    // list — open a received amount to see and map its invoices (and TDS).
+    { key: "unallocated_amount", label: "On account", align: "right", render: (r) => (
+      Number(r.unallocated_amount || 0) > 0
+        ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-amber-800 ring-1 ring-inset ring-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800"
+            title="Received but not mapped to an invoice yet">{inr(r.unallocated_amount)}</span>
+        : <span className="text-[11px] text-emerald-700 dark:text-emerald-300">Fully mapped</span>
     ) },
     { key: "notes", label: "Notes", render: (r) => (
       <span className="block max-w-[220px] truncate text-secondary" title={r.notes || ""}>{r.notes || "—"}</span>
@@ -609,6 +589,8 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
   const [options, setOptions] = useState<InvoiceOption[]>([]);
   const [optLoading, setOptLoading] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  /** Amount Finance typed for an invoice (20 Nov 2026); blank = what is left, oldest first. */
+  const [typed, setTyped] = useState<Record<number, string>>({});
   const [invQuery, setInvQuery] = useState("");
   /* One payment = one branch (16 Oct 2026, user decision): "" = not picked,
      "none" = invoices with no branch on record, else the branch id. */
@@ -664,7 +646,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, [uploadProof]);
-  const openOptions = useMemo(() => branchOptions.filter((o) => !o.payment_block), [branchOptions]);
+  const openOptions = branchOptions;
   /* Search across invoice no., employee, project and month; ticked rows stay in
      the list whatever the query so a selection can't silently vanish. */
   const visibleOptions = useMemo(() => {
@@ -710,18 +692,15 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
   /** What the customer owes in money on an invoice once its TDS is taken off. */
   const tdsFor = (id: number) => tdsMap[id]?.amount ?? 0;
   const dueFor = (o: InvoiceOption) => netDue(o.balance_amount, tdsFor(o.id));
-  // Preview the oldest-first allocation so Finance sees where the money goes.
+  // Preview the allocation so Finance sees where the money goes: typed amounts
+  // first, the rest oldest first — the server's `plan_mapping`.
   const preview = useMemo(() => {
-    let left = amt;
-    const rows: { id: number; take: number }[] = [];
-    for (const o of branchOptions.filter((x) => selected.has(x.id))) {
-      if (left <= 0) break;
-      const take = Math.min(netDue(o.balance_amount, tdsMap[o.id]?.amount ?? 0), left);
-      rows.push({ id: o.id, take });
-      left = Math.round((left - take) * 100) / 100;
-    }
-    return { rows, left };
-  }, [amt, branchOptions, selected, tdsMap]);
+    const ids = branchOptions.filter((x) => selected.has(x.id)).map((x) => x.id);
+    const due: Record<number, number> = {};
+    for (const o of branchOptions) if (selected.has(o.id)) due[o.id] = netDue(o.balance_amount, tdsMap[o.id]?.amount ?? 0);
+    const plan = mapPlan(amt, ids, due, typed);
+    return { rows: ids.map((id) => ({ id, take: plan.take[id] ?? 0 })).filter((r) => r.take > 0), left: Math.max(0, plan.left), over: plan.over };
+  }, [amt, branchOptions, selected, tdsMap, typed]);
   const takeFor = (id: number) => preview.rows.find((r) => r.id === id)?.take ?? 0;
   const allocated = Math.max(0, amt - preview.left);
   const ticked = options.filter((o) => selected.has(o.id));
@@ -729,10 +708,10 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
   const selectedBalance = ticked.reduce((t, o) => t + dueFor(o), 0);
   const tdsTotal = ticked.reduce((t, o) => t + tdsFor(o.id), 0);
   const toggle = (o: InvoiceOption) => {
-    if (o.payment_block) return;
     if (selected.has(o.id)) {
       setSelected((s) => { const n = new Set(s); n.delete(o.id); return n; });
       setTdsMap((m) => { const n = { ...m }; delete n[o.id]; return n; });
+      setTyped((m) => { const n = { ...m }; delete n[o.id]; return n; });
       return;
     }
     // Ticking asks about TDS first — unless TDS is already on record for it.
@@ -744,7 +723,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
     setSelected((s) => new Set(s).add(o.id));
     setTdsAsk(null);
   };
-  const missing = !customerId ? "Pick the customer" : needsBranch && !branchKey ? "Pick the branch that paid" : !receivedDate ? "Pick the received date" : !(gross > 0) ? "Enter the amount received" : prior >= gross ? "The earlier-year part must be less than the amount received" : "";
+  const missing = !customerId ? "Pick the customer" : needsBranch && !branchKey ? "Pick the branch that paid" : !receivedDate ? "Pick the received date" : !(gross > 0) ? "Enter the amount received" : prior >= gross ? "The earlier-year part must be less than the amount received" : preview.over ? preview.over : "";
 
   const submit = async () => {
     setError("");
@@ -757,7 +736,9 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
         prior_period_note: prior > 0 ? (priorNote.trim() || null) : null,
         branch_id: branchKey && branchKey !== "none" ? Number(branchKey) : null,
         payment_mode: mode || null, reference_number: reference.trim() || null,
-        notes: notes.trim() || null, invoice_ids: [...selected],
+        notes: notes.trim() || null,
+        items: branchOptions.filter((o) => selected.has(o.id)).map((o) => ({
+          invoice_id: o.id, amount: typed[o.id] != null && typed[o.id] !== "" ? Number(typed[o.id]) : null })),
         proof_url: proof?.url || null, proof_name: proof?.name || null,
         tds: [...selected].filter((id) => tdsMap[id]).map((id) => ({
           invoice_id: id, tds_rate: tdsMap[id]!.rate, tds_base: tdsMap[id]!.base, section: tdsMap[id]!.section || null,
@@ -910,7 +891,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
             action={options.length > 0 ? (
               <div className="flex gap-2 text-xs font-semibold">
                 <button type="button" className="text-emerald-700 hover:underline dark:text-emerald-300"
-                  onClick={() => setSelected((s) => { const n = new Set(s); visibleOptions.forEach((o) => { if (!o.payment_block) n.add(o.id); }); return n; })}>
+                  onClick={() => setSelected((s) => { const n = new Set(s); visibleOptions.forEach((o) => { n.add(o.id); }); return n; })}>
                   Select all open{invQuery ? " shown" : ""}
                 </button>
                 {selected.size > 0 && (
@@ -944,7 +925,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                   {visibleOptions.length === 0 && <li className="px-1 py-2 text-xs text-muted">No invoice matches “{invQuery}”.</li>}
                   {orderByLikelyMatch(visibleOptions, amt).map((o) => {
                     const on = selected.has(o.id);
-                    const locked = !!o.payment_block;
+                    const locked = false; // 20 Nov 2026: every issued tax invoice takes money
                     const take = takeFor(o.id);
                     return (
                       <li key={o.id}>
@@ -988,7 +969,7 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                                   : <span>· due {fmtDate(o.due_date)}</span>;
                               })()}
                             </span>
-                            {locked && <span className="block text-[11px] text-warning">{o.payment_block}</span>}
+                            {blockNote(o.payment_block) && <span className="block text-[11px] text-amber-700 dark:text-amber-300">{blockNote(o.payment_block)}</span>}
                           </span>
                           <span className="shrink-0 text-right">
                             <span className="block text-xs text-muted tabular-nums">Balance {inr(o.balance_amount)}</span>
@@ -999,6 +980,15 @@ function AddReceiptModal({ customers, preset, onClose, onSaved }: {
                         </button>
                         {on && (
                           <div className="ml-8 mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                            <label className="inline-flex items-center gap-1 font-semibold text-secondary">
+                              Amount on this invoice ₹
+                              <input type="number" min={0} step="0.01" inputMode="decimal"
+                                className="h-7 w-28 rounded-control border border-subtle bg-surface-1 px-2 text-right text-xs tabular-nums text-primary"
+                                value={typed[o.id] ?? ""} placeholder={String(take || 0)}
+                                aria-label={`Amount on ${o.invoice_number}`}
+                                title="Less than the balance? Type what goes on this invoice — the rest stays due (settle it later if it will not come)"
+                                onChange={(e) => setTyped((m) => ({ ...m, [o.id]: e.target.value }))} />
+                            </label>
                             {o.tds ? (
                               <TdsChip tds={o.tds} />
                             ) : tdsMap[o.id] ? (

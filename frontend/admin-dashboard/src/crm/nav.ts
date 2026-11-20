@@ -2,6 +2,7 @@
 import type { ComponentType } from "react";
 import {
   BadgeCheck,
+  Percent,
   ReceiptIndianRupee,
   Briefcase,
   Building2,
@@ -72,6 +73,10 @@ export const CRM_NAV: CrmNavItem[] = [
   // entry was replaced by this. Roles = union of everything the hub serves.
   { path: "projects", label: "Projects", icon: Briefcase,
     roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance", "RMG", "TA"] },
+  // Every invoice, with its filters, one click from the sidebar (20 Nov 2026, user
+  // ask: "a new Invoices tab below Projects"). The same page as Projects ▸ Invoices;
+  // the roles are the server's read gate (`INV_READ`: Finance · Sales Head · Sales).
+  { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance", "Sales", "Sales_Head"] },
   { path: "project-employees", label: "Project Employees", icon: Network, roles: ["Admin", "Sales", "Sales_Head", "HR", "Finance"] },
   // My Leave and Leave Applications live INSIDE Timesheets (the attendance
   // hub) since Aug 2026 — no standalone sidebar pages; routes stay for deep
@@ -79,11 +84,11 @@ export const CRM_NAV: CrmNavItem[] = [
   // page, non-timesheet roles see just that tab.
   { path: "holidays", label: "Holidays", icon: CalendarOff, roles: ["Admin", "HR"] },
   { path: "pos", label: "Purchase Orders", icon: Receipt, roles: ["Admin", "Finance"] },
-  { path: "invoices", label: "Invoices", icon: FileText, roles: ["Admin", "Finance"] },
   // Every e-invoice (IRN recorded) for Finance and every Sales rung (21 Oct 2026).
   { path: "e-invoices", label: "E-invoices", icon: BadgeCheck, roles: ["Admin", "Finance", "Sales", "Sales_Head"] },
   // Every customer branch's received amounts in one place (16 Oct 2026).
   { path: "received-amounts", label: "Received Amount", icon: Wallet, roles: ["Finance"] },
+  { path: "received-tds", label: "Received TDS", icon: Percent, roles: ["Finance"] },
   // Company expenses → net revenue on the CEO dashboard (4 Nov 2026).
   { path: "expenses", label: "Expenses", icon: ReceiptIndianRupee, roles: ["Admin", "Finance"] },
   // Financial Reports lives INSIDE Reports (Reports → Financial Reports tab)

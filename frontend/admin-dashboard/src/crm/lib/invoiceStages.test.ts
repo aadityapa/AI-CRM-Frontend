@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { INVOICE_STAGE_TABS, invoiceTabParams, stageTabLabel } from "./invoiceStages";
+import {
+  INVOICE_STAGE_TABS, OPEN_STAGES, allInvoicesCount, invoiceTabParams, stageTabLabel, stageWords, toggleStage,
+} from "./invoiceStages";
 import { isLikelyMatch, isPartlyPaid, orderByLikelyMatch } from "../pages/receipts/ReceiptWorkbench";
 import { roundPerDay } from "../components/invoice/ProformaActions";
 
@@ -13,6 +15,20 @@ describe("invoice stage tabs (24 Oct 2026)", () => {
     const unpaid = INVOICE_STAGE_TABS.find((t) => t.key === "Unpaid")!;
     expect(stageTabLabel(unpaid, { unpaid: 12 })).toBe("Unpaid (12)");
     expect(stageTabLabel(unpaid, null)).toBe("Unpaid");
+  });
+});
+
+describe("All invoices tab (20 Nov 2026)", () => {
+  it("comes first, asks for every stage unless the Stage filter picks some, and counts every stage", () => {
+    expect(INVOICE_STAGE_TABS[0].key).toBe("All");
+    expect(invoiceTabParams("All")).toEqual({});
+    expect(invoiceTabParams("All", OPEN_STAGES)).toEqual({ stage: "awaiting_customer,pending_einvoice,unpaid,partially_paid" });
+    expect(invoiceTabParams("Unpaid", ["paid"])).toEqual({ stage: "unpaid" });
+    expect(allInvoicesCount({ proforma: 0, awaiting_customer: 1, pending_einvoice: 0, unpaid: 119, partially_paid: 24, paid: 136 })).toBe(280);
+    expect(allInvoicesCount(null)).toBeUndefined();
+    expect(toggleStage(["paid"], "unpaid")).toEqual(["unpaid", "paid"]);
+    expect(toggleStage(["unpaid", "paid"], "paid")).toEqual(["unpaid"]);
+    expect(stageWords("pending_einvoice")).toBe("Pending e-invoice");
   });
 });
 

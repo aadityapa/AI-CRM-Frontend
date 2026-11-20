@@ -56,10 +56,21 @@ describe("employee profile fields", () => {
 
   it("reads values the way HR says them, and refuses a blank name or a bad email", () => {
     const f = (k: string) => EMPLOYEE_CARDS.job.fields.find((x) => x.key === k)!;
-    expect(displayValue(emp, f("employment_type"))).toBe("Full Time");
+    expect(displayValue(emp, f("employment_type"))).toBe("Full-Time");
     expect(displayValue(emp, f("reporting_manager_id"))).toBe("Manjeet Singh");
     expect(validationError({ first_name: " " })).toBe("First name is required");
     expect(validationError({ email: "nope" })).toBe("A valid official email is required");
     expect(validationError({ phone: "1" })).toBeNull();
+  });
+});
+
+describe("employment types (20 Nov 2026)", () => {
+  it("offers the four types HR picks from, with readable labels", async () => {
+    const m = await import("./employeeFields");
+    expect(m.EMPLOYMENT_TYPES.map((t) => t.label)).toEqual(["Full-Time", "Part-Time", "Contract / Consultant", "Intern"]);
+    expect(m.employmentTypeLabel("Contract")).toBe("Contract / Consultant");
+    expect(m.employmentTypeLabel("Intern")).toBe("Intern");
+    expect(m.employmentTypeLabel(null)).toBe("");
+    expect(m.employmentTypeLabel("Seasonal_Staff")).toBe("Seasonal Staff");
   });
 });

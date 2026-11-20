@@ -301,7 +301,7 @@ export function CeoInsightPage() {
     month: state.month, period: state.period, customer_id: state.customer ?? undefined,
     project_id: state.project ?? undefined, branch_id: state.branch ?? undefined, scope: state.scope || undefined,
   })}`;
-  const { data, loading, error, retry } = useDeskData<InsightPayload>(url, { live: 120_000 });
+  const { data, loading, error, retry } = useDeskData<InsightPayload>(url, { live: 60_000 });
 
   const look = TAB_LOOK[data?.tab ?? "finance"];
   // Keep the last picker lists while a new scope loads, so the dropdowns never blink.

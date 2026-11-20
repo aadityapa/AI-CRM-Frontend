@@ -38,11 +38,20 @@ export type EmpCardKey = "job" | "personal" | "attendance";
 
 const opts = (xs: string[]) => xs.map((x) => ({ value: x, label: x }));
 
+/** The four employment types HR picks from (20 Nov 2026) — keys are the
+ *  server's (`services/employees.EMPLOYMENT_TYPES`), labels are what HR reads. */
 export const EMPLOYMENT_TYPES = [
-  { value: "Full_Time", label: "Full Time" },
-  { value: "Part_Time", label: "Part Time" },
-  { value: "Contract", label: "Contract" },
+  { value: "Full_Time", label: "Full-Time" },
+  { value: "Part_Time", label: "Part-Time" },
+  { value: "Contract", label: "Contract / Consultant" },
+  { value: "Intern", label: "Intern" },
 ];
+
+/** "Full_Time" → "Full-Time"; an unknown stored value is shown as typed. PURE. */
+export function employmentTypeLabel(v?: string | null): string {
+  if (!v) return "";
+  return EMPLOYMENT_TYPES.find((t) => t.value === v)?.label || String(v).replace(/_/g, " ");
+}
 
 /** A yes / no answer where "No" is a real answer (a toggle would hide it). */
 const YES_NO = [{ value: "true", label: "Yes" }, { value: "false", label: "No" }];

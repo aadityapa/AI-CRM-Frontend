@@ -27,9 +27,9 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Briefcase, Building2, ChevronDown, ChevronRight, ReceiptText, RefreshCw, Target, Users, Wallet,
+  AlertTriangle, BadgeCheck, Briefcase, Building2, ChevronDown, ChevronRight, ReceiptText, RefreshCw, Target, Users, Wallet,
 } from "lucide-react";
-import { crmGet, qs } from "../../api";
+import { DESK_CHANGED_EVENT, crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
 import { fmtDateShort } from "../../../lib/datetime";
 import { ErrorBox, SkeletonText, btnSecondary, useToast } from "../../components/ui";
@@ -45,6 +45,7 @@ import { PaceCard } from "./HiringControlTower";
 import type { HiringData } from "./HiringControlTower";
 import { useDeskData } from "./DeskWidgets";
 import { BillingTracker } from "./BillingTracker";
+import { InvoiceApprovals } from "./InvoiceApprovals";
 import { bucketLink, insightLink } from "./CeoInsightPage";
 import { ScopeFilterBar, type FilterOption } from "../../components/ScopeFilterBar";
 import {
@@ -62,8 +63,10 @@ import {
 
 /** `billing` (20 Oct 2026) is the Billing Tracker — its own endpoint
  *  (`/api/dashboard/billing`, Finance · Admin · CEO), not a `/ceo` tab. */
-export type CeoTab = "finance" | "customer" | "sales" | "people" | "billing";
-type DataTab = Exclude<CeoTab, "billing">;
+/** `approvals` (20 Nov 2026) — Admin / CEO sign off collected invoices (`/api/dashboard/invoice-approvals`). */
+export type CeoTab = "finance" | "customer" | "sales" | "people" | "billing" | "approvals";
+type DataTab = Exclude<CeoTab, "billing" | "approvals">;
+const OWN_TABS: CeoTab[] = ["billing", "approvals"];
 
 export type CeoPeriod = {
   kind: PeriodKind; key: string; label: string; short_label: string; fy_label: string;
@@ -94,12 +97,17 @@ export type FinanceData = {
     received_ex?: number;
     /** 5 Nov 2026 — money by the day it arrived (mapped payments + still on account). */
     cash_in?: number; cash_mapped?: number; cash_on_account?: number;
+    /** 20 Nov 2026 — of the mapped cash: paid this period's invoices / invoices of EARLIER periods. */
+    cash_this_period?: number; cash_earlier?: number;
     /** 5 Nov 2026 — money mapped to this month's invoices AFTER the month ended. */
     mapping_changed_on?: string | null; mapped_later?: number })[];
   /** 5 Nov 2026 — received amounts still on account (not counted as Collected). */
   on_account?: OnAccount | null;
   /** 6 Nov 2026 — the period's bank / TDS split (services/money_split). */
-  money?: Partial<Record<MoneyKey | "expected_tds", number>> & { tds_rate_pct?: number };
+  money?: Partial<Record<MoneyKey | "expected_tds", number>> & { tds_rate_pct?: number;
+    /** 20 Nov 2026 — what Total Due is made of (services/cash_month.due_breakdown). */
+    due_tds_expected?: number; due_tds_booked?: number; on_account?: number; total_due_net?: number;
+    cash_mapped?: number; cash_earlier?: number; cash_on_account?: number };
   net?: NetData | null;
   forecast?: ForecastData | null;
   tds?: TdsData | null;
@@ -234,9 +242,30 @@ const TABS: { key: CeoTab; label: string; blurb: string; icon: React.ComponentTy
   { key: "sales", label: "Sales", blurb: "Positions, fills, internal vs external, pace", icon: Briefcase, accent: "from-violet-500 to-fuchsia-600" },
   { key: "people", label: "People", blurb: "Headcount, bench, joiners, exits", icon: Users, accent: "from-amber-500 to-orange-600" },
   { key: "billing", label: "Billing Tracker", blurb: "Timesheet → Proforma → invoice → paid", icon: ReceiptText, accent: "from-rose-500 to-pink-600" },
+  { key: "approvals", label: "Invoice approvals", blurb: "Collected + TDS in → your sign-off", icon: BadgeCheck, accent: "from-emerald-600 to-sky-600" },
 ];
 
 const TAB_STORAGE_KEY = "crm.ceo.tab";
+
+/** How many invoices wait for the Admin / CEO sign-off — the badge on the tab. */
+function useApprovalsBadge(enabled: boolean): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    const read = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      crmGet<unknown[]>("/api/dashboard/invoice-approvals?state=ready&limit=1")
+        .then((r) => { if (alive) setCount(Number((r.meta as any)?.counts?.ready || 0)); })
+        .catch(() => { /* the badge is a hint — the tab shows any error */ });
+    };
+    read();
+    const timer = window.setInterval(read, 60_000);
+    window.addEventListener(DESK_CHANGED_EVENT, read);
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener(DESK_CHANGED_EVENT, read); };
+  }, [enabled]);
+  return count;
+}
 
 function readStoredTab(): CeoTab {
   try {
@@ -426,28 +455,58 @@ const num0 = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 
 /** Whole percent of part in whole; null when whole is 0. */
 const shareOfPct = (part: number, whole: number): number | null => (whole > 0 ? Math.round((part / whole) * 100) : null);
 
+/** 20 Nov 2026 — one line that ties the Cash view to the Work-month view:
+ *  Mapped = paid this period's invoices (≈ Received Bank there) + paid EARLIER invoices;
+ *  money still on account is in neither until Finance maps it. */
+function CashReconcile({ tot, receivedBank, periodWord }: {
+  tot: { cash_in: number; cash_mapped: number; cash_on_account: number; cash_this_period: number; cash_earlier: number };
+  receivedBank: number | null; periodWord: string;
+}) {
+  if (tot.cash_in <= 0) return null;
+  return (
+    <div className="space-y-2">
+      <p className="rounded-control border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+        <span className="font-semibold">How this ties to the Work month view:</span>{" "}
+        Mapped {inrCompact(tot.cash_mapped)} = {inrCompact(tot.cash_this_period)} for this {periodWord}'s invoices
+        {receivedBank != null && <> (Received Bank there: {inrCompact(receivedBank)})</>}
+        {" "}+ {inrCompact(tot.cash_earlier)} for invoices from before this {periodWord} — those count in their own work month, not here.
+      </p>
+      {tot.cash_on_account > 0 && (
+        <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <span className="font-semibold">{inrCompact(tot.cash_on_account)} is still on account.</span>{" "}
+          It counts as Collected once Finance maps it to invoices in Received Amount — it then moves to the month of each invoice's work, and Total Due drops by the same amount.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* 8 Nov 2026 — the "Cash received month" view of How the year unfolded, in the same
    story-chart design as the work-month view (it was a plain bar panel). */
 const CASH_SERIES: StorySeries[] = [
-  { key: "cash_mapped", label: "Mapped to invoices", color: "#10b981", group: "cash", hint: "payments recorded against invoices, by the day the money arrived" },
+  // 20 Nov 2026 (user: "Mapped ₹3.80 Cr but Received ₹2.98 Cr — why?"): the mapped cash is split
+  // into what paid THIS period's invoices (the Received figure of the work-month view) and what
+  // paid invoices of EARLIER periods (it never shows on the work-month view).
+  { key: "cash_this_period", label: "Paid this period's invoices", color: "#10b981", group: "cash", hint: "mapped to invoices whose work month is in this period — the Received figure on the Work month view" },
+  { key: "cash_earlier", label: "Paid earlier invoices", color: "#a855f7", group: "cash", hint: "mapped to invoices whose work month is BEFORE this period starts — not part of this period's Received" },
   { key: "cash_on_account", label: "Still on account", color: "#f59e0b", group: "cash", hint: "money in Received Amount not mapped to any invoice yet — not Collected" },
   { key: "cash_in", label: "Cash received", color: "#22d3ee", group: "cash", line: true, hint: "everything that arrived that month, with GST (mapped + on account)" },
-  { key: "billed", label: "Billed (work month)", color: "#2563eb", group: "compare", hint: "Revenue (Ex. Tax) by the invoice's work month, for comparison" },
+  { key: "revenue_inc", label: "Revenue (Inc Tax)", color: "#2563eb", group: "compare", hint: "the month's invoices with GST, by work month — cash carries GST too, so this is the fair comparison" },
 ];
 const CASH_GROUPS = [{ key: "cash", label: "Cash in" }, { key: "compare", label: "Compare" }];
 const CASH_PRESETS = [
-  { key: "overview", label: "Overview", keys: ["cash_mapped", "cash_on_account", "cash_in"] },
-  { key: "mapping", label: "Mapping", keys: ["cash_mapped", "cash_on_account"] },
-  { key: "vsbilled", label: "Cash vs billed", keys: ["cash_in", "billed"] },
+  { key: "overview", label: "Overview", keys: ["cash_this_period", "cash_earlier", "cash_on_account", "cash_in"] },
+  { key: "mapping", label: "Mapping", keys: ["cash_this_period", "cash_earlier", "cash_on_account"] },
+  { key: "vsrevenue", label: "Cash vs revenue", keys: ["cash_in", "revenue_inc"] },
   { key: "all", label: "All", keys: CASH_SERIES.map((s) => s.key) },
 ];
 
 const CUSTOMER_GROUPS = [...MONEY_GROUPS.filter((g) => g.key !== "forecast"), { key: "cost", label: "Cost & margin" }];
 const CUSTOMER_TOTAL_PRESETS = [
-  { key: "overview", label: "Overview", keys: ["revenue_ex", "received_bank", "total_due"] },
+  { key: "overview", label: "Overview", keys: ["revenue_ex", "received_ex", "due_ex"] },
   { key: "revenue", label: "Revenue", keys: ["revenue_ex", "revenue_inc"] },
-  { key: "received", label: "Received", keys: ["receivable_bank", "received_bank", "receivable_tds", "received_tds"] },
-  { key: "due", label: "Due", keys: ["due_bank", "due_tds", "total_due"] },
+  { key: "received", label: "Received", keys: ["revenue_ex", "received_ex", "received_bank", "received_tds"] },
+  { key: "due", label: "Due", keys: ["due_ex", "due_bank", "due_tds", "total_due"] },
   { key: "profit", label: "Profit", keys: ["revenue_ex", "cost", "margin"] },
   { key: "all", label: "All", keys: [...MONEY_SERIES.filter((x) => x.key !== "predicted").map((x) => x.key), "cost", "margin"] },
 ];
@@ -501,6 +560,8 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const received = mo ? (mo.received_bank ?? 0) + (mo.received_tds ?? 0) : h.collected;
   const receivedPct = mo ? (revInc > 0 ? received / revInc * 100 : null) : h.collection_rate_pct;
   const totalDue = mo?.total_due ?? h.outstanding;
+  const receivedEx = mo?.received_ex ?? null;
+  const receivedExPct = receivedEx !== null && h.billed > 0 ? receivedEx / h.billed * 100 : null;
   const collectionState = highGood(receivedPct, 90, 75);
   const marginState = highGood(m.gross_margin_pct, 30, 15);
   // 8 Nov 2026 (user: "for now Gross margin — we do not track expense"): with people
@@ -530,10 +591,19 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const hasCash = d.monthly.some((r) => r.cash_in != null);
   const byCash = countedBy === "cash" && hasCash;
   const cashRows = monthly.filter((r) => !r.future).map((r) => ({ ...r, cash_in: r.cash_in ?? 0,
-    cash_mapped: r.cash_mapped ?? 0, cash_on_account: r.cash_on_account ?? 0, billed: r.revenue_ex ?? r.billed ?? 0 }));
+    cash_mapped: r.cash_mapped ?? 0, cash_on_account: r.cash_on_account ?? 0,
+    // An older server sends no split — all mapped cash reads as this period's.
+    cash_this_period: r.cash_this_period ?? r.cash_mapped ?? 0, cash_earlier: r.cash_earlier ?? 0,
+    revenue_inc: r.revenue_inc ?? r.billed ?? 0 }));
   const cashTot = cashRows.reduce((a, r) => ({ cash_in: a.cash_in + num0(r.cash_in), cash_mapped: a.cash_mapped + num0(r.cash_mapped),
-    cash_on_account: a.cash_on_account + num0(r.cash_on_account), billed: a.billed + num0(r.billed) }),
-    { cash_in: 0, cash_mapped: 0, cash_on_account: 0, billed: 0 });
+    cash_on_account: a.cash_on_account + num0(r.cash_on_account), cash_this_period: a.cash_this_period + num0(r.cash_this_period),
+    cash_earlier: a.cash_earlier + num0(r.cash_earlier), revenue_inc: a.revenue_inc + num0(r.revenue_inc) }),
+    { cash_in: 0, cash_mapped: 0, cash_on_account: 0, cash_this_period: 0, cash_earlier: 0, revenue_inc: 0 });
+  // 20 Nov 2026 — Total Due carries invoices that money already in Received Amount will
+  // settle once Finance maps it; and Due TDS is partly an estimate (no TDS booked yet).
+  const onAccountNow = mo?.on_account ?? 0;
+  const dueNet = mo?.total_due_net ?? null;
+  const tdsExpected = mo?.due_tds_expected ?? 0;
   const cashMonths = cashRows.filter((r) => num0(r.cash_in) > 0).length;
   const changed = mappingNotes(d.monthly.filter((r) => !r.future));
   const scopeIds = { customer_id: d.filters?.customer_id, project_id: d.filters?.project_id, branch_id: d.filters?.branch_id };
@@ -551,12 +621,21 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
               foot={h.comparison_partial
                 ? <span className="text-[11px] text-muted" title="The previous period starts before the month Orbit has data from (Settings ▸ Billing ▸ Data starts from), so a % change would compare a full period with a few months.">no like-for-like comparison yet</span>
                 : <><Delta value={h.billed_mom_pct} label={period.comparison_label} />{!h.yoy_same_as_previous && <Delta value={h.billed_yoy_pct} label="YoY" />}</>} />
-        <Tile label="Received (Bank + TDS)" value={inrCompact(received)} tone="success" to={drill("collected")}
-              sub={mo ? `${pct(receivedPct, 0)} of Inc Tax · Bank ${inrCompact(mo.received_bank ?? 0)} · TDS ${inrCompact(mo.received_tds ?? 0)}` : `${pct(receivedPct, 0)} of billed`}
+        {/* 20 Nov 2026 (CEO ask) — Received on Revenue (Ex. Tax)'s own basis: a paid invoice
+            counts its whole value before GST, a partly paid one its share; with GST under it. */}
+        <Tile label={receivedEx !== null ? "Received (Ex. Tax)" : "Received (Bank + TDS)"}
+              value={inrCompact(receivedEx ?? received)} tone="success" to={drill("collected")}
+              sub={receivedEx !== null
+                ? `${pct(receivedExPct, 0)} of Revenue (Ex. Tax) · with GST ${inrCompact(received)}`
+                : mo ? `${pct(receivedPct, 0)} of Inc Tax · Bank ${inrCompact(mo.received_bank ?? 0)} · TDS ${inrCompact(mo.received_tds ?? 0)}` : `${pct(receivedPct, 0)} of billed`}
               foot={h.comparison_partial ? undefined : <Delta value={h.collected_mom_pct} label={period.comparison_label} />} />
         <Tile label="Total Due" value={inrCompact(totalDue)} tone={totalDue > 0 ? "warning" : "neutral"} to={drill("outstanding")}
-              sub={mo ? `Bank ${inrCompact(mo.due_bank ?? 0)} · TDS ${inrCompact(mo.due_tds ?? 0)}` : `${num(h.open_invoices)} open invoices`}
-              foot={mo ? <span className="text-[11px] text-muted" title="Every open invoice up to the end of the period, including earlier years">all open to date {inrCompact(h.outstanding)}</span> : undefined} />
+              sub={mo ? `${mo.due_ex != null ? `Ex. Tax ${inrCompact(mo.due_ex)} · ` : ""}Bank ${inrCompact(mo.due_bank ?? 0)} · TDS ${inrCompact(mo.due_tds ?? 0)}${tdsExpected > 0 ? ` (${inrCompact(tdsExpected)} expected)` : ""}` : `${num(h.open_invoices)} open invoices`}
+              foot={mo ? (onAccountNow > 0 && dueNet !== null ? (
+                <span className="text-[11px] font-semibold text-warning"
+                  title={`${inrCompact(onAccountNow)} is already in Received Amount but not mapped to any invoice. Once Finance maps it, Total Due drops by up to that much. Expected TDS = ${mo.tds_rate_pct ?? 10}% assumed on open invoices with no TDS booked yet.`}>
+                  {inrCompact(onAccountNow)} received, not mapped · really owed ≈ {inrCompact(dueNet)}</span>
+              ) : <span className="text-[11px] text-muted" title="Every open invoice up to the end of the period, including earlier years">all open to date {inrCompact(h.outstanding)}</span>) : undefined} />
         <Tile label="Overdue" value={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "danger" : "success"} to={drill("overdue")}
               sub={d.ageing.overdue_90_plus > 0 ? `${inrCompact(d.ageing.overdue_90_plus)} past 90 days` : "nothing past 90 days"} />
         {showCost ? (
@@ -598,25 +677,21 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
             { label: "Cash received", value: inrCompact(cashTot.cash_in), sub: `${num(cashMonths)} month${cashMonths === 1 ? "" : "s"} with money in`, dot: "#22d3ee" },
             { label: "Mapped to invoices", value: inrCompact(cashTot.cash_mapped), sub: `${pct(shareOfPct(cashTot.cash_mapped, cashTot.cash_in), 0)} of cash received`, dot: "#10b981",
               ring: shareOfPct(cashTot.cash_mapped, cashTot.cash_in) },
+            { label: "Paid earlier invoices", value: inrCompact(cashTot.cash_earlier), sub: cashTot.cash_earlier > 0 ? "invoices from before this period" : "all for this period's invoices", dot: "#a855f7" },
             { label: "Still on account", value: inrCompact(cashTot.cash_on_account), sub: cashTot.cash_on_account > 0 ? "not Collected until Finance maps it" : "everything is mapped", dot: "#f59e0b" },
-            { label: "Billed (work month)", value: inrCompact(cashTot.billed), sub: cashTot.billed > 0 ? `cash in = ${pct(shareOfPct(cashTot.cash_in, cashTot.billed), 0)} of billed` : "nothing billed", dot: "#2563eb" },
           ]}
           ring={(r) => ({ pct: shareOfPct(num0(r.cash_mapped), num0(r.cash_in)), color: "#10b981" })}
           spotlightSub={(r) => (num0(r.cash_in) > 0 ? "of the cash that arrived is on an invoice" : "no money arrived this month")}
           spotlightExtra={(r) => (
             <>
-              <SpotLine label="Billed (work month)" value={inrCompact(num0(r.billed))} />
-              <SpotLine label="Cash in ÷ billed" value={pct(shareOfPct(num0(r.cash_in), num0(r.billed)), 0)} />
+              <SpotLine label="Paid this period's invoices" value={inrCompact(num0(r.cash_this_period))} />
+              <SpotLine label="Paid earlier invoices" value={inrCompact(num0(r.cash_earlier))} />
+              <SpotLine label="Revenue (Inc Tax, work month)" value={inrCompact(num0(r.revenue_inc))} />
             </>
           )}
-          onOpen={(row, s, _ticked, e) => openLink(monthBar(row, s === "billed" ? "billed" : "collected"), e)}
+          onOpen={(row, s, _ticked, e) => openLink(monthBar(row, s === "revenue_inc" ? "billed" : "collected"), e)}
           openLabel={(row) => `Open the money received in ${row.label}`}
-          footer={cashTot.cash_on_account > 0 ? (
-            <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-              <span className="font-semibold">{inrCompact(cashTot.cash_on_account)} is still on account.</span>{" "}
-              It counts as Collected once Finance maps it to invoices in Received Amount — it then moves to the month of each invoice's work.
-            </p>
-          ) : undefined} />
+          footer={<CashReconcile tot={cashTot} receivedBank={mo?.received_bank ?? null} periodWord={period.kind === "fy" ? "FY" : "period"} />} />
       ) : (
         <MoneyStoryChart rows={monthly} storageKey="crm.ceo.money" todayKey={thisMonthKey()}
           title={`How ${period.kind === "fy" ? "the year" : "the period"} unfolded`}
@@ -625,7 +700,15 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
           onOpen={(row, s, ticked, e) => openBarLink(insightLink("billed", period, {
             ...scopeIds, fmonth: row.key, series: seriesParam(ticked), bar: s }), e)}
           openLabel={(row) => (row.future ? `Open the Billed page at ${row.label}` : `Open the invoices of ${row.label}`)}
-          footer={changed.length > 0 ? (
+          footer={changed.length > 0 || onAccountNow > 0 ? (<div className="space-y-2">
+          {onAccountNow > 0 && (
+            <p className="rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <span className="font-semibold">{inrCompact(onAccountNow)} is already received but not mapped to any invoice.</span>{" "}
+              Received and Due here count it only once Finance maps it in Received Amount — Total Due {inrCompact(totalDue)} is really ≈ {inrCompact(dueNet ?? totalDue)}.
+              {tdsExpected > 0 && <> Due TDS includes {inrCompact(tdsExpected)} expected at {mo?.tds_rate_pct ?? 10}% on invoices with no TDS booked yet.</>}
+            </p>
+          )}
+          {changed.length > 0 && (
             <p className="rounded-control border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
               <span className="font-semibold">Collected changed after the month closed:</span>{" "}
               {changed.slice(0, 4).map((c, i) => (
@@ -634,7 +717,8 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
               {changed.length > 4 && <> · +{changed.length - 4} more</>}
               . Money mapped later moves into the month of its invoice's work.
             </p>
-          ) : undefined} />
+          )}
+          </div>) : undefined} />
       )}
 
       {/* 2 · Where we stand against target, collections and margin — the dials, right under the trend. */}
@@ -897,10 +981,12 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
   const sumOf = (k: string) => unfoldRows.reduce((a, r) => a + num0(r[k]), 0);
   const unfoldStats = unfoldBy === "totals" ? (() => {
     const ex = sumOf("revenue_ex"), inc = sumOf("revenue_inc"), recv = sumOf("received_bank") + sumOf("received_tds"), mg = sumOf("margin");
+    const recvEx = sumOf("received_ex");
+    // 20 Nov 2026 — Received / Due on Revenue (Ex. Tax)'s own basis (they add up to it).
     return [
       { label: "Revenue (Ex. Tax)", value: inrCompact(ex), sub: `Inc Tax ${inrCompact(inc)}`, dot: "#7dd3fc" },
-      { label: "Received (Bank + TDS)", value: inrCompact(recv), sub: inc > 0 ? `${pct(shareOfPct(recv, inc), 0)} of Inc Tax` : "nothing billed yet", dot: "#6ee7b7", ring: shareOfPct(recv, inc) },
-      { label: "Total Due", value: inrCompact(sumOf("total_due")), sub: `Bank ${inrCompact(sumOf("due_bank"))} · TDS ${inrCompact(sumOf("due_tds"))}`, dot: "#fca5a5" },
+      { label: "Received (Ex. Tax)", value: inrCompact(recvEx), sub: ex > 0 ? `${pct(shareOfPct(recvEx, ex), 0)} of Ex. Tax · with GST ${inrCompact(recv)}` : "nothing billed yet", dot: "#6ee7b7", ring: shareOfPct(recvEx, ex) },
+      { label: "Due (Ex. Tax)", value: inrCompact(sumOf("due_ex")), sub: `Total Due ${inrCompact(sumOf("total_due"))} · Bank ${inrCompact(sumOf("due_bank"))} · TDS ${inrCompact(sumOf("due_tds"))}`, dot: "#fca5a5" },
       showCost
         ? { label: "Margin", value: inrCompact(mg), sub: `${pct(shareOfPct(mg, ex), 0)} after ${inrCompact(sumOf("cost"))} people cost`, dot: "#5eead4" }
         : { label: "Overdue", value: inrCompact(s.overdue), sub: s.overdue > 0 ? `${pct(overdueSharePct, 0)} of what is owed, past the due date` : "nothing past the due date", dot: "#fca5a5" },
@@ -976,8 +1062,8 @@ function CustomerTab({ d, period }: { d: CustomerData; period: CeoPeriod }) {
           : "Revenue (Ex. Tax) month by month, one column per customer — the largest are named, the rest are Others"}
         headerExtra={<GlassToggle value={unfoldBy} ink={STORY_THEMES.customer.ink} label="Unfolded view"
           options={[{ key: "totals", label: "Totals" }, { key: "customers", label: "By customer" }]} onChange={setUnfoldBy} />}
-        stats={unfoldStats} stripKeys={unfoldBy === "totals" ? ["revenue_ex", "received_bank"] : [unfoldSeries[0]?.key ?? "", unfoldSeries[1]?.key]}
-        ring={unfoldBy === "totals" ? (r) => ({ pct: shareOfPct(num0(r.received_bank) + num0(r.received_tds), num0(r.revenue_inc)), color: "#10b981" }) : undefined}
+        stats={unfoldStats} stripKeys={unfoldBy === "totals" ? ["revenue_ex", "received_ex"] : [unfoldSeries[0]?.key ?? "", unfoldSeries[1]?.key]}
+        ring={unfoldBy === "totals" ? (r) => ({ pct: shareOfPct(num0(r.received_ex), num0(r.revenue_ex)), color: "#10b981" }) : undefined}
         spotlightSub={() => "work month"}
         spotlightExtra={unfoldBy === "totals" && showCost ? (r) => (
           <SpotLine label="Margin" value={`${inrCompact(num0(r.margin))} · ${pct(shareOfPct(num0(r.margin), num0(r.revenue_ex)), 0)}`}
@@ -1700,9 +1786,12 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
   });
   // The Billing Tracker fetches for itself; the period payload stays on the
   // last company tab (so the Targets button and returning to it are instant).
-  const firstData = (shownTabs.find((t) => t.key !== "billing")?.key ?? "finance") as DataTab;
-  const [dataTab, setDataTab] = useState<DataTab>(() => (tab === "billing" ? firstData : tab as DataTab));
-  const isBilling = tab === "billing";
+  const firstData = (shownTabs.find((t) => !OWN_TABS.includes(t.key))?.key ?? "finance") as DataTab;
+  const [dataTab, setDataTab] = useState<DataTab>(() => (OWN_TABS.includes(tab) ? firstData : tab as DataTab));
+  // Billing Tracker and Invoice approvals fetch for themselves — no period controls.
+  const isBilling = OWN_TABS.includes(tab);
+  const showApprovals = shownTabs.some((t) => t.key === "approvals");
+  const readyCount = useApprovalsBadge(showApprovals);
   const [period, setPeriod] = useState<PeriodKind>("fy");
   const [month, setMonth] = useState<string>(thisMonthKey());
 
@@ -1716,7 +1805,10 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
     project_id: scoped ? scope.project ?? undefined : undefined,
     branch_id: scoped ? scope.branch ?? undefined : undefined,
   })}`;
-  const { data, loading, error, retry } = useDeskData<CeoPayload<unknown>>(url);
+  // 20 Nov 2026 (user: "when Finance maps invoices the data must change"): re-read quietly
+  // every minute while visible, on return to the tab and at once after any change made in
+  // this browser (Map invoices, Record payment, Settle… — `announceDeskChange`).
+  const { data, loading, error, retry } = useDeskData<CeoPayload<unknown>>(url, { live: 60_000 });
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [toast, showToast] = useToast();
   // The Targets dialog reads the Finance tab's `targets`; on another tab it
@@ -1743,7 +1835,7 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
 
   const pick = (t: CeoTab) => {
     setTab(t);
-    if (t !== "billing") setDataTab(t);
+    if (!OWN_TABS.includes(t)) setDataTab(t as DataTab);
     try { localStorage.setItem(TAB_STORAGE_KEY, t); } catch { /* per-viewer convenience only */ }
   };
 
@@ -1771,7 +1863,7 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
             </button>}
           </div>
         </div>
-        {!single && <div className={`grid grid-cols-2 gap-2 border-t border-subtle px-3 py-3 ${shownTabs.length >= 5 ? "md:grid-cols-3 xl:grid-cols-5" : shownTabs.length === 2 ? "md:grid-cols-2" : "md:grid-cols-4"}`} role="tablist" aria-label="CEO dashboard tabs">
+        {!single && <div className={`grid grid-cols-2 gap-2 border-t border-subtle px-3 py-3 ${shownTabs.length >= 6 ? "md:grid-cols-3 xl:grid-cols-6" : shownTabs.length >= 5 ? "md:grid-cols-3 xl:grid-cols-5" : shownTabs.length === 2 ? "md:grid-cols-2" : "md:grid-cols-4"}`} role="tablist" aria-label="CEO dashboard tabs">
           {shownTabs.map((t) => {
             const active = t.key === tab;
             const Icon = t.icon;
@@ -1791,7 +1883,12 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
                   <Icon className="h-5 w-5" />
                 </span>
                 <span className="min-w-0">
-                  <span className={`block text-sm font-bold ${active ? "text-primary" : "text-secondary"}`}>{t.label}</span>
+                  <span className={`flex items-center gap-1.5 text-sm font-bold ${active ? "text-primary" : "text-secondary"}`}>
+                    {t.label}
+                    {t.key === "approvals" && readyCount > 0 && (
+                      <span className="rounded-full bg-emerald-600 px-1.5 text-[10px] font-bold text-white tabular-nums" title={`${readyCount} invoice(s) ready for your approval`}>{readyCount}</span>
+                    )}
+                  </span>
                   <span className="block truncate text-[11px] text-muted">{t.blurb}</span>
                 </span>
               </button>
@@ -1825,7 +1922,8 @@ export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccoun
         )}
       </header>
 
-      {isBilling && <BillingTracker />}
+      {tab === "billing" && <BillingTracker />}
+      {tab === "approvals" && <InvoiceApprovals />}
       {!isBilling && error && <ErrorBox error={error} onRetry={retry} />}
       {!isBilling && !data && loading && !error && (
         <div className="grid gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="rounded-card border border-subtle bg-surface-1 p-4"><SkeletonText lines={2} /></div>)}</div>

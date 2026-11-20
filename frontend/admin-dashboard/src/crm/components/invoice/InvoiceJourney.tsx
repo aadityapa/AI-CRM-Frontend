@@ -3,11 +3,12 @@
  * & e-invoice" card; server half in B-V2 `services/invoice_customer_approval.py`):
  *
  *   1 Invoice issued  →  2 Customer approved (Sales Manager / Sales Head)
- *     →  3 e-Invoice — Finance adds the IRN + Ack No.  →  4 Payment collected
+ *     →  3 e-Invoice — Finance adds the IRN + Ack No.
+ *     →  4 Admin / CEO approval (20 Nov 2026, was "Payment") — once the money and the
+ *        TDS are collected, Admin / CEO sign off and close the invoice
  *
- * Record Payment / Record TDS live on step 4 and stay LOCKED until step 3 is
- * done — the server refuses them too (`payment_block`), and says why; the page
- * prints that same reason. The e-invoice itself (the tax invoice with its IRN ·
+ * Step 4 (20 Nov 2026): money is recorded in Received Amount / Received TDS —
+ * the step links there (search pre-filled with the invoice number). The e-invoice itself (the tax invoice with its IRN ·
  * Ack No. · Ack Date band and a QR to the public e-invoice page) opens from
  * step 3 and from the page header.
  *
@@ -17,13 +18,15 @@
  */
 import { useState } from "react";
 import {
-  BadgeCheck, CheckCircle2, FileCheck2, FileKey2, Hourglass, IndianRupee, Lock, Mail, Receipt, RotateCcw,
+  AlertTriangle, BadgeCheck, CheckCircle2, CircleDashed, FileCheck2, FileKey2, Hourglass, IndianRupee, Lock, Mail, Receipt, RotateCcw,
   ShieldCheck, type LucideIcon,
 } from "lucide-react";
 import { crmDelete, crmPost, crmPut } from "../../api";
+import { CrmLink } from "../../routerHooks";
 import { Modal, inputCls } from "../ui";
 import { DecisionDialog, DialogActions, DialogFailure, DialogHero, DialogSection, type DecisionSpec } from "../dialogKit";
 import { fmtDateShort, fmtDateTime12 } from "../../../lib/datetime";
+import { approveSpec, undoSpec } from "../../pages/dashboard/InvoiceApprovals";
 
 export type CustomerApproval = {
   approved: boolean;
@@ -34,6 +37,15 @@ export type CustomerApproval = {
   can_confirm: boolean;
   can_withdraw: boolean;
   block: string | null;
+};
+
+/** Step 4 (20 Nov 2026) — Admin / CEO final approval (server `services/invoice_closure.py`). */
+export type ClosureCheck = { key: string; label: string; ok: boolean; detail: string };
+export type Closure = {
+  state: "ready" | "changed" | "waiting" | "approved"; state_label: string; ready: boolean;
+  checks: ClosureCheck[]; approved: boolean; approved_at: string | null; approved_by: number | null;
+  approved_by_name: string | null; note: string | null;
+  can_approve: boolean; can_reapprove: boolean; can_undo: boolean;
 };
 
 export type EInvoice = {
@@ -174,7 +186,7 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, on
   onChanged: () => void;
   notify: Notify;
 }) {
-  const [dialog, setDialog] = useState<null | "confirm" | "withdraw" | "irn">(null);
+  const [dialog, setDialog] = useState<null | "confirm" | "withdraw" | "irn" | "close" | "unclose">(null);
   const approval: CustomerApproval | undefined = inv.customer_approval;
   const einvoice: EInvoice | undefined = inv.einvoice;
   if (!approval) return null;
@@ -183,19 +195,25 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, on
   const paid = Number(inv.paid_amount || 0);
   const balance = Number(inv.balance_amount || 0);
   const fullyPaid = total > 0 && balance <= 0;
-  const states = journeyStates(approval.approved, einvoiceReady, fullyPaid);
+  const states = journeyStates(approval.approved, einvoiceReady, inv.closure ? inv.closure.state === "approved" : fullyPaid);
   // TDS the customer withheld settles the invoice beside the cash (16 Oct 2026).
   const tdsDeducted = Number(inv.tds_deducted || 0);
   const paidPct = total > 0 ? Math.min(100, Math.round(((paid + tdsDeducted) / total) * 100)) : 0;
-  const paymentsOpen = inv.payments_open !== false;
   const tds = inv.tds_record;
   const lastPay = latestPayment(inv.payments);
+  const closure: Closure | undefined = inv.closure;
+  const closureDone = closure?.state === "approved";
+  const moneyChecks: ClosureCheck[] = closure?.checks?.filter((c) => c.key === "money" || c.key === "tds") ?? [
+    { key: "money", label: "Payment collected", ok: fullyPaid, detail: fullyPaid ? "Collected in full" : `Balance ${inr(balance)}` },
+    { key: "tds", label: "TDS collected", ok: !tds || Number(tds.tds_balance) <= 0,
+      detail: !tds ? "No TDS on this invoice" : Number(tds.tds_balance) > 0 ? `TDS ${inr(tds.tds_balance)} pending from client` : "TDS received (Form 16A)" },
+  ];
   const payCount = Array.isArray(inv.payments) ? inv.payments.length : 0;
 
   const confirmSpec: DecisionSpec = {
     tone: "emerald", icon: BadgeCheck, eyebrow: "Customer approval", title: "Customer approved — no changes",
     intro: <>Confirm the customer accepted <b>{inv.invoice_number}</b> exactly as issued. Finance is told to add the e-invoice IRN. If the customer wants anything changed, use <b>Edit</b> (a change request) instead.</>,
-    flow: { steps: ["Invoice issued", "Customer approved", "Finance adds IRN", "Payment"], current: 1 },
+    flow: { steps: ["Invoice issued", "Customer approved", "Finance adds IRN", "Collected → Admin approves"], current: 1 },
     reason: { label: "Note (optional)", placeholder: "e.g. Approved by the customer's accounts team on mail",
       picks: ["Approved on email by the customer", "Customer confirmed on call", "Accepted by the customer's accounts team"] },
     happens: [
@@ -216,8 +234,8 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, on
     <section className="overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised" aria-labelledby={`inv-journey-${inv.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 px-4 py-3 dark:from-indigo-950/40 dark:via-sky-950/30 dark:to-emerald-950/30">
         <div>
-          <h2 id={`inv-journey-${inv.id}`} className="text-base font-bold text-primary">From invoice to payment</h2>
-          <p className="text-xs text-muted">The customer approves it, Finance registers the e-invoice, then the money is recorded against it.</p>
+          <h2 id={`inv-journey-${inv.id}`} className="text-base font-bold text-primary">From invoice to approval</h2>
+          <p className="text-xs text-muted">The customer approves it, Finance registers the e-invoice and collects the payment and TDS, then Admin / CEO approve and close it.</p>
         </div>
         <span className="rounded-full bg-surface-1 px-2.5 py-1 text-xs font-semibold text-secondary shadow-raised">
           {states.filter((s) => s === "done").length} of 4 steps done
@@ -303,43 +321,74 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, on
           )}
         </JourneyStep>
 
-        <JourneyStep n={4} state={states[3]} icon={IndianRupee} title="Payment" who="Finance"
-          actions={canWrite ? (
-            paymentsOpen ? (
-              <>
-                <button type="button" className={BTN_GREEN} onClick={onPay} disabled={balance <= 0}>
-                  <IndianRupee size={14} /> Record payment
+        <JourneyStep n={4} state={states[3]} icon={ShieldCheck} title="Admin / CEO approval" who="After payment and TDS are collected"
+          actions={(closure?.can_approve || closure?.can_reapprove || closure?.can_undo || (canWrite && !closureDone)) ? (
+            <>
+              {(closure?.can_approve || closure?.can_reapprove) && (
+                <button type="button" className={BTN_GREEN} onClick={() => setDialog("close")}>
+                  <BadgeCheck size={14} /> {closure?.can_reapprove ? "Re-approve" : "Approve & close"}
                 </button>
-                <button type="button" className={BTN_SOFT} onClick={onTds}
-                  title={tds ? "The TDS the customer withheld — mark it received when the Form 16A is in" : "The customer deducted TDS from this invoice"}>
-                  {!tds ? "Record TDS" : Number(tds.tds_balance) > 0 ? "TDS pending from client" : "TDS received"}
+              )}
+              {closure?.can_undo && (
+                <button type="button" className={BTN_SOFT} onClick={() => setDialog("unclose")}>
+                  <RotateCcw size={14} /> Undo approval
                 </button>
-              </>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-control bg-surface-2 px-2.5 py-1.5 text-[11px] font-semibold text-muted">
-                <Lock size={13} aria-hidden /> Locked until the e-invoice exists
-              </span>
-            )
+              )}
+              {/* 20 Nov 2026: money is recorded in Received Amount / Received TDS — links, never a form here. */}
+              {canWrite && !closureDone && balance > 0 && (
+                <CrmLink to={`received-amounts?q=${encodeURIComponent(inv.invoice_number || "")}`} className={BTN_SOFT}
+                  title="Record or map the customer's payment in Received Amount">
+                  <IndianRupee size={14} /> Map in Received Amount
+                </CrmLink>
+              )}
+              {canWrite && !closureDone && tds && Number(tds.tds_balance) > 0 && (
+                <CrmLink to={`received-tds?q=${encodeURIComponent(inv.invoice_number || "")}`} className={BTN_SOFT}
+                  title="Map the TDS the customer deposited (Form 16A / 26AS)">
+                  Received TDS
+                </CrmLink>
+              )}
+              {canWrite && tds && (
+                <button type="button" className={BTN_SOFT} onClick={onTds} title="The TDS the customer withheld — details, and undo 'received'">
+                  TDS details
+                </button>
+              )}
+            </>
           ) : undefined}>
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-sm font-bold text-primary tabular-nums">{inr(paid)}</span>
-            <span className="text-[11px] text-muted tabular-nums">of {inr(total)}</span>
-          </div>
-          <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+          <ul className="space-y-1">
+            {moneyChecks.map((c) => (
+              <li key={c.key} className="flex items-start gap-1.5">
+                {c.ok
+                  ? <CheckCircle2 size={14} className="mt-px shrink-0 text-emerald-600" aria-hidden />
+                  : <CircleDashed size={14} className="mt-px shrink-0 text-amber-600" aria-hidden />}
+                <span>
+                  <b className="text-primary">{c.label}</b>
+                  <span className={`block text-[11px] ${c.ok ? "text-secondary" : "text-amber-700 dark:text-amber-300"}`}>{c.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
             <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${paidPct}%` }} />
           </div>
-          <div className="mt-1">{fullyPaid ? (tdsDeducted > 0 ? "Settled (cash + TDS)." : "Fully paid.") : `Balance ${inr(balance)}`}</div>
-          {tds && (
-            <div className={`mt-0.5 text-[11px] ${Number(tds.tds_balance) > 0 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300"}`}>
-              TDS {inr(tds.tds_amount)} · {Number(tds.tds_balance) > 0 ? `${inr(tds.tds_balance)} pending from client` : "received (Form 16A)"}
-              {tds.created_by_name ? <> · booked by <b>{tds.created_by_name}</b></> : null}
+          {closure?.approved ? (
+            <div className={`mt-2 rounded-control px-2 py-1.5 ${closure.state === "changed" ? "bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "bg-emerald-100/70 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100"}`}>
+              <div className="flex items-center gap-1 font-semibold">
+                {closure.state === "changed" ? <AlertTriangle size={13} aria-hidden /> : <BadgeCheck size={13} aria-hidden />}
+                {closure.state === "changed" ? "Approved — but the money changed since" : "Approved — invoice closed"}
+              </div>
+              <ActorLine verb="Approved" name={closure.approved_by_name} at={closure.approved_at} />
+              {closure.note && <span className="mt-0.5 block italic">“{closure.note}”</span>}
             </div>
-          )}
+          ) : closure ? (
+            <div className="mt-2 text-[11px] text-muted">
+              {closure.state === "ready" ? <b className="text-emerald-700 dark:text-emerald-300">Everything is done — waiting for Admin / CEO to approve.</b>
+                : "Goes to Admin / CEO for approval once every step is done."}
+            </div>
+          ) : null}
           {lastPay && (
             <ActorLine verb={payCount > 1 ? `Last of ${payCount} payments recorded` : "Payment recorded"}
               name={lastPay.recorded_by_name} at={lastPay.created_at || lastPay.payment_date} />
           )}
-          {!paymentsOpen && inv.payment_block && <div className="mt-1 text-[11px] text-muted">{inv.payment_block}</div>}
         </JourneyStep>
       </ol>
 
@@ -357,6 +406,24 @@ export function InvoiceJourney({ inv, canWrite, onPay, onTds, onOpenEInvoice, on
           onConfirm={async () => {
             const res = await crmDelete(`/api/invoices/${inv.id}/customer-approval`);
             notify(res.message || "Customer approval withdrawn");
+            setDialog(null);
+            onChanged();
+          }} />
+      )}
+      {dialog === "close" && (
+        <DecisionDialog spec={approveSpec(1, total, inv.invoice_number)} onClose={() => setDialog(null)}
+          onConfirm={async (note) => {
+            const res = await crmPost(`/api/invoices/${inv.id}/closure-approval`, { note: note.trim() || null });
+            notify(res.message || "Invoice approved");
+            setDialog(null);
+            onChanged();
+          }} />
+      )}
+      {dialog === "unclose" && (
+        <DecisionDialog spec={undoSpec(inv.invoice_number)} onClose={() => setDialog(null)}
+          onConfirm={async (reason) => {
+            const res = await crmPost(`/api/invoices/${inv.id}/closure-approval/undo`, { reason: reason.trim() });
+            notify(res.message || "Approval undone");
             setDialog(null);
             onChanged();
           }} />

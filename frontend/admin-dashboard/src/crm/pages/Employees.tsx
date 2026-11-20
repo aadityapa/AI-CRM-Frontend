@@ -35,7 +35,7 @@ import {
   SectionHeaderBanner, WizardField,
 } from "../components/wizard";
 import {
-  EMPLOYEE_CARDS, changedPayload, coreCount, displayValue, hiddenFields, missingCore, seedValue,
+  EMPLOYEE_CARDS, EMPLOYMENT_TYPES, changedPayload, employmentTypeLabel, coreCount, displayValue, hiddenFields, missingCore, seedValue,
   validationError, visibleFields, type EmpCardKey, type EmpDraftValue, type EmpField,
 } from "../lib/employeeFields";
 import { usePageTab, useSessionState } from "../lib/pageState";
@@ -113,6 +113,24 @@ function TypeBadge({ type }: { type?: string | null }) {
       ? "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
       : "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300";
   return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{type}</span>;
+}
+
+/** One colour per employment type, so the list scans at a glance. */
+const EMPLOYMENT_TONE: Record<string, string> = {
+  Full_Time: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  Part_Time: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
+  Contract: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  Intern: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+};
+
+function EmploymentTypeBadge({ type }: { type?: string | null }) {
+  if (!type) return <span className="text-xs text-muted">Not set</span>;
+  const cls = EMPLOYMENT_TONE[type] || "bg-surface-2 text-secondary";
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>
+      {employmentTypeLabel(type)}
+    </span>
+  );
 }
 
 function InfoItem({ label, children }: { label: string; children: React.ReactNode }) {
@@ -418,6 +436,7 @@ function EmployeeFormModal({
   const [desigId, setDesigId] = useState(initial?.designation_id ? String(initial.designation_id) : "");
   const [managerId, setManagerId] = useState(initial?.reporting_manager_id ? String(initial.reporting_manager_id) : "");
   const [profileType, setProfileType] = useState(initial?.profile_type || "Internal");
+  const [employmentType, setEmploymentType] = useState<string>(initial?.employment_type || "");
   const [portalAccess, setPortalAccess] = useState(Boolean(initial?.portal_access));
   const [doj, setDoj] = useState(initial?.date_of_joining || "");
   const [pan, setPan] = useState(initial?.pan || "");
@@ -435,6 +454,7 @@ function EmployeeFormModal({
   const submit = async () => {
     if (!firstName.trim()) { setErr("First name is required"); return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { setErr("A valid official email is required"); return; }
+    if (!initial && !employmentType) { setErr("Choose the employment type — Full-Time, Part-Time, Contract / Consultant or Intern"); return; }
     setErr("");
     setBusy(true);
     try {
@@ -448,6 +468,7 @@ function EmployeeFormModal({
         designation_id: desigId ? Number(desigId) : null,
         reporting_manager_id: managerId ? Number(managerId) : null,
         profile_type: profileType,
+        employment_type: employmentType || null,
         portal_access: portalAccess,
         date_of_joining: doj || null,
         pan: pan.trim() || null,
@@ -521,6 +542,24 @@ function EmployeeFormModal({
                       .map((m) => <option key={m.id} value={m.id}>{m.full_name || `${m.first_name} ${m.last_name || ""}`}</option>)}
                   </select>
                 </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Employment type" required={!initial}>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Employment type">
+                      {EMPLOYMENT_TYPES.map((t) => {
+                        const on = employmentType === t.value;
+                        return (
+                          <button key={t.value} type="button" role="radio" aria-checked={on}
+                                  onClick={() => setEmploymentType(t.value)}
+                                  className={`rounded-control border px-3 py-2 text-sm font-semibold transition ${on
+                                    ? "border-brand-600 bg-brand-50 text-brand-700 ring-1 ring-brand-600 dark:bg-brand-900/30 dark:text-brand-200"
+                                    : "border-subtle bg-surface-1 text-secondary hover:border-brand-400"}`}>
+                            {t.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </Field>
+                </div>
                 <Field label="Profile type">
                   <select className={inputCls} value={profileType} onChange={(e) => setProfileType(e.target.value)}>
                     <option value="Internal">Internal</option>
@@ -594,6 +633,9 @@ function DeploymentCell({ row }: { row: { deployment_status?: string | null; cur
 export function EmployeesListPage() {
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("HR");
+  /* Admin / CEO delete in one step with everything recorded on the person
+     (20 Nov 2026); HR may delete only a record with no history. */
+  const isAdminUser = useHasRole();
   const canWrite = useCanAct("employees", "edit", canWriteRole);
   const [tab, setTab] = usePageTab<string>("status", "All", EMP_TABS.map((t) => t.key));
   const [search, setSearch] = useSessionState("emp.search", "");
@@ -663,7 +705,7 @@ export function EmployeesListPage() {
       crmGet<any[]>(`/api/employees${qs({
         is_active: tab === "All" ? undefined : tab === "Active",
         department_id: deptFilter || undefined,
-        profile_type: typeFilter || undefined,
+        employment_type: typeFilter || undefined,
         // Default (DOJ) is sent as undefined so the server owns it in one place.
         sort_by: sortBy || undefined,
         deployment: deploymentFilter || undefined,
@@ -698,7 +740,7 @@ export function EmployeesListPage() {
         <div className="text-xs text-muted">{r.department_id ? departments[r.department_id] || `#${r.department_id}` : "No department"}</div>
       </div>
     ) },
-    { key: "profile_type", label: "Type", render: (r) => <TypeBadge type={r.profile_type} /> },
+    { key: "employment_type", label: "Employment Type", render: (r) => <EmploymentTypeBadge type={r.employment_type} /> },
     { key: "date_of_joining", label: "Joined", className: "whitespace-nowrap", render: (r) => (
       <span className="inline-flex items-center gap-1 text-secondary"><CalendarDays size={12} className="text-muted" aria-hidden />{fmtDate(r.date_of_joining)}</span>
     ) },
@@ -718,10 +760,11 @@ export function EmployeesListPage() {
         <option value="">All departments</option>
         {Object.entries(departments).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
       </select>
-      <select className={`${inputCls} !w-36`} value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
-        <option value="">All types</option>
-        <option value="Internal">Internal</option>
-        <option value="External">External</option>
+      <select className={`${inputCls} !w-52`} value={typeFilter} title="Employment type"
+              onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
+        <option value="">All employment types</option>
+        {EMPLOYMENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        <option value="none">Not set</option>
       </select>
       {/* `!w-44` — the `!` matters: `inputCls` ends in `w-full`, which beats a
           plain `w-44` appended after it (see F-V2 CLAUDE.md). */}
@@ -821,6 +864,9 @@ export function EmployeesListPage() {
             onView={() => crmNavigate(`employees/${r.id}`)}
             onEdit={() => crmNavigate(`employees/${r.id}`)}
             deleteUrl={`/api/employees/${r.id}`}
+            deleteNote={isAdminUser
+              ? "As Admin this also removes their project assignments, timesheets, leave applications, leave ledger and balances. A tax invoice raised from their timesheets still has to be deleted first."
+              : "An employee with project assignments, timesheets or leave records cannot be deleted — deactivate them instead."}
             onDeleted={() => afterListDelete(r.id, setRows, load)}
             notify={showToast}
             canEdit
@@ -1053,6 +1099,7 @@ export function EmployeeDetailPage() {
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <TypeBadge type={emp.profile_type} />
+                {emp.employment_type && <EmploymentTypeBadge type={emp.employment_type} />}
                 <StatusBadge status={emp.is_active ? "Active" : "Inactive"} />
                 {(emp.is_exit || emp.is_resigned) && <StatusBadge status="Exited" />}
                 {emp.deployment_status && <DeploymentCell row={emp} />}

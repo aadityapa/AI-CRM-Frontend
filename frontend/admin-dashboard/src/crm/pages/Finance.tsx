@@ -4,8 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Ban, Building2, CalendarRange, ChevronDown, ChevronRight, ClipboardCheck, DollarSign, FileCheck2, FileDown, FileText, Percent,
   IndianRupee, Layers, MapPin, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Search, Undo2,
-  FileSpreadsheet, Landmark, ScrollText, Bell, XCircle, CheckCircle2,
+  FileSpreadsheet, Landmark, ScrollText, Bell, XCircle, CheckCircle2, Wallet,
 } from "lucide-react";
+import { MapMoneyDialog, mappableInvoice, pickCustomers, rupee as mapRupee, type MapPick } from "../components/invoice/MapMoneyDialog";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
 import { DecisionDialog } from "../components/dialogKit";
 import { crmGet, crmPost, crmPut, qs, type Meta } from "../api";
@@ -39,12 +40,15 @@ import {
   ReversePaymentDialog, type PaymentRow,
 } from "../components/invoice/PaymentLink";
 import { RecordPaymentDialog } from "../components/invoice/RecordPaymentDialog";
-import { SettleInFullDialog } from "../components/invoice/SettleInFull";
+import { BulkSettleDialog, SettleInFullDialog } from "../components/invoice/SettleInFull";
 import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
 import { EInvoiceRegister } from "../components/invoice/EInvoiceRegister";
-import { EINVOICE_TAB_KEY, INVOICE_STAGE_TABS, invoiceTabParams, tabsWithMatches } from "../lib/invoiceStages";
+import {
+  ALL_INVOICES_TAB_KEY, EINVOICE_TAB_KEY, INVOICE_STAGE_FILTERS, INVOICE_STAGE_TABS, OPEN_STAGES,
+  allInvoicesCount, invoiceTabParams, stageWords, tabsWithMatches, toggleStage,
+} from "../lib/invoiceStages";
 import {
   EMPTY_MORE_FILTERS, InvoiceStatusChip, MoreFiltersPanel, MoreFiltersToggle, StatusFilterPills,
   moreFilterCount, moreFilterQuery, rangeProblem,
@@ -2090,6 +2094,58 @@ const EINVOICE_TAB = EINVOICE_TAB_KEY;
    See crm/lib/invoiceStages.ts. */
 const INVOICE_TABS = INVOICE_STAGE_TABS;
 
+/** One colour per stage — the All tab's Stage filter dots and its Stage column. */
+const STAGE_CHIP: Record<string, { dot: string; chip: string }> = {
+  proforma: { dot: "bg-orange-500", chip: "bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300" },
+  awaiting_customer: { dot: "bg-amber-500", chip: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
+  pending_einvoice: { dot: "bg-sky-500", chip: "bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
+  unpaid: { dot: "bg-rose-500", chip: "bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300" },
+  partially_paid: { dot: "bg-purple-500", chip: "bg-purple-50 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300" },
+  paid: { dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
+};
+
+function StageChip({ stage }: { stage?: string | null }) {
+  const words = stageWords(stage);
+  if (!words) return <span className="text-xs text-muted">—</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${STAGE_CHIP[stage || ""]?.chip || ""}`}>{words}</span>;
+}
+
+/** The All tab's Stage filter (20 Nov 2026): several stages at once, each with
+ *  its count, plus a one-click "Still open" (raised, not yet fully paid). */
+function StageFilterPills({ counts, value, onChange }: {
+  counts: Record<string, number> | null; value: string[]; onChange: (next: string[]) => void;
+}) {
+  const pill = (active: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ring-1 transition ${
+      active ? "bg-brand-600 text-[#fff] ring-brand-600" : "bg-surface-1 text-secondary ring-border hover:bg-surface-2"}`;
+  const openPicked = value.length === OPEN_STAGES.length && OPEN_STAGES.every((s) => value.includes(s));
+  const openCount = counts ? OPEN_STAGES.reduce((a, s) => a + (counts[s] || 0), 0) : undefined;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by stage">
+      <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted">Stage</span>
+      <button type="button" className={pill(value.length === 0)} aria-pressed={value.length === 0} onClick={() => onChange([])}>
+        All stages {counts ? <span className="tnum opacity-80">{allInvoicesCount(counts)}</span> : null}
+      </button>
+      <button type="button" className={pill(openPicked)} aria-pressed={openPicked}
+        title="Raised and not yet fully paid: awaiting customer, pending e-invoice, unpaid, partially paid"
+        onClick={() => onChange(openPicked ? [] : [...OPEN_STAGES])}>
+        Still open {openCount != null ? <span className="tnum opacity-80">{openCount}</span> : null}
+      </button>
+      <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+      {INVOICE_STAGE_FILTERS.map((st) => {
+        const on = value.includes(st.stage);
+        return (
+          <button key={st.stage} type="button" className={pill(on)} aria-pressed={on}
+            onClick={() => onChange(toggleStage(value, st.stage))}>
+            <span className={`h-1.5 w-1.5 rounded-full ${STAGE_CHIP[st.stage]?.dot || "bg-slate-400"}`} />
+            {st.label} {counts ? <span className="tnum opacity-80">{counts[st.stage] ?? 0}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Customer approval + (Finance / Admin / CEO only) IRN state of a list row. */
 function ApprovalChip({ r }: { r: any }) {
   if (r.kind === "Proforma") return <span className="text-xs text-muted">—</span>;
@@ -2127,13 +2183,22 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const [countsSearch, setCountsSearch] = useState<string | null>(null);
   const invoiceTabs = INVOICE_TABS
     .filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key))
-    .map((x) => ({ key: x.key, label: x.label, count: x.stage && stageCounts ? stageCounts[x.stage] ?? 0 : undefined }));
+    .map((x) => ({ key: x.key, label: x.label,
+      count: x.key === ALL_INVOICES_TAB_KEY ? allInvoicesCount(stageCounts)
+        : x.stage && stageCounts ? stageCounts[x.stage] ?? 0 : undefined }));
   const invTabKeys = invoiceTabs.map((x) => x.key);
   /* `?tab=Proforma` deep link (28 Sep 2026: the work desk's "Proformas to
-     convert" queue lands here); an unknown value falls back to Unpaid. */
-  const [rawInvTab, setTab] = usePageTab<string>("tab", invTabKeys.includes("Unpaid") ? "Unpaid" : (invTabKeys[0] || "Unpaid"), invTabKeys);
+     convert" queue lands here). 20 Nov 2026 (user ask): the list opens on All. */
+  const defaultInvTab = invTabKeys.includes(ALL_INVOICES_TAB_KEY) ? ALL_INVOICES_TAB_KEY
+    : invTabKeys.includes("Unpaid") ? "Unpaid" : (invTabKeys[0] || "Unpaid");
+  const [rawInvTab, setTab] = usePageTab<string>("tab", defaultInvTab, invTabKeys);
   const tab = invTabKeys.includes(rawInvTab) || !invTabKeys.length ? rawInvTab : invTabKeys[0];
   const einvoiceTab = tab === EINVOICE_TAB;
+  const allTab = tab === ALL_INVOICES_TAB_KEY;
+  /* The All tab's Stage filter — several stages at once (server CSV). */
+  const [stageFilter, setStageFilter] = useSessionState<string[]>("inv.stages", []);
+  const stagesPicked = allTab ? stageFilter : [];
+  const stageKey = stagesPicked.join(",");
   const [search, setSearch] = useSessionState("inv.search", "");
   const [page, setPage] = useSessionState("inv.page", 1);
   const [rows, setRows] = useState<any[]>([]);
@@ -2157,7 +2222,12 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const [toast, showToast] = useToast();
   const projects = useNameMap("/api/projects?limit=100");
   const pos = useNameMap("/api/purchase-orders?limit=100", "po_number");
+  const [bulkSettle, setBulkSettle] = useState(false);
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
+  /* 20 Nov 2026 (Finance ask): map money from here — tick invoices (or press Map on
+     a row / a customer's group) → cash from Received Amount + TDS from Received TDS. */
+  const [mapSel, setMapSel] = useState<Map<number, MapPick>>(new Map());
+  const [mapIds, setMapIds] = useState<number[] | null>(null);
   /* Customer + project filters (25 Aug 2026): server-side — paginated list. */
   const [customerFilter, setCustomerFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
@@ -2191,7 +2261,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     setLoading(true);
     const t = window.setTimeout(() => {
       const params = {
-        ...invoiceTabParams(tab),
+        ...invoiceTabParams(tab, stagesPicked),
         search,
         customer_id: customerFilter || undefined,
         project_id: projectFilter || undefined,
@@ -2215,7 +2285,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     }, typing ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `moreKey` stands for `more`
-  }, [tab, search, page, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, view, statusFilter, moreKey]);
+  }, [tab, search, page, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, view, statusFilter, moreKey, stageKey]);
   /* The counts on the tabs: one tiny request (limit 1) with the same filters,
      whichever tab is open. A failure just leaves the tabs without numbers. */
   useEffect(() => {
@@ -2226,7 +2296,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         branch_id: branchFilter || undefined, month: monthFilter || undefined,
         ...moreQuery,
         /* The open tab's Status choices + counts and the More filters pickers ride along. */
-        ...(tab === EINVOICE_TAB ? {} : { ...invoiceTabParams(tab), with_status_counts: true }),
+        ...(tab === EINVOICE_TAB ? {} : { ...invoiceTabParams(tab, stagesPicked), with_status_counts: true }),
         with_stage_counts: true, limit: 1,
       })}`)
         .then((r) => {
@@ -2241,20 +2311,20 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
     }, typing ? 300 : 0);
     return () => { alive = false; window.clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `moreKey` stands for `more`
-  }, [tab, search, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, moreKey]);
+  }, [tab, search, reloadKey, customerFilter, projectFilter, branchFilter, monthFilter, moreKey, stageKey]);
   /* 2 Nov 2026 (screenshot): an invoice number searched on the WRONG tab read
      "No invoices yet". When the open tab holds nothing for the search but
      another tab does, the page moves to that tab once per search term (a
      replace — Back is not filled with jumps), and the strip below names every
      tab that holds a match. */
   const searchTerm = search.trim();
-  const elsewhere = searchTerm && countsSearch === search && !einvoiceTab
+  const elsewhere = searchTerm && countsSearch === search && !einvoiceTab && !allTab
     ? tabsWithMatches(stageCounts, tab, invTabKeys) : [];
   const currentStage = INVOICE_TABS.find((x) => x.key === tab)?.stage || "";
   const hereCount = stageCounts && currentStage ? stageCounts[currentStage] ?? 0 : null;
   const jumpedFor = useRef<string>("");
   useEffect(() => {
-    if (!searchTerm || countsSearch !== search || einvoiceTab) return;
+    if (!searchTerm || countsSearch !== search || einvoiceTab || allTab) return;
     if (hereCount === 0 && elsewhere.length > 0 && jumpedFor.current !== searchTerm) {
       jumpedFor.current = searchTerm;
       setTab(elsewhere[0].key, { replace: true });
@@ -2277,7 +2347,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   ) : null;
   /* A search that finds nothing on this tab never reads "No invoices yet". */
   const anyFilterBesidesSearch = !!(customerFilter || projectFilter || branchFilter || monthFilter || statusFilter
-    || moreFilterCount(more));
+    || moreFilterCount(more) || stagesPicked.length);
   const searchEmpty = searchTerm ? (
     <div className="mx-auto max-w-md py-6 text-center text-sm text-secondary">
       <Search size={20} className="mx-auto mb-2 text-muted" />
@@ -2291,12 +2361,13 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           ))}.</>
       ) : (
         <>No invoice or Proforma matches “{searchTerm}” on any tab.
-          {anyFilterBesidesSearch ? " A customer, project, month or status filter is on — clear it and search again." : " Check the number — the search reads the invoice number, PI number, PO number, customer, project and employee."}</>
+          {anyFilterBesidesSearch ? " A customer, project, month, stage or status filter is on — clear it and search again." : " Check the number — the search reads the invoice number, PI number, PO number, customer, project and employee."}</>
       )}
     </div>
   ) : null;
-  useChangeEffect(() => { setPage(1); }, [search, customerFilter, projectFilter, branchFilter, monthFilter, statusFilter, moreKey]);
-  useChangeEffect(() => { setStatusFilter(""); }, [tab]);
+  useChangeEffect(() => { setPage(1); }, [search, customerFilter, projectFilter, branchFilter, monthFilter, statusFilter, moreKey, stageKey]);
+  /* A status belongs to its stages — a new tab / stage pick drops the choice. */
+  useChangeEffect(() => { setStatusFilter(""); }, [tab, stageKey]);
   useChangeEffect(() => { setBranchFilter(""); setBranchChoices([]); }, [customerFilter]);
   const extraFilters = (
     <>
@@ -2333,10 +2404,87 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           : <StatusBadge status={r.payment_status} /> },
     { key: "customer_approval", label: "Customer / IRN", render: (r) => <ApprovalChip r={r} /> },
   ];
+  /* The All tab mixes every stage, so it says each row's (20 Nov 2026). */
+  if (allTab) {
+    const at = columns.findIndex((c) => c.key === "payment_status");
+    columns.splice(at, 0, { key: "stage", label: "Stage", render: (r) => <StageChip stage={r.stage} /> });
+  }
+
+  /* ---- Map money shortcut (20 Nov 2026) ---- */
+  const canMap = canWrite && !einvoiceTab;
+  const toPick = (r: any): MapPick => ({ id: r.id, number: r.invoice_number || `#${r.id}`,
+    customer_id: r.customer_id ?? null, customer_name: r.customer_name || "", balance: Number(r.balance_amount || 0) });
+  const mapSelected = new Set<string | number>(mapSel.keys());
+  const onMapSelection = (next: Set<string | number>) => setMapSel((prev) => {
+    const m = new Map<number, MapPick>();
+    for (const raw of next) {
+      const id = Number(raw);
+      const row = rows.find((r) => r.id === id);
+      const pick = prev.get(id) ?? (row && mappableInvoice(row) ? toPick(row) : undefined);
+      if (pick) m.set(id, pick);
+    }
+    return m;
+  });
+  useChangeEffect(() => { setMapSel(new Map()); }, [tab]);
+  const selCustomers = pickCustomers(mapSel.values());
+  const selOpen = [...mapSel.values()].reduce((a, p) => a + p.balance, 0);
+  const mapButton = (r: any) => (canMap && mappableInvoice(r) ? (
+    <button type="button" title="Map cash from Received Amount and TDS from Received TDS"
+      onClick={(e) => { e.stopPropagation(); setMapIds([r.id]); }}
+      className="inline-flex h-7 items-center gap-1 rounded-control bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-700">
+      <Wallet size={13} /> Map
+    </button>
+  ) : null);
+  const mapBar = canMap && mapSel.size > 0 ? (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-card border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm shadow-raised dark:border-emerald-800 dark:bg-emerald-950/40">
+      <Wallet size={16} className="text-emerald-700 dark:text-emerald-300" />
+      <span><b>{mapSel.size}</b> invoice{mapSel.size === 1 ? "" : "s"} ticked · <b className="tabular-nums">{mapRupee(Math.round(selOpen * 100) / 100)}</b> open</span>
+      {selCustomers.length > 1
+        ? <span className="font-semibold text-amber-700 dark:text-amber-300">Tick invoices of one customer — now: {selCustomers.join(", ")}</span>
+        : <span className="text-secondary">{selCustomers[0]}</span>}
+      <span className="ml-auto flex gap-2">
+        <button type="button" className={btnSecondary} onClick={() => setMapSel(new Map())}>Clear</button>
+        <button type="button" className={btnPrimary} disabled={selCustomers.length !== 1}
+          onClick={() => setMapIds([...mapSel.keys()])}>
+          <Wallet size={15} /> Map money…
+        </button>
+      </span>
+    </div>
+  ) : null;
+  const rowActionsWithMap = (r: any) => (
+    <div className="flex items-center gap-1">
+      {mapButton(r)}
+      <RowActions
+        entity="invoice"
+        itemLabel={r.invoice_number}
+        onView={() => crmNavigate(`invoices/${r.id}`)}
+        onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
+        deleteUrl={`/api/invoices/${r.id}`}
+        deleteNote={invoiceDeleteNote}
+        onDeleted={() => afterListDelete(r.id, setRows, load)}
+        notify={showToast}
+        canEdit={canWrite}
+        canDelete={canWrite}
+      colored />
+    </div>
+  );
+  const groupMap = (rs: any[]) => {
+    const open = rs.filter(mappableInvoice);
+    if (!canMap || !open.length) return null;
+    return (
+      <>
+        <span className="text-xs text-secondary">{open.length} open · {mapRupee(Math.round(open.reduce((a, r) => a + Number(r.balance_amount || 0), 0) * 100) / 100)}</span>
+        <button type="button" className={`${btnPrimary} !px-3 !py-1 text-xs`} onClick={() => setMapIds(open.slice(0, 100).map((r) => r.id))}>
+          <Wallet size={13} /> Map money to these {open.length}…
+        </button>
+      </>
+    );
+  };
 
   const moreCount = moreFilterCount(more);
   const statusAndMore = einvoiceTab ? null : (
     <div className="space-y-3">
+      {allTab && <StageFilterPills counts={stageCounts} value={stageFilter} onChange={setStageFilter} />}
       <div className="flex flex-wrap items-center gap-2">
         <StatusFilterPills counts={statusCounts} value={statusFilter} onChange={setStatusFilter} />
         <div className="ml-auto">
@@ -2392,10 +2540,28 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         </PageHeader>
       )}
       {INVOICE_TABS.find((x) => x.key === tab)?.hint && (
-        <p className="text-xs text-muted">{INVOICE_TABS.find((x) => x.key === tab)?.hint}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs text-muted">{INVOICE_TABS.find((x) => x.key === tab)?.hint}</p>
+          {/* 20 Nov 2026 (Finance ask): close small balances left on partly paid invoices. */}
+          {tab === "Partially_Paid" && canWriteRole && (
+            <button type="button" className={`${btnPrimary} !px-3 !py-1 text-xs`} onClick={() => setBulkSettle(true)}>
+              Settle small balances…
+            </button>
+          )}
+        </div>
+      )}
+      {bulkSettle && (
+        <BulkSettleDialog onClose={() => setBulkSettle(false)}
+          onDone={(msg) => { setBulkSettle(false); showToast(msg); load(); }} />
       )}
       {einvoiceTab ? <EInvoiceRegister /> : null}
       {statusAndMore}
+      {canMap && !mapSel.size && (tab === "Unpaid" || tab === "Partially_Paid") && rows.some(mappableInvoice) && (
+        <p className="flex items-center gap-1.5 text-xs text-emerald-800 dark:text-emerald-300">
+          <Wallet size={13} /> Tick invoices of one customer (or press <b>Map</b> on a row) to put cash from Received Amount and TDS from Received TDS on them in one step.
+        </p>
+      )}
+      {mapBar}
       {foundElsewhere}
       {!einvoiceTab && error && <ErrorBox error={error} />}
       {einvoiceTab ? null : view === "customer" ? (
@@ -2430,20 +2596,8 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
             onRowClick={(r) => crmNavigate(`invoices/${r.id}`)} rowHref={(r: any) => `invoices/${r.id}`}
             rowKey={(r) => r.id}
             empty={searchEmpty ?? <TeachingEmpty page="invoices" />}
-            rowActions={(r) => (
-              <RowActions
-                entity="invoice"
-                itemLabel={r.invoice_number}
-                onView={() => crmNavigate(`invoices/${r.id}`)}
-                onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
-                deleteUrl={`/api/invoices/${r.id}`}
-                deleteNote={invoiceDeleteNote}
-                onDeleted={() => afterListDelete(r.id, setRows, load)}
-                notify={showToast}
-                canEdit={canWrite}
-                canDelete={canWrite}
-              colored />
-            )}
+            rowActions={rowActionsWithMap}
+            groupActions={groupMap}
           />
         </div>
       ) : (
@@ -2477,21 +2631,15 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           </>
         }
         emptyMessage={searchEmpty ?? <TeachingEmpty page="invoices" />}
-        rowActions={(r) => (
-          <RowActions
-            entity="invoice"
-            itemLabel={r.invoice_number}
-            onView={() => crmNavigate(`invoices/${r.id}`)}
-            onEdit={() => crmNavigate(`invoices/${r.id}?edit=1`)}
-            deleteUrl={`/api/invoices/${r.id}`}
-            deleteNote={invoiceDeleteNote}
-            onDeleted={() => afterListDelete(r.id, setRows, load)}
-            notify={showToast}
-            canEdit={canWrite}
-            canDelete={canWrite}
-          colored />
-        )}
+        selectable={canMap}
+        selectedIds={mapSelected}
+        onSelectionChange={onMapSelection}
+        rowActions={rowActionsWithMap}
       />
+      )}
+      {mapIds && (
+        <MapMoneyDialog invoiceIds={mapIds} onClose={() => setMapIds(null)}
+          onDone={(msg) => { setMapIds(null); setMapSel(new Map()); showToast(msg); load(); }} />
       )}
       {showNew && (
         <InvoiceFormModal
