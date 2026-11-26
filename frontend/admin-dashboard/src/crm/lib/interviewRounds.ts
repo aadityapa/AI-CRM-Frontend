@@ -1,7 +1,7 @@
 /**
  * Interview-round vocabulary shared by every screen that shows rounds (28 Sep
  * 2026): the Applied Candidates Rounds column, the interviews pop-up, the
- * Screening Desk ladder and the Dashboard's "My work" desk. Kinds mirror B-V2
+ * RMG Desk ladder and the Dashboard's "My work" desk. Kinds mirror B-V2
  * `services/interview_rounds.ROUNDS`.
  */
 

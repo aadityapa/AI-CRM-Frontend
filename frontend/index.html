@@ -8030,6 +8030,68 @@
       .rules-v4 .rv-foot-hint { display: block; }
     }
     @media (prefers-reduced-motion: reduce) { .rules-v4 * { transition: none !important; } }
+
+    /* ================================================================
+       Phone interview (25 Nov 2026) — only when the template allowed a
+       phone and this page runs on one (js/phone_mode.js adds kx-phone).
+       Laptops / PCs never get the class. One scrolling column: camera tile
+       + status + a small AI band at the top, the question full width, the
+       live transcript, then Skip | Send side by side, stuck to the bottom.
+       ================================================================ */
+    @media (max-width: 900px) {
+      html.kx-phone body.interview-mode .main,
+      html.kx-phone #screenCandidate { height: auto !important; min-height: 100dvh; overflow: visible !important; }
+      html.kx-phone #screenCandidate .qc-layout { padding: 10px 10px 0 !important; gap: 8px !important; min-height: 100dvh; }
+      html.kx-phone #screenCandidate .qc-top { flex-wrap: wrap; gap: 6px 10px !important; padding: 8px 10px !important; }
+      html.kx-phone #screenCandidate .qc-center-timer { order: 3; flex: 1 1 100%; text-align: left; }
+      html.kx-phone #screenCandidate .qc-meta { display: none !important; }
+      html.kx-phone #screenCandidate .qc-end-btn { min-height: 34px; padding: 6px 12px; font-size: 12px; }
+      html.kx-phone #screenCandidate .qc-grid {
+        display: grid !important;
+        grid-template-columns: 108px minmax(0, 1fr) !important;
+        grid-template-rows: auto !important;
+        grid-template-areas: "cam status" "cam stage" "q q" "tr tr" "resp resp" !important;
+        gap: 8px !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      html.kx-phone #screenCandidate .qc-left,
+      html.kx-phone #screenCandidate .qc-right { display: contents !important; }
+      html.kx-phone #screenCandidate .qc-cam-card {
+        grid-area: cam; width: 108px !important; height: 144px !important; min-height: 0 !important;
+        max-height: none !important; aspect-ratio: auto !important; flex: none !important; border-radius: 12px;
+      }
+      html.kx-phone #screenCandidate .qc-cam-card video { width: 100%; height: 100%; object-fit: cover; }
+      html.kx-phone #screenCandidate .qc-cam-overlay,
+      html.kx-phone #screenCandidate .qc-cam-icons,
+      html.kx-phone #screenCandidate .qc-rec-text { display: none !important; }
+      html.kx-phone #screenCandidate .qc-status-tracker { grid-area: status; margin: 0 !important; padding: 8px 10px !important; }
+      html.kx-phone #screenCandidate .qc-ai-stage {
+        grid-area: stage; min-height: 88px !important; height: 88px !important; flex: none !important;
+        padding: 6px !important; overflow: hidden;
+      }
+      html.kx-phone #screenCandidate .qc-ai-center { transform: scale(.42); transform-origin: center; }
+      html.kx-phone #screenCandidate .qc-chip-row,
+      html.kx-phone #screenCandidate .qc-controls { display: none !important; }
+      html.kx-phone #screenCandidate .qc-stage-label { font-size: 11px !important; bottom: 4px !important; }
+      html.kx-phone #screenCandidate .qc-question-card { grid-area: q; max-height: none !important; overflow: visible !important; padding: 12px !important; }
+      html.kx-phone #screenCandidate .cand-question { font-size: 17px !important; line-height: 1.45 !important; }
+      html.kx-phone #screenCandidate .qc-transcript-panel { grid-area: tr; max-height: 30vh; }
+      html.kx-phone #screenCandidate .qc-response-card {
+        grid-area: resp; position: sticky; bottom: 0; z-index: 5; margin: 0 -10px !important;
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom)) !important; border-radius: 14px 14px 0 0 !important;
+      }
+      html.kx-phone #screenCandidate .qc-response-card .cand-chat-input {
+        display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important;
+      }
+      html.kx-phone #screenCandidate .qc-response-card .cand-listen-status { grid-column: 1 / -1; }
+      html.kx-phone #screenCandidate .cand-skip,
+      html.kx-phone #screenCandidate .cand-send { width: 100% !important; min-height: 48px !important; flex: none !important; }
+
+      /* Rules screen on a phone: no stepper, everything in one scroll. */
+      html.kx-phone #screenInterviewRules .rv-steps { display: none !important; }
+      html.kx-phone #screenInterviewRules .rv-summary { grid-template-columns: 1fr 1fr !important; }
+    }
   </style>
 </head>
 <body>
@@ -8659,7 +8721,7 @@
                 <ul class="rv-rules" role="list">
                   <li class="rv-rule rv-rule--stop">
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/><path d="M9.5 14.5l5 3M14.5 14.5l-5 3"/></svg></span>
-                    <div class="rv-rule-text"><strong>Stay on this page, in full screen.</strong><span>Switching tabs or windows, leaving full screen or stopping the screen share each counts as a warning. <b>After 3 warnings, the next one ends the interview</b> and submits what you have answered.</span></div>
+                    <div class="rv-rule-text"><strong id="rulesStayRuleTitle">Stay on this page, in full screen.</strong><span id="rulesStayRuleText">Switching tabs or windows, leaving full screen or stopping the screen share each counts as a warning. <b>After 3 warnings, the next one ends the interview</b> and submits what you have answered.</span></div>
                   </li>
                   <li class="rv-rule rv-rule--stop" id="rulesGazeRule">
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
@@ -8684,11 +8746,11 @@
                 <ul class="rv-rules" role="list">
                   <li class="rv-rule">
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/></svg></span>
-                    <div class="rv-rule-text"><strong>Laptop or desktop with a camera.</strong><span>Phones and tablets cannot be used. Sit somewhere quiet and well lit.</span></div>
+                    <div class="rv-rule-text"><strong id="rulesDeviceRuleTitle">Laptop or desktop with a camera.</strong><span id="rulesDeviceRuleText">Phones and tablets cannot be used. Sit somewhere quiet and well lit.</span></div>
                   </li>
                   <li class="rv-rule" id="rulesRecordRule">
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
-                    <div class="rv-rule-text"><strong>Camera, microphone and your whole screen are recorded.</strong><span>You share your <b>entire screen</b> in the next step. The hiring team reviews the recording.</span></div>
+                    <div class="rv-rule-text"><strong id="rulesRecordRuleTitle">Camera, microphone and your whole screen are recorded.</strong><span id="rulesRecordRuleText">You share your <b>entire screen</b> in the next step. The hiring team reviews the recording.</span></div>
                   </li>
                   <li class="rv-rule" id="rulesProctorRule" hidden>
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></span>
@@ -8734,7 +8796,7 @@
                   </li>
                   <li class="rv-rule">
                     <span class="rv-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>
-                    <div class="rv-rule-text"><strong>If your connection drops, reopen the same link.</strong><span>On the same computer you continue from where you left off — answers already sent are saved.</span></div>
+                    <div class="rv-rule-text"><strong>If your connection drops, reopen the same link.</strong><span id="rulesReopenText">On the same computer you continue from where you left off — answers already sent are saved.</span></div>
                   </li>
                 </ul>
               </section>
@@ -8749,7 +8811,7 @@
         <footer class="rv-foot">
           <label class="rules-ack" for="interviewRulesAck">
             <input type="checkbox" id="interviewRulesAck">
-            <span>I have read these rules, and I agree to my camera, microphone and screen being recorded and proctored for this interview.</span>
+            <span id="rulesConsentText">I have read these rules, and I agree to my camera, microphone and screen being recorded and proctored for this interview.</span>
           </label>
           <div class="rules-actions">
             <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
@@ -8764,92 +8826,6 @@
     </div>
   </section>
 
-            <section class="rv-group" aria-label="Stay in the interview">
-              <h2 class="rv-group-title rv-group-title--stop">Stay in the interview</h2>
-              <ul class="rv-rules" role="list">
-              <li class="rv-rule rv-rule--stop" id="rulesProctorRule" hidden>
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg></span>
-                <div><strong>Extra checks for this interview.</strong><span id="rulesProctorText"></span></div>
-              </li>
-
-              <li class="rv-rule rv-rule--stop" id="rulesGazeRule">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
-                <div><strong>Keep your eyes on the screen.</strong><span>The camera follows where you look. Looking away — to the side, down at a phone or notes, or out of the camera — for a few seconds gives a soft reminder. <b id="rulesGazeLimit">The 10th reminder ends the interview.</b> Looking down at the keyboard during a coding question is fine.</span></div>
-              </li>
-
-              <li class="rv-rule rv-rule--stop">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/><path d="M9.5 14.5l5 3M14.5 14.5l-5 3"/></svg></span>
-                <div><strong>Stay on this page, in full screen.</strong><span>Switching tabs or windows, leaving full screen or stopping the screen share each counts as a warning. <b>After 3 warnings, the next one ends the interview</b> and submits what you have answered.</span></div>
-              </li>
-
-              <li class="rv-rule rv-rule--stop">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>
-                <div><strong>The keyboard is switched off.</strong><span><span id="rulesKeyboardText">You answer by speaking, so typing, copy and paste are off. Use the mouse for the buttons.</span></span></div>
-              </li>
-
-              </ul>
-            </section>
-
-            <section class="rv-group" aria-label="Answering">
-              <h2 class="rv-group-title">Answering</h2>
-              <ul class="rv-rules" role="list">
-              <li class="rv-rule ">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h3l4 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 9a3 3 0 0 1 0 6M19 6a7 7 0 0 1 0 12"/></svg></span>
-                <div><strong>Spoken questions: listen, then answer aloud.</strong><span>Your microphone opens when the AI finishes reading. Speak clearly, then press <b>Send Response</b>. A short introduction comes first — it is not scored.</span></div>
-              </li>
-
-              <li class="rv-rule " id="rulesTypedRule" hidden>
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16"/></svg></span>
-                <div><strong>Pseudo-code and coding questions are on screen.</strong><span><span id="rulesTypedText">Each has its own timer. Choose the right option, or write your code in the editor — the keyboard works inside the editor only.</span></span></div>
-              </li>
-
-              <li class="rv-rule " id="rulesFollowupRule" hidden>
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/></svg></span>
-                <div><strong>The AI may ask a short follow-up.</strong><span><span id="rulesFollowupText">Based on your answer — answer it like any other question.</span></span></div>
-              </li>
-
-              <li class="rv-rule ">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span>
-                <div><strong>One question at a time — no going back.</strong><span>You can skip a question you do not know, but a skipped question scores zero.</span></div>
-              </li>
-
-              </ul>
-            </section>
-
-            <section class="rv-group" aria-label="Good to know">
-              <h2 class="rv-group-title">Good to know</h2>
-              <ul class="rv-rules" role="list">
-              <li class="rv-rule " id="rulesRecruiterRule">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M17 11h5M19.5 8.5v5"/></svg></span>
-                <div><strong>A recruiter may join live.</strong><span>They can pause the AI, show you a note, ask their own question or call you on video. The clock stops while the interview is paused.</span></div>
-              </li>
-
-              <li class="rv-rule ">
-                <span class="rv-rule-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></span>
-                <div><strong>If your connection drops, reopen the same link.</strong><span>On the same computer you continue from where you left off — answers already sent are saved.</span></div>
-              </li>
-
-              </ul>
-            </section>
-          </div>
-        </div>
-
-        <footer class="rv-foot">
-          <label class="rules-ack" for="interviewRulesAck">
-            <input type="checkbox" id="interviewRulesAck">
-            <span>I have read these rules, and I agree to my camera, microphone and screen being recorded and proctored for this interview.</span>
-          </label>
-          <div class="rules-actions">
-            <button id="interviewRulesBackBtn" class="btn-ghost" type="button">Back</button>
-            <button id="interviewRulesContinueBtn" class="btn-primary" type="button" disabled>
-              Continue to device check
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-            </button>
-          </div>
-        </footer>
-      </div>
-    </div>
-  </section>
 
   <!--
     Pre-Interview Device Test Page (Feature 4, May 2026)
@@ -9642,7 +9618,7 @@
 
     </main>
   </div>
-  <script type="module" src="js/app.js?v=58"></script>
+  <script type="module" src="js/app.js?v=61"></script>
   <script type="module" src="js/auth/passwordReset.js?v=1"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {

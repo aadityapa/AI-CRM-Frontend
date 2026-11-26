@@ -1,6 +1,6 @@
 /**
  * Project wizard — shared premium chrome for Create + Edit.
- * Steps (edit): Leave & Holiday Billing Policy (combined) → Billing Properties.
+ * Steps (edit): Project Dates (last working day) → Leave & Holiday Billing Policy → Billing Properties.
  * Steps (create): Project Details + same policy sections.
  * Create mode: Branch selector (from customer) drives branch_id + policy prefill.
  *
@@ -12,11 +12,13 @@
  * Branch → form caps: max_billable_hours_per_day → max_billable_hours_day (etc.)
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Building2, Check, CircleDot, Clock3, FolderKanban, GitBranch, Plus, Sparkles, Timer, Trash2, Users } from "lucide-react";
+import { ArrowRight, Building2, CalendarClock, Check, CircleDot, Clock3, FolderKanban, GitBranch, Plus, Sparkles, Timer, Trash2, Users } from "lucide-react";
 import { useActiveCustomers } from "../lib/activeCustomers";
 import { crmDelete, crmGet, crmPost, crmPut } from "../api";
 import { ConfirmModal, btnSecondary, inputCls } from "./ui";
 import { SearchableSelect } from "./SearchableSelect";
+import { type ProjectClosure } from "./ProjectClosure";
+import { ProjectStartDateBody } from "./ProjectStartDate";
 import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
 import {
   SectionHeaderBanner,
@@ -77,12 +79,15 @@ export type ProjectWizardInitial = {
   is_initial_no_billing_period?: boolean | null;
   initial_no_billing_qty?: number | null;
   initial_no_billing_period?: string | null;
+  /** Last working day + where the close stands (edit only). */
+  end_date?: string | null;
+  closure?: ProjectClosure | null;
 };
 
 type BranchOption = { id: number; branch_name: string };
 
 type SectionDef = {
-  key: PolicySectionKey | "projectDetails" | "mapEmployees";
+  key: PolicySectionKey | "projectDetails" | "projectDates" | "mapEmployees";
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -130,6 +135,14 @@ const POLICY_SECTION_DEFS: SectionDef[] = [
     icon: <Timer size={18} />,
   },
 ];
+
+/** Edit only (24 Nov 2026): the project's START date — move it earlier to open old timesheets. */
+const EDIT_DATES_SECTION: SectionDef = {
+  key: "projectDates",
+  title: "Project Start Date",
+  description: "When the team started — move it earlier and Draft timesheets open from that month.",
+  icon: <CalendarClock size={18} />,
+};
 
 const CREATE_DETAILS_SECTION: SectionDef = {
   key: "projectDetails",
@@ -307,19 +320,21 @@ function ProjectWizard({
   onClose,
   onSaved,
   notify,
+  onDatesChanged,
 }: {
   mode: "create" | "edit";
   initial?: ProjectWizardInitial;
   onClose: () => void;
   onSaved: (project?: { id: number }) => void;
   notify: Notify;
+  onDatesChanged?: () => void;
 }) {
   const isCreate = mode === "create";
   const projectId = initial?.id;
   const sections = useMemo(
     () => (isCreate
       ? [CREATE_DETAILS_SECTION, ...POLICY_SECTION_DEFS, MAP_EMPLOYEES_SECTION]
-      : POLICY_SECTION_DEFS),
+      : [EDIT_DATES_SECTION, ...POLICY_SECTION_DEFS]),
     [isCreate],
   );
 
@@ -462,6 +477,8 @@ function ProjectWizard({
 
   const sectionStatus = (key: SectionDef["key"]): StepStatus => {
     switch (key) {
+      case "projectDates":
+        return "complete"; // optional — saves on its own
       case "projectDetails":
         if (errors.name || errors.customer || errors.branch) return "error";
         if (!(name.trim() && customerId)) return "empty";
@@ -498,6 +515,7 @@ function ProjectWizard({
       sections.map((s) => ({
         key: s.key,
         title: s.title,
+        ...(s.key === "projectDates" ? { icon: CalendarClock } : {}),
         sublabel: s.description.split(".")[0],
         status: sectionStatus(s.key),
       })),
@@ -949,6 +967,10 @@ function ProjectWizard({
 
   const onKeyDownBody = (e: React.KeyboardEvent) => {
     if (e.key !== "Enter") return;
+    // A dialog opened from a step is portalled; its keys bubble here through React.
+    if (!e.currentTarget.contains(e.target as Node)) return;
+    // The start-date form saves with its own button — Enter there must not move the wizard.
+    if ((e.target as HTMLElement).closest?.("[data-wizard-enter-off]")) return;
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "TEXTAREA") return;
     e.preventDefault();
@@ -1038,6 +1060,23 @@ function ProjectWizard({
             >
               <Plus size={14} /> Add another employee
             </button>
+          </div>
+        );
+      case "projectDates":
+        return (
+          <div className="space-y-4">
+            <WizardGroup
+              icon={CalendarClock}
+              title="Project start date"
+              hint="Showing the current start — change it and press Update start date"
+              done
+              cols={1}
+              accent="from-sky-500 to-indigo-600"
+            >
+              {projectId != null ? (
+                <ProjectStartDateBody projectId={projectId} notify={notify} onChanged={onDatesChanged} />
+              ) : null}
+            </WizardGroup>
           </div>
         );
       case "projectDetails":
@@ -1305,11 +1344,14 @@ export function EditProjectWizard({
   onClose,
   onSaved,
   notify,
+  onDatesChanged,
 }: {
   initial: ProjectWizardInitial;
   onClose: () => void;
   onSaved: () => void;
   notify: Notify;
+  /** The last working day changed (saved at once from the Project Dates step). */
+  onDatesChanged?: () => void;
 }) {
   return (
     <ProjectWizard
@@ -1318,6 +1360,7 @@ export function EditProjectWizard({
       onClose={onClose}
       onSaved={() => onSaved()}
       notify={notify}
+      onDatesChanged={onDatesChanged}
     />
   );
 }

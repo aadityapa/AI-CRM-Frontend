@@ -5,7 +5,7 @@
  * pipeline stage + the latest Manual / Customer / AI round + RMG's screening,
  * and sends it on every profile payload as `candidate_status` (profile lists,
  * detail, candidate page, reports) or `profile_status` (rows that are not
- * profiles: Applied Candidates, Screening Desk). Naming convention:
+ * profiles: Applied Candidates, RMG Desk). Naming convention:
  * "<who runs the round> – <result>", e.g. "Manual L1 – Scheduled",
  * "Customer L2 – Failed", "HR Discussion", "Customer Shortlisted".
  *

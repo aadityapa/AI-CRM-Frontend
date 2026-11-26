@@ -278,19 +278,24 @@ function themeButton() {
 /* ------------------------------------------------------------------------- */
 
 /**
- * Every scored question as a small tile: spoken (mic) · pseudo-code (braces) ·
- * coding (code); done tiles are filled, the current one is solid, the rest dashed.
+ * The questions asked SO FAR as small tiles: spoken (mic) · pseudo-code (braces)
+ * · coding (code); answered tiles are filled, the current one is solid.
  * `current` is 1-based (0 = the warm-up, nothing current yet).
+ *
+ * 26 Nov 2026 (user rule): the candidate never sees how many questions the
+ * interview has — no tiles for questions still to come, no "of N", no counts
+ * per kind. Only what they have attempted and the question in front of them.
  */
 export function buildStrip(map, current, { legend = true } = {}) {
-  const items = Array.isArray(map) ? map : [];
-  const row = h("div", { class: "kxsb-strip-row", role: "list", "aria-label": "Interview questions" });
+  const all = Array.isArray(map) ? map : [];
+  const items = all.slice(0, Math.max(0, Math.min(Number(current) || 0, all.length)));
+  const row = h("div", { class: "kxsb-strip-row", role: "list", "aria-label": "Questions so far" });
   items.forEach((q, i) => {
     const kind = KIND_LOOK[q?.kind] ? q.kind : "normal";
     const n = i + 1;
-    const state = n < current ? "done" : n === current ? "current" : "upcoming";
+    const state = n < current ? "done" : "current";
     const look = KIND_LOOK[kind];
-    const word = state === "done" ? "answered" : state === "current" ? "now" : "coming up";
+    const word = state === "done" ? "answered" : "now";
     row.appendChild(h("span", {
       class: `kxsb-seg ${kind} ${state}`,
       role: "listitem",
@@ -301,20 +306,20 @@ export function buildStrip(map, current, { legend = true } = {}) {
   });
   const wrap = h("div", { class: "kxsb-strip" }, [row]);
   if (legend) {
-    const counts = { normal: 0, pseudo: 0, coding: 0 };
-    items.forEach((q) => { counts[KIND_LOOK[q?.kind] ? q.kind : "normal"] += 1; });
+    // Which kinds the tiles show (no numbers — they would add up to the total).
+    const seen = new Set(items.map((q) => (KIND_LOOK[q?.kind] ? q.kind : "normal")));
     const leg = h("div", { class: "kxsb-strip-legend" });
     for (const k of ["normal", "pseudo", "coding"]) {
-      if (!counts[k]) continue;
+      if (!seen.has(k)) continue;
       leg.appendChild(h("span", {}, [h("i", { style: `background:var(--sb-${k === "normal" ? "spoken" : k})` }),
-        `${KIND_LOOK[k].label} ${counts[k]}`]));
+        KIND_LOOK[k].label]));
     }
-    // The current question's skill beside the count (12 Oct 2026) — the strip's
-    // icons say WHAT kind of answer; this says which skill it tests.
+    // The current question's skill beside its number (12 Oct 2026) — the icons
+    // say WHAT kind of answer; this says which skill it tests.
     const nowSkill = current > 0 ? (items[current - 1]?.skill || "") : "";
     leg.appendChild(h("span", { class: "count", text: current > 0
-      ? `Question ${current} of ${items.length}${nowSkill ? ` · ${nowSkill}` : ""}`
-      : `${items.length} questions` }));
+      ? `Question ${current}${nowSkill ? ` · ${nowSkill}` : ""}`
+      : "Your questions appear here as you answer them" }));
     wrap.appendChild(leg);
   }
   return wrap;
@@ -342,10 +347,11 @@ export function renderStageStrip(data) {
 
 function planPills(plan) {
   if (!plan || typeof plan !== "object") return null;
+  // The kinds only — never how many (26 Nov 2026: the total stays hidden).
   const bits = [];
-  if (plan.normal) bits.push(["normal", `${plan.normal} spoken question${plan.normal === 1 ? "" : "s"}`]);
-  if (plan.pseudo) bits.push(["pseudo", `${plan.pseudo} pseudo-code (pick an option)`]);
-  if (plan.coding) bits.push(["coding", `${plan.coding} coding (type code)`]);
+  if (plan.normal) bits.push(["normal", "Spoken questions"]);
+  if (plan.pseudo) bits.push(["pseudo", "Pseudo-code (pick an option)"]);
+  if (plan.coding) bits.push(["coding", "Coding (type code)"]);
   if (!bits.length) return null;
   return h("div", { class: "kxsb-plan" }, bits.map(([k, t]) => h("span", { class: `kxsb-pill ${k}` }, [icon(KIND_LOOK[k].icon), t])));
 }
@@ -632,7 +638,6 @@ export function presentTypedQuestion(data, handlers = {}) {
   let right;
   let left;
 
-  const total = Number(data.total) || 0;
   const index = Number(data.index) || 0;
   const map = Array.isArray(data.question_map) ? data.question_map : [];
 
@@ -737,7 +742,8 @@ export function presentTypedQuestion(data, handlers = {}) {
       h("div", {}, [
         h("div", { class: "kxsb-ws-kind", text: `${KIND_LOOK[kind].label} question · no voice` }),
         h("div", { class: "kxsb-ws-qn" }, [
-          total ? `Question ${index} of ${total}` : "Question",
+          // Never "of N" — the candidate does not see the total (26 Nov 2026).
+          index ? `Question ${index}` : "Question",
           data.skill ? h("span", { class: "kxsb-chip", style: "margin-left:8px", text: String(data.skill) }) : null,
         ]),
       ]),

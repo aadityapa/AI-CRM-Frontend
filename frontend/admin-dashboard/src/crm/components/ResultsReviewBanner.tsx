@@ -1,6 +1,6 @@
 /**
  * "Interview done — review the result" (28 Sep 2026; shared 7 Oct 2026 so the
- * Screening Desk AND Opportunity ▸ Applied Candidates print the same banner).
+ * RMG Desk AND Opportunity ▸ Applied Candidates print the same banner).
  * Every finished interview on the candidate that no screener has marked
  * reviewed (server `new_results`); Mark reviewed →
  * POST /api/screening-desk/results-reviewed.

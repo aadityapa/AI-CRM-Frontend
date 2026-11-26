@@ -16,6 +16,8 @@ import {
 } from "../components/controlTower";
 import type { PeriodKind, StateTone } from "../components/controlTower";
 import { WorkDesk } from "./dashboard/WorkDesk";
+import { BenchSnapshot } from "../components/bench/BenchInsights";
+import { useTrainingWriter } from "../components/training/TrainingParts";
 import { PanelDashboard } from "./dashboard/PanelDashboard";
 import { HiringManagerDashboard } from "./dashboard/HiringManagerDashboard";
 import { PoExpiryPanel } from "./dashboard/PoExpiryPanel";
@@ -360,7 +362,7 @@ function RmgSection() {
       </Panel>
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Applicants awaiting RMG screening" hint="oldest first — the AI L1 stays locked until you decide"
-               action={screening.length ? <CrmLink to="screening-desk" className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">Open the Screening Desk →</CrmLink> : undefined}>
+               action={screening.length ? <CrmLink to="screening-desk" className="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">Open the RMG Desk →</CrmLink> : undefined}>
           {screening.length ? (
             <ul className="divide-y divide-subtle">
               {screening.slice(0, 8).map((p) => (
@@ -375,7 +377,7 @@ function RmgSection() {
                   </div>
                 </li>
               ))}
-              {screening.length > 8 && <li className="pt-2 text-xs text-muted">+{screening.length - 8} more on the Screening Desk</li>}
+              {screening.length > 8 && <li className="pt-2 text-xs text-muted">+{screening.length - 8} more on the RMG Desk</li>}
             </ul>
           ) : <p className="text-sm text-muted">Nobody is waiting for screening.</p>}
         </Panel>
@@ -752,6 +754,8 @@ export function CrmDashboardPage() {
   const showExecutive = useHasRole("Sales_Head");
   const showRequirements = useHasRole("Sales", "Sales_Head", "RMG");
   const showRmg = useHasRole("RMG");
+  /** Bench cost / 30+ days / roll-offs card (25 Nov 2026): RMG / GM / Admin / CEO. */
+  const showBenchCost = useTrainingWriter();
   const showTa = useHasRole("TA");
   const showTaTracking = isAdmin || showTa;
   const showFinance = useHasRole("Finance");
@@ -829,11 +833,13 @@ export function CrmDashboardPage() {
       {panelOnly || hmOnly || (isHm && nothingElse) ? null : isAdmin ? (
         <>
           <CeoDashboard />
+          <BenchSnapshot />
           <StartHereCard />
         </>
       ) : (
         <>
           <StartHereCard />
+          {showBenchCost && <BenchSnapshot />}
           {showCompanyFinance &&<CeoDashboard tabs={showBilling ? ["finance", "billing"] : ["finance"]} canSetTargets={canSetTargets}
             showOnAccount={(me.roles ?? []).includes("Finance")} />}
           {showHiringTower && <HiringControlTower />}

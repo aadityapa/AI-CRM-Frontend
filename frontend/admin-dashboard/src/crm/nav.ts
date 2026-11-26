@@ -1,7 +1,9 @@
 /** CRM sidebar / command-palette nav entries (shared, no CrmApp side effects). */
 import type { ComponentType } from "react";
 import {
+  Armchair,
   BadgeCheck,
+  NotebookPen,
   Percent,
   ReceiptIndianRupee,
   Briefcase,
@@ -44,22 +46,30 @@ export const CRM_NAV: CrmNavItem[] = [
   { path: "candidates", label: "Candidates", icon: Users, roles: ["Admin", "TA", "Sales", "Sales_Head"] },
   { path: "template-requests", label: "Template Requests", icon: FileText, roles: ["Admin", "TA", "RMG"] },
   { path: "profiles", label: "Candidate Profiles", icon: UsersRound, roles: ["Admin", "Sales", "Sales_Head", "RMG", "TA"] },
-  // Screening Desk (25 Sep 2026): RMG / GM screen every TA-applied candidate
+  // RMG Desk (25 Sep 2026): RMG / GM screen every TA-applied candidate
   // across opportunities. Visibility is the APPROVAL (`profile.rmg_screening`,
   // see CrmApp), not this role list — a GM custom role has no built-in role.
-  { path: "screening-desk", label: "Screening Desk", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
+  { path: "screening-desk", label: "RMG Desk", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
   // Talent Pool (16 Oct 2026): every candidate we have had, searched by skill.
   // TA · RMG / GM · Sales Head (user decision); a GM sees it through the
-  // screening approval, like the Screening Desk (see CrmApp).
+  // screening approval, like the RMG Desk (see CrmApp).
+  // Bench & Deployed (23 Nov 2026): RMG / GM / CEO track every person, their
+  // history, tasks, daily activity and resume. A GM sees it through the
+  // screening approval (see CrmApp), like the RMG Desk.
+  { path: "bench", label: "Bench & Deployed", icon: Armchair, roles: ["Admin", "CEO", "RMG"] },
   { path: "talent-pool", label: "Talent Pool", icon: Sparkles, roles: ["Admin", "TA", "RMG", "Sales_Head"] },
   // Careers applications (6 Nov 2026): every careers-page / apply-link / "send your
   // resume" candidate — channel, position, facts. TA · RMG by role; a GM through the
-  // screening approval (see CrmApp), like the Screening Desk.
+  // screening approval (see CrmApp), like the RMG Desk.
   { path: "careers-applications", label: "Careers Applications", icon: Inbox, roles: ["Admin", "TA", "RMG"] },
   // My Interviews (7 Oct 2026): the rounds this login takes as the panel. RMG
   // by role; everyone else (the Interviewer custom role, a TA who interviews)
   // through the `my-interviews` tab grant.
   { path: "my-interviews", label: "My Interviews", icon: ClipboardCheck, roles: ["Admin", "RMG"] },
+  // My Workspace (23 Nov 2026): every employee's daily activity, tasks from RMG
+  // and resume. The seeded "Employee" role grants it; Admin / CEO never see it
+  // (see CrmApp).
+  { path: "my-workspace", label: "My Workspace", icon: NotebookPen, roles: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
   // Interview calendar. Deliberately NOT Sales/Sales_Head: booking and running
   // interviews is not their workflow, which is also why the upcoming-interviews
   // widget was removed from their dashboard.

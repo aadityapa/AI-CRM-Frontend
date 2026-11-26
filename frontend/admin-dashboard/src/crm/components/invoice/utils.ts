@@ -182,6 +182,8 @@ export function mapApiInvoiceToData(raw: Record<string, unknown>): InvoiceData {
     project_name: (raw.project_name as string) || null,
     customer_id: (raw.customer_id as number) ?? null,
     customer_name: (raw.customer_name as string) || null,
+    file_stem: (raw.file_stem as string) || null,
+    einvoice_file_stem: (raw.einvoice_file_stem as string) || null,
     sac_code: (raw.sac_code as string) || null,
     qty_label: (raw.qty_label as string) || null,
     rate_label: (raw.rate_label as string) || null,

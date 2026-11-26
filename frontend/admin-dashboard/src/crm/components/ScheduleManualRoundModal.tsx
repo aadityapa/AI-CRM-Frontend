@@ -3,7 +3,7 @@
  * this pop-up best of best, the same for all roles").
  *
  * ONE dialog for every place a human technical round is booked — Applied
- * Candidates (TA), the profile's RMG banner and the Screening Desk ladder /
+ * Candidates (TA), the profile's RMG banner and the RMG Desk ladder /
  * My Tasks (RMG / GM). It used to be three copies with three sets of rules.
  * POST /api/candidate-profiles/{id}/l2-face-to-face {round, scheduled_at,
  * meeting_link, interviewer, note} — `scheduled_at` is the typed IST wall

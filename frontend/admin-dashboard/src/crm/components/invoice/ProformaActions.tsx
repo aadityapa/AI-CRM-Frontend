@@ -19,6 +19,7 @@ import { FileCheck2, Undo2 } from "lucide-react";
 import { crmGet, crmPost, crmPut } from "../../api";
 import { Modal, btnPrimary, btnSecondary, inputCls } from "../ui";
 import { INVOICE_FORMAT_COLUMNS, type InvoiceFormat } from "./types";
+import { InvoiceNumberHint, useInvoiceNumberCheck } from "./InvoiceNumberCheck";
 
 type Notify = (msg: string, kind?: "ok" | "err") => void;
 
@@ -185,6 +186,9 @@ export function ConvertProformaModal({
   const [round, setRound] = useState(!!roundOff);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // One number, once (26 Nov 2026): checked while it is typed.
+  const numberCheck = useInvoiceNumberCheck(number, { excludeId: invoiceId });
+  const numberTaken = numberCheck.state === "taken";
 
   useEffect(() => {
     crmGet<{ invoice_number: string }>("/api/invoices/next-number")
@@ -193,6 +197,7 @@ export function ConvertProformaModal({
   }, []);
 
   const submit = async () => {
+    if (numberTaken) { setError("This invoice number is already present in the tool — use a different number"); return; }
     setBusy(true);
     setError("");
     try {
@@ -218,7 +223,8 @@ export function ConvertProformaModal({
       footer={
         <>
           <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={submit} disabled={busy}>
+          <button className={btnPrimary} onClick={submit} disabled={busy || numberTaken}
+            title={numberTaken ? "This invoice number is already present in the tool" : undefined}>
             <FileCheck2 size={14} /> {busy ? "Generating…" : "Generate invoice"}
           </button>
         </>
@@ -232,7 +238,9 @@ export function ConvertProformaModal({
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-secondary">Invoice number</span>
           <input className={inputCls} value={number} onChange={(e) => setNumber(e.target.value)}
-            placeholder="Blank = next INV-YYYY-NNN" maxLength={64} />
+            placeholder="Blank = next INV-YYYY-NNN" maxLength={64}
+            aria-invalid={numberTaken || undefined} />
+          <InvoiceNumberHint check={numberCheck} />
         </label>
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-secondary">Invoice date</span>

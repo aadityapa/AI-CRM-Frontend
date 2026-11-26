@@ -90,7 +90,8 @@ function _questionPayload(q) {
     is_followup: !!q.is_followup,
     is_warmup: !!q.is_warmup,
     question_number: q.is_warmup ? 0 : Number(q.index) || 0,
-    total_questions: Number(q.total) || 0,
+    // No total_questions (26 Nov 2026): the voice must never tell the
+    // candidate how many questions the interview has.
     note: q.is_warmup
       ? "This is the warm-up introduction; it is not scored."
       : q.is_followup ? "This is a follow-up on their previous answer." : "",

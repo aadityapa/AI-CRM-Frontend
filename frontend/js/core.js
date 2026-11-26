@@ -110,7 +110,11 @@ export async function apiFetch(path, init, options = {}) {
   } finally {
     if (timer) clearTimeout(timer);
   }
-  if (res.status === 401) {
+  // A wrong password on /auth/login answers 401 (26 Nov 2026). That is a
+  // failed sign-in, not a lost session — never clear the session or reload
+  // the page for it, or the "Invalid username or password" message vanishes.
+  const isSignInCall = /^\/auth\/(login|register)(\?|$)/.test(String(path || ""));
+  if (res.status === 401 && !isSignInCall) {
     const had = !!token;
     clearAuthSession();
     if (had) {

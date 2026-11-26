@@ -170,7 +170,9 @@ describe("CEO dashboard", () => {
     expect(ceoCall).toMatch(/tab=finance/);
     expect(screen.getAllByText("₹46.0L").length).toBeGreaterThan(0);   // billed tile
     expect(screen.getByText("Behind target")).toBeTruthy();     // alert chip
-    expect(screen.getAllByRole("figure").length).toBeGreaterThanOrEqual(3);   // three speedometers
+    // 25 Nov 2026 — the Finance tab's three dials were removed (user ask).
+    expect(screen.queryByText("Collection rate")).toBeNull();
+    expect(screen.queryByText(/needle = billed so far/)).toBeNull();
     expect(screen.getByRole("tab", { name: /Finance/ }).getAttribute("aria-selected")).toBe("true");
     // 27 Oct 2026 — every money tile opens its own drill-down page at the SAME anchor + zoom.
     const billed = screen.getAllByText("Revenue (Ex. Tax)").map((e) => e.closest("a")).find(Boolean);
@@ -187,8 +189,7 @@ describe("CEO dashboard", () => {
     // Reading order: trend → dials → the four money panels.
     const titles = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent || "");
     const at = (t: string) => titles.findIndex((x) => x.startsWith(t));
-    expect(at("How the year unfolded")).toBeLessThan(at("Collection rate"));
-    expect(at("Collection rate")).toBeLessThan(at("Who we bill"));
+    expect(at("Who we bill")).toBeGreaterThanOrEqual(0);
     expect(at("Who we bill")).toBeLessThan(at("Billing by engagement type"));
     expect(screen.getAllByRole("group", { name: "Months" }).length).toBeGreaterThan(0);
   });

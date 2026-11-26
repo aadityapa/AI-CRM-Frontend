@@ -3,7 +3,7 @@
  *
  * An upload lands at SOURCING, with TA. From the row TA then:
  *   Technical Screening → hands the candidate to RMG / GM (they Shortlist /
- *                         Reject on the Screening Desk and choose the L1)
+ *                         Reject on the RMG Desk and choose the L1)
  *   Hold                → parks them (not reachable, over budget …)
  *   Release hold        → back into the flow
  *   Reject              → closes the candidacy ("Rejected by TA")
@@ -27,6 +27,7 @@ import {
 
 import { crmPost } from "../api";
 import { DecisionDialog, type DecisionSpec } from "./dialogKit";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "./RejectSkills";
 import { FLOW_BTN } from "./flowButtons";
 
 export type TaDecision = "screen" | "hold" | "release" | "reject" | "withdraw" | "reapply"
@@ -341,7 +342,7 @@ const DIALOG: Record<TaDecision, DecisionSpec> = {
     reason: { label: "Note for RMG / GM", placeholder: DECISIONS.screen.placeholder,
       picks: ["Strong skill match", "Can join early", "Within budget", "Referred by an employee"] },
     happens: [
-      { icon: Inbox, text: "Lands on the RMG / GM Screening Desk under \"To screen\"." },
+      { icon: Inbox, text: "Lands on the RMG / GM RMG Desk under \"To screen\"." },
       { icon: BellRing, text: "RMG and GM are notified — your note travels with the candidate." },
       { icon: Route, text: "When they shortlist, they pick the AI or manual L1 and you are told what to schedule." },
     ],
@@ -354,7 +355,7 @@ const DIALOG: Record<TaDecision, DecisionSpec> = {
       picks: ["Not reachable", "Over the budget", "Candidate asked for time", "Awaiting documents"] },
     happens: [
       { icon: PauseCircle, text: "Reads \"On Hold\" on every screen and stays with you at Sourcing." },
-      { icon: EyeOff, text: "Kept off the Screening Desk — nobody screens or interviews them." },
+      { icon: EyeOff, text: "Kept off the RMG Desk — nobody screens or interviews them." },
       { icon: PlayCircle, text: "Release the hold from the row whenever you are ready." },
     ],
     confirmLabel: "Put on hold", busyLabel: "Saving…",
@@ -418,7 +419,7 @@ const DIALOG: Record<TaDecision, DecisionSpec> = {
       picks: ["Details confirmed on call", "Confirmed by email", "Can join early", "Within budget"] },
     happens: [
       { icon: ThumbsUp, text: "Their reply is recorded on the candidate's history." },
-      { icon: Inbox, text: "They land on the RMG / GM Screening Desk under \"To screen\" — RMG and GM are told." },
+      { icon: Inbox, text: "They land on the RMG / GM RMG Desk under \"To screen\" — RMG and GM are told." },
       { icon: Route, text: "When RMG / GM shortlist, they pick the AI or manual L1 and you are told what to schedule." },
     ],
     confirmLabel: "Confirm & send for screening", busyLabel: "Sending…",
@@ -460,6 +461,8 @@ export function TaDecisionModal({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const isReject = decision === "reject";
+  const [skills, setSkills] = useRejectSkills({ profileId: isReject ? profileId : null });
   const spec = decision === "reapply" && rejected
     ? { ...DIALOG.reapply, flow: { steps: ["Rejected", "Sourcing", "Technical Screening"], current: 1 },
         reason: { ...DIALOG.reapply.reason, required: true, min: 5 } }
@@ -480,11 +483,16 @@ export function TaDecisionModal({
       ) : null}
       onClose={onClose}
       onConfirm={async (note) => {
+        const problem = isReject ? rejectSkillsProblem(skills) : null;
+        if (problem) throw new Error(problem);
         const res = await crmPost(`/api/candidate-profiles/${profileId}/ta-decision`, {
           decision, note: note || undefined,
         });
-        onDone(res.message || "Saved");
+        const n = isReject ? await saveRejectSkills(skills) : 0;
+        onDone((res.message || "Saved") + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added to their record` : ""));
       }}
-    />
+    >
+      {isReject ? <RejectSkillsField state={skills} onChange={setSkills} /> : null}
+    </DecisionDialog>
   );
 }

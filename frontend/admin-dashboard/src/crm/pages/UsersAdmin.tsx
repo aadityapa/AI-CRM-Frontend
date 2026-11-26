@@ -12,6 +12,7 @@ import { ResetPasswordModal } from "../components/ResetPasswordModal";
 import { AccessAuditLog } from "../components/access/AccessAuditLog";
 import { DeactivateUserModal, DeleteUserModal } from "../components/access/UserLifecycle";
 import { UserManageModal } from "../components/access/UserManageModal";
+import { RolesPickerCell } from "../components/access/RolesPickerCell";
 import { ActionPermissionsPanel, EmailFlowsPanel, type ActionPerm, type EmailFlow } from "../components/access/PermissionsPanels";
 import { StagePills } from "../components/PageHeader";
 import { CONTROL } from "../components/controlTower";
@@ -1106,7 +1107,9 @@ export function UsersAdminPage() {
 
   useEffect(() => {
     crmGet<{ custom: { id: number; name: string; is_active: boolean }[] }>("/api/roles")
-      .then((r) => setCustomRoles((r.data?.custom || []).filter((c) => c.is_active)))
+      // Every custom role — the picker offers active ones and keeps a held
+      // inactive one ticked, so saving never drops it by accident.
+      .then((r) => setCustomRoles(r.data?.custom || []))
       .catch(() => {});
   }, []);
 
@@ -1155,29 +1158,28 @@ export function UsersAdminPage() {
     }
   };
 
-  /** Where a user's permissions come from: ONE custom role, or their built-in
-   *  roles (each with its own permissions, else the product rules). */
-  const setAccessSource = async (user: UserRow, value: string) => {
-    const [kind, idStr] = value ? value.split(":") : ["default", ""];
+  /** Where a user's permissions come from: ANY number of custom roles plus
+   *  their built-in roles — every role's permissions, added up (25 Nov 2026:
+   *  the old single select replaced every custom role with the one picked).
+   *  Same endpoint as Edit Roles; built-in roles are sent unchanged. Throws so
+   *  the picker can show the refusal in place. */
+  const saveCustomRoles = async (user: UserRow, ids: number[]) => {
     setSourceBusyId(user.id);
     try {
       const res = await crmPost<{ custom_roles: string[]; roles?: string[] }>(
-        `/api/users/${user.id}/access-source`,
-        { kind, id: idStr ? Number(idStr) : null },
+        `/api/users/${user.id}/roles`,
+        { roles: user.roles, custom_roles: ids },
       );
-      notify(res.message || "Access updated");
+      const names = res.data?.custom_roles ?? [];
+      notify(res.message || (names.length
+        ? `${user.full_name || user.username} now has ${names.join(" + ")}`
+        : "Custom roles removed — their built-in roles decide"));
       setRows((prev) =>
         prev.map((r) => (r.id === user.id
-          ? {
-              ...r,
-              custom_roles: res.data?.custom_roles ?? [],
-              roles: res.data?.roles ?? r.roles,
-            }
+          ? { ...r, custom_roles: names, roles: res.data?.roles ?? r.roles }
           : r)),
       );
       setAuditKey((k) => k + 1);
-    } catch (e: any) {
-      notify(e?.message || "Failed to update access", "err");
     } finally {
       setSourceBusyId(null);
     }
@@ -1237,32 +1239,23 @@ export function UsersAdminPage() {
       key: "permissions_from",
       label: "Permissions from",
       render: (r) => {
-        // Access Templates were merged into Roles (27 Oct 2026): ONE custom
-        // role, or the person's built-in roles (their own permissions, else
-        // the product rules). Built-in roles are changed in Edit Roles.
-        const roleMatch = customRoles.find((c) => (r.custom_roles || []).includes(c.name));
-        const value = roleMatch ? `role:${roleMatch.id}` : "";
+        // Any number of custom roles + the built-in ones (Edit Roles); the
+        // person's permissions are every role's, added up (25 Nov 2026).
+        const held = r.custom_roles || [];
         const isAdminRow = r.roles.includes("Admin") || r.roles.includes("CEO");
-        if (isAdminRow && !value) {
+        if (isAdminRow && !held.length) {
           return <span className="text-xs font-semibold text-muted" title="Admin and CEO open every tab">Full access</span>;
         }
         return (
-          <select
-            className={`${inputCls} !w-auto min-w-[10rem] py-1 text-xs`}
-            value={value}
+          <RolesPickerCell
+            userName={r.full_name || r.username}
+            builtin={r.roles}
+            customNames={held}
+            roles={customRoles}
             disabled={sourceBusyId === r.id}
-            onChange={(e) => setAccessSource(r, e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Where ${r.full_name || r.username}'s permissions come from`}
-            title="A custom role here replaces their other custom roles; built-in roles stay (Edit Roles)"
-          >
-            <option value="">Built-in role{r.roles.length === 1 ? "" : "s"}{r.roles.length ? ` (${r.roles.map((x) => x.replace(/_/g, " ")).join(", ")})` : ""}</option>
-            {customRoles.length > 0 && (
-              <optgroup label="Custom roles">
-                {customRoles.map((c) => <option key={`r${c.id}`} value={`role:${c.id}`}>{c.name}</option>)}
-              </optgroup>
-            )}
-          </select>
+            onSave={(ids) => saveCustomRoles(r, ids)}
+            onEditBuiltin={() => setRolesFor(r)}
+          />
         );
       },
     },
@@ -1320,7 +1313,7 @@ export function UsersAdminPage() {
   ];
   const roleOptions = [
     ...CRM_ROLES.map((r) => ({ value: r, label: r.replace(/_/g, " ") })),
-    ...customRoles.map((c) => ({ value: c.name, label: `${c.name} (custom)` })),
+    ...customRoles.filter((c) => c.is_active).map((c) => ({ value: c.name, label: `${c.name} (custom)` })),
   ];
 
   const header = (

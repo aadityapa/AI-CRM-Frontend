@@ -1742,8 +1742,10 @@ async function _transitionToNextQuestion(data, loadSeq, options = {}) {
   _applyWarmupChrome(!!data.is_warmup, data.warmup_label, data.warmup_note);
   if (data.is_warmup) {
     if (progressEl) progressEl.innerText = "";
-  } else if (data.total && progressEl) {
-    progressEl.innerText = `Question ${data.index}/${data.total}`;
+  } else if (progressEl) {
+    // Only the question they are on — never "of N" (26 Nov 2026, user rule:
+    // the candidate does not see how many questions the interview has).
+    progressEl.innerText = data.index ? `Question ${data.index}` : "";
   }
   // Skill-wise interview (12 Oct 2026): every question on a strip, by kind.
   renderStageStrip(data);

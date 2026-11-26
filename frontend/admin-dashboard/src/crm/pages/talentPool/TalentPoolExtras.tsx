@@ -40,11 +40,14 @@ export type FilterShape = {
   skills: string[]; nice: string[]; q: string; exp_min: string; exp_max: string; location: string;
   notice: string; ctc_max: string; availability: string; untouched_days: string; proven_only: boolean;
   include_employees: boolean; sort: string;
+  /** 24 Nov 2026 — job-board filters. Optional so an older session value still type-checks. */
+  ctc_min?: string; cur_ctc_min?: string; cur_ctc_max?: string; added_days?: string; has_phone?: boolean;
 };
 
 const BLANK: FilterShape = {
   skills: [], nice: [], q: "", exp_min: "", exp_max: "", location: "", notice: "", ctc_max: "",
   availability: "any", untouched_days: "", proven_only: false, include_employees: true, sort: "match",
+  ctc_min: "", cur_ctc_min: "", cur_ctc_max: "", added_days: "", has_phone: false,
 };
 
 const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
@@ -62,6 +65,8 @@ export function paramsToFilters(p: Record<string, unknown> | null | undefined): 
     proven_only: x.proven_only === true || x.proven_only === "true",
     include_employees: !(x.include_employees === false || x.include_employees === "false"),
     sort: str(x.sort) || "match",
+    ctc_min: str(x.ctc_min), cur_ctc_min: str(x.cur_ctc_min), cur_ctc_max: str(x.cur_ctc_max),
+    added_days: str(x.added_days), has_phone: x.has_phone === true || x.has_phone === "true",
   };
 }
 
@@ -70,9 +75,12 @@ export function filtersToParams(f: FilterShape): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (f.skills.length) out.skills = f.skills;
   if (f.nice.length) out.nice = f.nice;
-  for (const k of ["q", "exp_min", "exp_max", "location", "notice", "ctc_max", "untouched_days"] as const) {
-    if (f[k].trim()) out[k] = f[k].trim();
+  for (const k of ["q", "exp_min", "exp_max", "location", "notice", "ctc_max", "untouched_days",
+    "ctc_min", "cur_ctc_min", "cur_ctc_max", "added_days"] as const) {
+    const v = (f[k] || "").trim();
+    if (v) out[k] = v;
   }
+  if (f.has_phone) out.has_phone = true;
   if (f.availability && f.availability !== "any") out.availability = f.availability;
   if (f.proven_only) out.proven_only = true;
   if (!f.include_employees) out.include_employees = false;

@@ -4,8 +4,9 @@
  *
  * Every invoice sits in exactly ONE tab — the server's stage
  * (`billing_rules.invoice_stage_case`): Proforma → Awaiting customer → Pending
- * e-invoice → Unpaid → Partially paid → Paid. Money on an invoice (cash or TDS)
- * puts it in Partially paid / Paid even when it predates the approval rule.
+ * e-invoice → Unpaid → Partially paid → Paid. CASH on an invoice puts it in
+ * Partially paid / Paid even when it predates the approval rule; a TDS
+ * deduction alone does not (21 Nov 2026 — ₹0 paid read "Partially paid").
  * The E-invoice register lists every invoice with its IRN, whatever its stage.
  *
  * The tab KEYS are the old ones, so saved links (`invoices?tab=Customer_Approved`,
@@ -15,6 +16,9 @@ export const EINVOICE_TAB_KEY = "EInvoice";
 /** 20 Nov 2026 (user ask): the first tab, opened by default — every invoice,
  *  whatever its stage, with a Stage filter of its own. */
 export const ALL_INVOICES_TAB_KEY = "All";
+/** 26 Nov 2026 (user ask): every timesheet and Proforma that is not yet a tax
+ *  invoice, at the step it is stuck on — its own panel (PendingWorkPanel). */
+export const PENDING_TAB_KEY = "Pending";
 
 /** The stages the All tab's Stage filter offers, in the money's order. */
 export const INVOICE_STAGE_FILTERS: { stage: string; label: string }[] = [
@@ -38,6 +42,8 @@ export type InvoiceStageTab = { key: string; label: string; stage: string; hint:
 export const INVOICE_STAGE_TABS: InvoiceStageTab[] = [
   { key: ALL_INVOICES_TAB_KEY, label: "All", stage: "",
     hint: "Every invoice and Proforma, whatever its stage — narrow it with the Stage, Status and other filters." },
+  { key: PENDING_TAB_KEY, label: "Pending work", stage: "",
+    hint: "Timesheets not yet submitted or approved, Proformas still to raise, and Proformas waiting for Finance's tax invoice — every employee, every project, in one list." },
   { key: "Proforma", label: "Proforma", stage: "proforma",
     hint: "Proformas raised by the GM — Finance checks them and generates the tax invoice." },
   { key: "Awaiting_Customer", label: "Awaiting customer", stage: "awaiting_customer",
@@ -45,9 +51,9 @@ export const INVOICE_STAGE_TABS: InvoiceStageTab[] = [
   { key: "Customer_Approved", label: "Pending e-invoice", stage: "pending_einvoice",
     hint: "Customer approved — Finance adds the IRN and Ack No. Payments open after that." },
   { key: "Unpaid", label: "Unpaid", stage: "unpaid",
-    hint: "E-invoice done (IRN added), nothing received yet." },
+    hint: "E-invoice done (IRN added), no cash received yet (TDS the customer deducted may be booked)." },
   { key: "Partially_Paid", label: "Partially paid", stage: "partially_paid",
-    hint: "Part of the money received (cash or TDS) — the balance is still due from the customer." },
+    hint: "Part of the cash received — the balance is still due from the customer." },
   { key: "Paid", label: "Paid", stage: "paid", hint: "Fully settled (cash + TDS)." },
   { key: EINVOICE_TAB_KEY, label: "E-invoice register", stage: "",
     hint: "Every tax invoice with its IRN, whatever its payment state." },

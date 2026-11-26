@@ -31,6 +31,13 @@
  * three half-dial gauges (period target · financial year · collections/DSO),
  * a customer-share donut, step bars for ageing / forecast / dimensions. The
  * payload and every number are unchanged; only the presentation moved.
+ *
+ * v5 (25 Nov 2026, user ask with screenshots): the charts and dials are gone —
+ * 12-month trend, the three gauges, revenue by customer, cash flow, ageing,
+ * billing by dimension, margin / forecast and the project / employee bar
+ * charts. The page is the tiles, the alerts, the invoice tracker and the data
+ * tables (placements, revenue by project, revenue by employee, coming up,
+ * efficiency, leakage). The Excel pack still carries every section.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -41,11 +48,12 @@ import { crmGet, qs } from "../../api";
 import { CrmLink } from "../../routerHooks";
 import { ErrorBox, SkeletonText, btnPrimary, btnSecondary, useToast } from "../../components/ui";
 import {
-  DateStepper, Delta, FilteredBars, ICON_BTN, MiniStat, PERIODS, Panel, PeriodSwitcher, STATE_CHIP,
-  Speedometer, Tile, inr, inrCompact, pct, periodMeta, shiftMonthKey, thisMonthKey,
+  DateStepper, Delta, ICON_BTN, MiniStat, PERIODS, Panel, PeriodSwitcher, STATE_CHIP,
+  Tile, inr, inrCompact, pct, periodMeta, shiftMonthKey, thisMonthKey,
 } from "../../components/controlTower";
 import type { PeriodKind, StateTone } from "../../components/controlTower";
 import { PlacementsPanel } from "./PlacementsPanel";
+import { InvoiceTrackerPanel } from "./InvoiceTrackerPanel";
 import { RevenueTargetsModal, monthLabelOf } from "../../components/RevenueTargetsModal";
 import { ScopeFilterBar as FilterBar, type FilterOption } from "../../components/ScopeFilterBar";
 import { useDataChanged } from "../../lib/useDataChanged";
@@ -260,20 +268,6 @@ function Stat({ k, v, tone, sub }: { k: string; v: React.ReactNode; tone?: "dang
   );
 }
 
-/** Attainment bar: green ≥ 100, amber ≥ 80, red below. */
-function Attainment({ pctValue }: { pctValue: number | null }) {
-  if (pctValue === null) return <span className="text-xs font-normal text-muted">no target</span>;
-  const tone = pctValue >= 100 ? "bg-emerald-500" : pctValue >= 80 ? "bg-amber-500" : "bg-rose-500";
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-1" aria-hidden>
-        <span className={`block h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, Math.max(0, pctValue))}%` }} />
-      </span>
-      <span className="text-xs font-semibold tabular-nums text-primary">{pct(pctValue, 0)}</span>
-    </span>
-  );
-}
-
 /**
  * The CEO's exception list — the first thing on the page when non-empty.
  *
@@ -338,140 +332,6 @@ function AlertsStrip({ alerts, periodLabel }: { alerts: Alert[]; periodLabel: st
   );
 }
 
-/** Chart rows: the top `MAX_BAR_ROWS` by the sort key; the rest fold into "Others" so a
- *  long book stays readable (the table below still lists everyone). */
-const MAX_BAR_ROWS = 12;
-function topRows<T extends Record<string, unknown>>(rows: T[], by: keyof T, label: (r: T) => string, sums: (keyof T)[]): Record<string, unknown>[] {
-  const sorted = [...rows].sort((x, y) => Number(y[by] ?? 0) - Number(x[by] ?? 0));
-  const top = sorted.slice(0, MAX_BAR_ROWS).map((r) => ({ label: label(r), ...Object.fromEntries(sums.map((k) => [k, Number(r[k] ?? 0)])) }));
-  const rest = sorted.slice(MAX_BAR_ROWS);
-  if (rest.length) {
-    top.push({ label: `Others (${rest.length})`, ...Object.fromEntries(sums.map((k) => [k, rest.reduce((a, r) => a + Number(r[k] ?? 0), 0)])) });
-  }
-  return top;
-}
-
-/** One segmented control for the three billing dimensions. */
-type DimKey = "by_type" | "by_branch" | "by_owner";
-const DIM_OPTIONS: { key: DimKey; label: string }[] = [
-  { key: "by_type", label: "Engagement type" }, { key: "by_branch", label: "Customer branch" }, { key: "by_owner", label: "Sales owner" },
-];
-
-/* ---------- Gauge cards ---------- */
-
-/** Period target: sweep = billed, tick = target, needle = billed. */
-function PeriodTargetCard({ data, meta }: { data: RevenueReportData; meta: ReturnType<typeof periodMeta> }) {
-  const t = data.targets;
-  const billed = data.headline.billed;
-  const target = t.month_target;
-  const state = attainmentState(t.month_attainment_pct);
-  const scaleMax = Math.max(target ?? 0, billed, t.is_current_month ? t.run_rate : 0, 1) * 1.1;
-  const hint = target === null
-    ? `Set a monthly target to measure the ${meta.label.toLowerCase()}`
-    : data.months_in_period > 1
-      ? `sum of ${t.months_with_target} monthly target(s)`
-      : t.month_target_is_default ? "using the default monthly target" : "month-specific target";
-  return (
-    <Panel
-      title={`Target · ${data.label}`}
-      hint={hint}
-      action={
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[state]}`}>
-          {target === null ? "No target" : pct(t.month_attainment_pct, 0)}
-        </span>
-      }
-    >
-      <div className="space-y-3">
-        <Speedometer value={billed} max={scaleMax} marker={target} markerLabel="target" state={state} label="Period target" caption="billed so far" format={inrCompact} />
-        <div className="grid grid-cols-2 gap-2">
-          <MiniStat k="Target" v={inr(target)} />
-          <MiniStat k="Billed" v={<Attainment pctValue={t.month_attainment_pct} />} />
-          {t.is_current_month && (
-            <MiniStat k={`Run-rate · full ${meta.label.toLowerCase()}`} v={inr(t.run_rate)} tone={attainmentState(t.run_rate_attainment_pct) === "none" ? undefined : attainmentState(t.run_rate_attainment_pct)}
-              hint={t.run_rate_attainment_pct === null ? undefined : `${pct(t.run_rate_attainment_pct, 0)} of target at this pace`} />
-          )}
-          {t.month_gap !== null && (
-            <MiniStat k={t.month_gap > 0 ? "Still to bill" : "Ahead by"} v={inr(Math.abs(t.month_gap))} tone={t.month_gap > 0 ? "bad" : "ok"} />
-          )}
-          <p className="col-span-2 text-xs text-muted">
-            Billed = invoice value before GST, by invoice date · {data.headline.invoices} invoice{data.headline.invoices === 1 ? "" : "s"} in {data.label}
-          </p>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-/** Financial year: sweep = billed to date, tick = FY target. State follows the PROJECTION. */
-function FyTargetCard({ data }: { data: RevenueReportData }) {
-  const t = data.targets;
-  const state = attainmentState(t.fy_projection_pct);
-  const scaleMax = Math.max(t.fy_target ?? 0, t.fy_billed_to_date, t.fy_projection, 1) * 1.1;
-  const needMore = t.fy_required_monthly !== null && t.fy_months_remaining > 0;
-  return (
-    <Panel
-      title={`${t.fy_label} · April to March`}
-      hint={`${t.fy_months_elapsed} of 12 months booked`}
-      action={
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[state]}`}>
-          {t.fy_target === null ? "No FY target" : `Projected ${pct(t.fy_projection_pct, 0)}`}
-        </span>
-      }
-    >
-      <div className="space-y-3">
-        <Speedometer value={t.fy_billed_to_date} max={scaleMax} marker={t.fy_target} markerLabel="FY target" state={state} label="Financial year" caption="billed to date" format={inrCompact} />
-        <div className="grid grid-cols-2 gap-2">
-          <MiniStat k="FY target" v={inr(t.fy_target)} />
-          <MiniStat k="To date" v={<Attainment pctValue={t.fy_attainment_pct} />} />
-          <MiniStat k="Projected close" v={inr(t.fy_projection)} tone={state === "none" ? undefined : state}
-            hint={t.fy_projection_pct === null ? undefined : `${pct(t.fy_projection_pct, 0)} of the FY target at the last-3-month pace`} />
-          {needMore && (
-            <MiniStat k={`Needed / month · ${t.fy_months_remaining} left`} v={inr(Math.max(0, t.fy_required_monthly!))}
-              tone={t.fy_required_monthly! > data.pipeline.avg_monthly_billed ? "bad" : "ok"} />
-          )}
-          <p className="col-span-2 text-xs text-muted">
-            Projection = billed to date + the trailing 3-month average × months left.
-          </p>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-/** Collections: sweep = DSO days, tick = the 60-day line. Lower is better here. */
-function CollectionsCard({ data }: { data: RevenueReportData }) {
-  const c = data.collections;
-  const state = dsoState(c.dso_days);
-  const dso = c.dso_days ?? 0;
-  const scaleMax = Math.max(90, Math.ceil((dso * 1.2) / 30) * 30);
-  const fmtDays = (v: number) => `${Math.round(v)} d`;
-  return (
-    <Panel
-      title="Collections"
-      hint={`DSO over the last ${c.dso_window_days} days · lower is better`}
-      action={
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[state]}`}>
-          {c.dso_days === null ? "No billing" : state === "ok" ? "Healthy" : state === "warn" ? "Slowing" : "Slow"}
-        </span>
-      }
-    >
-      <div className="space-y-3">
-        <Speedometer value={dso} max={scaleMax} marker={DSO_BAD_DAYS} markerLabel="limit" state={state} invert label="Days sales outstanding" caption="days sales outstanding" format={fmtDays}
-          ariaLabel={`DSO ${c.dso_days === null ? "not available" : `${c.dso_days} days`}; the tick marks ${DSO_BAD_DAYS} days`} />
-        <div className="grid grid-cols-2 gap-2">
-          <MiniStat k="Avg days to pay" v={c.avg_days_to_pay === null ? "—" : `${c.avg_days_to_pay} d`} hint="amount-weighted, receipts in this period" />
-          <MiniStat k="Receipts" v={c.receipts.toLocaleString("en-IN")} />
-          <MiniStat k="Outstanding" v={inr(data.headline.outstanding)} />
-          <MiniStat k="Overdue" v={inr(data.ageing.overdue_total)} tone={data.ageing.overdue_total > 0 ? "bad" : "ok"} />
-          <p className="col-span-2 text-xs text-muted">
-            DSO = outstanding ÷ trailing-{c.dso_window_days}-day billing (incl. GST) × {c.dso_window_days}. The tick is the {DSO_BAD_DAYS}-day line.
-          </p>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 /* ---------- Page ---------- */
 
 /** `canSetTargets` (19 Oct 2026): Finance + Admin / CEO; Sales reads the page. */
@@ -504,7 +364,6 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
   useDataChanged(() => { quietRef.current = true; setTick((t) => t + 1); });
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [dim, setDim] = useState<DimKey>("by_type");
   const [toast, showToast] = useToast();
 
   /** The query every request on this page shares, so the workbook can never be
@@ -579,7 +438,6 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
   const isCurrent = data ? data.period_start <= today && today <= data.period_end : month === thisMonthKey();
   const h = data?.headline;
 
-  const customerRows = useMemo(() => data?.by_customer.rows ?? [], [data]);
   const projectRows = useMemo(() => data?.by_project.rows ?? [], [data]);
   const employeeRows = useMemo(() => data?.by_employee.rows ?? [], [data]);
 
@@ -747,185 +605,17 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
             />
           </div>
 
-          {/* 1 · How the period unfolded — the first chart, as on the Dashboard. */}
-          <Panel title={meta.trend} hint={`billed per ${meta.label.toLowerCase()} vs the cash collected in it — tick a series or a ${meta.label.toLowerCase()}`}>
-            <FilteredBars rowFilter rowLabel={`${meta.label}s`} format={inrCompact}
-                          data={data.series.map((p) => ({ label: p.label, billed: p.billed, collected: p.collected, invoices: p.invoices }))}
-                          series={[{ key: "billed", label: "Billed (excl. GST)", color: 0 }, { key: "collected", label: "Collected", color: 1 },
-                                   { key: "invoices", label: "Invoices", color: 7, defaultOff: true }]} />
-          </Panel>
+          {/* 24 Nov 2026 — Finance's invoice tracker: one row per tax invoice of
+              the period, the same columns as the Excel sheet (first sheet of the pack). */}
+          <InvoiceTrackerPanel query={query} tick={tick} onError={(m) => showToast(m, "err")} />
 
-          {/* 2 · The three dials: period target · financial year · collections. */}
-          <div className="grid gap-4 xl:grid-cols-3">
-            <PeriodTargetCard data={data} meta={meta} />
-            <FyTargetCard data={data} />
-            <CollectionsCard data={data} />
-          </div>
-
-          {/* 3 · Where the money is — bar charts with their own ticks, two per row. */}
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Panel
-              title="Revenue by customer"
-              hint={`${data.by_customer.customers} customer${data.by_customer.customers === 1 ? "" : "s"} billed · top 3 = ${pct(data.by_customer.top3_share_pct, 0)}`}
-              action={data.by_customer.concentration_risk && data.by_customer.top_customer ? (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.warn}`} title="One account carries half or more of this period's billing">
-                  {data.by_customer.top_customer} {pct(data.by_customer.top1_share_pct, 0)}
-                </span>
-              ) : undefined}
-            >
-              {customerRows.length === 0 ? (
-                <div className="py-6 text-center text-sm text-muted">No invoices raised in {data.label}.</div>
-              ) : (
-                <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220}
-                              data={topRows(customerRows, "billed", (r) => r.customer, ["billed", "previous", "collected"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: data.comparison_label, color: 7 },
-                                       { key: "collected", label: "Collected", color: 1, defaultOff: true }]} />
-              )}
-            </Panel>
-
-            <Panel
-              title="Cash flow — next 3 months"
-              hint={`as of ${fmtDay(data.cashflow.as_of)} · open invoices placed on the calendar by due date`}
-              action={showCost ? (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${data.cashflow.covers_cost ? STATE_CHIP.ok : STATE_CHIP.bad}`}>
-                  {data.cashflow.covers_cost ? "Covers payroll" : "Falls short"}
-                </span>
-              ) : undefined}
-            >
-              {showCost && data.cashflow.heads_without_ctc > 0 && (
-                <Warn>{data.cashflow.heads_without_ctc} deployed head(s) have no CTC on record — the people cost below is understated.</Warn>
-              )}
-              <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={220}
-                            data={data.cashflow.months.map((m) => ({ label: m.label, at_pace: m.expected_at_pace, expected: m.expected, people_cost: m.people_cost, net: m.net_at_pace }))}
-                            series={[{ key: "at_pace", label: "Expected in (our pace)", color: 2 }, { key: "expected", label: "On agreed terms", color: 1, defaultOff: showCost },
-                                     ...(showCost ? [{ key: "people_cost", label: "People cost", color: 6 }, { key: "net", label: "Net", color: 0, defaultOff: true }] : [])]} />
-              <div className={`mt-3 grid grid-cols-2 gap-2 ${showCost ? "lg:grid-cols-4" : ""}`}>
-                <MiniStat k="Expected in, at our pace" v={inrCompact(data.cashflow.expected_total_at_pace)} hint={`${inr(data.cashflow.expected_total)} if everyone paid on terms`} />
-                {showCost && <MiniStat k="People cost out" v={inrCompact(data.cashflow.people_cost_total)} hint={`${data.cashflow.heads_costed} deployed head(s)`} />}
-                {showCost && <MiniStat k="Net position" v={inrCompact(data.cashflow.net_total_at_pace)} tone={data.cashflow.covers_cost ? "ok" : "bad"} />}
-                <MiniStat k="Paid late by" v={data.cashflow.slip_days === 0 ? "On terms" : `${data.cashflow.slip_days} d`} tone={data.cashflow.slip_days > 30 ? "warn" : undefined} hint="amount-weighted, last 12 months" />
-              </div>
-              {(data.cashflow.overdue.amount > 0 || data.cashflow.unbilled_ready.amount > 0) && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {data.cashflow.overdue.amount > 0 && (
-                    <CrmLink to="invoices" className="rounded-control border border-subtle bg-surface-2 px-3 py-2 text-xs transition-colors duration-micro hover:border-danger">
-                      <span className="font-bold text-danger">{inr(data.cashflow.overdue.amount)}</span>
-                      <span className="text-secondary"> overdue across {data.cashflow.overdue.count} invoice(s) — chase first.</span>
-                    </CrmLink>
-                  )}
-                  {data.cashflow.unbilled_ready.amount > 0 && (
-                    <CrmLink to="timesheets" className="rounded-control border border-subtle bg-surface-2 px-3 py-2 text-xs transition-colors duration-micro hover:border-warning">
-                      <span className="font-bold text-warning">{inr(data.cashflow.unbilled_ready.amount)}</span>
-                      <span className="text-secondary"> approved but not invoiced ({data.cashflow.unbilled_ready.count} timesheet(s)) — raise it.</span>
-                    </CrmLink>
-                  )}
-                </div>
-              )}
-              {data.cashflow.top_expected.length > 0 && (
-                <p className="mt-3 text-xs text-secondary">
-                  Biggest inflows: {data.cashflow.top_expected.slice(0, 3).map((r) => `${r.customer} ${inrCompact(r.amount)}${r.overdue_days > 0 ? ` (${r.overdue_days}d overdue)` : ""}`).join(" · ")}
-                </p>
-              )}
-            </Panel>
-
-            <Panel
-              title="Receivables ageing"
-              hint="open invoices by days past due (30-day terms when none set)"
-              action={data.ageing.overdue_90_plus > 0 ? (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.bad}`}>{inrCompact(data.ageing.overdue_90_plus)} past 90 d</span>
-              ) : undefined}
-            >
-              {data.ageing.buckets.length === 0 ? (
-                <p className="text-sm text-muted">Nothing outstanding.</p>
-              ) : (
-                <FilteredBars rowFilter rowLabel="Buckets" format={inrCompact} height={220}
-                              data={data.ageing.buckets.map((b) => ({ label: b.label, amount: b.amount, invoices: b.count }))}
-                              series={[{ key: "amount", label: "Outstanding", color: 5 }, { key: "invoices", label: "Invoices", color: 7, defaultOff: true }]} />
-              )}
-              {data.ageing.top_overdue_customers.length > 0 && (
-                <p className="mt-3 text-xs text-secondary">
-                  Owes most: {data.ageing.top_overdue_customers.slice(0, 3).map((c) => `${c.customer} ${inrCompact(c.overdue)}`).join(" · ")}
-                  {" · "}<CrmLink to="invoices" className="font-semibold text-brand-600 hover:underline dark:text-brand-300">Open invoices →</CrmLink>
-                </p>
-              )}
-            </Panel>
-
-            <Panel title="Billing by dimension" hint={`${data.label} billing split by ${DIM_OPTIONS.find((d) => d.key === dim)?.label.toLowerCase()}`}
-                   action={
-                     <div className="inline-flex h-9 items-center rounded-control border border-subtle bg-surface-2 p-0.5" role="group" aria-label="Billing dimension">
-                       {DIM_OPTIONS.map((o) => (
-                         <button key={o.key} type="button" onClick={() => setDim(o.key)} aria-pressed={dim === o.key}
-                                 className={`h-8 rounded-control px-3 text-xs font-semibold transition-all duration-micro ${dim === o.key ? "bg-surface-1 text-brand-600 shadow-raised dark:text-brand-300" : "text-secondary hover:text-primary"}`}>
-                           {o.label}
-                         </button>
-                       ))}
-                     </div>
-                   }>
-              {data.dimensions[dim].length === 0 ? (
-                <p className="text-sm text-muted">No billing in this period.</p>
-              ) : (
-                <FilteredBars key={dim} rowFilter rowLabel="Rows" format={inrCompact} height={220}
-                              data={data.dimensions[dim].map((r) => ({ label: r.label, billed: r.billed, share: r.share_pct ?? 0, invoices: r.invoices }))}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "share", label: "Share %", color: 3, defaultOff: true }, { key: "invoices", label: "Invoices", color: 7, defaultOff: true }]} />
-              )}
-            </Panel>
-          </div>
-
-          {/* 4 · Margin beside forecast — bars first, the tables under them. */}
-          <div className={`grid gap-4 ${showCost ? "xl:grid-cols-2" : ""}`}>
-            {showCost && <Panel
-              title="Gross margin by customer"
-              hint={`billed − people cost (annual CTC ÷ 12 × ${data.months_in_period} month${data.months_in_period === 1 ? "" : "s"} for everyone deployed)`}
-              action={<span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP[marginState]}`}>{pct(data.margin.gross_margin_pct, 0)}</span>}
-            >
-              {data.margin.heads_without_ctc > 0 && (
-                <Warn>{data.margin.heads_without_ctc} deployed assignment(s) have no CTC on the employee record — their cost is counted as zero.</Warn>
-              )}
-              <div className="mb-3 grid grid-cols-3 gap-2">
-                <MiniStat k="People cost" v={inrCompact(data.margin.cost)} />
-                <MiniStat k="Gross margin" v={inrCompact(data.margin.gross_margin)} tone={data.margin.gross_margin < 0 ? "bad" : undefined} />
-                <MiniStat k="Margin %" v={pct(data.margin.gross_margin_pct)} tone={marginState === "none" ? undefined : marginState} />
-              </div>
-              {data.margin.by_customer.length === 0 ? (
-                <div className="py-4 text-center text-sm text-muted">No billing or deployments in {data.label}.</div>
-              ) : (
-                <FilteredBars rowFilter rowLabel="Customers" format={inrCompact} height={220}
-                              data={topRows(data.margin.by_customer, "billed", (r) => r.customer, ["billed", "cost", "margin", "heads"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "cost", label: "People cost", color: 6 },
-                                       { key: "margin", label: "Margin", color: 2 }, { key: "heads", label: "Heads", color: 7, defaultOff: true }]} />
-              )}
-            </Panel>}
-
-            <Panel
-              title={`Forecast · next ${data.forecast.months.length} months`}
-              hint={`${inrCompact(data.forecast.total)} from the deployed team's billing rates`}
-              action={data.forecast.po_shortfall > 0 ? (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.bad}`}>{inrCompact(data.forecast.po_shortfall)} without PO</span>
-              ) : (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.ok}`}>PO covered</span>
-              )}
-            >
-              {data.forecast.po_shortfall > 0 && (
-                <Warn>{inr(data.forecast.po_shortfall)} of the forecast has no PO cover — renew or raise POs before billing.</Warn>
-              )}
-              <FilteredBars rowFilter rowLabel="Months" format={inrCompact} height={220}
-                            data={data.forecast.months.map((m) => ({ label: m.label, amount: m.amount, heads: m.heads, roll_offs: m.roll_off_count }))}
-                            series={[{ key: "amount", label: "Expected billing", color: 2 }, { key: "heads", label: "Heads", color: 7, defaultOff: true },
-                                     { key: "roll_offs", label: "Roll-offs", color: 5, defaultOff: true }]} />
-              <p className="mt-3 text-xs text-secondary">
-                {data.forecast.months.map((m) => `${m.label}: ${m.heads} head(s)${m.roll_off_count ? `, ${m.roll_off_count} roll-off(s)` : ""}${m.po_covered ? "" : ", no PO cover"}`).join(" · ")}
-              </p>
-              <p className="mt-2 text-xs text-muted">{data.forecast.assumptions}</p>
-            </Panel>
-          </div>
-
-          {/* 5 · People: who we placed at customers, redeployed vs newly hired. */}
+          {/* People: who we placed at customers, redeployed vs newly hired. */}
           <PlacementsPanel month={month} period={period} customerId={customerId} projectId={projectId} />
 
-          {/* 6 · Delivery view: which projects and which people made the money — bars, then the full table. */}
+          {/* Delivery view: which projects and which people made the money — the tables (charts removed 25 Nov 2026). */}
           <Panel
             title="Revenue by project"
-            hint={`${data.by_project.projects} project${data.by_project.projects === 1 ? "" : "s"} billed in ${data.label} · tick a project to compare`}
+            hint={`${data.by_project.projects} project${data.by_project.projects === 1 ? "" : "s"} billed in ${data.label}`}
             action={showCost && data.by_project.loss_making.length > 0 ? (
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.bad}`}>{data.by_project.loss_making.length} loss-making</span>
             ) : undefined}
@@ -937,12 +627,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               <div className="py-6 text-center text-sm text-muted">No project billing in {data.label}.</div>
             ) : (
               <>
-                <FilteredBars rowFilter rowLabel="Projects" format={inrCompact}
-                              data={topRows(projectRows, "billed", (r) => r.customer ? `${r.project} · ${r.customer}` : r.project, ["billed", "previous", "cost", "margin", "heads"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 }, { key: "previous", label: data.comparison_label, color: 7, defaultOff: showCost },
-                                       ...(showCost ? [{ key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2 }] : []),
-                                       { key: "heads", label: "Heads", color: 3, defaultOff: true }]} />
-                <div className={`${tableWrapTall} mt-4`}>
+                <div className={tableWrapTall}>
                   <table className="w-full">
                     <thead><tr className={trCls}>
                       <th className={thCls}>Project</th>
@@ -986,7 +671,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
             title="Revenue by employee"
             hint={data.by_employee.coverage_pct === null
               ? "per-head revenue comes from timesheet-driven invoices"
-              : `${pct(data.by_employee.coverage_pct, 0)} of billing is traceable to a person · ${data.by_employee.billing_heads} head(s) billing · tick a person to compare`}
+              : `${pct(data.by_employee.coverage_pct, 0)} of billing is traceable to a person · ${data.by_employee.billing_heads} head(s) billing`}
             action={data.by_employee.idle_count > 0 ? (
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${STATE_CHIP.warn}`}>{data.by_employee.idle_count} on the bench</span>
             ) : undefined}
@@ -994,7 +679,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
             {data.by_employee.unlinked_billed > 0 && (
               <Warn>
                 {inr(data.by_employee.unlinked_billed)} across {data.by_employee.unlinked_invoices} invoice(s) was raised without a timesheet,
-                so it cannot be attributed to a person and is NOT in the chart or table below.
+                so it cannot be attributed to a person and is NOT in the table below.
               </Warn>
             )}
             <div className={`mb-3 grid grid-cols-2 gap-2 ${showCost ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
@@ -1007,12 +692,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
               <div className="py-6 text-center text-sm text-muted">No deployments or timesheet-driven invoices in {data.label}.</div>
             ) : (
               <>
-                <FilteredBars rowFilter rowLabel="Employees" format={inrCompact}
-                              data={topRows(employeeRows, "billed", (r) => r.employee, ["billed", "cost", "margin", "billed_per_month"])}
-                              series={[{ key: "billed", label: "Billed", color: 0 },
-                                       ...(showCost ? [{ key: "cost", label: "People cost", color: 6 }, { key: "margin", label: "Margin", color: 2 }] : []),
-                                       ...(data.months_in_period > 1 ? [{ key: "billed_per_month", label: "Per month", color: 3, defaultOff: true }] : [])]} />
-                <div className={`${tableWrapTallMid} mt-4`}>
+                <div className={tableWrapTallMid}>
                   <table className="w-full">
                     <thead><tr className={trCls}>
                       <th className={thCls}>Employee</th>
@@ -1059,7 +739,7 @@ export function RevenueReport({ canSetTargets = true }: { canSetTargets?: boolea
             </p>
           </Panel>
 
-          {/* 7 · Runway · efficiency · leakage. */}
+          {/* Runway · efficiency · leakage. */}
           <div className="grid gap-4 md:grid-cols-3">
             <Panel
               title="Coming up"

@@ -1,6 +1,6 @@
 /**
  * RMG / GM's screening call — Shortlist or Reject (30 Sep 2026 redesign on
- * `dialogKit.DecisionDialog`). ONE dialog for the Screening Desk and the
+ * `dialogKit.DecisionDialog`). ONE dialog for the RMG Desk and the
  * Applied Candidates row; they used to be two copies with different words.
  * POST /api/candidate-profiles/{id}/rmg-screening {decision, note}.
  */
@@ -8,6 +8,7 @@ import { BellRing, Bot, CheckCircle2, Route, Send, ThumbsUp, UserRoundCheck, Use
 
 import { crmPost } from "../api";
 import { DecisionDialog, DialogHero, type DecisionSpec } from "./dialogKit";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "./RejectSkills";
 
 export type ScreeningDecision = "Shortlisted" | "Rejected";
 /** The L1 route chosen WITH the shortlist (30 Sep 2026, user ask: "Shortlist for AI
@@ -97,12 +98,16 @@ export function ScreeningDecisionModal({ profileId, candidateName, position, taN
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const isReject = decision === "Rejected";
+  const [skills, setSkills] = useRejectSkills({ profileId: isReject ? profileId : null });
   return (
     <DecisionDialog
       spec={specFor(decision, taName ? `the TA (${taName})` : "the TA", position, decision === "Shortlisted" ? route : undefined)}
       person={{ name: candidateName, meta: position || undefined }}
       onClose={onClose}
       onConfirm={async (note) => {
+        const problem = isReject ? rejectSkillsProblem(skills) : null;
+        if (problem) throw new Error(problem);
         const res = await crmPost(`/api/candidate-profiles/${profileId}/rmg-screening`, {
           decision, note: note || undefined,
         });
@@ -115,14 +120,17 @@ export function ScreeningDecisionModal({ profileId, candidateName, position, taN
           onDone(r2.message || (route === "ai" ? "Shortlisted — TA notified to schedule the AI L1" : "Shortlisted — TA notified to book the manual L1"));
           return;
         }
-        onDone(res.message || "Screening decision recorded");
+        const n = isReject ? await saveRejectSkills(skills) : 0;
+        onDone((res.message || "Screening decision recorded") + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added` : ""));
       }}
-    />
+    >
+      {isReject ? <RejectSkillsField state={skills} onChange={setSkills} /> : null}
+    </DecisionDialog>
   );
 }
 
 /** The header of RMG / GM's verdict after the rounds — Submit to Sales or
- *  Reject — used by the three places that record it (Screening Desk, Applied
+ *  Reject — used by the three places that record it (RMG Desk, Applied
  *  Candidates, the profile's RMG banner). */
 export function RmgVerdictHero({ sales, name, position }: {
   sales: boolean;

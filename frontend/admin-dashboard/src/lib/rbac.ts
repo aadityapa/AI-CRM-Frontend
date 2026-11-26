@@ -128,6 +128,16 @@ export const MANAGEABLE_TABS: ManageableTab[] = [
   { key: "crm:my-interviews", label: "My Interviews (panel feedback)", group: "CRM", roles: ["RMG"] },
   // Talent Pool (16 Oct 2026) — every candidate on record, searched by skill.
   { key: "crm:talent-pool", label: "Talent Pool", group: "CRM", roles: ["TA", "RMG", "Sales_Head"] },
+  // Bench & Deployed + My Workspace (23 Nov 2026).
+  { key: "crm:bench", label: "Bench & Deployed", group: "CRM", roles: ["RMG"] },
+  { key: "crm:my-workspace", label: "My Workspace (employee)", group: "CRM", roles: ["Sales", "Sales_Head", "RMG", "TA", "HR", "Finance"] },
+  // Six sidebar pages grantable on their own (25 Nov 2026, B-V2 migration 0161).
+  { key: "crm:screening-desk", label: "RMG Desk", group: "CRM", roles: ["RMG"] },
+  { key: "crm:careers-applications", label: "Careers Applications", group: "CRM", roles: ["TA", "RMG"] },
+  { key: "crm:e-invoices", label: "E-invoices (needs Invoices)", group: "CRM", roles: ["Finance", "Sales", "Sales_Head"] },
+  { key: "crm:received-amounts", label: "Received Amount", group: "CRM", roles: ["Finance"] },
+  { key: "crm:received-tds", label: "Received TDS", group: "CRM", roles: ["Finance"] },
+  { key: "crm:expenses", label: "Expenses", group: "CRM", roles: ["Finance"] },
   // Interview calendar — TA and RMG only (plus Admin/CEO via isSuperAdmin).
   // Sales roles are excluded on purpose; see nav.ts.
   { key: "crm:calendar", label: "Interview Calendar", group: "CRM", roles: ["RMG", "TA"] },

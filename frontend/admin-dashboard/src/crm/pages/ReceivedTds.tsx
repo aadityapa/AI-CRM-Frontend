@@ -97,7 +97,10 @@ export function ReceivedTdsPage({ scope, standalone = false }: {
   scope?: { customerId: number; customerName?: string | null };
   standalone?: boolean;
 } = {}) {
-  const canEdit = useCanAct("invoices", "edit", useHasRole("Finance"));
+  const invEdit = useCanAct("invoices", "edit", useHasRole("Finance"));
+  // 25 Nov 2026: the "Received TDS" page granted at Edit in Access Control works it too.
+  const pageEdit = useCanAct("received-tds", "edit", false);
+  const canEdit = invEdit || pageEdit;
   const [toastNode, showToast] = useToast();
   const [rows, setRows] = useState<TdsEntry[]>([]);
   const [meta, setMeta] = useState<(Meta & { total_received?: number; total_unmapped?: number }) | undefined>();

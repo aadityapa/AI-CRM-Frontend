@@ -18,9 +18,13 @@ import type { InvoiceData } from "./types";
 import { mapApiInvoiceToData } from "./utils";
 import styles from "./taxInvoice.module.css";
 
-/** Download file name stem: `ProformaInvoice_PI-2026-003` / `TaxInvoice_INV-2026-041`
-    / `EInvoice_INV-2026-041`. */
+/** Download file name stem — the server's name, the same as the Word file:
+    `Souhan_C_H_KRSW26-27-158-VS` / `Proforma_<Employee>_PI-2026-003` /
+    `EInvoice_<Employee>_<number>`. An older server (no `file_stem`) falls back
+    to `TaxInvoice_<number>`. */
 export function fileStem(data: InvoiceData, id: string | number, einvoice = false): string {
+  const server = einvoice ? data.einvoice_file_stem : data.file_stem;
+  if (server) return server;
   const safe = (data.invoice_number || `invoice-${id}`).replace(/[^\w.-]+/g, "_");
   if (einvoice) return `EInvoice_${safe}`;
   return `${data.kind === "Proforma" ? "ProformaInvoice" : "TaxInvoice"}_${safe}`;

@@ -646,6 +646,17 @@ type Suggestion = {
   penalty?: number;
   reasons: string[];
   engaged: boolean;
+  /** 24 Nov 2026 — live candidacies elsewhere, and what our interviews said. */
+  in_process?: number;
+  interview_signal?: {
+    best_round: { round: string; result: string; feedback: string | null; when: string | null } | null;
+    best_ai_score: number | null;
+    passed: boolean;
+    recent_fail: { round: string; when: string; feedback: string | null } | null;
+  };
+  last_working_day?: string | null;
+  serving_notice?: boolean;
+  added_at?: string | null;
   applications_count: number;
   /** EVERY previous application, newest first (28 Sep 2026). */
   history?: HistoryRow[];
@@ -891,6 +902,19 @@ function ScreenerAppliedTab({ requirementId, toast, onChanged }: {
   );
 }
 
+/** Joins within 30 days: serving notice, immediate, or a notice of ≤ 30 days. PURE. */
+export function joinsWithin30(r: Pick<Suggestion, "notice_period" | "serving_notice" | "last_working_day">): boolean {
+  if (r.serving_notice || r.last_working_day) return true;
+  const t = (r.notice_period || "").toLowerCase();
+  if (!t) return false;
+  if (/immediate|serving|no notice|^0\b/.test(t)) return true;
+  const n = Number((t.match(/\d+(\.\d+)?/) || [])[0]);
+  if (!Number.isFinite(n)) return false;
+  if (/month/.test(t)) return n <= 1;
+  if (/week/.test(t)) return n <= 4;
+  return n <= 30;
+}
+
 export function SuggestedCandidatesTab({
   oppId, canApply, onApplied, showToast,
 }: {
@@ -926,6 +950,12 @@ export function SuggestedCandidatesTab({
   const [hideEngaged, setHideEngaged] = useState(false);
   const [completeOnly, setCompleteOnly] = useState(false);
   const [contactableOnly, setContactableOnly] = useState(false);
+  /* More accurate picks (24 Nov 2026): free now, cleared an interview with us,
+     joins within 30 days, no recent technical "No Hire". */
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [passedOnly, setPassedOnly] = useState(false);
+  const [noticeSoon, setNoticeSoon] = useState(false);
+  const [hideRecentFail, setHideRecentFail] = useState(false);
   /* Hiring-interest email (Aug 2026): compose → one POST queues a personalised
    * "are you interested?" email to each recipient on the durable outbox.
    *
@@ -1140,6 +1170,10 @@ export function SuggestedCandidatesTab({
     if (hideEngaged && r.engaged) return false;
     if (completeOnly && r.missing_mandatory_skills.length > 0) return false;
     if (contactableOnly && !(r.phone || realEmail(r.email))) return false;
+    if (availableOnly && (r.engaged || (r.in_process || 0) > 0)) return false;
+    if (passedOnly && !r.interview_signal?.passed) return false;
+    if (noticeSoon && !joinsWithin30(r)) return false;
+    if (hideRecentFail && r.interview_signal?.recent_fail) return false;
     if (q.trim()) {
       const t = q.trim().toLowerCase();
       const hay = [r.name, r.technical_domain, r.city, ...r.matched_skills, ...(r.jd_terms_matched || [])]
@@ -1152,10 +1186,12 @@ export function SuggestedCandidatesTab({
   const allVisSelected = visible.length > 0 && visIds.every((id) => selected.has(id));
   const selectedVisible = visIds.filter((id) => selected.has(id)).length;
   const filtersActive =
-    minScore > 0 || q.trim() !== "" || hideEngaged || completeOnly || contactableOnly;
+    minScore > 0 || q.trim() !== "" || hideEngaged || completeOnly || contactableOnly
+    || availableOnly || passedOnly || noticeSoon || hideRecentFail;
   const clearFilters = () => {
     setMinScore(0); setQ(""); setHideEngaged(false);
     setCompleteOnly(false); setContactableOnly(false);
+    setAvailableOnly(false); setPassedOnly(false); setNoticeSoon(false); setHideRecentFail(false);
   };
 
   return (
@@ -1223,6 +1259,19 @@ export function SuggestedCandidatesTab({
               checked={contactableOnly} onChange={() => setContactableOnly((v) => !v)} />
             Contactable (email/phone)
           </label>
+          {([
+            ["Available now (no live candidacy)", availableOnly, setAvailableOnly],
+            ["Cleared an interview with us", passedOnly, setPassedOnly],
+            ["Joins within 30 days", noticeSoon, setNoticeSoon],
+            ["Hide recent technical No Hire", hideRecentFail, setHideRecentFail],
+          ] as [string, boolean, (f: (v: boolean) => boolean) => void][]).map(([label, on, setOn]) => (
+            <label key={label} className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-secondary">
+              <input type="checkbox" className="h-3.5 w-3.5 cursor-pointer"
+                style={{ accentColor: "var(--brand-600)" }}
+                checked={on} onChange={() => setOn((v) => !v)} />
+              {label}
+            </label>
+          ))}
           <span className="ml-auto text-xs text-muted">
             Showing <b className="text-secondary">{visible.length}</b> of {rows.length}
           </span>
@@ -1315,11 +1364,33 @@ export function SuggestedCandidatesTab({
                     Engaged elsewhere
                   </span>
                 )}
+                {!r.engaged && (r.in_process || 0) > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                    title="In a live candidacy on another opportunity">
+                    In process elsewhere ({r.in_process})
+                  </span>
+                )}
+                {r.interview_signal?.passed && (
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                    title={r.interview_signal.best_round?.feedback || undefined}>
+                    {r.interview_signal.best_round && ["Strong Hire", "Hire", "Leaning Hire"].includes(r.interview_signal.best_round.result)
+                      ? `Cleared ${r.interview_signal.best_round.round} with us`
+                      : `AI L1 ${Math.round(r.interview_signal.best_ai_score || 0)}% with us`}
+                  </span>
+                )}
+                {r.interview_signal?.recent_fail && (
+                  <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800"
+                    title={r.interview_signal.recent_fail.feedback || undefined}>
+                    {r.interview_signal.recent_fail.round} No Hire · {fmtDateShort(r.interview_signal.recent_fail.when)}
+                  </span>
+                )}
               </div>
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-secondary">
                 {r.experience_years != null && <span>{r.experience_years} yrs</span>}
                 {r.city && <span>{r.city}</span>}
-                {r.notice_period && <span>Notice: {r.notice_period}</span>}
+                {(r.serving_notice || r.last_working_day)
+                  ? <span className="font-semibold text-emerald-700 dark:text-emerald-300">Serving notice{r.last_working_day ? ` · LWD ${fmtDateShort(r.last_working_day)}` : ""}</span>
+                  : r.notice_period && <span>Notice: {r.notice_period}</span>}
                 {r.current_ctc != null && <span>CTC ₹{Number(r.current_ctc).toLocaleString("en-IN")}</span>}
                 {r.expected_ctc != null && <span>Expects ₹{Number(r.expected_ctc).toLocaleString("en-IN")}</span>}
                 <span>{displayEmail(r.email)}</span>
@@ -1830,7 +1901,9 @@ export function OpportunityDetailPage() {
   // Approvals, else the Sales Head role — the same answer as the server gate.
   const canApprove = useCanApprove("opportunity.approve");
   const canEngApprove = useCanApprove("requirement.engineering_approve");
-  const canApplyHere = useHasRole("TA", "Sales", "RMG");
+  const applyByRole = useHasRole("TA", "Sales", "RMG");
+  const applyAsScreener = useCanApprove("profile.rmg_screening");   // GM (custom role) — 24 Nov 2026
+  const canApplyHere = applyByRole || applyAsScreener;
   const [applyHere, setApplyHere] = useState(false);
   // Skill Evaluation Details are owned by RMG (and Admin/CEO) — Sales & Sales Head
   // can view but not add/edit. RMG fills these in during approval review.
@@ -1867,7 +1940,7 @@ export function OpportunityDetailPage() {
   const [tab, setTab] = usePageTab<string>("tab", "details");
   /* RMG / GM screen and interview; they never source (28 Sep 2026, user
      request) — Applicants and Suggested Candidates are TA's / Sales' tabs.
-     Their candidates are on the Screening Desk. */
+     Their candidates are on the RMG Desk. */
   const screensCandidates = useCanApprove("profile.rmg_screening");
   const isTaRole = useHasRole("TA");   // both hooks always run — never `a && useX()`
   const screenerOnly = screensCandidates && !canWriteRole && !isTaRole;
@@ -2025,8 +2098,10 @@ export function OpportunityDetailPage() {
             : []),
           ...(screenerOnly ? [] : [
             { key: "applicants", label: "Applicants", count: profileMeta?.total, gate: "tab:applicants" },
-            { key: "suggested", label: "Suggested Candidates", gate: "tab:suggested", legacy: "tab:applicants" },
           ]),
+          /* Suggested Candidates is RMG / GM's too (24 Nov 2026, user ask): they
+             know the position best and may apply a strong match straight away. */
+          { key: "suggested", label: "Suggested Candidates", gate: "tab:suggested", legacy: "tab:applicants" },
           { key: "skills", label: "Skill Evaluation Details", count: skills.length, gate: "tab:skill-eval" },
           { key: "activity", label: "Activity Log", gate: "tab:activity" },
           { key: "projects", label: "Projects", gate: "tab:projects", legacy: "tab:details" },
@@ -2177,7 +2252,7 @@ export function OpportunityDetailPage() {
       ) : null}
 
       {/* RMG approval on the opportunity page (7 Oct 2026, user ask): the position
-          waits for RMG — approve / reject it here, as on the Screening Desk. */}
+          waits for RMG — approve / reject it here, as on the RMG Desk. */}
       {opp.requirement_id && opp.requirement_status === "Pending_Engineering_Review" && canEngApprove ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/30" role="status">
           <div className="text-sm text-amber-900 dark:text-amber-200">

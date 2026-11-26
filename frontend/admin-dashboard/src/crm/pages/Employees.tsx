@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Briefcase, Building2, CalendarDays, ChevronDown, Download, FileSpreadsheet, FolderOpen, GraduationCap,
-  History, IdCard, LogOut, Mail, UserX, MapPin, Pencil, Phone, Plus, Save, Trash2, User, UserCheck, Users, X,
+  FolderInput, FolderLock, History, IdCard, Layers, LogOut, Mail, Sparkles, UserX, MapPin, Pencil, Phone, Plus, Save, Trash2, User, UserCheck, Users, X,
   type LucideIcon,
 } from "lucide-react";
 import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
@@ -39,6 +39,11 @@ import {
   validationError, visibleFields, type EmpCardKey, type EmpDraftValue, type EmpField,
 } from "../lib/employeeFields";
 import { usePageTab, useSessionState } from "../lib/pageState";
+import { JoiningDocumentsTab } from "../components/employee/JoiningDocuments";
+import {
+  GroupChip, ManageGroupsDialog, MoveToGroupDialog, SuggestionsDialog,
+  type BenchGroup, type MovePerson, type Suggestion,
+} from "../components/bench/BenchGroups";
 import { DialogActions, DialogFailure, DialogHero, DialogSection, QuickPicks, WhatHappens } from "../components/dialogKit";
 
 /** Local single-screen shell — applies the shared New Opportunity wizard look
@@ -106,13 +111,14 @@ function useNameMap(path: string): Record<number, string> {
   return map;
 }
 
-function TypeBadge({ type }: { type?: string | null }) {
-  if (!type) return null;
-  const cls =
-    type === "Internal"
-      ? "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
-      : "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300";
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{type}</span>;
+/** A one-line empty state for a profile card — the big EmptyState made the
+ *  employee page mostly white space (26 Nov 2026). */
+function QuietEmpty({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return (
+    <p className="flex items-center gap-2 rounded-control bg-surface-2 px-3 py-2.5 text-sm text-secondary">
+      <Icon size={15} className="shrink-0 text-muted" aria-hidden /> {text}
+    </p>
+  );
 }
 
 /** One colour per employment type, so the list scans at a glance. */
@@ -435,7 +441,7 @@ function EmployeeFormModal({
   const [deptId, setDeptId] = useState(initial?.department_id ? String(initial.department_id) : "");
   const [desigId, setDesigId] = useState(initial?.designation_id ? String(initial.designation_id) : "");
   const [managerId, setManagerId] = useState(initial?.reporting_manager_id ? String(initial.reporting_manager_id) : "");
-  const [profileType, setProfileType] = useState(initial?.profile_type || "Internal");
+  const [profileType] = useState(initial?.profile_type || "Internal");
   const [employmentType, setEmploymentType] = useState<string>(initial?.employment_type || "");
   const [portalAccess, setPortalAccess] = useState(Boolean(initial?.portal_access));
   const [doj, setDoj] = useState(initial?.date_of_joining || "");
@@ -560,12 +566,8 @@ function EmployeeFormModal({
                     </div>
                   </Field>
                 </div>
-                <Field label="Profile type">
-                  <select className={inputCls} value={profileType} onChange={(e) => setProfileType(e.target.value)}>
-                    <option value="Internal">Internal</option>
-                    <option value="External">External</option>
-                  </select>
-                </Field>
+                {/* Profile type left the form (26 Nov 2026) — every employee is
+                    created Internal; it said nothing HR needed. */}
                 <div className="flex items-end gap-4 pb-1.5">
                   <label className="inline-flex items-center gap-2 text-sm font-semibold text-secondary">
                     <input type="checkbox" checked={portalAccess} onChange={(e) => setPortalAccess(e.target.checked)} />
@@ -605,9 +607,9 @@ function EmployeeFormModal({
  * Employees — list
  * =================================================================== */
 
-/** "All" first and default (26 Aug 2026, user decision): after the directory
- * import, 191 of 288 people are Relieved — hiding them behind a second tab
- * made the directory look two-thirds empty. */
+/** Opens on Working every time (26 Nov 2026, user ask — reverses the 26 Aug
+ * "All first"): HR's day is the people who work here; the relieved stay one
+ * click away. The tab still follows Back / Forward through the address. */
 const EMP_TABS = [
   { key: "All", label: "All" },
   { key: "Active", label: "Working" },
@@ -615,12 +617,29 @@ const EMP_TABS = [
 ];
 
 
+type RowGroup = { id: number; name: string; color: string; counts_as_bench: boolean } | null | undefined;
+
+/** The deployment dropdown's value → the server's `deployment`. PURE. */
+export function deploymentChoice(raw: string | null | undefined): string {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "bench" || v === "deployed" || v === "grouped") return v;
+  return /^group:\d+$/.test(v) ? v : "";
+}
+
 /** Deployed (with the live project in the tooltip) or Bench — from the list
- *  endpoint's `deployment_status`; an inactive person shows neither. */
-function DeploymentCell({ row }: { row: { deployment_status?: string | null; current_projects?: { project: string; customer: string | null }[] } }) {
+ *  endpoint's `deployment_status`; an inactive person shows neither. A person
+ *  filed under a group that leaves the bench pool (Management, Internal
+ *  staff…) shows the GROUP instead of "Bench" (26 Nov 2026). */
+function DeploymentCell({ row }: { row: { deployment_status?: string | null; group?: RowGroup; current_projects?: { project: string; customer: string | null }[] } }) {
   if (!row.deployment_status) return <span className="text-muted">—</span>;
   if (row.deployment_status === "Bench") {
-    return <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-bold text-warning">Bench</span>;
+    if (row.group && !row.group.counts_as_bench) return <GroupChip group={row.group} small />;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-bold text-warning">Bench</span>
+        {row.group && <GroupChip group={row.group} small />}
+      </span>
+    );
   }
   const where = (row.current_projects || []).map((p) => [p.project, p.customer].filter(Boolean).join(" · ")).join("\n");
   return (
@@ -637,7 +656,7 @@ export function EmployeesListPage() {
      (20 Nov 2026); HR may delete only a record with no history. */
   const isAdminUser = useHasRole();
   const canWrite = useCanAct("employees", "edit", canWriteRole);
-  const [tab, setTab] = usePageTab<string>("status", "All", EMP_TABS.map((t) => t.key));
+  const [tab, setTab] = usePageTab<string>("status", "Active", EMP_TABS.map((t) => t.key), { remember: false });
   const [search, setSearch] = useSessionState("emp.search", "");
   const [deptFilter, setDeptFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -652,9 +671,14 @@ export function EmployeesListPage() {
    *  closed project's team lands. Server-side filter, so paging stays right. */
   const [deploymentFilter, setDeploymentFilter] = useState(() => {
     // Deep link from the CEO dashboard's Deployed / Bench tiles (28 Sep 2026).
-    const v = new URLSearchParams(window.location.search).get("deployment") || "";
-    return v === "bench" || v === "deployed" ? v : "";
+    return deploymentChoice(new URLSearchParams(window.location.search).get("deployment"));
   });
+  /* Groups (Management, Internal staff …) — HR files people here too, so the
+     "On the bench" count holds only people who can be deployed (26 Nov 2026). */
+  const [moveFor, setMoveFor] = useState<MovePerson[] | null>(null);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [showManage, setShowManage] = useState(false);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
   const [page, setPage] = useSessionState("emp.page", 1);
   const [rows, setRows] = useState<any[]>([]);
   const [meta, setMeta] = useState<Meta | undefined>();
@@ -720,6 +744,14 @@ export function EmployeesListPage() {
     return () => { alive = false; window.clearTimeout(t); };
   }, [tab, search, deptFilter, typeFilter, sortBy, deploymentFilter, page, reloadKey]);
 
+  const groups: BenchGroup[] = ((meta as any)?.groups || []) as BenchGroup[];
+  const suggestions: Suggestion[] = ((meta as any)?.bench_suggestions || []) as Suggestion[];
+  const outOfPool = groups.filter((g) => !g.counts_as_bench).reduce((n, g) => n + (g.members || 0), 0);
+  const movePeople = (list: any[]) => setMoveFor(list.map((r) => ({
+    id: r.id, name: r.full_name, group: r.group ? { ...r.group, key: null, note: null, set_by_name: null, set_at: null } : null,
+  })));
+  const afterMove = (msg: string) => { setMoveFor(null); setShowSuggest(false); setPicked(new Set()); showToast(msg); load(); };
+
   const columns: Column<any>[] = [
     { key: "employee_code", label: "Emp ID", className: "whitespace-nowrap",
       render: (r) => r.employee_code ? <span className="font-mono text-xs font-semibold text-secondary">{r.employee_code}</span> : <span className="text-muted">—</span> },
@@ -750,11 +782,22 @@ export function EmployeesListPage() {
 
   const filters = (
     <>
-      <select className={`${inputCls} !w-48`} value={deploymentFilter}
-              onChange={(e) => { setDeploymentFilter(e.target.value); setPage(1); }} title="Deployment">
+      <select className={`${inputCls} !w-56`} value={deploymentFilter}
+              onChange={(e) => { setDeploymentFilter(e.target.value); setPage(1); setPicked(new Set()); }}
+              title="Deployment — On the bench leaves out people filed under Management, Internal staff and other groups">
         <option value="">Bench & deployed</option>
         <option value="bench">On the bench</option>
         <option value="deployed">Deployed</option>
+        {groups.length > 0 && (
+          <optgroup label="Groups (not on the bench)">
+            {groups.map((g) => (
+              <option key={g.id} value={`group:${g.id}`}>
+                {g.name} ({g.members}){g.counts_as_bench ? " · still counts as bench" : ""}
+              </option>
+            ))}
+            <option value="grouped">Everyone in a group</option>
+          </optgroup>
+        )}
       </select>
       <select className={`${inputCls} !w-44`} value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value); setPage(1); }}>
         <option value="">All departments</option>
@@ -780,17 +823,25 @@ export function EmployeesListPage() {
         <option value="date_of_joining">Newest joiner first</option>
         <option value="name">Name (A–Z)</option>
       </select>
+      {canWrite && (
+        <button type="button" className={btnSecondary} onClick={() => setShowManage(true)}
+          title="Groups such as Management or Internal staff — shared with Bench & Deployed ▸ Groups">
+          <Layers size={14} aria-hidden /> Groups
+        </button>
+      )}
     </>
   );
 
   /* Headline chips — read-only, from what the page already loaded. */
   const deployedHere = rows.filter((r) => r.deployment_status === "Deployed").length;
-  const benchHere = rows.filter((r) => r.deployment_status === "Bench").length;
+  const benchHere = rows.filter((r) => r.deployment_status === "Bench" && !(r.group && !r.group.counts_as_bench)).length;
   const heroStats = [
     { label: meta?.total === 1 ? "employee" : "employees", value: meta ? meta.total : "—" },
     { label: "deployed on this page", value: deployedHere, title: "Deployed people among the rows shown" },
-    { label: "on the bench on this page", value: benchHere, title: "Bench people among the rows shown" },
+    { label: "on the bench on this page", value: benchHere, title: "Bench people among the rows shown (groups such as Management left out)" },
+    ...(outOfPool ? [{ label: "in groups (management, internal…)", value: outOfPool, title: "Filed under a group that is not counted as bench" }] : []),
   ];
+  const selectedRows = rows.filter((r) => picked.has(r.id));
 
   return (
     <div className="space-y-4">
@@ -845,6 +896,27 @@ export function EmployeesListPage() {
         </div>
       </PageHeader>
       {error && <ErrorBox error={error} />}
+      {canWrite && deploymentFilter === "bench" && suggestions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-card border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-900 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-100">
+          <Sparkles size={16} className="shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <b>{suggestions.length} {suggestions.length === 1 ? "person" : "people"} on the bench look{suggestions.length === 1 ? "s" : ""} like management or internal staff</b>
+            {" "}— e.g. {suggestions.slice(0, 3).map((s) => s.name).join(", ")}{suggestions.length > 3 ? "…" : ""}. File them under a group and the bench count shows only people who can be deployed.
+          </span>
+          <button type="button" className={`${btnPrimary} !bg-purple-600 hover:!bg-purple-700`} onClick={() => setShowSuggest(true)}>
+            <FolderInput size={14} aria-hidden /> Review & move
+          </button>
+        </div>
+      )}
+      {canWrite && selectedRows.length > 0 && (
+        <div className="sticky top-2 z-20 flex flex-wrap items-center gap-3 rounded-card bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2.5 text-sm text-white shadow-overlay">
+          <b>{selectedRows.length} selected</b>
+          <button type="button" className="rounded-control bg-white/15 px-3 py-1.5 font-semibold hover:bg-white/25" onClick={() => movePeople(selectedRows)}>
+            <FolderInput size={14} className="mr-1 inline" aria-hidden /> Move to a group
+          </button>
+          <button type="button" className="ml-auto text-white/80 hover:text-white" onClick={() => setPicked(new Set())}>Clear</button>
+        </div>
+      )}
       <DataTable
         columns={columns}
         rows={rows}
@@ -881,6 +953,9 @@ export function EmployeesListPage() {
             deactivateSuccessMessage="Employee deactivated"
           colored />
         ) : undefined}
+        selectable={canWrite}
+        selectedIds={picked}
+        onSelectionChange={(n) => setPicked(new Set([...n].map(Number)))}
       />
       {showNew && (
         <EmployeeFormModal
@@ -889,6 +964,9 @@ export function EmployeesListPage() {
           onError={(m) => showToast(m, "err")}
         />
       )}
+      {moveFor && <MoveToGroupDialog people={moveFor} onClose={() => setMoveFor(null)} onDone={afterMove} />}
+      {showSuggest && <SuggestionsDialog suggestions={suggestions} onClose={() => setShowSuggest(false)} onDone={afterMove} />}
+      {showManage && <ManageGroupsDialog onClose={() => setShowManage(false)} onChanged={(m) => { showToast(m); load(); }} />}
       {showBulk && (
         <BulkEmployeeUploadModal
           onClose={() => setShowBulk(false)}
@@ -1026,23 +1104,40 @@ const DETAIL_TABS = [
   { key: "profile", label: "Profile" },
   { key: "employee_history", label: "History" },
   { key: "history", label: "Project History" },
+  /* HR (and Admin / CEO) only — 26 Nov 2026; the server refuses everyone else. */
+  { key: "documents", label: "Joining Documents" },
 ];
 const DETAIL_TAB_ICONS: Record<string, LucideIcon> = {
   profile: UserCheck,
   employee_history: History,
   history: Briefcase,
+  documents: FolderLock,
 };
+
+/** "3 yrs 2 mos" since a date (null when unknown / in the future). PURE. */
+export function tenureText(from?: string | null, today: Date = new Date()): string | null {
+  if (!from) return null;
+  const d = new Date(String(from).slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(d.getTime()) || d > today) return null;
+  let months = (today.getFullYear() - d.getFullYear()) * 12 + (today.getMonth() - d.getMonth());
+  if (today.getDate() < d.getDate()) months -= 1;
+  const y = Math.floor(months / 12), m = months % 12;
+  if (y === 0 && m === 0) return "New this month";
+  return [y ? `${y} yr${y === 1 ? "" : "s"}` : "", m ? `${m} mo${m === 1 ? "" : "s"}` : ""].filter(Boolean).join(" ");
+}
 
 export function EmployeeDetailPage() {
   const { id } = useCrmParams();
   /* Both hooks must run unconditionally (rules-of-hooks) — combine after. */
   const canWriteRole = useHasRole("HR");
   const canWrite = useCanAct("employees", "edit", canWriteRole);
+  /* useHasRole admits Admin / CEO — the same people the server lets in. */
+  const canSeeDocs = useHasRole("HR");
   const [emp, setEmp] = useState<any | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = usePageTab<string>("tab", "profile", DETAIL_TABS.map((t) => t.key));
   const pageSub = useSubTabs("employees");   // sub-tabs a template can switch off (22 Oct 2026)
-  const DETAIL_TABS_SHOWN = DETAIL_TABS.filter((t) => pageSub.allowed(t.key));
+  const DETAIL_TABS_SHOWN = DETAIL_TABS.filter((t) => (t.key === "documents" ? canSeeDocs : pageSub.allowed(t.key)));
   const shownTab = DETAIL_TABS_SHOWN.some((t) => t.key === tab) ? tab : (DETAIL_TABS_SHOWN[0]?.key || "");
   /* Lazy-load flag: the 360° History view mounts (and fetches) only on first
    * open, then stays mounted (hidden) so switching tabs doesn't refetch. */
@@ -1064,11 +1159,16 @@ export function EmployeeDetailPage() {
 
   const mailOk = typeof emp.email === "string" && emp.email.includes("@");
   const pillCls = "inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-semibold text-white ring-1 ring-inset ring-white/25";
-  const bandFacts: { label: string; value: React.ReactNode }[] = [
-    { label: "Designation", value: emp.designation_name || "—" },
-    { label: "Department", value: emp.department_name || "—" },
-    { label: "Reporting manager", value: emp.reporting_manager_name || "—" },
-    { label: "Joined", value: fmtDate(emp.date_of_joining) },
+  const tenure = emp.is_active ? tenureText(emp.date_of_joining) : null;
+  const project = (emp.current_projects || [])[0];
+  const bandFacts: { label: string; value: React.ReactNode; sub?: React.ReactNode; icon: LucideIcon; title?: string }[] = [
+    { label: "Designation", icon: Briefcase, value: emp.designation_name || "—", sub: emp.department_name || "No department" },
+    { label: "Reporting manager", icon: Users, value: emp.reporting_manager_name || "—", sub: emp.reporting_hr_name ? `HR: ${emp.reporting_hr_name}` : undefined },
+    { label: "Based at", icon: Building2, value: emp.based_location || "—", sub: emp.work_location ? `Works at ${emp.work_location}` : undefined },
+    { label: "Joined", icon: CalendarDays, value: fmtDate(emp.date_of_joining), sub: tenure ? `${tenure} with Karnex` : undefined },
+    { label: "Deployment", icon: MapPin,
+      value: emp.deployment_status === "Deployed" ? (project?.project || "Deployed") : emp.deployment_status === "Bench" ? "On the bench" : "—",
+      sub: emp.deployment_status === "Deployed" ? project?.customer || undefined : undefined },
   ];
 
   return (
@@ -1098,7 +1198,6 @@ export function EmployeeDetailPage() {
                 {[emp.designation_name, emp.department_name].filter(Boolean).join(" · ") || "No designation recorded"}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <TypeBadge type={emp.profile_type} />
                 {emp.employment_type && <EmploymentTypeBadge type={emp.employment_type} />}
                 <StatusBadge status={emp.is_active ? "Active" : "Inactive"} />
                 {(emp.is_exit || emp.is_resigned) && <StatusBadge status="Exited" />}
@@ -1124,13 +1223,22 @@ export function EmployeeDetailPage() {
             )}
           </div>
         </div>
-        <dl className="grid grid-cols-2 border-t border-subtle bg-surface-1 sm:grid-cols-4">
-          {bandFacts.map((f) => (
-            <div key={f.label} className="min-w-0 px-4 py-3">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{f.label}</dt>
-              <dd className="mt-0.5 truncate text-sm font-semibold text-primary" title={typeof f.value === "string" ? f.value : undefined}>{f.value}</dd>
-            </div>
-          ))}
+        <dl className="grid grid-cols-2 divide-subtle border-t border-subtle bg-surface-1 sm:grid-cols-3 lg:grid-cols-5 lg:divide-x">
+          {bandFacts.map((f) => {
+            const FIcon = f.icon;
+            return (
+              <div key={f.label} className="flex min-w-0 items-start gap-2.5 px-4 py-3">
+                <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300" aria-hidden>
+                  <FIcon size={15} />
+                </span>
+                <div className="min-w-0">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted">{f.label}</dt>
+                  <dd className="mt-0.5 truncate text-sm font-semibold text-primary" title={typeof f.value === "string" ? f.value : undefined}>{f.value}</dd>
+                  {f.sub && <dd className="truncate text-xs text-muted" title={typeof f.sub === "string" ? f.sub : undefined}>{f.sub}</dd>}
+                </div>
+              </div>
+            );
+          })}
         </dl>
         <div className="border-t border-subtle px-3 py-2 sm:px-4">
           <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Employee sections">
@@ -1173,6 +1281,10 @@ export function EmployeeDetailPage() {
       )}
 
       {shownTab === "history" && <ProjectHistoryTab employeeId={Number(id)} />}
+
+      {shownTab === "documents" && canSeeDocs && (
+        <JoiningDocumentsTab employeeId={Number(id)} employeeName={emp.full_name} showToast={showToast} />
+      )}
 
       {toast}
     </div>
@@ -1496,9 +1608,8 @@ function EmployeeProfile({ emp, canWrite, onSaved, showToast }: SectionProps) {
       <AddressSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />
       <LeaveBalancesSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
       <MoreSection title="More details" icon={FolderOpen}
-        hint={`Education · Experience · Attendance rule${resigned ? "" : " · Resignation"} — open only when you need them`}>
+        hint={`Education · Attendance rule${resigned ? "" : " · Resignation"} — open only when you need them`}>
         <EducationSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
-        <ExperienceSection employeeId={emp.id} canWrite={canWrite} showToast={showToast} />
         <DetailsCard cardKey="attendance" {...common}
           emptyText="Follows the branch / project attendance policy. Set hours here only for an exception." />
         {!resigned && <SeparationSection emp={emp} canWrite={canWrite} onSaved={onSaved} showToast={showToast} />}
@@ -1906,245 +2017,7 @@ function EducationSection({
   );
 }
 
-/** Row modal for the Experience subform (Currently Working disables relieving date). */
-function ExperienceModal({
-  employeeId,
-  initial,
-  onClose,
-  onSaved,
-  showToast,
-}: {
-  employeeId: number;
-  initial?: any;
-  onClose: () => void;
-  onSaved: () => void;
-  showToast: ShowToast;
-}) {
-  const [company, setCompany] = useState(initial?.company_name || "");
-  const [jobTitle, setJobTitle] = useState(initial?.job_title || "");
-  const [current, setCurrent] = useState(Boolean(initial?.currently_working));
-  const [doj, setDoj] = useState(initial?.date_of_joining || "");
-  const [relieving, setRelieving] = useState(initial?.date_of_relieving || "");
-  const [city, setCity] = useState(initial?.city || "");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  const submit = async () => {
-    if (!company.trim()) { setErr("Company name is required"); return; }
-    setErr("");
-    setBusy(true);
-    const payload = {
-      company_name: company.trim(),
-      job_title: sOrNull(jobTitle),
-      currently_working: current,
-      date_of_joining: doj || null,
-      date_of_relieving: current ? null : (relieving || null),
-      city: sOrNull(city),
-    };
-    try {
-      if (initial) await crmPut(`/api/experience/${initial.id}`, payload);
-      else await crmPost(`/api/employees/${employeeId}/experience`, payload);
-      showToast(initial ? "Experience updated" : "Experience added");
-      onSaved();
-    } catch (e: any) {
-      showToast(e?.message || "Failed to save experience", "err");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={<span className="sr-only">{initial ? "Edit Experience" : "Add Experience"}</span>}
-      onClose={onClose}
-      scopeClassName="crm-wizard wiz-noise"
-      bodyClassName="!px-0 !py-0"
-    >
-      <WizFormShell
-        title={initial ? "Edit Experience" : "Add Experience"}
-        subtitle="Prior employer, role, and tenure dates."
-        icon={<Briefcase size={20} aria-hidden />}
-      >
-        <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
-          <WizardField label="Company name" required icon="building" filled={!!company.trim()}>
-            <input className={inputCls} value={company} onChange={(e) => setCompany(e.target.value)} />
-          </WizardField>
-          <WizardField label="Job title" icon="user" filled={!!jobTitle.trim()}>
-            <input className={inputCls} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
-          </WizardField>
-          <WizardField label="Date of joining" icon="calendar" filled={!!doj}>
-            <input type="date" className={inputCls} value={doj} onChange={(e) => setDoj(e.target.value)} />
-          </WizardField>
-          <WizardField label="Date of relieving" icon={current ? "lock" : "calendar"} filled={!current && !!relieving}>
-            <input
-              type="date"
-              className={inputCls}
-              value={current ? "" : relieving}
-              onChange={(e) => setRelieving(e.target.value)}
-              disabled={current}
-            />
-          </WizardField>
-          <WizardField label="City">
-            <SearchableSelect
-              value={city}
-              options={optionsFromStrings(INDIAN_CITIES)}
-              allowAdd
-              searchable
-              placeholder="Search city…"
-              onChange={setCity}
-            />
-          </WizardField>
-          <div className="flex items-end pb-1.5">
-            <label className="inline-flex items-center gap-2 text-sm font-semibold text-[color:var(--wiz-text)]">
-              <input type="checkbox" checked={current} onChange={(e) => setCurrent(e.target.checked)} />
-              Currently working here
-            </label>
-          </div>
-        </div>
-        {err && <div className="mt-3 text-sm text-danger">{err}</div>}
-        <div className={wizFooterRow}>
-          <button className={`${btnSecondary} h-10 rounded-xl`} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={`${btnPrimary} btn-gradient ml-auto h-10 rounded-xl px-4`} onClick={submit} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-        </div>
-      </WizFormShell>
-    </Modal>
-  );
-}
-
-function ExperienceSection({
-  employeeId,
-  canWrite,
-  showToast,
-}: {
-  employeeId: number;
-  canWrite: boolean;
-  showToast: ShowToast;
-}) {
-  const [rows, setRows] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [modal, setModal] = useState<{ open: boolean; initial?: any } | null>(null);
-  const [toDelete, setToDelete] = useState<any | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const load = () => {
-    setLoading(true);
-    crmGet<any[]>(`/api/employees/${employeeId}/experience`)
-      .then((r) => { setRows(r.data || []); setError(""); })
-      .catch((e) => setError(e?.message || "Failed to load experience details"))
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, [employeeId]);
-
-  const doDelete = async () => {
-    if (!toDelete) return;
-    setDeleting(true);
-    try {
-      await crmDelete(`/api/experience/${toDelete.id}`);
-      showToast("Experience entry deleted");
-      setToDelete(null);
-      load();
-    } catch (e: any) {
-      showToast(e?.message || "Failed to delete", "err");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  return (
-    <SectionCard
-      title="Experience Details"
-      headerExtra={canWrite ? (
-        <button className={btnSecondary} onClick={() => setModal({ open: true })}>
-          <Plus size={14} /> Add
-        </button>
-      ) : undefined}
-    >
-      {error && <ErrorBox error={error} onRetry={load} />}
-      {loading ? (
-        <div className="py-6 text-center text-sm text-muted">Loading…</div>
-      ) : rows.length === 0 ? (
-        <p className="text-sm text-muted">No earlier employers recorded{canWrite ? " — use Add to record one" : ""}.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-max text-sm lg:min-w-0">
-            <thead>
-              <tr className={rowCls}>
-                <th className={thCls}>Company</th>
-                <th className={thCls}>Job Title</th>
-                <th className={thCls}>Joining</th>
-                <th className={thCls}>Relieving</th>
-                <th className={thCls}>City</th>
-                <th className={thCls}>Certificate</th>
-                {canWrite && <th className={thCls}></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className={`${rowCls} transition-colors duration-base ease-smooth hover:bg-surface-2`}>
-                  <td className={`${tdCls} font-semibold text-primary`}>{r.company_name}</td>
-                  <td className={tdCls}>{r.job_title || "—"}</td>
-                  <td className={tdCls}>{fmtDate(r.date_of_joining)}</td>
-                  <td className={tdCls}>
-                    {r.currently_working
-                      ? <StatusBadge status="Present" />
-                      : fmtDate(r.date_of_relieving)}
-                  </td>
-                  <td className={tdCls}>{r.city || "—"}</td>
-                  <td className={tdCls}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <FileLink url={r.certificate_url} label="View" />
-                      {canWrite && (
-                        <FileUploadButton
-                          path={`/api/experience/${r.id}/certificate`}
-                          label={r.certificate_url ? "Replace" : "Upload"}
-                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                          onDone={() => { showToast("Certificate uploaded"); load(); }}
-                          onError={(m) => showToast(m, "err")}
-                        />
-                      )}
-                    </div>
-                  </td>
-                  {canWrite && (
-                    <td className={tdCls}>
-                      <div className="flex gap-1.5">
-                        <button className={iconBtnCls} onClick={() => setModal({ open: true, initial: r })} aria-label="Edit experience">
-                          <Pencil size={14} />
-                        </button>
-                        <button className={`${iconBtnCls} hover:text-danger`} onClick={() => setToDelete(r)} aria-label="Delete experience">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {modal?.open && (
-        <ExperienceModal
-          employeeId={employeeId}
-          initial={modal.initial}
-          onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); load(); }}
-          showToast={showToast}
-        />
-      )}
-      {toDelete && (
-        <ConfirmModal
-          title="Delete experience entry"
-          message={<>Delete <span className="font-semibold">{toDelete.company_name}</span>? This cannot be undone.</>}
-          confirmLabel="Delete"
-          danger
-          busy={deleting}
-          onConfirm={doDelete}
-          onClose={() => setToDelete(null)}
-        />
-      )}
-    </SectionCard>
-  );
-}
+/* Experience Details left the employee page (26 Nov 2026, user ask). */
 
 /* ------------------------------------------------ 5. Projects (read-only) */
 
@@ -2157,7 +2030,7 @@ function ProjectsSection({ emp }: { emp: any }) {
   return (
     <SectionCard title="Projects">
       {projects.length === 0 ? (
-        <EmptyState message="Not assigned to any project" />
+        <QuietEmpty icon={Briefcase} text="Not assigned to any project yet" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-sm lg:min-w-0">
@@ -2676,7 +2549,7 @@ function LeaveBalancesSection({
       ) : loading ? (
         <div className="py-6 text-center text-sm text-muted">Loading…</div>
       ) : !matrix || (matrix.rows || []).length === 0 ? (
-        <EmptyState message={`No leave data for ${year}`} />
+        <QuietEmpty icon={CalendarDays} text={`No leave accrued or taken in ${year} yet`} />
       ) : (
         (() => {
           const nonZero = (v: number | null | undefined) => Number(v || 0) !== 0;

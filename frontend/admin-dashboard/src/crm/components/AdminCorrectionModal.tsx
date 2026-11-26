@@ -163,7 +163,7 @@ export function AdminCorrectionModal({ profileId, candidateName, onClose, onDone
           </DialogSection>
 
           <DialogSection n={2} title="RMG screening" tone="slate" optional done={screening !== SCREENING_LEAVE}
-            hint={<>Now: <b>{opts.screening || "not sent"}</b>. Pending puts the candidate back on the Screening Desk.</>}>
+            hint={<>Now: <b>{opts.screening || "not sent"}</b>. Pending puts the candidate back on the RMG Desk.</>}>
             <select className={`${inputCls} !w-auto min-w-[14rem]`} value={screening}
               onChange={(e) => setScreening(e.target.value)} aria-label="RMG screening">
               <option value={SCREENING_LEAVE}>Leave as it is</option>

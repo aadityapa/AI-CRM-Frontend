@@ -38,6 +38,13 @@ import {
   type ProctoringConfig,
 } from "../components/interview-template/ProctoringSettings";
 import {
+  DEVICES_DEFAULT,
+  DeviceSettings,
+  devicesFromWeights,
+  devicesToWeights,
+  type DevicesConfig,
+} from "../components/interview-template/DeviceSettings";
+import {
   SKILL_BANK_DEFAULTS,
   SkillBankReview,
   bankProblems,
@@ -45,7 +52,7 @@ import {
   skillBankToWeights,
   type SkillBankConfig,
 } from "../components/interview-template/SkillBankEditor";
-import { OurQuestionsEditor, bankQuestionTotal, finalizeBank } from "../components/interview-template/OurQuestionsEditor";
+import { OurQuestionsEditor, askedByKind, bankQuestionTotal, finalizeBank } from "../components/interview-template/OurQuestionsEditor";
 import { INTELLIGENCE_SUITE_CATEGORIES } from "../constants/intelligenceSuiteCategories";
 import { MAX_COUNT_MODE_QUESTIONS, clampCountModeQuestions } from "../constants/interviewLimits";
 import { useAiEngine } from "../lib/aiEngine";
@@ -222,6 +229,7 @@ export function TemplateFormPage({
   const [conversation, setConversation] = useState<ConversationConfig>(CONVERSATION_OFF);
   // Anti-cheating checks (13 Nov 2026) — weights.proctoring; all off by default.
   const [proctoring, setProctoring] = useState<ProctoringConfig>(PROCTORING_OFF);
+  const [devices, setDevices] = useState<DevicesConfig>(DEVICES_DEFAULT);
   // Skill-wise question bank (10 Oct 2026) — weights.skillBank; off by default.
   const [skillBank, setSkillBank] = useState<SkillBankConfig>(SKILL_BANK_DEFAULTS);
   // JD upload (Aug 2026): dynamic templates generate questions from the
@@ -638,6 +646,7 @@ export function TemplateFormPage({
     setAutoAdvanceEnabled(toBoolean(w.autoAdvanceEnabled ?? w.auto_advance_enabled, true));
     setConversation(conversationFromWeights(w));
     setProctoring(proctoringFromWeights(w));
+    setDevices(devicesFromWeights(w));
     setSkillBank(skillBankFromWeights(w));
     setInitialResponseWaitSec(clampInt(w.initialResponseWaitSec ?? w.initial_response_wait_sec ?? 5, 2, 30));
     setNoResponseExtraWaitSec(
@@ -1176,6 +1185,7 @@ export function TemplateFormPage({
         speechConfirmMs,
         conversation: conversationToWeights(conversation),
         proctoring: proctoringToWeights(proctoring),
+        devices: devicesToWeights(devices),
         skillBank: skillBankToWeights(finalizeBank(skillBank, requiredSkills.split(",")[0]?.trim() || "")),
       };
       fd.append("weights", JSON.stringify(mergedWeights));
@@ -1688,6 +1698,12 @@ export function TemplateFormPage({
             <ConversationSettings value={conversation} onChange={setConversation} />
 
             <ProctoringSettings value={proctoring} onChange={setProctoring} />
+
+            <DeviceSettings
+              value={devices}
+              onChange={setDevices}
+              typedQuestions={skillBank.enabled ? askedByKind(skillBank).pseudo + askedByKind(skillBank).coding : 0}
+            />
 
           </div>
         ) : step === 2 ? (

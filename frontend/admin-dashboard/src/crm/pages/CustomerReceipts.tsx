@@ -61,10 +61,22 @@ import {
 } from "./receipts/receiptShared";
 import { ReceiptDetailModal, isLikelyMatch, isPartlyPaid, mapPlan, orderByLikelyMatch } from "./receipts/ReceiptWorkbench";
 import { InvoiceSearchHits, type InvoiceHit } from "./receipts/InvoiceSearchHits";
+import { BranchModeToggle, BranchSummary, PickChip, branchTotals, type BranchPick } from "./receipts/BranchSummary";
 
 export { daysLate };
 export type { BranchScope };
 
+
+/** The customer page's "By branch / One list" choice, per browser. */
+const BRANCH_MODE_KEY = "crm.receipts.customerView";
+
+/** Branch groups in the order of the branch cards: biggest payer first, the
+ *  receipts with no branch last. */
+const byBranchPaid = (a: { rows: Receipt[]; name: string }, b: { rows: Receipt[]; name: string }) => {
+  const none = (g: { rows: Receipt[] }) => (g.rows.some((r) => !r.branch_id) ? 1 : 0);
+  const paid = (g: { rows: Receipt[] }) => g.rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  return none(a) - none(b) || paid(b) - paid(a) || a.name.localeCompare(b.name);
+};
 
 /** One group per (customer, branch) in the grouped view — a stable number key. */
 const groupKey = (r: { customer_id: number; branch_id?: number | null }) => r.customer_id * 100000 + (r.branch_id || 0);
@@ -76,7 +88,10 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
   /** The sidebar page: full-width header, grouped Customer ▸ Branch. */
   standalone?: boolean;
 } = {}) {
-  const canEdit = useCanAct("invoices", "edit", useHasRole("Finance"));
+  const invEdit = useCanAct("invoices", "edit", useHasRole("Finance"));
+  // 25 Nov 2026: the "Received Amount" page granted at Edit in Access Control works it too.
+  const pageEdit = useCanAct("received-amounts", "edit", false);
+  const canEdit = invEdit || pageEdit;
   const [toastNode, showToast] = useToast();
   const [rows, setRows] = useState<Receipt[]>([]);
   const [meta, setMeta] = useState<(Meta & { total_received?: number }) | undefined>();
@@ -115,11 +130,25 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
   // Customer-wise view (14 Sep 2026, like Purchase Orders): fetch every page
   // of the current filters so each customer's section is complete.
   const [groupView, setView] = useGroupView();
-  // A branch's own list is short and has one customer — always the flat table.
-  const view = scope ? "flat" : groupView;
   // Primitives, so a parent re-render (a fresh `scope` object) never refetches.
   const scopeCustomer = scope?.customerId ?? null;
   const scopeBranch = scope?.branchId ?? null;
+  // The customer page (24 Nov 2026, user ask "place it branch-wise"): branch
+  // cards on top, the receipts grouped by branch (or one list), a card narrows
+  // the list to that branch.
+  const customerScoped = scopeCustomer != null && !scopeBranch;
+  const [branchMode, setBranchModeState] = useState<"branch" | "flat">(() => {
+    try { return localStorage.getItem(BRANCH_MODE_KEY) === "flat" ? "flat" : "branch"; } catch { return "branch"; }
+  });
+  const setBranchMode = (m: "branch" | "flat") => {
+    setBranchModeState(m);
+    setPage(1);
+    try { localStorage.setItem(BRANCH_MODE_KEY, m); } catch { /* private window */ }
+  };
+  const [branchPick, setBranchPick] = useState<BranchPick>(null);
+  const [branchRows, setBranchRows] = useState<Receipt[]>([]);
+  // A branch's own list is short and has one customer — always the flat table.
+  const view = scopeBranch ? "flat" : customerScoped ? (branchMode === "branch" ? "customer" : "flat") : scope ? "flat" : groupView;
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -127,25 +156,36 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
       const params = {
         search: debounced, sort_by: sort.by, sort_dir: sort.dir,
         customer_id: scopeCustomer ?? (colFilters.customer_name?.value || undefined),
-        branch_id: scopeBranch ?? undefined,
+        branch_id: scopeBranch ?? (customerScoped && branchPick != null ? branchPick : undefined),
         payment_mode: colFilters.payment_mode?.value || undefined,
         received_from: colFilters.received_date?.from || undefined,
         received_to: colFilters.received_date?.to || undefined,
       };
+      let shown: Receipt[];
       if (view === "customer") {
-        setRows(await fetchAllMaster<Receipt>("/api/customer-receipts", params));
+        shown = await fetchAllMaster<Receipt>("/api/customer-receipts", params);
+        setRows(shown);
         setMeta(undefined);
       } else {
         const res = await crmGet<Receipt[]>(`/api/customer-receipts${qs({ ...params, page, limit: 20 })}`);
-        setRows(res.data || []);
+        shown = res.data || [];
+        setRows(shown);
         setMeta(res.meta as any);
+      }
+      // The branch cards always cover every branch of the customer (same
+      // search / date / mode filters) — never only the page or the picked one.
+      if (customerScoped) {
+        setBranchRows(view === "customer" && branchPick == null ? shown
+          : await fetchAllMaster<Receipt>("/api/customer-receipts", { ...params, branch_id: undefined }));
       }
     } catch (e: any) {
       setError(e?.message || "Failed to load received amounts");
     } finally {
       setLoading(false);
     }
-  }, [page, debounced, sort, colFilters, view, scopeCustomer, scopeBranch]);
+  }, [page, debounced, sort, colFilters, view, scopeCustomer, scopeBranch, customerScoped, branchPick]);
+  const branchTotalsShown = useMemo(() => branchTotals(branchRows), [branchRows]);
+  const pickBranch = (p: BranchPick) => { setBranchPick(p); setPage(1); };
   useEffect(() => { load(); }, [load]);
   /* 2 Nov 2026: a search that names an INVOICE — the server's `invoice_hits`
      (what came in on it, which receipts paid it). Its own tiny request, so the
@@ -337,6 +377,9 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
         <InvoiceSearchHits hits={hits} term={searching} onOpenReceipt={openReceiptById}
           noReceipts={!loading && rows.length === 0} />
       )}
+      {customerScoped && !error && (
+        <BranchSummary totals={branchTotalsShown} pick={branchPick} onPick={pickBranch} loading={loading} />
+      )}
       {error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : view === "customer" ? (
@@ -344,7 +387,9 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           <div className="flex flex-wrap items-center gap-2">
             <input className={`${inputCls} !w-64`} placeholder="Search invoice no., UTR, customer, branch…" value={search}
               onChange={(e) => setSearch(e.target.value)} aria-label="Search received amounts" />
-            <ViewToggle view={view} onChange={setView} />
+            {customerScoped ? <BranchModeToggle mode={branchMode} onChange={setBranchMode} />
+              : <ViewToggle view={view} onChange={setView} />}
+            {customerScoped && branchPick != null && <PickChip pick={branchPick} totals={branchTotalsShown} onClear={() => pickBranch(null)} />}
             <span className="ml-auto text-xs text-muted">
               {rows.length} receipt{rows.length === 1 ? "" : "s"} · total {inr(rows.reduce((a, r) => a + Number(r.amount || 0), 0))}
             </span>
@@ -352,9 +397,13 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
           <CustomerGroupedList<Receipt>
             rows={rows}
             loading={loading}
+            defaultOpen={customerScoped}
+            groupOrder={customerScoped ? byBranchPaid : undefined}
             columns={columns.filter((c) => c.key !== "customer_name" && c.key !== "branch_name")}
             customerId={(r) => groupKey(r)}
-            customerName={(r) => `${r.customer_name || `Customer #${r.customer_id}`} · ${r.branch_name || "No branch on record"}`}
+            customerName={(r) => customerScoped
+              ? (r.branch_name || "No branch on record")
+              : `${r.customer_name || `Customer #${r.customer_id}`} · ${r.branch_name || "No branch on record"}`}
             noun="receipt"
             summary={(rs) => (
               <>
@@ -401,7 +450,12 @@ export function CustomerReceiptsPage({ scope, standalone = false }: {
               {meta.total} receipt{meta.total === 1 ? "" : "s"}, page {meta.page}/{Math.max(1, meta.pages || 1)}
             </span>
           ) : undefined}
-          filters={scope ? undefined : <ViewToggle view={view} onChange={setView} />}
+          filters={customerScoped ? (
+            <span className="flex flex-wrap items-center gap-2">
+              <BranchModeToggle mode={branchMode} onChange={setBranchMode} />
+              {branchPick != null && <PickChip pick={branchPick} totals={branchTotalsShown} onClear={() => pickBranch(null)} />}
+            </span>
+          ) : scope ? undefined : <ViewToggle view={view} onChange={setView} />}
           emptyMessage={emptyText}
           rowActions={canEdit ? (r) => rowButtons(r) : undefined}
         />

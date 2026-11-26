@@ -1,7 +1,7 @@
 /**
  * JdSkillsModal (extracted 28 Sep 2026 from Requirements.tsx; redesigned 30 Sep 2026 on the
  * dialog kit) — the ONE "Edit JD & skills" dialog: `PATCH /api/requirements/{id}/jd-skills`.
- * Shared by the requirement page, the Screening Desk (a position with no JD and no skills
+ * Shared by the requirement page, the RMG Desk (a position with no JD and no skills
  * cannot be ATS-scored and is fixed from the position header) and RMG's approvals strip
  * (`mode="approve"` → `POST …/engineering-approve`).
  *
@@ -81,7 +81,7 @@ export function JdSkillsModal({
   onClose: () => void;
   onSaved: (updated: any) => void;
   toast: ToastFn;
-  /** "approve" (28 Sep 2026, Screening Desk): the same JD + skills form, but the
+  /** "approve" (28 Sep 2026, RMG Desk): the same JD + skills form, but the
    *  save is RMG's approval — `POST …/engineering-approve` with the JD, the
    *  skills and a comment — so a position is approved without leaving the desk. */
   mode?: "edit" | "approve";

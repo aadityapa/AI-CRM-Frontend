@@ -72,8 +72,12 @@ export const EMPLOYEE_CARDS: Record<EmpCardKey, { title: string; subtitle: strin
       { key: "department_id", label: "Department", kind: "ref", ref: "departments", display: "department_name", core: true },
       { key: "designation_id", label: "Designation", kind: "ref", ref: "designations", display: "designation_name", core: true },
       { key: "reporting_manager_id", label: "Reporting manager", kind: "ref", ref: "people", display: "reporting_manager_name", core: true },
-      { key: "work_location", label: "Work location", kind: "text", core: true, placeholder: "e.g. Pune" },
-      { key: "profile_type", label: "Profile type", kind: "select", core: true, options: opts(["Internal", "External"]) },
+      /* Based + work location (26 Nov 2026, user ask); Profile type left the
+         card the same day (every joiner is created Internal — it said nothing). */
+      { key: "based_location", label: "Based location", kind: "text", core: true, placeholder: "e.g. Pune",
+        hint: "The city / Karnex office they are based at" },
+      { key: "work_location", label: "Work location", kind: "text", core: true, placeholder: "e.g. Bengaluru — customer site",
+        hint: "Where they work today (the customer's site)" },
       { key: "is_active", label: "Status", kind: "toggle", core: true },
       { key: "reporting_hr_id", label: "Reporting HR", kind: "ref", ref: "people", display: "reporting_hr_name" },
       { key: "role_title", label: "Role", kind: "text" },

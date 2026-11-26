@@ -28,7 +28,7 @@ import { useState, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Shield, AlertTriangle, CheckCircle2, XCircle, Clock, Monitor, ChevronDown, ChevronUp,
   Download, Search, Camera, Copy, Code2, Maximize2, Layers, Users, RefreshCw,
-  Video, FileText, UserRound, Radio, Eye, Hand, Headphones, Lightbulb, BookOpenText, DoorOpen,
+  Video, FileText, UserRound, Radio, Eye, Hand, Headphones, Lightbulb, BookOpenText, DoorOpen, Smartphone,
 } from "lucide-react";
 import { apiGet, authFetch } from "../api/client";
 import { RecordingPanel, LIVE_SESSION_STATUSES, type Recording } from "../components/interview-recording/RecordingViewer";
@@ -63,6 +63,8 @@ interface IntegrityRow {
   active_device_id: string;
   reason?: string;
   template_name?: string;
+  /** 25 Nov 2026 — "phone" when the template allowed a phone and the candidate used one. */
+  device?: "phone" | "computer";
   /** "" · "recording" (chunks arriving — watchable live) · "ready" · "missing". */
   recording_status?: string;
   /** 22 Sep 2026 — a finished whole-session recording exists for this interview. */
@@ -594,6 +596,12 @@ export function IntegrityLogsPage() {
                         </span>
                       )}
                       {row.has_recording && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted"><Video className="h-3 w-3" /> recording</span>}
+                      {row.device === "phone" && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-info-soft px-2 py-0.5 text-[11px] font-bold text-info ring-1 ring-inset ring-subtle"
+                              title="Taken on a phone / tablet (the template allows it) — the screen is not recorded; the camera and microphone are">
+                          <Smartphone className="h-3 w-3" aria-hidden /> On a phone
+                        </span>
+                      )}
                       {isOpenInterview(row) && row.lobby && row.session_status !== "active" && (
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset ring-subtle ${row.lobby.online ? "bg-info-soft text-info" : "bg-surface-2 text-muted"}`}
                               title="Where the candidate's page is right now — open the row to guide or watch them">

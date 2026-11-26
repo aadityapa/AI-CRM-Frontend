@@ -8,7 +8,7 @@
  * the reason back as `block` when the move is not available. This file only
  * renders that answer; it never guesses from roles.
  *
- * Used by the Screening Desk (row detail) and the candidate profile page.
+ * Used by the RMG Desk (row detail) and the candidate profile page.
  */
 import { useState } from "react";
 import { BellRing, FastForward, Rocket, Send, ShieldCheck } from "lucide-react";
@@ -131,7 +131,7 @@ export function FastTrackButton({
 }
 
 const DIRECT_SPEC: DecisionSpec = {
-  tone: "emerald", icon: Rocket, eyebrow: "Screening Desk · direct submission",
+  tone: "emerald", icon: Rocket, eyebrow: "RMG Desk · direct submission",
   title: "Send straight to Sales for the customer round",
   intro: <>A strong match for the position skips the technical L1 / L2. The candidate moves to
     <b> Sales Screening</b> now; Sales is told to submit them to the customer and the TA is told no

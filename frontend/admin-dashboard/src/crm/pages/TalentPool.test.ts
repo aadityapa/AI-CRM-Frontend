@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  EMPTY_FILTERS, EVIDENCE_LOOK, activeFilterCount, addSkill, groupCatalogue, lakh, poolQuery,
+  EMPTY_FILTERS, EVIDENCE_LOOK, activeFilterCount, addSkill, groupCatalogue, historyLine, lakh, listSkills, poolQuery, readPoolView,
 } from "./TalentPool";
 
 describe("Talent Pool helpers", () => {
@@ -49,5 +49,38 @@ describe("Talent Pool helpers", () => {
     const ranked = Object.entries(EVIDENCE_LOOK).sort((a, b) => b[1].rank - a[1].rank).map(([k]) => k);
     expect(ranked[0]).toBe("interview");
     expect(ranked[ranked.length - 1]).toBe("interview_low");
+  });
+});
+
+describe("Talent Pool list view", () => {
+  const sk = (name: string) => ({ name, key: name.toLowerCase(), evidence: ["cv" as const], best: "cv" as const, rating: null });
+  it("shows the asked skills first, then the person's own", () => {
+    const row = {
+      matched: [{ skill: "CAPL", required: true, best: "interview" as const, evidence: ["interview" as const], rating: 4, proven: true }],
+      missing_nice: ["UDS"],
+      skills: [sk("CAN"), sk("ADB"), sk("CANoe"), sk("cluster")],
+    };
+    const r = listSkills(row, 4);
+    expect(r.shown.map((s) => s.name)).toEqual(["CAPL", "UDS"]);
+    expect(r.shown[1].missing).toBe(true);
+    expect(r.more).toBe(4);
+    const own = listSkills({ ...row, matched: [], missing_nice: [] }, 3);
+    expect(own.shown.map((s) => s.name)).toEqual(["CAN", "ADB", "CANoe"]);
+    expect(own.more).toBe(1);
+  });
+  it("sums up their history in one line", () => {
+    expect(historyLine(null)).toBeNull();
+    const h = historyLine({ count: 2, joined: 0, rejected: 1, live: 1, recent: [
+      { profile_id: 9, opportunity_id: 1, opp_id: "C-1", opportunity_title: "Tester", customer_name: "VISTEON",
+        pipeline_status: "Sourcing", stage_label: "Sourcing", outcome: "in_progress", applied_on: null }] });
+    expect(h?.count).toBe("2 applications · 1 live · 1 closed");
+    expect(h?.latest?.opp_id).toBe("C-1");
+  });
+  it("opens on cards unless the login chose the list", () => {
+    window.localStorage.removeItem("crm.talent.view");
+    expect(readPoolView()).toBe("cards");
+    window.localStorage.setItem("crm.talent.view", "list");
+    expect(readPoolView()).toBe("list");
+    window.localStorage.removeItem("crm.talent.view");
   });
 });

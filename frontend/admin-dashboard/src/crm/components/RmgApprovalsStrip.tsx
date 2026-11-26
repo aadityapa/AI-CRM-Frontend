@@ -1,6 +1,6 @@
 /**
  * RmgApprovalsStrip (28 Sep 2026) — the positions waiting for RMG's approval,
- * on the Screening Desk. The server sends the list ONLY to a caller whose
+ * on the RMG Desk. The server sends the list ONLY to a caller whose
  * `user_may(requirement.engineering_approve)` is true (meta.approvals), so
  * the strip never shows a button the click would 403.
  *

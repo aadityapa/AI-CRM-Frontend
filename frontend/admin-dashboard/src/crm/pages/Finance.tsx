@@ -34,6 +34,7 @@ import { COUNTRIES, DEFAULT_COUNTRY } from "../constants/geo";
 import {
   ConvertProformaModal, PROFORMA_COLOR, ProformaBanner, ProformaEditModal, ReturnProformaModal,
 } from "../components/invoice/ProformaActions";
+import { InvoiceNumberHint, useInvoiceNumberCheck } from "../components/invoice/InvoiceNumberCheck";
 import { InvoiceJourney } from "../components/invoice/InvoiceJourney";
 import { InvoiceAddressCard } from "../components/invoice/InvoiceAddressCard";
 import {
@@ -41,12 +42,14 @@ import {
 } from "../components/invoice/PaymentLink";
 import { RecordPaymentDialog } from "../components/invoice/RecordPaymentDialog";
 import { BulkSettleDialog, SettleInFullDialog } from "../components/invoice/SettleInFull";
+import { AmountCorrectionNote, CorrectAmountsDialog, UndoAmountsDialog } from "../components/invoice/CorrectAmounts";
 import { TdsChip, TdsDeductionModal, TdsDetailModal, tdsStatusLabel, type TdsInfo } from "../components/invoice/TdsDeduction";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
 import { EInvoiceRegister } from "../components/invoice/EInvoiceRegister";
+import { PendingWorkPanel } from "../components/invoice/PendingWorkPanel";
 import {
-  ALL_INVOICES_TAB_KEY, EINVOICE_TAB_KEY, INVOICE_STAGE_FILTERS, INVOICE_STAGE_TABS, OPEN_STAGES,
+  ALL_INVOICES_TAB_KEY, EINVOICE_TAB_KEY, PENDING_TAB_KEY, INVOICE_STAGE_FILTERS, INVOICE_STAGE_TABS, OPEN_STAGES,
   allInvoicesCount, invoiceTabParams, stageWords, tabsWithMatches, toggleStage,
 } from "../lib/invoiceStages";
 import {
@@ -2181,10 +2184,23 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   /* The search the counts above were worked out for — the "found in another
      tab" jump only trusts counts of the term on screen (2 Nov 2026). */
   const [countsSearch, setCountsSearch] = useState<string | null>(null);
+  /* Invoices ▸ Pending work (26 Nov 2026): its count comes from its own list. */
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    crmGet<any[]>("/api/invoices/pending-work?limit=1")
+      .then((r) => {
+        const c = ((r.meta as any)?.counts || {}) as Record<string, { count: number }>;
+        if (alive) setPendingCount(Object.values(c).reduce((a, x) => a + (x?.count || 0), 0));
+      })
+      .catch(() => { if (alive) setPendingCount(null); });
+    return () => { alive = false; };
+  }, []);
   const invoiceTabs = INVOICE_TABS
     .filter((x) => (x.key !== EINVOICE_TAB || canSeeEInvoices) && invSub.allowed(x.key))
     .map((x) => ({ key: x.key, label: x.label,
       count: x.key === ALL_INVOICES_TAB_KEY ? allInvoicesCount(stageCounts)
+        : x.key === PENDING_TAB_KEY ? pendingCount ?? undefined
         : x.stage && stageCounts ? stageCounts[x.stage] ?? 0 : undefined }));
   const invTabKeys = invoiceTabs.map((x) => x.key);
   /* `?tab=Proforma` deep link (28 Sep 2026: the work desk's "Proformas to
@@ -2194,6 +2210,9 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   const [rawInvTab, setTab] = usePageTab<string>("tab", defaultInvTab, invTabKeys);
   const tab = invTabKeys.includes(rawInvTab) || !invTabKeys.length ? rawInvTab : invTabKeys[0];
   const einvoiceTab = tab === EINVOICE_TAB;
+  const pendingTab = tab === PENDING_TAB_KEY;
+  /* Tabs that render their own panel instead of the invoice list. */
+  const ownTab = einvoiceTab || pendingTab;
   const allTab = tab === ALL_INVOICES_TAB_KEY;
   /* The All tab's Stage filter — several stages at once (server CSV). */
   const [stageFilter, setStageFilter] = useSessionState<string[]>("inv.stages", []);
@@ -2256,7 +2275,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
 
   useEffect(() => {
     // The E-invoice tab loads its own register (EInvoiceRegister).
-    if (tab === EINVOICE_TAB) { setLoading(false); return undefined; }
+    if (tab === EINVOICE_TAB || tab === PENDING_TAB_KEY) { setLoading(false); return undefined; }
     let alive = true;
     setLoading(true);
     const t = window.setTimeout(() => {
@@ -2296,7 +2315,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
         branch_id: branchFilter || undefined, month: monthFilter || undefined,
         ...moreQuery,
         /* The open tab's Status choices + counts and the More filters pickers ride along. */
-        ...(tab === EINVOICE_TAB ? {} : { ...invoiceTabParams(tab, stagesPicked), with_status_counts: true }),
+        ...(tab === EINVOICE_TAB || tab === PENDING_TAB_KEY ? {} : { ...invoiceTabParams(tab, stagesPicked), with_status_counts: true }),
         with_stage_counts: true, limit: 1,
       })}`)
         .then((r) => {
@@ -2318,13 +2337,13 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
      replace — Back is not filled with jumps), and the strip below names every
      tab that holds a match. */
   const searchTerm = search.trim();
-  const elsewhere = searchTerm && countsSearch === search && !einvoiceTab && !allTab
+  const elsewhere = searchTerm && countsSearch === search && !ownTab && !allTab
     ? tabsWithMatches(stageCounts, tab, invTabKeys) : [];
   const currentStage = INVOICE_TABS.find((x) => x.key === tab)?.stage || "";
   const hereCount = stageCounts && currentStage ? stageCounts[currentStage] ?? 0 : null;
   const jumpedFor = useRef<string>("");
   useEffect(() => {
-    if (!searchTerm || countsSearch !== search || einvoiceTab || allTab) return;
+    if (!searchTerm || countsSearch !== search || ownTab || allTab) return;
     if (hereCount === 0 && elsewhere.length > 0 && jumpedFor.current !== searchTerm) {
       jumpedFor.current = searchTerm;
       setTab(elsewhere[0].key, { replace: true });
@@ -2411,7 +2430,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   }
 
   /* ---- Map money shortcut (20 Nov 2026) ---- */
-  const canMap = canWrite && !einvoiceTab;
+  const canMap = canWrite && !ownTab;
   const toPick = (r: any): MapPick => ({ id: r.id, number: r.invoice_number || `#${r.id}`,
     customer_id: r.customer_id ?? null, customer_name: r.customer_name || "", balance: Number(r.balance_amount || 0) });
   const mapSelected = new Set<string | number>(mapSel.keys());
@@ -2482,7 +2501,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
   };
 
   const moreCount = moreFilterCount(more);
-  const statusAndMore = einvoiceTab ? null : (
+  const statusAndMore = ownTab ? null : (
     <div className="space-y-3">
       {allTab && <StageFilterPills counts={stageCounts} value={stageFilter} onChange={setStageFilter} />}
       <div className="flex flex-wrap items-center gap-2">
@@ -2555,6 +2574,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
           onDone={(msg) => { setBulkSettle(false); showToast(msg); load(); }} />
       )}
       {einvoiceTab ? <EInvoiceRegister /> : null}
+      {pendingTab ? <PendingWorkPanel onCount={setPendingCount} /> : null}
       {statusAndMore}
       {canMap && !mapSel.size && (tab === "Unpaid" || tab === "Partially_Paid") && rows.some(mappableInvoice) && (
         <p className="flex items-center gap-1.5 text-xs text-emerald-800 dark:text-emerald-300">
@@ -2563,8 +2583,8 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean } = {}) 
       )}
       {mapBar}
       {foundElsewhere}
-      {!einvoiceTab && error && <ErrorBox error={error} />}
-      {einvoiceTab ? null : view === "customer" ? (
+      {!ownTab && error && <ErrorBox error={error} />}
+      {ownTab ? null : view === "customer" ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <input className="input-recessed !w-64 rounded-control px-3 py-2 text-sm" placeholder="Search invoice / PI / PO number, customer, employee…"
@@ -2901,6 +2921,14 @@ function describeChanges(ch: Record<string, any>): string[] {
     if (ch[k]) out.push(`${lab[k]}: ${ch[k].from ?? "—"} → ${ch[k].to ?? "—"}`);
   }
   if (ch.po_id) out.push(`Purchase order: ${ch.po_id.from_label ?? "—"} → ${ch.po_id.to_label ?? "—"}`);
+  if (ch.amounts) {
+    // Admin / CEO typed the amounts (24 Nov 2026) — or undid that.
+    const words: Record<string, string> = { sub_total: "Sub-total", tax_amount: "GST", round_off: "Round off", grand_total: "Grand total" };
+    out.push(ch.kind === "restored" ? "Amount correction undone" : "Amounts corrected by hand");
+    for (const [k, v] of Object.entries(ch.amounts as Record<string, { from: number | null; to: number | null }>)) {
+      out.push(`${words[k] || k}: ${v.from == null ? "—" : inr(v.from)} → ${v.to == null ? "—" : inr(v.to)}`);
+    }
+  }
   for (const lc of (ch.lines || []) as any[]) {
     const parts: string[] = [];
     if (lc.qty) parts.push(`qty ${lc.qty.from} → ${lc.qty.to}`);
@@ -2961,6 +2989,9 @@ function RequestChangeModal({ invoice, onClose, onSaved }: {
     if (Number.isFinite(r) && r > 0 && Math.abs(r - Number(o.rate)) > 1e-9) c.rate = r;
     return Object.keys(c).length > 1 ? [c] : [];
   });
+  // One number, once (26 Nov 2026): a renumber is checked while it is typed.
+  const numberCheck = useInvoiceNumberCheck(number, { excludeId: invoice.id, currentNumber: invoice.invoice_number });
+  const numberTaken = numberCheck.state === "taken";
   const poChanged = !!poId && Number(poId) !== Number(invoice.po_id || 0);
   const headerDirty = number.trim() !== String(invoice.invoice_number || "")
     || invoiceDate !== String(invoice.invoice_date || "").slice(0, 10)
@@ -2975,6 +3006,7 @@ function RequestChangeModal({ invoice, onClose, onSaved }: {
     setErr("");
     if (reason.trim().length < 10) { setErr("Give a reason (at least 10 characters) — the approver and the history need it"); return; }
     if (!dirty) { setErr("Nothing changed"); return; }
+    if (numberTaken) { setErr("This invoice number is already present in the tool — use a different number"); return; }
     setBusy(true);
     try {
       const payload: Record<string, unknown> = { reason: reason.trim(), lines: lineChanges };
@@ -2995,7 +3027,7 @@ function RequestChangeModal({ invoice, onClose, onSaved }: {
       footer={
         <div className="flex justify-end gap-2">
           <button className={btnSecondary} onClick={onClose} disabled={busy}>Cancel</button>
-          <button className={btnPrimary} onClick={() => void save()} disabled={busy || !dirty}>
+          <button className={btnPrimary} onClick={() => void save()} disabled={busy || !dirty || numberTaken}>
             {busy ? "Sending…" : "Send for approval"}
           </button>
         </div>
@@ -3016,7 +3048,9 @@ function RequestChangeModal({ invoice, onClose, onSaved }: {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-secondary">Invoice number</span>
-            <input className={inputCls} value={number} onChange={(e) => setNumber(e.target.value)} maxLength={64} />
+            <input className={inputCls} value={number} onChange={(e) => setNumber(e.target.value)} maxLength={64}
+              aria-invalid={numberTaken || undefined} />
+            <InvoiceNumberHint check={numberCheck} />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-secondary">Invoice date</span>
@@ -3225,6 +3259,7 @@ export function InvoiceDetailPage() {
   const [reversing, setReversing] = useState<PaymentRow | null>(null);
   const [showTds, setShowTds] = useState(false);
   const [settleMode, setSettleMode] = useState<"settle" | "undo" | null>(null);
+  const [amountsMode, setAmountsMode] = useState<"correct" | "undo" | null>(null);
   // The list's pencil lands here with ?edit=1 (11 Sep 2026) — open the editor
   // straight away, then drop the flag so Back/refresh does not reopen it.
   const [showEdit, setShowEdit] = useState<boolean>(() => {
@@ -3372,7 +3407,8 @@ export function InvoiceDetailPage() {
     setDocxBusy(true);
     try {
       await downloadFile(`/api/invoices/${id}/tax-invoice.docx`,
-        `${isProforma ? "ProformaInvoice" : "TaxInvoice"}_${inv.invoice_number || id}.docx`, "Word export");
+        `${inv.file_stem || `${isProforma ? "ProformaInvoice" : "TaxInvoice"}_${inv.invoice_number || id}`}.docx`,
+        "Word export");
       showToast(`${docLabel} (Word) downloaded`);
     } catch (e: any) {
       showToast(e?.message || "Failed to download the Word file", "err");
@@ -3413,7 +3449,8 @@ export function InvoiceDetailPage() {
       return;
     }
     try {
-      await downloadFile(`/api/invoices/${id}/einvoice.docx`, `EInvoice_${inv.invoice_number || id}.docx`,
+      await downloadFile(`/api/invoices/${id}/einvoice.docx`,
+        `${inv.einvoice_file_stem || `EInvoice_${inv.invoice_number || id}`}.docx`,
         "E-invoice Word");
       showToast("E-invoice (Word) downloaded");
     } catch (e: any) {
@@ -3633,6 +3670,20 @@ export function InvoiceDetailPage() {
               </>
             )}
           </dl>
+          <AmountCorrectionNote correction={inv.amount_correction} />
+          {inv.can_correct_amounts && (
+            <div className="flex flex-wrap gap-2 border-t border-subtle px-4 py-3">
+              <button type="button" className={btnSecondary} onClick={() => setAmountsMode("correct")}
+                title="Admin / CEO: type the amounts of the invoice that was issued">
+                <Pencil size={15} /> Correct amounts
+              </button>
+              {inv.amount_correction && (
+                <button type="button" className={btnSecondary} onClick={() => setAmountsMode("undo")}>
+                  <RotateCcw size={15} /> Undo correction
+                </button>
+              )}
+            </div>
+          )}
           {!isProforma && inv.settlement && (
             <p className="mx-4 mb-2 rounded-control bg-violet-50 px-2.5 py-1.5 text-[11px] text-violet-800 dark:bg-violet-900/30 dark:text-violet-200">
               Settled in full{inv.settlement.by_name ? ` by ${inv.settlement.by_name}` : ""}
@@ -3723,6 +3774,24 @@ export function InvoiceDetailPage() {
           onClose={() => setReversing(null)}
           onDone={(msg) => { setReversing(null); showToast(msg); load(); }}
         />
+      )}
+      {amountsMode === "correct" && (
+        <CorrectAmountsDialog invoiceId={inv.id} invoiceNumber={inv.invoice_number} isProforma={isProforma}
+          current={{
+            sub: Number(gst != null ? (gst.subtotal ?? gst.sub_total) : inv.sub_total) || 0,
+            cgst: Number(gst?.cgst || 0), sgst: Number(gst?.sgst || 0),
+            igst: gst != null ? Number(gst.igst || 0) : Number(inv.tax_amount || 0),
+            roundOff: gst?.round_off ?? inv.round_off ?? null,
+            total: displayGrand,
+          }}
+          received={paid + Number(inv.tds_deducted || 0) + settledAdj}
+          onClose={() => setAmountsMode(null)}
+          onDone={(msg) => { setAmountsMode(null); showToast(msg); load(); }} />
+      )}
+      {amountsMode === "undo" && inv.amount_correction && (
+        <UndoAmountsDialog invoiceId={inv.id} invoiceNumber={inv.invoice_number} correction={inv.amount_correction}
+          onClose={() => setAmountsMode(null)}
+          onDone={(msg) => { setAmountsMode(null); showToast(msg); load(); }} />
       )}
       {settleMode && (
         <SettleInFullDialog mode={settleMode} invoiceId={inv.id} invoiceNumber={inv.invoice_number}

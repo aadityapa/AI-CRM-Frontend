@@ -1,5 +1,5 @@
 /**
- * FeedbackDuePanel (30 Sep 2026, user ask: the Screening Desk's "Feedback due" tile
+ * FeedbackDuePanel (30 Sep 2026, user ask: the RMG Desk's "Feedback due" tile
  * used to print "37 of Feedback due are past the desk" — a flat list; RMG / GM want
  * the overdue verdicts POSITION-wise or DAY-wise, with filters).
  *

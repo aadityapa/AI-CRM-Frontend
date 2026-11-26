@@ -10,6 +10,7 @@ import {
   ArrowLeft, ArrowRight, Bell, Menu, PanelLeftClose, PanelLeftOpen, Volume2, VolumeX, X,
 } from "lucide-react";
 import { APP_NAME } from "../lib/brand";
+import { isEmployeeOnlyRoles } from "../lib/employeeLogin";
 import { HISTORY_EVENT, canGoBack, canGoForward } from "../lib/appHistory";
 import { PageErrorBoundary } from "../components/PageErrorBoundary";
 import { crmGet, crmPost, CrmApiError } from "./api";
@@ -126,6 +127,10 @@ export function useMe(): Me {
   if (!me) throw new Error("useMe outside CrmApp");
   return me;
 }
+/** useMe without the throw — for widgets also rendered outside CrmApp (tests, stories). */
+export function useMeMaybe(): Me | null {
+  return useContext(MeCtx);
+}
 export function useHasRole(...roles: string[]): boolean {
   const me = useMe();
   return isSuperAdmin(me.roles) || roles.some((r) => me.roles.includes(r));
@@ -145,6 +150,8 @@ export function crmNavItemActive(path: string, itemPath: string): boolean {
       path.startsWith("requirements/")
     );
   }
+  // A training plan page belongs to Bench & Deployed (its Training tab, 25 Nov 2026).
+  if (itemPath === "bench" && path.startsWith("training/")) return true;
   return path === itemPath || path.startsWith(itemPath + "/");
 }
 
@@ -455,7 +462,7 @@ export function NotificationsBell() {
       if (rawQ) {
         try { q = decodeURIComponent(rawQ).slice(0, 120); } catch { q = ""; }
       }
-      // Screening Desk deep links (28 Sep 2026): `task` = a task category key,
+      // RMG Desk deep links (28 Sep 2026): `task` = a task category key,
       // `focus` = the candidate profile id — both validated to their shape.
       const task = (link.match(/[?&]task=([a-z_]{1,32})(?:&|$)/) || [])[1];
       const focus = (link.match(/[?&]focus=(\d{1,10})(?:&|$)/) || [])[1];
@@ -749,6 +756,33 @@ export function isPanelOnlyLogin(me: Me): boolean {
     && crmTabVisibleFromMe(me, n.path, n.roles.some((r) => me.roles.includes(r)), false));
 }
 
+/**
+ * An employee-only login (the seeded "Employee" role, 23 Nov 2026): no built-in
+ * role and My Workspace is its only page — the Dashboard IS My Workspace.
+ */
+export function isWorkspaceOnlyLogin(me: Me): boolean {
+  if (me.roles.some((r) => BUILT_IN_ROLES.includes(r))) return false;
+  if (!crmTabVisibleFromMe(me, "my-workspace", false, false)) return false;
+  return !NAV.some((n) => n.path !== "" && n.path !== "my-workspace"
+    && crmTabVisibleFromMe(me, n.path, n.roles.some((r) => me.roles.includes(r)), false));
+}
+
+/** Roles an employee-only login may hold (26 Nov 2026) — mirror of the server's
+ *  `services/employee_scope.EMPLOYEE_ONLY_ROLES`. */
+export { EMPLOYEE_ONLY_ROLES } from "../lib/employeeLogin";
+
+/**
+ * An employee-only login (26 Nov 2026): it HOLDS the "Employee" role and nothing
+ * else but the "Interviewer" panel role. Whatever its role grants, Opportunities
+ * shows the employee view — open roles with their JD and Apply — never the Sales
+ * pipeline, customers, budgets or commercials (the server refuses those too).
+ * PURE.
+ */
+export function isEmployeeOnlyLogin(me: Pick<Me, "roles" | "display_roles"> | null | undefined): boolean {
+  if (!me) return false;
+  return isEmployeeOnlyRoles(me.roles, me.display_roles);
+}
+
 export default function CrmApp() {
   const reduce = useReducedMotion();
   const [me, setMe] = useState<Me | null>(null);
@@ -952,27 +986,49 @@ export default function CrmApp() {
     // Applicants, 26 Aug 2026) — their sidebar entry hides. TA/RMG keep it:
     // for them it is a primary work queue, not an oversight view.
     if (n.path === "template-requests" && isSuperAdmin(me.roles)) return false;
-    // The Screening Desk follows the approval the server gates it on, so a GM
+    // The RMG Desk follows the approval the server gates it on, so a GM
     // (custom role) sees it and a templated RMG without the approval does not.
-    if (n.path === "screening-desk") return canApprove(me, "profile.rmg_screening");
+    // 25 Nov 2026: each of these six pages is also a tab in Access Control ▸ Roles &
+    // permissions — a configured role decides by its tick (B-V2 migration 0161 wrote
+    // the pages each role saw before); otherwise the rule below decides.
+    if (n.path === "screening-desk") {
+      return crmTabVisibleFromMe(me, "screening-desk", canApprove(me, "profile.rmg_screening"), false);
+    }
     // Talent Pool: its tab grant, or the screening approval (the server's
     // `screener_or` — a GM custom role is admitted the same way).
+    // Bench & Deployed (23 Nov 2026): its tab grant, RMG by role, or a screener (GM).
+    if (n.path === "bench") {
+      return crmTabVisibleFromMe(me, "bench", roleOk, false) || canApprove(me, "profile.rmg_screening");
+    }
+    // My Workspace: every employee's own page — never Admin / CEO.
+    if (n.path === "my-workspace") {
+      return !isSuperAdmin(me.roles) && crmTabVisibleFromMe(me, "my-workspace", roleOk, false);
+    }
     if (n.path === "talent-pool") {
       return crmTabVisibleFromMe(me, "talent-pool", roleOk, false) || canApprove(me, "profile.rmg_screening");
     }
     // Careers Applications: TA · RMG by role, or whoever screens as RMG (GM) — the
     // server's `screener_or(gated_read("requirements", "TA", "RMG"))`.
     if (n.path === "careers-applications") {
-      return crmTabVisibleFromMe(me, "requirements", roleOk, false) || canApprove(me, "profile.rmg_screening");
+      return crmTabVisibleFromMe(me, "careers-applications",
+        crmTabVisibleFromMe(me, "requirements", roleOk, false) || canApprove(me, "profile.rmg_screening"), false);
     }
     // Received Amount is a Finance desk entry only (19 Oct 2026, user rule) — every other
     // login (Admin / CEO included) reaches received amounts from the customer branch page.
-    if (n.path === "received-amounts" || n.path === "received-tds") return me.roles.includes("Finance");
+    if (n.path === "received-amounts" || n.path === "received-tds") {
+      return !isSuperAdmin(me.roles) && crmTabVisibleFromMe(me, n.path, me.roles.includes("Finance"), false);
+    }
     // Expenses (4 Nov 2026): Finance + Admin / CEO by role — the server's gate.
-    if (n.path === "expenses") return me.roles.includes("Finance") || isSuperAdmin(me.roles);
+    if (n.path === "expenses") {
+      return crmTabVisibleFromMe(me, "expenses", me.roles.includes("Finance") || isSuperAdmin(me.roles), false);
+    }
     // E-invoices (21 Oct 2026): Finance + every Sales rung + Admin / CEO, and a
     // templated login only while its template opens Invoices (the server gate).
-    if (n.path === "e-invoices" || n.path === "invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);
+    if (n.path === "invoices") return roleOk && crmTabVisibleFromMe(me, "invoices", roleOk, false);
+    // E-invoices reads the invoice list, so it also needs Invoices (View).
+    if (n.path === "e-invoices") {
+      return crmTabVisibleFromMe(me, "e-invoices", roleOk, false) && crmTabVisibleFromMe(me, "invoices", roleOk, false);
+    }
     // Merged Opportunities workspace: show if either opportunities OR requirements tab is allowed.
     if (n.path === "opportunities") {
       return (

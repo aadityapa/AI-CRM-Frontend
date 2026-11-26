@@ -1,6 +1,6 @@
 /** Candidate master pages: searchable list + detail with personal info,
  * education, experience, skills and linked candidate-profiles tabs. */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Briefcase, Building2, CalendarDays, Check, ChevronRight, Clock, FileBadge, FileText, GraduationCap, IndianRupee, Linkedin,
@@ -16,7 +16,8 @@ import { displayEmail, isPlaceholderEmail } from "../lib/candidateEmail";
 import { useHasRole, useMe } from "../CrmApp";
 import { useCanAct, useCrmAccess, useSubTabs } from "../useAccess";
 import { CrmLink, crmNavigate, useCrmParams } from "../routerHooks";
-import { HERO_BTN, HERO_BTN_SOLID, PageHeader } from "../components/PageHeader";
+import { HERO_BTN, HERO_BTN_SOLID, PageHeader, StagePills } from "../components/PageHeader";
+import { lazyRetry } from "../../lib/lazyRetry";
 import { DataTable } from "../components/DataTable";
 import type { Column } from "../components/DataTable";
 import { RowActions, afterListDelete } from "../components/RowActions";
@@ -255,7 +256,14 @@ function useMaster<T = any>(path: string): T[] {
 
 /* ------------------------------------------------------------------ list page */
 
+const InterviewReadinessLazy = lazyRetry(() => import("./candidates/InterviewReadiness").then((m) => ({ default: m.InterviewReadiness })));
+
 export function CandidatesListPage() {
+  /* Two views (24 Nov 2026): the whole list, and Interview readiness — who we
+     interviewed and whether to approach, train or leave them. */
+  // Interview readiness is a sub-tab a role can switch off in Access Control (25 Nov 2026).
+  const showReadiness = useSubTabs("candidates").allowed("readiness");
+  const [view, setView] = usePageTab<"all" | "readiness">("sub", "all", showReadiness ? ["all", "readiness"] : ["all"]);
   const canWrite = useHasRole(...WRITE_ROLES);
   // Roles allowed to create a Candidate Profile (POST /api/candidate-profiles).
   const canApply = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
@@ -467,10 +475,15 @@ export function CandidatesListPage() {
               </button>
             </>
           ) : undefined}
-        />
+        >
+          {showReadiness && (
+            <StagePills label="Candidates view" active={view} onChange={(k) => setView(k as "all" | "readiness")}
+              tabs={[{ key: "all", label: "All candidates" }, { key: "readiness", label: "Interview readiness — approach · train · re-interview" }]} />
+          )}
+        </PageHeader>
       </div>
 
-      {error ? (
+      {view === "readiness" ? <Suspense fallback={<Spinner label="Loading…" />}><InterviewReadinessLazy /></Suspense> : error ? (
         <ErrorBox error={error} onRetry={load} />
       ) : (
         <DataTable<Candidate>

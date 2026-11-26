@@ -1,5 +1,5 @@
 /**
- * Screening Desk (25 Sep 2026) — RMG / GM screen every TA-applied candidate here.
+ * RMG Desk (25 Sep 2026) — RMG / GM screen every TA-applied candidate here.
  *
  * Before: open an opportunity → its requirement → Applied Candidates → a row →
  * View resume → ATS → Shortlist, once per candidate, once per opportunity.
@@ -48,6 +48,7 @@ import { FLOW_BTN } from "../components/flowButtons";
 import { useHandoverNote } from "../components/handoverNote";
 import { SalesReadinessPanel } from "../components/SalesReadinessPanel";
 import { RmgVerdictHero, ScreeningDecisionModal, type ShortlistRoute } from "../components/ScreeningDecisionModal";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "../components/RejectSkills";
 import { DialogActions } from "../components/dialogKit";
 import { HandedOverPanel } from "../components/HandedOverPanel";
 import { RmgApprovalsStrip, type ApprovalItem } from "../components/RmgApprovalsStrip";
@@ -64,7 +65,8 @@ import { CandidateStatusBadge } from "../components/CandidateStatusBadge";
 import type { CandidateStatus } from "../components/CandidateStatusBadge";
 import { displayEmail } from "../lib/candidateEmail";
 import { CrmLink } from "../routerHooks";
-import { useCanApprove } from "../useAccess";
+import { crmTabVisibleFromMe, useCanApprove } from "../useAccess";
+import { useMe } from "../CrmApp";
 import { usePageTab } from "../lib/pageState";
 
 /* ---------- server shapes ---------- */
@@ -271,12 +273,15 @@ function readDeskLink(): { task: string | null; focus: number | null } {
 
 export function ScreeningDeskPage() {
   const canScreen = useCanApprove("profile.rmg_screening");
-  if (!canScreen) {
+  // 25 Nov 2026 — the "RMG Desk" page granted in Access Control opens it too
+  // (the server's `desk_read`); decisions still need the approval.
+  const pageGranted = crmTabVisibleFromMe(useMe(), "screening-desk", false);
+  if (!canScreen && !pageGranted) {
     return (
       <div className="mx-auto max-w-3xl p-6">
         <EmptyState
           icon={<ClipboardCheck size={22} />}
-          message={<><b className="text-primary">The Screening Desk is for RMG and GM.</b><br />
+          message={<><b className="text-primary">The RMG Desk is for RMG and GM.</b><br />
             Ask Admin to tick “RMG screening decision” in your role or access template if you should screen candidates.</>}
         />
       </div>
@@ -381,7 +386,7 @@ function Desk() {
         window.setTimeout(() => document.getElementById(`desk-row-${focus}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 60);
       }
     } catch (e: any) {
-      if (seq === loadSeq.current) setError(e?.message || "Could not load the screening desk");
+      if (seq === loadSeq.current) setError(e?.message || "Could not load the RMG desk");
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -563,7 +568,7 @@ function Desk() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-display flex items-center gap-2 text-xl font-bold">
-                <ClipboardCheck size={20} aria-hidden /> Screening Desk
+                <ClipboardCheck size={20} aria-hidden /> RMG Desk
               </h1>
               <p className="mt-1 max-w-3xl text-sm text-white/85">
                 Your whole day in one place — review results, screen, choose the route, book and judge the
@@ -1552,6 +1557,7 @@ function VerdictModal({ row, verdict, onClose, onDone, onError }: {
 }) {
   const sales = verdict === "sales";
   const [comment, setComment] = useState("");
+  const [skills, setSkills] = useRejectSkills({ profileId: sales ? null : row.profile_id });
   /* Submit to Sales comes pre-written from the interviews (28 Sep 2026) — the
      rounds, AI L1 and skill ratings; edit it or send it as it is. Only fills
      an EMPTY field, so it never overwrites what was typed while it loaded. */
@@ -1570,6 +1576,8 @@ function VerdictModal({ row, verdict, onClose, onDone, onError }: {
       setErr(`A ${sales ? "comment" : "reason"} of at least ${MIN_REJECT_NOTE} characters is required`);
       return;
     }
+    const problem = sales ? null : rejectSkillsProblem(skills);
+    if (problem) { onError(problem); return; }
     setBusy(true);
     try {
       const res = await crmPost(`/api/candidate-profiles/${row.profile_id}/status-transition`, {
@@ -1577,7 +1585,8 @@ function VerdictModal({ row, verdict, onClose, onDone, onError }: {
         comment: comment.trim(),
         ask_notice_period: sales && askNotice,
       });
-      onDone(res.message || (sales ? "Submitted to the Sales team" : "Candidate rejected"));
+      const n = sales ? 0 : await saveRejectSkills(skills);
+      onDone((res.message || (sales ? "Submitted to the Sales team" : "Candidate rejected")) + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added` : ""));
     } catch (e: any) {
       onError(e?.message || "Could not record the decision");
       setBusy(false);
@@ -1606,6 +1615,7 @@ function VerdictModal({ row, verdict, onClose, onDone, onError }: {
               ? (handover.loading ? "Writing the summary from the interviews…" : "Strengths, level, anything Sales should position with the customer")
               : "Why is this candidate not going forward?"} />
         </Field>
+        {!sales && <RejectSkillsField state={skills} onChange={setSkills} />}
         {sales && prefilled && (
           <p className="-mt-2 text-xs text-muted">
             Written from the recorded interviews and skill ratings — edit anything before you submit.

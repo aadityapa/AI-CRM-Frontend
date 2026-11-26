@@ -11,6 +11,7 @@ import { ForcePasswordChange } from "./components/ForcePasswordChange";
 import { useSpotlight } from "./crm/components/motion3d";
 import { getAuthToken, getStoredAuthUser } from "./lib/authSession";
 import { initAppHistory, pushAppHistory } from "./lib/appHistory";
+import { isEmployeeOnlyRoles } from "./lib/employeeLogin";
 
 // 23 Oct 2026: number this tab's first entry so Back never leaves the app.
 initAppHistory();
@@ -40,6 +41,7 @@ const UpcomingInterviewsPage = lazyRetry(() => import("./pages/UpcomingInterview
 const QuestionBankPage = lazyRetry(() => import("./pages/QuestionBank").then((m) => ({ default: m.QuestionBankPage })));
 const CrmApp = lazyRetry(() => import("./crm/CrmApp"));
 const HrSetupPage = lazyRetry(() => import("./pages/HrSetup").then((m) => ({ default: m.HrSetupPage })));
+const MyAiReportsPage = lazyRetry(() => import("./pages/MyAiReports").then((m) => ({ default: m.MyAiReportsPage })));
 
 type View = InterviewView;
 
@@ -69,6 +71,13 @@ const PLATFORM_NAV_ORDER: View[] = ["dashboard", "templates", "candidates", "ats
 function isScreener(body: any): boolean {
   const approvals = body?.data?.approvals ?? body?.approvals;
   return Array.isArray(approvals) && approvals.includes("profile.rmg_screening");
+}
+
+/** `/api/me` says this is an employee-only login (Employee + Interviewer, 25 Nov
+ *  2026): its Reports tab is "My AI reports" — its own interviews, nobody else's. */
+function isEmployeeOnlyBody(body: any): boolean {
+  const d = body?.data ?? body ?? {};
+  return isEmployeeOnlyRoles(d.roles, d.display_roles);
 }
 
 function readInitialView(): {
@@ -188,8 +197,9 @@ export default function App() {
   // server refuses every CRM call but the change, so render ONLY that screen.
   const [mustChange, setMustChange] = useState<{ name: string } | null>(null);
   // Holds the RMG screening approval (a GM custom role has no built-in role):
-  // the Screening Desk's "Open report" lands on the AI report page.
+  // the RMG Desk's "Open report" lands on the AI report page.
   const [screener, setScreener] = useState(false);
+  const [employeeOnly, setEmployeeOnly] = useState(false);
 
   // Fetch super-admin flag (question bank) and CRM roles (RBAC) once on mount.
   useEffect(() => {
@@ -221,6 +231,7 @@ export default function App() {
           const ta = (body?.data?.tab_access ?? body?.tab_access ?? null) as string[] | null;
           if (!cancelled) setTabAccess(Array.isArray(ta) ? ta : null);
           if (!cancelled) setScreener(isScreener(body));
+          if (!cancelled) setEmployeeOnly(isEmployeeOnlyBody(body));
           if (!cancelled && body?.data?.must_change_password) {
             setMustChange({ name: String(body?.data?.full_name || body?.data?.username || "") });
           }
@@ -261,6 +272,7 @@ export default function App() {
         setTabAccess((prev) =>
           JSON.stringify(prev) === JSON.stringify(ta) ? prev : (Array.isArray(ta) ? ta : null));
         setScreener(isScreener(body));
+        setEmployeeOnly(isEmployeeOnlyBody(body));
       } catch {
         /* ignore */
       }
@@ -289,7 +301,8 @@ export default function App() {
     ? tabAccess
     : null;
 
-  const platformViews: View[] = rbacActive
+  // An employee-only login gets ONE platform tab: Reports = "My AI reports" (its own).
+  const platformViews: View[] = employeeOnly ? ["candidates"] : rbacActive
     ? PLATFORM_NAV_ORDER.filter((v) =>
         tabVisible(ivTabAccess, ivTabKey(v as InterviewView), canAccessInterviewView(effRoles, v)),
       )
@@ -302,6 +315,9 @@ export default function App() {
   const isViewAllowed = (v: View): boolean => {
     if (!rbacActive) return true;
     if (v === "crm") return canCrm;
+    // 25 Nov 2026: an employee reads only their own AI reports (the "candidates"
+    // view renders My AI reports for them) — every staff page is closed.
+    if (employeeOnly) return v === "candidates";
     if (v === "questionBank") return isSuperAdmin; // Admin/super-admin only
     // Detail views are NOT separately manageable tabs (they never appear in the
     // Edit Tab Access modal). They must inherit the tab-grant of their parent —
@@ -309,7 +325,7 @@ export default function App() {
     // "templateForm") bounces the user to the landing page the moment they click
     // Create Template. Role authority still checks the view ITSELF, so e.g.
     // hrSetup keeps its own TA/HR role rule while riding Dashboard's tab grant.
-    // A screener (GM) reviews AI L1 results from the Screening Desk; the report
+    // A screener (GM) reviews AI L1 results from the RMG Desk; the report
     // detail page is part of that job even without the Reports tab.
     if ((v === "candidateReport" || v === "candidateInterviews") && screener) return true;
     // RMG / GM author the interview templates and their question banks (11 Oct
@@ -375,7 +391,8 @@ export default function App() {
   }, [view, rolesLoaded]);
 
   const navItems: NavDef[] = [
-    ...platformViews.map((v) => NAV_DEFS[v as keyof typeof NAV_DEFS]).filter(Boolean),
+    ...platformViews.map((v) => NAV_DEFS[v as keyof typeof NAV_DEFS]).filter(Boolean)
+      .map((d) => (employeeOnly && d.target === "candidates" ? { ...d, label: "My AI reports" } : d)),
     ...(isSuperAdmin && isViewAllowed("questionBank") ? [NAV_DEFS.questionBank] : []),
     ...(canCrm ? [NAV_DEFS.crm] : []),
   ];
@@ -506,6 +523,8 @@ export default function App() {
                   setView("templateForm");
                 }}
               />
+            ) : showViewInBody === "candidates" && employeeOnly ? (
+              <MyAiReportsPage />
             ) : showViewInBody === "candidates" ? (
               <CandidatesPage onOpenCandidateReport={(cid, iid) => goCandidateReport(cid, iid, "candidates")} />
             ) : showViewInBody === "templateForm" ? (

@@ -1,6 +1,6 @@
 /**
  * InterviewLadder (28 Sep 2026) — the technical interview ladder of one candidate,
- * as RMG / GM work it from the Screening Desk: AI L1 → manual L1 → L2 (→ L3/L4),
+ * as RMG / GM work it from the RMG Desk: AI L1 → manual L1 → L2 (→ L3/L4),
  * each rung with the action that is due NOW.
  *
  *  - Renders what the desk row already carries (`ai_l1`, `rounds`, from the

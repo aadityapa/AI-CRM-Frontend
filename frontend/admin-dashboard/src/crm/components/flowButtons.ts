@@ -2,7 +2,7 @@
  * ONE palette for the small action buttons on candidate rows (28 Sep 2026,
  * user ask: "all these buttons with a good colour combination, in every
  * login"). The colour says what KIND of step a button is, the same on
- * Applied Candidates, the Screening Desk and the profile page:
+ * Applied Candidates, the RMG Desk and the profile page:
  *
  *   primary   sky      move the candidate forward (Technical Screening, Schedule, Submit)
  *   success   emerald  a positive verdict (Shortlist, Approve, Release hold)

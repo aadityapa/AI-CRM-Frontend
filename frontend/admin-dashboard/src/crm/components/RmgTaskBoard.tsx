@@ -1,6 +1,6 @@
 /**
  * RMG / GM task board (28 Sep 2026, user ask: "all RMG & GM pending tasks in one
- * place in the Screening Desk, each opening the exact place to act, and the same
+ * place in the RMG Desk, each opening the exact place to act, and the same
  * on the Dashboard so they know their pending work two ways").
  *
  * One server list, `GET /api/screening-desk/tasks` (B-V2 `services/rmg_tasks.py`),

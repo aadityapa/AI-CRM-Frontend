@@ -14,27 +14,32 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Award, Briefcase, CheckCircle2, ChevronLeft, ChevronRight, FileText, Filter, MapPin,
-  MessageSquare, Plus, RotateCcw, Search, Send, Shuffle, Sparkles, Target, UserCheck, Users, X,
+  Award, Briefcase, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileText, Filter, FolderPlus, LayoutGrid, List, MapPin,
+  CalendarClock, Clock, Copy, Layers, Mail, MessageSquare, Phone, Plus, RotateCcw, Search, Send, Shuffle, Sparkles,
+  Target, UserCheck, Users, X,
 } from "lucide-react";
 
-import { crmGet, crmPost, qs } from "../api";
-import { useHasRole } from "../CrmApp";
+import { crmGet, qs } from "../api";
 import { useSubTabs } from "../useAccess";
 import { CrmLink } from "../router";
-import { Modal, Spinner, ErrorBox, useToast } from "../components/ui";
+import { Spinner, ErrorBox, useToast, isOwnDomClick } from "../components/ui";
 import { PageHeader, StagePills, HERO_BTN } from "../components/PageHeader";
 import { CONTROL } from "../components/controlTower";
 import { FLOW_BTN } from "../components/flowButtons";
 import { ScoreIndicator } from "../components/ScoreIndicator";
-import { DialogActions, DialogHero, DialogSection, ReasonBox, WhatHappens, initials } from "../components/dialogKit";
+import { initials } from "../components/dialogKit";
 import { usePageTab, useSessionState, useChangeEffect } from "../lib/pageState";
+import { DupesMode, FreshMode, ReadyMode, ReengageDialog } from "./talentPool/TalentPoolMore";
 import { isPlaceholderEmail } from "../lib/candidateEmail";
 import { fmtDateShort } from "../../lib/datetime";
 import { fileViewHref } from "./FileView";
 import {
   PoolOptOutButton, RetentionMode, SavedSearchesBar, SkillNamesModal, paramsToFilters, type SavedSearch,
 } from "./talentPool/TalentPoolExtras";
+import {
+  AddToGroupDialog, ApplyPeopleDialog, FitApplyDialog, GroupsMode, TagSkillDialog, TalentGroupChips,
+  useCanApplyFromPool, type GroupChipData, type GroupSkill,
+} from "./talentPool/TalentGroups";
 
 // ---------------------------------------------------------------------------
 // Types (mirror the server payload)
@@ -79,6 +84,14 @@ export type PoolRow = {
   last_touch: string | null;
   strengths?: { area: string; detail: string }[];
   gaps?: { area: string; detail: string }[];
+  /** Talent Pool groups the candidate is in (24 Nov 2026). */
+  groups?: GroupChipData[];
+  /** When the candidate came into the tool, by whom; notice details. */
+  added_at?: string | null;
+  added_by?: string | null;
+  last_working_day?: string | null;
+  serving_notice?: boolean;
+  notice_bucket?: string | null;
 };
 type SkillCat = { id: number | null; name: string; category: string; count: number; proven: number };
 type Position = {
@@ -89,6 +102,8 @@ type Meta = {
   skills: SkillCat[]; positions: Position[]; proven_rating: number;
   index?: { ready: boolean; built_at: string | null };
   retention?: { months: number; warn_days: number; counts: Record<string, number> };
+  added_days?: number[];
+  added_counts?: Record<string, number>;
 };
 type SearchMeta = {
   total: number; page: number; limit: number; truncated: boolean;
@@ -152,12 +167,28 @@ export type PoolFilters = {
   proven_only: boolean;
   include_employees: boolean;
   sort: string;
+  /** Job-board filters (24 Nov 2026): expected CTC from, current CTC range (lakh),
+   *  added to the tool in the last N days, has a mobile number. */
+  ctc_min: string;
+  cur_ctc_min: string;
+  cur_ctc_max: string;
+  added_days: string;
+  has_phone: boolean;
 };
 
 export const EMPTY_FILTERS: PoolFilters = {
   skills: [], nice: [], q: "", exp_min: "", exp_max: "", location: "", notice: "", ctc_max: "",
   availability: "any", untouched_days: "", proven_only: false, include_employees: true, sort: "match",
+  ctc_min: "", cur_ctc_min: "", cur_ctc_max: "", added_days: "", has_phone: false,
 };
+
+/** A filter value saved in the session before a key existed gets the blank. */
+export function withFilterDefaults(f: Partial<PoolFilters> | null | undefined): PoolFilters {
+  return { ...EMPTY_FILTERS, ...(f || {}) } as PoolFilters;
+}
+
+/** "Added in" choices (the server's ADDED_DAYS). */
+export const ADDED_CHOICES = [7, 15, 30, 60, 90, 180];
 
 /** Same key the server compares skills by. */
 export function skillKey(s: string): string {
@@ -186,6 +217,11 @@ export function poolQuery(f: PoolFilters, page: number, limit = 24): string {
     location: f.location.trim() || undefined,
     notice: f.notice || undefined,
     ctc_max: f.ctc_max || undefined,
+    ctc_min: f.ctc_min || undefined,
+    cur_ctc_min: f.cur_ctc_min || undefined,
+    cur_ctc_max: f.cur_ctc_max || undefined,
+    added_days: f.added_days || undefined,
+    has_phone: f.has_phone ? "true" : undefined,
     availability: f.availability !== "any" ? f.availability : undefined,
     untouched_days: f.untouched_days || undefined,
     proven_only: f.proven_only ? "true" : undefined,
@@ -198,9 +234,11 @@ export function poolQuery(f: PoolFilters, page: number, limit = 24): string {
 
 /** How many filters (besides the skills) narrow the search — the "Filters (n)" badge. */
 export function activeFilterCount(f: PoolFilters): number {
-  return [f.q.trim(), f.exp_min, f.exp_max, f.location.trim(), f.notice, f.ctc_max, f.untouched_days]
+  return [f.q.trim(), f.exp_min, f.exp_max, f.location.trim(), f.notice, f.ctc_max, f.untouched_days,
+    f.ctc_min, f.cur_ctc_min, f.cur_ctc_max, f.added_days]
     .filter(Boolean).length
-    + (f.availability !== "any" ? 1 : 0) + (f.proven_only ? 1 : 0) + (f.include_employees ? 0 : 1);
+    + (f.availability !== "any" ? 1 : 0) + (f.proven_only ? 1 : 0) + (f.include_employees ? 0 : 1)
+    + (f.has_phone ? 1 : 0);
 }
 
 /** Skill browser: categories in order, skills filtered by the search box. */
@@ -236,14 +274,25 @@ function daysAgo(iso: string | null | undefined): string | null {
 const PAGE_SIZE = 24;
 const MODES = [
   { key: "search", label: "Search the pool" },
+  { key: "ready", label: "Ready to place" },
   { key: "position", label: "Match a position" },
+  { key: "groups", label: "Groups" },
   { key: "retention", label: "Retention" },
+  { key: "fresh", label: "Keep up to date" },
+  { key: "dupes", label: "Duplicates" },
 ] as const;
 type Mode = (typeof MODES)[number]["key"];
 
 export function TalentPoolPage() {
   const [toast, showToast] = useToast();
-  const [rawMode, setMode] = usePageTab<Mode>("tab", "search", ["search", "position", "retention"]);
+  const [rawMode, setMode] = usePageTab<Mode>("tab", "search", ["search", "ready", "position", "groups", "retention", "fresh", "dupes"]);
+  const [openGroup, setOpenGroup] = useSessionState<number | null>("talent.group", null);
+  const [seed, setSeed] = useState<{ skills: string[]; nice: string[]; n: number } | null>(null);
+  const openGroupPage = (id: number) => { setOpenGroup(id); setMode("groups"); };
+  const findMore = (skills: GroupSkill[]) => {
+    setSeed({ skills: skills.filter((x) => x.must).map((x) => x.name), nice: skills.filter((x) => !x.must).map((x) => x.name), n: Date.now() });
+    setMode("search");
+  };
   // The three modes are sub-tabs a template / custom role can switch off (22 Oct 2026).
   const poolSub = useSubTabs("talent-pool");
   const shownModes = MODES.filter((m) => poolSub.allowed(m.key));
@@ -251,6 +300,7 @@ export function TalentPoolPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaErr, setMetaErr] = useState("");
   const [names, setNames] = useState(false);
+  const skillNames = useMemo(() => (meta?.skills || []).map((x) => x.name), [meta]);
 
   const loadMeta = useCallback(() => {
     setMetaErr("");
@@ -279,12 +329,85 @@ export function TalentPoolPage() {
           active={mode} onChange={(k) => setMode(k as Mode)} label="Talent Pool mode" />
       </PageHeader>
       {metaErr && <ErrorBox error={metaErr} onRetry={loadMeta} />}
-      {mode !== "retention" && <EvidenceLegend />}
-      {mode === "search" ? <SearchMode meta={meta} toast={showToast} />
-        : mode === "position" ? <PositionMode meta={meta} toast={showToast} />
-          : <RetentionMode toast={showToast} />}
+      {(mode === "search" || mode === "position") && <EvidenceLegend />}
+      {mode === "search" ? <SearchMode meta={meta} toast={showToast} seed={seed} onOpenGroup={openGroupPage} skillNames={skillNames} />
+        : mode === "position" ? <PositionMode meta={meta} toast={showToast} onOpenGroup={openGroupPage} skillNames={skillNames} />
+          : mode === "groups" ? <>
+            <SkillGroups meta={meta} onPick={(name) => { setSeed({ skills: [name], nice: [], n: Date.now() }); setMode("search"); }} />
+            <GroupsMode toast={showToast} openId={openGroup} onOpen={setOpenGroup} onFindMore={findMore} skillSuggestions={skillNames} />
+          </>
+            : mode === "ready" ? <ReadyMode toast={showToast} positions={meta?.positions || []} />
+              : mode === "fresh" ? <FreshMode toast={showToast} />
+                : mode === "dupes" ? <DupesMode toast={showToast} />
+                  : <RetentionMode toast={showToast} />}
       {names && <SkillNamesModal onClose={() => { setNames(false); loadMeta(); }} toast={showToast} />}
     </div>
+  );
+}
+
+/** Skill groups — the pool grouped by skill family, built from the live skill
+ *  counts (nothing stored). A skill opens the search with it as a must-have. */
+export function skillGroups(skills: SkillCat[], perGroup = 8): { category: string; total: number; proven: number; skills: SkillCat[] }[] {
+  const byCat = new Map<string, SkillCat[]>();
+  for (const sk of skills) {
+    if (!sk.count) continue;
+    const list = byCat.get(sk.category || "Other") || [];
+    list.push(sk);
+    byCat.set(sk.category || "Other", list);
+  }
+  return [...byCat.entries()].map(([category, list]) => {
+    const sorted = [...list].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    return { category, total: list.reduce((n, x) => n + x.count, 0), proven: list.reduce((n, x) => n + (x.proven || 0), 0),
+      skills: sorted.slice(0, perGroup) };
+  }).sort((a, b) => b.total - a.total);
+}
+
+const SKILL_GROUP_TONES = [
+  "from-teal-500 to-emerald-600", "from-sky-500 to-indigo-600", "from-purple-500 to-fuchsia-600",
+  "from-amber-500 to-orange-600", "from-rose-500 to-pink-600", "from-cyan-500 to-blue-600",
+];
+
+function SkillGroups({ meta, onPick }: { meta: Meta | null; onPick: (skill: string) => void }) {
+  const groups = useMemo(() => skillGroups(meta?.skills || []), [meta]);
+  const [all, setAll] = useState(false);
+  if (!groups.length) return null;
+  const shown = all ? groups : groups.slice(0, 6);
+  return (
+    <section className="rounded-card border border-subtle bg-surface-1 p-3 shadow-raised">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="flex items-center gap-1.5 text-sm font-bold text-primary"><Layers size={15} aria-hidden /> Skill groups</h2>
+          <p className="text-xs text-muted">The pool grouped by skill family, counted live. Click a skill to see everyone who has it — proven in interview first.</p>
+        </div>
+        {groups.length > 6 && (
+          <button type="button" className={FLOW_BTN.neutral} onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `All ${groups.length} groups`}</button>
+        )}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {shown.map((g, i) => (
+          <div key={g.category} className="rounded-control border border-subtle bg-surface-2/50 p-2.5">
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex h-7 w-7 items-center justify-center rounded-control bg-gradient-to-br text-white ${SKILL_GROUP_TONES[i % SKILL_GROUP_TONES.length]}`}>
+                <Layers size={14} aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-primary">{g.category}</div>
+                <div className="text-[11px] text-muted">{g.skills.length} top skills · {g.proven} proven in interview</div>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {g.skills.map((sk) => (
+                <button key={`${sk.id}-${sk.name}`} type="button" onClick={() => onPick(sk.name)}
+                  className="inline-flex items-center gap-1 rounded-full bg-surface-1 px-2 py-0.5 text-[11px] font-semibold text-secondary ring-1 ring-inset ring-subtle hover:text-brand-700 hover:ring-brand-300 dark:hover:text-brand-300">
+                  {sk.name}<span className="tabular-nums text-muted">{sk.count}</span>
+                  {sk.proven > 0 && <Award size={10} className="text-emerald-600" aria-label={`${sk.proven} proven`} />}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -307,27 +430,44 @@ function EvidenceLegend() {
 // Search mode
 // ---------------------------------------------------------------------------
 
-function SearchMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k?: "ok" | "err") => void }) {
-  const [filters, setFilters] = useSessionState<PoolFilters>("talent.filters", EMPTY_FILTERS);
+function SearchMode({ meta, toast, seed, onOpenGroup, skillNames }: {
+  meta: Meta | null; toast: (m: string, k?: "ok" | "err") => void;
+  /** Skills handed over from a group's "Find more like this". */
+  seed?: { skills: string[]; nice: string[]; n: number } | null;
+  onOpenGroup: (id: number) => void;
+  skillNames: string[];
+}) {
+  const [storedFilters, setFilters] = useSessionState<PoolFilters>("talent.filters", EMPTY_FILTERS);
+  const filters = useMemo(() => withFilterDefaults(storedFilters), [storedFilters]);
   const [page, setPage] = useSessionState<number>("talent.page", 1);
   const [rows, setRows] = useState<PoolRow[]>([]);
   const [smeta, setSmeta] = useState<SearchMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [showFilters, setShowFilters] = useState(() => activeFilterCount(filters) > 0);
+  const [showFilters, setShowFilters] = useState(() => !!(storedFilters?.untouched_days || storedFilters?.proven_only
+    || storedFilters?.include_employees === false));
   const [draftQ, setDraftQ] = useState(filters.q);
   const [draftLoc, setDraftLoc] = useState(filters.location);
   const [saved, setSaved] = useState<SavedSearch | null>(null);
+  const [picked, setPicked] = useState<Map<number, string>>(new Map());
+  const [bulk, setBulk] = useState<"group" | "apply" | "mail" | null>(null);
+  const canApply = useCanApplyFromPool();
+  const [view, setView] = usePoolView();
   const seq = useRef(0);
+  useEffect(() => {
+    if (!seed) return;
+    setFilters({ ...EMPTY_FILTERS, skills: seed.skills, nice: seed.nice });
+    setDraftQ(""); setDraftLoc("");
+  }, [seed, setFilters]);
   const newKeys = useMemo(() => new Set(saved?.new_keys || []), [saved]);
   const pickSaved = useCallback((s: SavedSearch | null, apply: boolean) => {
     setSaved(s);
     if (s && apply) {
-      const f = paramsToFilters(s.filters);
+      const f = withFilterDefaults(paramsToFilters(s.filters) as Partial<PoolFilters>);
       setFilters(f);
       setDraftQ(f.q);
       setDraftLoc(f.location);
-      if (activeFilterCount(f) > 0) setShowFilters(true);
+      if (f.untouched_days || f.proven_only || !f.include_employees) setShowFilters(true);
     }
   }, [setFilters]);
 
@@ -377,10 +517,10 @@ function SearchMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k?:
           <SkillPicker filters={filters} onAdd={add} onRemove={remove} holders={smeta?.holders || {}} synonyms={smeta?.synonyms || {}} />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label className="relative min-w-[14rem] flex-1">
-              <span className="sr-only">Search by name, email, phone or domain</span>
+              <span className="sr-only">Search by name, email, mobile or domain</span>
               <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
               <input type="text" value={draftQ} onChange={(e) => setDraftQ(e.target.value)}
-                placeholder="Name, email, phone or domain" className={`${CONTROL} w-full pl-8`} />
+                placeholder="Name, email, mobile number or domain" className={`${CONTROL} w-full pl-8`} />
             </label>
             <select aria-label="Availability" className={CONTROL} value={filters.availability}
               onChange={(e) => set("availability", e.target.value)}>
@@ -391,44 +531,63 @@ function SearchMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k?:
             </select>
             <select aria-label="Sort" className={CONTROL} value={filters.sort} onChange={(e) => set("sort", e.target.value)}>
               <option value="match">Best match</option>
+              <option value="newest">Newest added</option>
               <option value="recent">Latest activity</option>
               <option value="experience">Most experienced</option>
             </select>
-            <button type="button" className={FLOW_BTN.neutral} onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
-              <Filter size={13} aria-hidden /> More filters{nFilters ? ` (${nFilters})` : ""}
-            </button>
             {(nFilters > 0 || filters.skills.length > 0 || filters.nice.length > 0) && (
               <button type="button" className={FLOW_BTN.danger} onClick={reset}><X size={13} aria-hidden /> Clear all</button>
             )}
           </div>
+
+          <AddedInChips value={filters.added_days} counts={meta?.added_counts || {}}
+            onChange={(v) => set("added_days", v)} />
+
+          <div className="mt-3 grid gap-2 rounded-control border border-subtle bg-surface-2/50 p-3 sm:grid-cols-2 xl:grid-cols-3">
+            <FilterField label="Experience (years)">
+              <RangeInputs min={filters.exp_min} max={filters.exp_max} step={0.5} label="experience"
+                onMin={(v) => set("exp_min", v)} onMax={(v) => set("exp_max", v)} />
+            </FilterField>
+            <FilterField label="Location (lives in or prefers)">
+              <div className="relative">
+                <MapPin size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" aria-hidden />
+                <input type="text" value={draftLoc} onChange={(e) => setDraftLoc(e.target.value)} placeholder="e.g. Pune, Bangalore"
+                  className={`${CONTROL} w-full pl-8`} />
+              </div>
+            </FilterField>
+            <FilterField label="Notice period">
+              <select className={`${CONTROL} w-full`} value={filters.notice} onChange={(e) => set("notice", e.target.value)}>
+                <option value="">Any</option>
+                <option value="15">Immediate – 15 days</option>
+                <option value="30">Up to 30 days</option>
+                <option value="60">Up to 60 days</option>
+                <option value="90">More than 60 days</option>
+                <option value="serving">Serving notice / LWD given</option>
+                <option value="unknown">Not recorded</option>
+              </select>
+            </FilterField>
+            <FilterField label="Current CTC (lakh)">
+              <RangeInputs min={filters.cur_ctc_min} max={filters.cur_ctc_max} step={0.5} label="current CTC"
+                onMin={(v) => set("cur_ctc_min", v)} onMax={(v) => set("cur_ctc_max", v)} />
+            </FilterField>
+            <FilterField label="Expected CTC (lakh)">
+              <RangeInputs min={filters.ctc_min} max={filters.ctc_max} step={0.5} label="expected CTC"
+                onMin={(v) => set("ctc_min", v)} onMax={(v) => set("ctc_max", v)} />
+            </FilterField>
+            <FilterField label="Reach them">
+              <label className="flex h-[38px] items-center gap-2 text-sm text-secondary">
+                <input type="checkbox" checked={filters.has_phone} onChange={(e) => set("has_phone", e.target.checked)} />
+                <Phone size={13} aria-hidden /> Only people with a mobile number
+              </label>
+            </FilterField>
+          </div>
+
+          <button type="button" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline dark:text-brand-300"
+            onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
+            <Filter size={12} aria-hidden /> {showFilters ? "Fewer options" : "More options"} — untouched for N days, proven skills, bench employees
+          </button>
           {showFilters && (
-            <div className="mt-3 grid gap-2 rounded-control border border-dashed border-subtle bg-surface-2/50 p-3 sm:grid-cols-2 xl:grid-cols-4">
-              <FilterField label="Experience (years)">
-                <div className="flex items-center gap-1">
-                  <input type="number" min={0} step={0.5} aria-label="Minimum experience" placeholder="Min" className={`${CONTROL} w-full`}
-                    value={filters.exp_min} onChange={(e) => set("exp_min", e.target.value)} />
-                  <span className="text-muted">–</span>
-                  <input type="number" min={0} step={0.5} aria-label="Maximum experience" placeholder="Max" className={`${CONTROL} w-full`}
-                    value={filters.exp_max} onChange={(e) => set("exp_max", e.target.value)} />
-                </div>
-              </FilterField>
-              <FilterField label="Location (lives in or prefers)">
-                <input type="text" value={draftLoc} onChange={(e) => setDraftLoc(e.target.value)} placeholder="e.g. Pune" className={`${CONTROL} w-full`} />
-              </FilterField>
-              <FilterField label="Notice period">
-                <select className={`${CONTROL} w-full`} value={filters.notice} onChange={(e) => set("notice", e.target.value)}>
-                  <option value="">Any</option>
-                  <option value="15">Immediate – 15 days</option>
-                  <option value="30">Up to 30 days</option>
-                  <option value="60">Up to 60 days</option>
-                  <option value="90">More than 60 days</option>
-                  <option value="unknown">Not recorded</option>
-                </select>
-              </FilterField>
-              <FilterField label="Expected CTC up to (lakh)">
-                <input type="number" min={0} step={0.5} placeholder="e.g. 12" className={`${CONTROL} w-full`}
-                  value={filters.ctc_max} onChange={(e) => set("ctc_max", e.target.value)} />
-              </FilterField>
+            <div className="mt-2 grid gap-2 rounded-control border border-dashed border-subtle bg-surface-2/50 p-3 sm:grid-cols-3">
               <FilterField label="No activity for">
                 <select className={`${CONTROL} w-full`} value={filters.untouched_days} onChange={(e) => set("untouched_days", e.target.value)}>
                   <option value="">Any time</option>
@@ -461,27 +620,78 @@ function SearchMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k?:
               </>
             ) : null}
           </div>
-          {smeta && (
-            <div className="flex flex-wrap gap-1.5 text-xs">
-              {(["available", "bench", "in_process", "deployed"] as const).map((k) => counts[k] ? (
-                <span key={k} className={`rounded-full px-2 py-0.5 font-semibold ring-1 ring-inset ${AVAILABILITY_LOOK[k]}`}>
-                  {counts[k]} {k === "available" ? "available" : k === "bench" ? "on the bench" : k === "in_process" ? "in process" : "deployed"}
-                </span>
-              ) : null)}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {smeta && (
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                {(["available", "bench", "in_process", "deployed"] as const).map((k) => counts[k] ? (
+                  <span key={k} className={`rounded-full px-2 py-0.5 font-semibold ring-1 ring-inset ${AVAILABILITY_LOOK[k]}`}>
+                    {counts[k]} {k === "available" ? "available" : k === "bench" ? "on the bench" : k === "in_process" ? "in process" : "deployed"}
+                  </span>
+                ) : null)}
+              </div>
+            )}
+            <ViewSwitch view={view} onChange={setView} />
+          </div>
         </div>
 
         {error ? <ErrorBox error={error} onRetry={load} />
           : loading && rows.length === 0 ? <Spinner label="Searching the pool…" />
             : rows.length === 0 ? (
               <EmptyPool hasSkills={filters.skills.length + filters.nice.length > 0} onReset={reset} />
+            ) : view === "list" ? (
+              <PoolList rows={rows} dim={loading} toast={toast} newKeys={newKeys} skillNames={skillNames} onChanged={load}
+                presetSkills={[...filters.skills.map((x) => ({ name: x, must: true })), ...filters.nice.map((x) => ({ name: x, must: false }))]}
+                isSelected={(r) => !!r.candidate_id && picked.has(r.candidate_id)}
+                onSelect={(r, on) => setPicked((prev) => {
+                  const next = new Map(prev);
+                  if (r.candidate_id) { if (on) next.set(r.candidate_id, r.name); else next.delete(r.candidate_id); }
+                  return next;
+                })}
+                renderCard={(r) => <PoolCard row={r} onAddSkill={(s) => add(s, "nice")} toast={toast}
+                  isNew={newKeys.has(r.key)} onChanged={load} onOpenGroup={onOpenGroup} skillNames={skillNames}
+                  presetSkills={[...filters.skills.map((x) => ({ name: x, must: true })), ...filters.nice.map((x) => ({ name: x, must: false }))]} />} />
             ) : (
               <div className={`grid gap-3 xl:grid-cols-2 ${loading ? "opacity-60" : ""}`}>
                 {rows.map((r) => <PoolCard key={r.key} row={r} onAddSkill={(s) => add(s, "nice")} toast={toast}
-                  isNew={newKeys.has(r.key)} onChanged={load} />)}
+                  isNew={newKeys.has(r.key)} onChanged={load} onOpenGroup={onOpenGroup} skillNames={skillNames}
+                  presetSkills={[...filters.skills.map((x) => ({ name: x, must: true })), ...filters.nice.map((x) => ({ name: x, must: false }))]}
+                  selectable={r.kind === "candidate"} selected={!!r.candidate_id && picked.has(r.candidate_id)}
+                  onSelect={(on) => setPicked((prev) => {
+                    const next = new Map(prev);
+                    if (r.candidate_id) { if (on) next.set(r.candidate_id, r.name); else next.delete(r.candidate_id); }
+                    return next;
+                  })} />)}
               </div>
             )}
+
+        {picked.size > 0 && (
+          <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-2 rounded-card border border-brand-300 bg-surface-1 px-4 py-2.5 shadow-overlay">
+            <span className="text-sm font-semibold text-primary">{picked.size} selected</span>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={FLOW_BTN.neutral} onClick={() => setPicked(new Map())}>Clear</button>
+              <button type="button" className={FLOW_BTN.edit} onClick={() => setBulk("group")}><FolderPlus size={13} aria-hidden /> Add {picked.size} to a group</button>
+              {canApply && <button type="button" className={FLOW_BTN.success} onClick={() => setBulk("apply")}><Send size={13} aria-hidden /> Apply {picked.size} to a position…</button>}
+              <button type="button" className={FLOW_BTN.primary} onClick={() => setBulk("mail")}><Mail size={13} aria-hidden /> Email {picked.size} about new roles</button>
+            </div>
+          </div>
+        )}
+        {bulk === "mail" && (
+          <ReengageDialog people={[...picked.entries()].map(([candidate_id, name]) => ({ candidate_id, name }))} positions={meta?.positions || []}
+            onClose={() => setBulk(null)} onDone={(m) => { setBulk(null); setPicked(new Map()); toast(m); }} />
+        )}
+        {bulk === "group" && (
+          <AddToGroupDialog people={[...picked.entries()].map(([candidate_id, name]) => ({ candidate_id, name }))}
+            skillSuggestions={skillNames}
+            presetSkills={[...filters.skills.map((x) => ({ name: x, must: true })), ...filters.nice.map((x) => ({ name: x, must: false }))]}
+            onClose={() => setBulk(null)}
+            onDone={(m) => { setBulk(null); setPicked(new Map()); toast(m); load(); }} />
+        )}
+        {bulk === "apply" && (
+          <ApplyPeopleDialog positions={meta?.positions || []}
+            people={[...picked.entries()].map(([candidate_id, name]) => ({ candidate_id, name }))}
+            onClose={() => setBulk(null)}
+            onDone={(m) => { setBulk(null); setPicked(new Map()); toast(m); load(); }} />
+        )}
 
         {smeta && pages > 1 && (
           <div className="flex items-center justify-center gap-2 pt-1 text-sm">
@@ -505,6 +715,73 @@ function FilterField({ label, children }: { label: string; children: React.React
       <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
       {children}
     </div>
+  );
+}
+
+/** "Added in the last N days" — when the candidate came into the tool. */
+function AddedInChips({ value, counts, onChange }: {
+  value: string; counts: Record<string, number>; onChange: (v: string) => void;
+}) {
+  const chip = (on: boolean) => `inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset transition-colors ${
+    on ? "bg-teal-600 text-white ring-teal-600" : "bg-surface-1 text-secondary ring-subtle hover:text-primary"}`;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Added to the tool in the last">
+      <span className="mr-1 inline-flex items-center gap-1 text-xs font-semibold text-muted"><CalendarClock size={13} aria-hidden /> Added in</span>
+      <button type="button" className={chip(!value)} aria-pressed={!value} onClick={() => onChange("")}>Any time</button>
+      {ADDED_CHOICES.map((d) => (
+        <button key={d} type="button" className={chip(value === String(d))} aria-pressed={value === String(d)}
+          onClick={() => onChange(value === String(d) ? "" : String(d))}>
+          Last {d} days
+          {counts[String(d)] !== undefined && (
+            <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${value === String(d) ? "bg-white/25" : "bg-surface-2"}`}>
+              {counts[String(d)].toLocaleString("en-IN")}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RangeInputs({ min, max, step, label, onMin, onMax }: {
+  min: string; max: string; step: number; label: string; onMin: (v: string) => void; onMax: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <input type="number" min={0} step={step} aria-label={`Minimum ${label}`} placeholder="From" className={`${CONTROL} w-full`}
+        value={min} onChange={(e) => onMin(e.target.value)} />
+      <span className="text-muted">–</span>
+      <input type="number" min={0} step={step} aria-label={`Maximum ${label}`} placeholder="To" className={`${CONTROL} w-full`}
+        value={max} onChange={(e) => onMax(e.target.value)} />
+    </div>
+  );
+}
+
+/** The notice period as a coloured chip; a serving candidate shows the last day. */
+export function noticeLook(bucket: string | null | undefined, serving?: boolean): string {
+  if (serving || bucket === "serving") return "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800";
+  if (bucket === "15") return "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800";
+  if (bucket === "30") return "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:ring-sky-800";
+  if (bucket === "60") return "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800";
+  if (bucket === "90") return "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800";
+  return "bg-surface-2 text-muted ring-subtle";
+}
+
+/** Mobile number with call + copy (a placeholder number is never shown). */
+function PhoneChip({ phone, toast }: { phone: string | null; toast?: (m: string, k?: "ok" | "err") => void }) {
+  const clean = (phone || "").trim();
+  if (clean.replace(/\D/g, "").length < 6) {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted ring-1 ring-inset ring-subtle">
+      <Phone size={11} aria-hidden /> No mobile</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-800 ring-1 ring-inset ring-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-200 dark:ring-indigo-800">
+      <a href={`tel:${clean.replace(/\s+/g, "")}`} className="inline-flex items-center gap-1 hover:underline"><Phone size={11} aria-hidden />{clean}</a>
+      <button type="button" aria-label="Copy mobile number" title="Copy" className="ml-0.5 opacity-70 hover:opacity-100"
+        onClick={() => { void navigator.clipboard?.writeText(clean).then(() => toast?.("Mobile number copied")); }}>
+        <Copy size={11} aria-hidden />
+      </button>
+    </span>
   );
 }
 
@@ -672,8 +949,14 @@ const OUTCOME_LOOK: Record<string, string> = {
   in_progress: "text-amber-700 dark:text-amber-300",
 };
 
-function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNew, onChanged }: {
+function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNew, onChanged, onOpenGroup, skillNames = [], presetSkills }: {
   row: PoolRow;
+  /** Open a Talent Pool group (its chip on the card). */
+  onOpenGroup?: (id: number) => void;
+  /** Master skill names — suggestions for "+ Skill". */
+  skillNames?: string[];
+  /** The search's skills — a new group made from this card starts with them. */
+  presetSkills?: GroupSkill[];
   onAddSkill?: (name: string) => void;
   toast?: (m: string, k?: "ok" | "err") => void;
   selectable?: boolean;
@@ -684,8 +967,10 @@ function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNe
   /** The card's person left the pool — reload the list. */
   onChanged?: () => void;
 }) {
-  const isTa = useHasRole("TA");
+  const canApply = useCanApplyFromPool();
   const [allSkills, setAllSkills] = useState(false);
+  const [dialog, setDialog] = useState<"group" | "skill" | "fit" | null>(null);
+  const done = (m: string) => { setDialog(null); toast?.(m); onChanged?.(); };
   const profileLink = row.kind === "candidate" ? `candidates/${row.candidate_id}` : `employees/${row.employee_id}`;
   const email = row.email && !isPlaceholderEmail(row.email) ? row.email : null;
   const cv = fileViewHref(row.cv_url, `${row.name} CV`);
@@ -726,8 +1011,21 @@ function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNe
                 <MapPin size={11} className="mr-0.5 inline" aria-hidden />{row.city || "—"}{row.preferred_locations ? ` → ${row.preferred_locations}` : ""}
               </span>
             )}
-            {row.notice_period && <span>Notice {row.notice_period}</span>}
             {(now || exp) && <span>CTC {now || "—"} → <b className="text-primary">{exp || "—"}</b></span>}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <PhoneChip phone={row.phone} toast={toast} />
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${noticeLook(row.notice_bucket, row.serving_notice)}`}>
+              <Clock size={11} aria-hidden />
+              {row.serving_notice || row.last_working_day
+                ? `Serving notice${row.last_working_day ? ` · LWD ${fmtDateShort(row.last_working_day)}` : ""}`
+                : row.notice_period ? `Notice ${row.notice_period}` : "Notice not recorded"}
+            </span>
+            {row.added_at && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted" title={row.added_by ? `Added by ${row.added_by}` : undefined}>
+                <CalendarClock size={11} aria-hidden /> Added {daysAgo(row.added_at)}{row.added_by ? ` by ${row.added_by}` : ""}
+              </span>
+            )}
           </div>
           {row.technical_domain && <div className="mt-0.5 truncate text-xs text-muted">{row.technical_domain}</div>}
           {row.internal && row.internal.projects.length > 0 && (
@@ -759,6 +1057,13 @@ function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNe
       {row.skills.length === 0 && row.matched.length === 0 && (
         <p className="mt-2 text-xs text-muted">No skills on record yet.</p>
       )}
+      {row.kind === "candidate" && row.candidate_id && (
+        <button type="button" onClick={() => setDialog("skill")}
+          className="mt-1.5 inline-flex w-fit items-center gap-1 rounded-full border border-dashed border-sky-300 px-2 py-0.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-50 dark:border-sky-700 dark:text-sky-300 dark:hover:bg-sky-950/40">
+          <Plus size={11} aria-hidden /> Skill
+        </button>
+      )}
+      <TalentGroupChips groups={row.groups} onOpen={onOpenGroup} />
 
       {(row.strengths?.length || row.gaps?.length) ? (
         <div className="mt-2 grid gap-1.5 text-xs sm:grid-cols-2">
@@ -805,8 +1110,14 @@ function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNe
       <footer className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
         <CrmLink to={profileLink} className={FLOW_BTN.view}><UserCheck size={12} aria-hidden /> {row.kind === "candidate" ? "Open candidate" : "Open employee"}</CrmLink>
         {cv && <a href={cv} target="_blank" rel="noreferrer" className={FLOW_BTN.neutral}><FileText size={12} aria-hidden /> CV</a>}
-        {isTa && row.kind === "candidate" && (
-          <CrmLink to={`candidates/${row.candidate_id}?tab=matching`} className={FLOW_BTN.primary}><Send size={12} aria-hidden /> Apply to positions</CrmLink>
+        {row.kind === "candidate" && row.candidate_id && (
+          <>
+            <button type="button" className={FLOW_BTN.primary} onClick={() => setDialog("fit")}
+              title="Every open position scored against this candidate's resumes">
+              <Target size={12} aria-hidden /> {canApply ? "Check fit & apply" : "Check fit"}
+            </button>
+            <button type="button" className={FLOW_BTN.edit} onClick={() => setDialog("group")}><FolderPlus size={12} aria-hidden /> Add to group</button>
+          </>
         )}
         <span className="ml-auto text-[11px] text-muted">
           {email || row.phone || ""}{touched ? ` · last activity ${touched}` : ""}
@@ -815,16 +1126,325 @@ function PoolCard({ row, onAddSkill, selectable, selected, onSelect, toast, isNe
           <PoolOptOutButton compact candidateId={row.candidate_id} name={row.name} toast={toast} onDone={onChanged} />
         )}
       </footer>
+      {dialog === "group" && row.candidate_id && (
+        <AddToGroupDialog people={[{ candidate_id: row.candidate_id, name: row.name }]} skillSuggestions={skillNames}
+          presetSkills={presetSkills} onClose={() => setDialog(null)} onDone={done} />
+      )}
+      {dialog === "skill" && row.candidate_id && (
+        <TagSkillDialog candidateId={row.candidate_id} name={row.name} suggestions={skillNames}
+          has={[...row.matched.map((m) => m.skill), ...row.skills.map((x) => x.name)]} onClose={() => setDialog(null)} onDone={done} />
+      )}
+      {dialog === "fit" && row.candidate_id && (
+        <FitApplyDialog candidateId={row.candidate_id} name={row.name} onClose={() => setDialog(null)} onDone={done} />
+      )}
     </article>
   );
 }
 
 // ---------------------------------------------------------------------------
+// Cards | List — the same people, two ways to read them (24 Nov 2026)
+// ---------------------------------------------------------------------------
+
+export type PoolView = "cards" | "list";
+const VIEW_KEY = "crm.talent.view";
+
+/** The view this login last chose (cards by default; storage may be blocked). */
+export function readPoolView(): PoolView {
+  try { return window.localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards"; } catch { return "cards"; }
+}
+
+function usePoolView(): [PoolView, (v: PoolView) => void] {
+  const [view, setView] = useState<PoolView>(readPoolView);
+  const set = useCallback((v: PoolView) => {
+    setView(v);
+    try { window.localStorage.setItem(VIEW_KEY, v); } catch { /* per-viewer convenience only */ }
+  }, []);
+  return [view, set];
+}
+
+function ViewSwitch({ view, onChange }: { view: PoolView; onChange: (v: PoolView) => void }) {
+  const btn = (v: PoolView, icon: React.ReactNode, label: string) => (
+    <button type="button" role="radio" aria-checked={view === v} onClick={() => onChange(v)}
+      className={`inline-flex items-center gap-1.5 rounded-control px-3 py-1.5 text-xs font-semibold transition-colors ${
+        view === v ? "bg-brand-600 text-white shadow-raised" : "text-secondary hover:bg-surface-2 hover:text-primary"}`}>
+      {icon}{label}
+    </button>
+  );
+  return (
+    <div role="radiogroup" aria-label="How to show the people" className="inline-flex rounded-control border border-subtle bg-surface-1 p-0.5">
+      {btn("cards", <LayoutGrid size={13} aria-hidden />, "Cards")}
+      {btn("list", <List size={13} aria-hidden />, "List")}
+    </div>
+  );
+}
+
+export type ListSkill = { name: string; evidence: Evidence | null; rating: number | null; missing?: boolean };
+
+/** The skills one list row has room for: the asked skills first (strongest
+ *  evidence), then the missing nice-to-haves, else the person's own skills. */
+export function listSkills(row: Pick<PoolRow, "matched" | "missing_nice" | "skills">, max = 4): { shown: ListSkill[]; more: number } {
+  const asked: ListSkill[] = [
+    ...row.matched.map((m) => ({ name: m.skill, evidence: m.best, rating: m.rating })),
+    ...row.missing_nice.map((s) => ({ name: s, evidence: null, rating: null, missing: true })),
+  ];
+  const all: ListSkill[] = asked.length ? asked : row.skills.map((s) => ({ name: s.name, evidence: s.best, rating: s.rating }));
+  const total = asked.length ? asked.length + row.skills.length : row.skills.length;
+  const shown = all.slice(0, max);
+  return { shown, more: Math.max(0, total - shown.length) };
+}
+
+/** One line about their history with us: count, and the latest candidacy. */
+export function historyLine(apps: PoolRow["applications"]): { count: string; latest: HistoryItem | null } | null {
+  if (!apps || !apps.count) return null;
+  const parts = [`${apps.count} application${apps.count === 1 ? "" : "s"}`];
+  if (apps.live) parts.push(`${apps.live} live`);
+  if (apps.joined) parts.push(`${apps.joined} joined`);
+  if (apps.rejected) parts.push(`${apps.rejected} closed`);
+  return { count: parts.join(" · "), latest: apps.recent[0] || null };
+}
+
+function noticeText(row: PoolRow): string {
+  if (row.serving_notice || row.last_working_day) {
+    return row.last_working_day ? `LWD ${fmtDateShort(row.last_working_day)}` : "Serving notice";
+  }
+  return row.notice_period || "Not recorded";
+}
+
+const TH = "sticky top-0 z-[1] border-b border-subtle bg-surface-2 px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wide text-muted";
+
+/** The list view: one comfortable row per person, everything that decides a
+ *  call on one line; a click opens the full card under the row. */
+function PoolList({ rows, isSelected, onSelect, renderCard, toast, newKeys, skillNames, presetSkills, onChanged, dim }: {
+  rows: PoolRow[];
+  isSelected: (r: PoolRow) => boolean;
+  onSelect: (r: PoolRow, on: boolean) => void;
+  renderCard: (r: PoolRow) => React.ReactNode;
+  toast: (m: string, k?: "ok" | "err") => void;
+  newKeys?: Set<string>;
+  skillNames: string[];
+  presetSkills?: GroupSkill[];
+  onChanged: () => void;
+  dim?: boolean;
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const selectable = rows.filter((r) => r.kind === "candidate" && r.candidate_id);
+  const allOn = selectable.length > 0 && selectable.every(isSelected);
+  const someOn = selectable.some(isSelected);
+  const toggle = (key: string) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  return (
+    <div className={`overflow-hidden rounded-card border border-subtle bg-surface-1 shadow-raised ${dim ? "opacity-60" : ""}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-3 py-2 text-xs text-muted">
+        <span>Click a row to see the full card · tick people to add them to a group or apply them</span>
+        {open.size > 0
+          ? <button type="button" className="font-semibold text-brand-700 hover:underline dark:text-brand-300" onClick={() => setOpen(new Set())}>Close all cards</button>
+          : <button type="button" className="font-semibold text-brand-700 hover:underline dark:text-brand-300" onClick={() => setOpen(new Set(rows.map((r) => r.key)))}>Open all cards</button>}
+      </div>
+      <div className="max-h-[75vh] overflow-auto">
+        <table className="w-full min-w-[1040px] border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr>
+              <th className={`${TH} sticky left-0 z-[2] w-10`}>
+                <input type="checkbox" aria-label="Select everyone on this page" checked={allOn}
+                  ref={(el) => { if (el) el.indeterminate = !allOn && someOn; }}
+                  disabled={selectable.length === 0}
+                  onChange={() => selectable.forEach((r) => onSelect(r, !allOn))} />
+              </th>
+              <th className={`${TH} sticky left-10 z-[2] min-w-[15rem]`}>Candidate</th>
+              <th className={`${TH} w-16 text-center`}>Match</th>
+              <th className={`${TH} min-w-[11rem]`}>Skills</th>
+              <th className={TH}>Exp. · location</th>
+              <th className={TH}>CTC</th>
+              <th className={TH}>Notice</th>
+              <th className={`${TH} min-w-[10rem]`}>With us</th>
+              <th className={`${TH} text-right`}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <PoolListRow key={r.key} row={r} zebra={i % 2 === 1} open={open.has(r.key)} onToggle={() => toggle(r.key)}
+                selected={isSelected(r)} onSelect={(on) => onSelect(r, on)} toast={toast} isNew={!!newKeys?.has(r.key)}
+                skillNames={skillNames} presetSkills={presetSkills} onChanged={onChanged} card={open.has(r.key) ? renderCard(r) : null} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PoolListRow({ row, zebra, open, onToggle, selected, onSelect, toast, isNew, skillNames, presetSkills, onChanged, card }: {
+  row: PoolRow; zebra: boolean; open: boolean; onToggle: () => void;
+  selected: boolean; onSelect: (on: boolean) => void;
+  toast: (m: string, k?: "ok" | "err") => void; isNew: boolean;
+  skillNames: string[]; presetSkills?: GroupSkill[]; onChanged: () => void;
+  card: React.ReactNode;
+}) {
+  const canApply = useCanApplyFromPool();
+  const [dialog, setDialog] = useState<"group" | "fit" | null>(null);
+  const done = (m: string) => { setDialog(null); toast(m); onChanged(); };
+  const profileLink = row.kind === "candidate" ? `candidates/${row.candidate_id}` : `employees/${row.employee_id}`;
+  const email = row.email && !isPlaceholderEmail(row.email) ? row.email : null;
+  const cv = fileViewHref(row.cv_url, `${row.name} CV`);
+  const now = lakh(row.current_ctc);
+  const exp = lakh(row.expected_ctc);
+  const skills = listSkills(row);
+  const hist = historyLine(row.applications);
+  const touched = daysAgo(row.last_touch);
+  const isCandidate = row.kind === "candidate" && !!row.candidate_id;
+  const bg = selected ? "bg-brand-50 dark:bg-brand-900/30" : open ? "bg-surface-2"
+    : `${zebra ? "bg-surface-2/40" : "bg-surface-1"} group-hover:bg-brand-50/60 dark:group-hover:bg-brand-900/20`;
+  const td = `border-b border-subtle px-3 py-3 align-top ${bg}`;
+  // Clicks on links, buttons, inputs and the row's portalled dialogs never toggle the card.
+  const onRow = (e: React.MouseEvent<HTMLTableRowElement>) => {
+    if (!isOwnDomClick(e)) return;
+    if ((e.target as HTMLElement).closest("a,button,input,label,select")) return;
+    onToggle();
+  };
+  return (
+    <>
+      <tr onClick={onRow} className="group cursor-pointer" aria-expanded={open}>
+        <td className={`${td} sticky left-0 z-[1]`}>
+          {isCandidate && <input type="checkbox" aria-label={`Select ${row.name}`} checked={selected} onChange={(e) => onSelect(e.target.checked)} />}
+        </td>
+        <td className={`${td} sticky left-10 z-[1]`}>
+          <div className="flex items-start gap-2.5">
+            <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ${
+              row.kind === "employee" ? "bg-gradient-to-br from-teal-500 to-emerald-600" : "bg-gradient-to-br from-brand-500 to-indigo-600"}`}>
+              {initials(row.name)}
+            </span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1">
+                <CrmLink to={profileLink} className="font-bold text-primary hover:underline">{row.name}</CrmLink>
+                <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold ring-1 ring-inset ${AVAILABILITY_LOOK[row.availability]}`}>
+                  {row.availability_label}{row.internal?.employee_code ? ` · ${row.internal.employee_code}` : ""}
+                </span>
+                {isNew && <span className="rounded-full bg-amber-500 px-1.5 py-px text-[10px] font-bold text-white">New</span>}
+              </div>
+              <ContactLine phone={row.phone} email={email} toast={toast} />
+            </div>
+          </div>
+        </td>
+        <td className={`${td} text-center`}>
+          {row.score !== null ? <div className="inline-flex"><ScoreIndicator score={row.score} size="sm" showLabel={false} /></div>
+            : <span className="text-xs text-muted" title="Pick skills to see a match score">—</span>}
+        </td>
+        <td className={td}>
+          {skills.shown.length === 0 ? <span className="text-xs text-muted">No skills on record</span> : (
+            <div className="flex max-w-[16rem] flex-wrap gap-1">
+              {skills.shown.map((s) => <SkillChip key={s.name} name={s.name} evidence={s.evidence} rating={s.rating} missing={s.missing} />)}
+              {skills.more > 0 && <span className="self-center text-[11px] font-semibold text-muted">+{skills.more}</span>}
+            </div>
+          )}
+          {row.technical_domain && <div className="mt-1 max-w-[16rem] truncate text-[11px] text-muted">{row.technical_domain}</div>}
+        </td>
+        <td className={td}>
+          <div className="whitespace-nowrap tabular-nums">
+            {row.experience_years !== null ? <><b className="text-primary">{row.experience_years}</b><span className="text-xs text-muted"> yrs</span></> : <span className="text-muted">—</span>}
+          </div>
+          <div className="max-w-[9rem] truncate text-xs text-secondary" title={row.preferred_locations ? `Lives in ${row.city || "—"} · prefers ${row.preferred_locations}` : undefined}>
+            <MapPin size={10} className="mr-0.5 inline" aria-hidden />{row.city || "—"}{row.preferred_locations ? <span className="text-muted"> → {row.preferred_locations}</span> : null}
+          </div>
+        </td>
+        <td className={`${td} whitespace-nowrap tabular-nums`}>
+          {now || exp ? <>
+            <div className="text-xs text-muted">Now {now || "—"}</div>
+            <div><b className="text-primary">{exp || "—"}</b> <span className="text-[11px] text-muted">expected</span></div>
+          </> : <span className="text-muted">—</span>}
+        </td>
+        <td className={td}>
+          <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${noticeLook(row.notice_bucket, row.serving_notice)}`}>
+            <Clock size={11} aria-hidden />{noticeText(row)}
+          </span>
+        </td>
+        <td className={td}>
+          <div className="max-w-[13rem] text-xs">
+            {hist ? <>
+              <div className="font-semibold text-secondary">{hist.count}</div>
+              {hist.latest && (
+                <div className="mt-0.5 truncate text-muted" title={`${hist.latest.opp_id} · ${hist.latest.opportunity_title}${hist.latest.customer_name ? ` · ${hist.latest.customer_name}` : ""}`}>
+                  <CrmLink to={`profiles/${hist.latest.profile_id}`} className="font-semibold text-primary hover:underline">{hist.latest.opp_id}</CrmLink>
+                  {" "}<span className={`font-semibold ${OUTCOME_LOOK[hist.latest.outcome] || ""}`}>{hist.latest.stage_label}</span>
+                </div>
+              )}
+            </> : <div className="font-semibold text-secondary">New to us</div>}
+            <div className="mt-0.5 truncate text-[11px] text-muted" title={row.added_by ? `Added by ${row.added_by}` : undefined}>
+              {row.added_at ? `Added ${fmtDateShort(row.added_at)}` : ""}{touched ? `${row.added_at ? " · " : ""}active ${touched}` : ""}
+            </div>
+          </div>
+        </td>
+        <td className={`${td} text-right`}>
+          <div className="flex items-center justify-end gap-1">
+            {isCandidate && (
+              <button type="button" className={`${FLOW_BTN.primary} whitespace-nowrap`} onClick={() => setDialog("fit")}
+                title="Every open position scored against this candidate's resumes">
+                <Target size={12} aria-hidden /> {canApply ? "Fit & apply" : "Fit"}
+              </button>
+            )}
+            {cv && <a href={cv} target="_blank" rel="noreferrer" className={ICON_BTN_SM} title="Open the CV" aria-label={`Open ${row.name}'s CV`}><FileText size={14} aria-hidden /></a>}
+            {isCandidate && (
+              <button type="button" className={ICON_BTN_SM} title="Add to group" aria-label={`Add ${row.name} to a group`} onClick={() => setDialog("group")}>
+                <FolderPlus size={14} aria-hidden />
+              </button>
+            )}
+            <button type="button" className={ICON_BTN_SM} onClick={onToggle} aria-label={open ? "Close the card" : "Open the full card"} title={open ? "Close the card" : "Open the full card"}>
+              <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+            </button>
+          </div>
+          {dialog === "group" && row.candidate_id && (
+            <AddToGroupDialog people={[{ candidate_id: row.candidate_id, name: row.name }]} skillSuggestions={skillNames}
+              presetSkills={presetSkills} onClose={() => setDialog(null)} onDone={done} />
+          )}
+          {dialog === "fit" && row.candidate_id && (
+            <FitApplyDialog candidateId={row.candidate_id} name={row.name} onClose={() => setDialog(null)} onDone={done} />
+          )}
+        </td>
+      </tr>
+      {open && card && (
+        <tr>
+          <td colSpan={9} className="border-b border-subtle bg-surface-2 px-3 pb-3 pt-1">
+            <div className="sticky left-3 max-w-[min(100%,62rem)]">{card}</div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/** Mobile (call + copy) and email on one small line under the name. */
+function ContactLine({ phone, email, toast }: { phone: string | null; email: string | null; toast: (m: string, k?: "ok" | "err") => void }) {
+  const clean = (phone || "").trim();
+  const hasPhone = clean.replace(/\D/g, "").length >= 6;
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+      {hasPhone ? (
+        <span className="inline-flex items-center gap-1 font-semibold text-indigo-700 dark:text-indigo-300">
+          <a href={`tel:${clean.replace(/\s+/g, "")}`} className="inline-flex items-center gap-1 hover:underline"><Phone size={10} aria-hidden />{clean}</a>
+          <button type="button" aria-label="Copy mobile number" title="Copy" className="opacity-60 hover:opacity-100"
+            onClick={() => { void navigator.clipboard?.writeText(clean).then(() => toast("Mobile number copied")); }}>
+            <Copy size={10} aria-hidden />
+          </button>
+        </span>
+      ) : <span className="inline-flex items-center gap-1 text-muted"><Phone size={10} aria-hidden />No mobile</span>}
+      {email && <a href={`mailto:${email}`} className="max-w-[12rem] truncate text-muted hover:underline" title={email}>{email}</a>}
+    </div>
+  );
+}
+
+const ICON_BTN_SM ="inline-flex h-8 w-8 items-center justify-center rounded-control border border-subtle bg-surface-1 text-secondary hover:bg-surface-2 hover:text-primary";
+
+// ---------------------------------------------------------------------------
 // Position mode
 // ---------------------------------------------------------------------------
 
-function PositionMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k?: "ok" | "err") => void }) {
-  const isTa = useHasRole("TA");
+function PositionMode({ meta, toast, onOpenGroup, skillNames }: {
+  meta: Meta | null; toast: (m: string, k?: "ok" | "err") => void; onOpenGroup: (id: number) => void; skillNames: string[];
+}) {
+  const isTa = useCanApplyFromPool();
+  const [grouping, setGrouping] = useState(false);
   const [reqId, setReqId] = useSessionState<string>("talent.position", "");
   const [rows, setRows] = useState<PoolRow[]>([]);
   const [pmeta, setPmeta] = useState<PositionMeta | null>(null);
@@ -833,6 +1453,7 @@ function PositionMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k
   const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [applying, setApplying] = useState(false);
+  const [view, setView] = usePoolView();
 
   const load = useCallback(() => {
     if (!reqId) { setRows([]); setPmeta(null); return; }
@@ -856,6 +1477,9 @@ function PositionMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k
   const shown = rows.filter((r) => !onlyAvailable || r.availability === "available" || r.availability === "bench");
   const chosen = rows.filter((r) => r.candidate_id && picked.has(r.candidate_id));
   const basis = pmeta?.basis;
+  const positionSkills: GroupSkill[] | undefined = basis
+    ? [...basis.mandatory_skills.map((x) => ({ name: x, must: true })), ...basis.optional_skills.map((x) => ({ name: x, must: false }))]
+    : undefined;
 
   return (
     <div className="space-y-3">
@@ -921,11 +1545,26 @@ function PositionMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k
             </div>
           ) : (
             <>
-              <div className="text-sm text-secondary"><b className="text-primary">{shown.length}</b> match{shown.length === 1 ? "" : "es"} · best first</div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-secondary"><b className="text-primary">{shown.length}</b> match{shown.length === 1 ? "" : "es"} · best first</div>
+                <ViewSwitch view={view} onChange={setView} />
+              </div>
+              {view === "list" ? (
+                <PoolList rows={shown} toast={toast} skillNames={skillNames} onChanged={load} presetSkills={positionSkills}
+                  isSelected={(r) => !!r.candidate_id && picked.has(r.candidate_id)}
+                  onSelect={(r, on) => setPicked((prev) => {
+                    const next = new Set(prev);
+                    if (r.candidate_id) { if (on) next.add(r.candidate_id); else next.delete(r.candidate_id); }
+                    return next;
+                  })}
+                  renderCard={(r) => <PoolCard row={r} toast={toast} onChanged={load} onOpenGroup={onOpenGroup}
+                    skillNames={skillNames} presetSkills={positionSkills} />} />
+              ) : (
               <div className="grid gap-3 xl:grid-cols-2">
                 {shown.map((r) => (
-                  <PoolCard key={r.key} row={r} toast={toast}
-                    selectable={isTa}
+                  <PoolCard key={r.key} row={r} toast={toast} onChanged={load} onOpenGroup={onOpenGroup} skillNames={skillNames}
+                    presetSkills={basis ? [...basis.mandatory_skills.map((x) => ({ name: x, must: true })), ...basis.optional_skills.map((x) => ({ name: x, must: false }))] : undefined}
+                    selectable={r.kind === "candidate"}
                     selected={!!r.candidate_id && picked.has(r.candidate_id)}
                     onSelect={(on) => setPicked((prev) => {
                       const next = new Set(prev);
@@ -934,114 +1573,39 @@ function PositionMode({ meta, toast }: { meta: Meta | null; toast: (m: string, k
                     })} />
                 ))}
               </div>
+              )}
             </>
           )}
 
-      {isTa && chosen.length > 0 && pmeta?.requirement && (
+      {chosen.length > 0 && pmeta?.requirement && (
         <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-2 rounded-card border border-brand-300 bg-surface-1 px-4 py-2.5 shadow-overlay">
           <span className="text-sm font-semibold text-primary">{chosen.length} selected</span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button type="button" className={FLOW_BTN.neutral} onClick={() => setPicked(new Set())}>Clear</button>
-            <button type="button" className={FLOW_BTN.success} onClick={() => setApplying(true)}>
-              <Send size={13} aria-hidden /> Apply {chosen.length} to this position
-            </button>
+            <button type="button" className={FLOW_BTN.edit} onClick={() => setGrouping(true)}><FolderPlus size={13} aria-hidden /> Save as a group</button>
+            {isTa && (
+              <button type="button" className={FLOW_BTN.success} onClick={() => setApplying(true)}>
+                <Send size={13} aria-hidden /> Apply {chosen.length} to this position
+              </button>
+            )}
           </div>
         </div>
       )}
       {applying && pmeta?.requirement && (
-        <ApplyToPositionDialog
+        <ApplyPeopleDialog
           requirement={pmeta.requirement}
-          people={chosen}
+          people={chosen.filter((r) => r.candidate_id).map((r) => ({ candidate_id: r.candidate_id!, name: r.name }))}
           onClose={() => setApplying(false)}
           onDone={(msg) => { setApplying(false); toast(msg); load(); }}
         />
       )}
-    </div>
-  );
-}
-
-type ApplyOutcome = { candidate_id: number; name: string; ok: boolean; message: string; profile_id?: number };
-
-/** Applies each ticked person to the position through the candidate page's own
- *  multi-apply (one request per person — each answers for itself, so one
- *  refusal never blocks the rest). */
-function ApplyToPositionDialog({ requirement, people, onClose, onDone }: {
-  requirement: { id: number; req_number: string; title: string };
-  people: PoolRow[];
-  onClose: () => void;
-  onDone: (message: string) => void;
-}) {
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<ApplyOutcome[] | null>(null);
-
-  const submit = async () => {
-    setBusy(true);
-    const out: ApplyOutcome[] = [];
-    for (const p of people) {
-      if (!p.candidate_id) continue;
-      try {
-        const res = await crmPost<{ ok: boolean; message?: string; profile_id?: number }[]>(
-          `/api/candidates/${p.candidate_id}/multi-apply`,
-          { items: [{ requirement_id: requirement.id, resume_id: null }], note: note.trim() || null },
-        );
-        const r = (res.data || [])[0];
-        out.push({ candidate_id: p.candidate_id, name: p.name, ok: !!r?.ok, message: r?.message || res.message || "",
-                   profile_id: r?.profile_id });
-      } catch (e: any) {
-        out.push({ candidate_id: p.candidate_id, name: p.name, ok: false, message: e?.message || "Could not apply" });
-      }
-    }
-    setResults(out);
-    setBusy(false);
-  };
-  const okCount = results?.filter((r) => r.ok).length || 0;
-
-  return (
-    <Modal title="Apply from the Talent Pool" onClose={results ? () => onDone(`${okCount} applied to ${requirement.title}`) : onClose} medium
-      hero={<DialogHero tone="emerald" icon={Send} eyebrow="Talent Pool" title={`Apply ${people.length} to ${requirement.title}`}
-        subtitle={`${requirement.req_number} · each application starts at Sourcing with the candidate's main CV; the ATS scores it straight away.`}
-        flow={{ steps: ["Pick people", "Apply", "Sourcing", "Technical Screening"], current: 1 }} />}>
-      {!results ? (
-        <div className="space-y-4">
-          <DialogSection n={1} title="Who" done>
-            <ul className="flex flex-wrap gap-1.5">
-              {people.map((p) => (
-                <li key={p.key} className="rounded-full bg-surface-2 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-subtle">{p.name}</li>
-              ))}
-            </ul>
-          </DialogSection>
-          <DialogSection n={2} title="Note on the applications" optional>
-            <ReasonBox id="pool-note" label="Note" value={note} onChange={setNote} max={500}
-              placeholder="e.g. Found in the Talent Pool — strong AUTOSAR match"
-              picks={["Found in the Talent Pool", "Spoke on the phone — interested", "Strong match on the must-have skills"]} />
-          </DialogSection>
-          <WhatHappens tone="emerald" items={[
-            { icon: UserCheck, text: "Each person gets a Sourcing candidacy on this position, with you as TA owner." },
-            { icon: Award, text: "The ATS scores their CV against the position at once." },
-            { icon: Send, text: "Send the opening email or Technical Screening from Applied Candidates as usual." },
-          ]} />
-          <DialogActions onCancel={onClose} busy={busy} tone="emerald" icon={Send} label={`Apply ${people.length}`}
-            busyLabel="Applying…" onConfirm={submit} />
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <p className="text-sm text-secondary"><b className="text-primary">{okCount}</b> of {results.length} applied.</p>
-          <ul className="divide-y divide-subtle rounded-control border border-subtle">
-            {results.map((r) => (
-              <li key={r.candidate_id} className="flex items-start justify-between gap-2 px-3 py-2 text-sm">
-                <span className="font-semibold text-primary">{r.name}</span>
-                <span className={`text-right text-xs ${r.ok ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
-                  {r.ok ? (r.profile_id ? <CrmLink to={`profiles/${r.profile_id}`} className="underline">Applied — open</CrmLink> : "Applied") : r.message}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="flex justify-end">
-            <button type="button" className={FLOW_BTN.primary} onClick={() => onDone(`${okCount} applied to ${requirement.title}`)}>Done</button>
-          </div>
-        </div>
+      {grouping && pmeta?.requirement && (
+        <AddToGroupDialog people={chosen.filter((r) => r.candidate_id).map((r) => ({ candidate_id: r.candidate_id!, name: r.name }))}
+          skillSuggestions={skillNames}
+          presetSkills={basis ? [...basis.mandatory_skills.map((x) => ({ name: x, must: true })), ...basis.optional_skills.map((x) => ({ name: x, must: false }))] : undefined}
+          onClose={() => setGrouping(false)}
+          onDone={(m, id) => { setGrouping(false); setPicked(new Set()); toast(m); if (id) onOpenGroup(id); }} />
       )}
-    </Modal>
+    </div>
   );
 }

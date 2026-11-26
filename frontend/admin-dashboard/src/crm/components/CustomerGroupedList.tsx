@@ -71,11 +71,16 @@ type Props<T> = {
   /** A strip of actions under a group's header (23 Oct 2026: "Set branch" on a
    *  receipts group with no branch). Return null for no strip. */
   groupActions?: (rows: T[]) => React.ReactNode;
+  /** Every group starts open (24 Nov 2026: one customer's receipts, branch by
+   *  branch — a handful of short groups). */
+  defaultOpen?: boolean;
+  /** Group order (default: by name). */
+  groupOrder?: (a: CustomerGroup<T>, b: CustomerGroup<T>) => number;
 };
 
 export function CustomerGroupedList<T>({
   rows, loading, columns, customerId, customerName, search = "", matches, noun,
-  summary, onRowClick, rowHref, rowActions, rowKey, empty, groupActions,
+  summary, onRowClick, rowHref, rowActions, rowKey, empty, groupActions, defaultOpen = false, groupOrder,
 }: Props<T>) {
   const [rowMenu, setRowMenu] = useState<RowMenuState>(null);
   const groups = useMemo<CustomerGroup<T>[]>(() => {
@@ -89,14 +94,14 @@ export function CustomerGroupedList<T>({
       g.rows.push(r);
       by.set(cid, g);
     }
-    return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows, search, matches, customerId, customerName]);
+    return [...by.values()].sort(groupOrder || ((a, b) => a.name.localeCompare(b.name)));
+  }, [rows, search, matches, customerId, customerName, groupOrder]);
 
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const toggle = (cid: number) => setExpanded((p) => ({ ...p, [cid]: !p[cid] }));
   // A search means "find that row" — open every matching section; otherwise
   // a single customer's tab opens itself so the page is never a lone header.
-  const isOpen = (cid: number) => (search.trim() ? expanded[cid] !== false
+  const isOpen = (cid: number) => (search.trim() || defaultOpen ? expanded[cid] !== false
     : groups.length === 1 ? expanded[cid] !== false : !!expanded[cid]);
 
   if (loading) return <div className="p-6 text-sm text-muted">Loading…</div>;

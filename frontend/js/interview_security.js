@@ -9,6 +9,7 @@
 import { apiFetch } from "./core.js";
 import { state } from "./state.js";
 import { getAuthUserRaw, getAuthToken } from "./auth/session.js";
+import { isPhoneMode, stopPhoneGuards } from "./phone_mode.js";
 
 const MAX_WARNINGS = 3;
 /**
@@ -76,6 +77,11 @@ const INTEGRITY_VIOLATION_TYPES = new Set([
   "room_scan_started",
   "room_scan_done",
   "room_scan_skipped",
+  // 25 Nov 2026 — a phone interview (the template allowed one).
+  "phone_interview",
+  "split_screen",
+  "orientation_changed",
+  "camera_interrupted",
 ]);
 
 const VIOLATION_LABELS = {
@@ -98,6 +104,10 @@ const VIOLATION_LABELS = {
   screen_share_missing: "Screen not recorded",
   camera_monitor_unavailable: "Face / eye monitor unavailable",
   gaze_away: "Looked away from the screen",
+  phone_interview: "Interview on a phone",
+  split_screen: "Split screen / floating window",
+  orientation_changed: "Phone turned sideways",
+  camera_interrupted: "Camera interrupted",
 };
 
 /* Events that only inform the Integrity tab — they never raise the on-screen
@@ -108,6 +118,8 @@ const SILENT_VIOLATION_TYPES = new Set([
   // 13 Nov 2026 — each check shows its own soft notice, never the strike modal.
   "gesture_prompt_ok", "gesture_prompt_missed", "headphones_disconnected", "headphones_reconnected",
   "audio_device_changed", "low_light", "reading_pattern", "room_scan_started", "room_scan_done", "room_scan_skipped",
+  // 25 Nov 2026 — phone notes; split screen is a strike and shows the modal.
+  "phone_interview", "orientation_changed", "camera_interrupted",
 ]);
 
 /* What the warning modal says for the strike that raised it (13 Oct 2026 —
@@ -117,6 +129,15 @@ const WARNING_REASON = {
     "Another person was detected on your camera. Only you may be visible during the interview — please make sure you are alone.",
   clipboard: "Copy and paste are not allowed during the interview.",
   devtools: "Developer tools are not allowed during the interview.",
+};
+
+/* On a phone the same strikes mean something else (25 Nov 2026). */
+const PHONE_WARNING_REASON = {
+  visibility_hidden: "You left the interview app. Stay on this page until the interview ends — do not open other apps.",
+  tab_switch: "You left the interview app. Stay on this page until the interview ends — do not open other apps.",
+  window_blur: "Something covered the interview (a notification, another app or a call). Please return and stay on this page.",
+  focus_lost: "Something covered the interview (a notification, another app or a call). Please return and stay on this page.",
+  split_screen: "Split screen or a floating window was detected. Close the other app and keep the interview on the whole screen.",
 };
 
 const WARNING_COPY = {
@@ -282,7 +303,9 @@ async function _onFullscreenGateClick() {
  * Blocks until the candidate enters fullscreen (required before first question).
  */
 export function requireFullscreenBeforeInterview() {
-  if (isFullscreenActive()) return Promise.resolve(true);
+  // A phone has no reliable full screen (none at all on iPhone) — the phone
+  // checks in phone_mode.js stand in for it (25 Nov 2026).
+  if (isPhoneMode() || isFullscreenActive()) return Promise.resolve(true);
   createFullscreenGateModal();
   if (!fullscreenGateModal) return Promise.resolve(false);
   fullscreenGateModal.style.display = "flex";
@@ -356,7 +379,8 @@ function showWarning(level, type = "") {
   // candidate must never be ended on a strike they were not warned about.
   const warn = WARNING_COPY.default[Math.min(Math.max(level, 1), 2) - 1] || WARNING_COPY.default[0];
   document.getElementById("secWarnTitle").textContent = warn.title;
-  document.getElementById("secWarnMsg").textContent = WARNING_REASON[type] || warn.message;
+  document.getElementById("secWarnMsg").textContent =
+    (isPhoneMode() && PHONE_WARNING_REASON[type]) || WARNING_REASON[type] || warn.message;
   const shown = Math.min(Math.max(level, 1), MAX_WARNINGS);
   const last = shown >= MAX_WARNINGS;
   document.getElementById("secWarnCounter").textContent = last
@@ -402,6 +426,7 @@ function updateBadge() {
 }
 
 async function restoreFullscreenAfterReturn() {
+  if (isPhoneMode()) return;
   if (!securityActive || document.hidden || isFullscreenActive() || fullscreenRecoveryInFlight) return;
   const now = Date.now();
   if (now - lastFullscreenRecoveryAttempt < 2000) return;
@@ -635,7 +660,7 @@ function onWindowFocus() {
 }
 
 function onFullscreenChange() {
-  if (!securityActive) return;
+  if (!securityActive || isPhoneMode()) return;
   if (!isFullscreenActive()) {
     void reportViolation("fullscreen_exit", "Candidate exited fullscreen mode");
     return;
@@ -836,6 +861,7 @@ export function activateInterviewSecurity() {
 
 export function deactivateInterviewSecurity() {
   securityActive = false;
+  stopPhoneGuards();
   unbindIntegrityListeners();
   if (warningModal) warningModal.style.display = "none";
   if (violationBadge) violationBadge.style.display = "none";

@@ -21,6 +21,7 @@ import { aiDecisionLabel } from "../lib/aiDecision";
 import { useHasRole, useMe } from "../CrmApp";
 import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
 import { RmgVerdictHero } from "../components/ScreeningDecisionModal";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "../components/RejectSkills";
 import { DialogActions } from "../components/dialogKit";
 import { AiInterviewOverview, WrongTemplateNotice, useCanOpenAiReport, type TemplateMismatch } from "../components/AiInterviewOverview";
 import { InterviewRoundsModal } from "../components/InterviewRoundsModal";
@@ -789,6 +790,7 @@ function RmgDecisionBanner({
    * field-level error and some browsers let users suppress it entirely,
    * which made Submit/Reject silently dead). */
   const [decision, setDecision] = useState<"sales" | "reject" | null>(null);
+  const [rejSkills, setRejSkills] = useRejectSkills({ profileId: decision === "reject" ? profileId : null });
   const [decisionComment, setDecisionComment] = useState("");
   const [decisionErr, setDecisionErr] = useState("");
   /* "Ask TA to collect the notice period" (2 Sep 2026, user request) —
@@ -802,7 +804,7 @@ function RmgDecisionBanner({
   const unrated = (skillEvaluations || []).filter((s) => s.reviewer_rated == null).length;
 
   /* Submit to Sales is pre-written from the interviews (28 Sep 2026, user ask)
-     — the same note the Screening Desk uses (`useHandoverNote`). */
+     — the same note the RMG Desk uses (`useHandoverNote`). */
   const handover = useHandoverNote(profileId, decision === "sales");
   useEffect(() => {
     if (decision === "sales" && handover.note) setDecisionComment((c) => (c.trim() ? c : handover.note));
@@ -822,6 +824,8 @@ function RmgDecisionBanner({
         : "A rejection reason of at least 5 characters is required");
       return;
     }
+    const skillProblem = isSales ? null : rejectSkillsProblem(rejSkills);
+    if (skillProblem) { showToast(skillProblem, "err"); return; }
     setBusy(decision);
     try {
       const res = await crmPost(`/api/candidate-profiles/${profileId}/status-transition`, {
@@ -829,7 +833,8 @@ function RmgDecisionBanner({
         comment: decisionComment.trim(),
         ask_notice_period: isSales && askNotice,
       });
-      showToast(res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected"));
+      const n = isSales ? 0 : await saveRejectSkills(rejSkills);
+      showToast((res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected")) + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added` : ""));
       setDecision(null);
       onDone();
     } catch (e: any) {
@@ -988,6 +993,7 @@ function RmgDecisionBanner({
                 <p className="mt-1 text-xs text-muted">Written from the recorded interviews and skill ratings — edit anything before you submit.</p>
               )}
             </Field>
+            {decision === "reject" && <RejectSkillsField state={rejSkills} onChange={setRejSkills} />}
           </div>
         </Modal>
       )}

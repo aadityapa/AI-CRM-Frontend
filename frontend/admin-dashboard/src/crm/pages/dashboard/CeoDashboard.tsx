@@ -44,6 +44,8 @@ import type { RevenueReportData } from "../reports/RevenueReport";
 import { PaceCard } from "./HiringControlTower";
 import type { HiringData } from "./HiringControlTower";
 import { useDeskData } from "./DeskWidgets";
+import { subTabVisible } from "../../useAccess";
+import { useMeMaybe } from "../../CrmApp";
 import { BillingTracker } from "./BillingTracker";
 import { InvoiceApprovals } from "./InvoiceApprovals";
 import { bucketLink, insightLink } from "./CeoInsightPage";
@@ -103,6 +105,8 @@ export type FinanceData = {
     mapping_changed_on?: string | null; mapped_later?: number })[];
   /** 5 Nov 2026 — received amounts still on account (not counted as Collected). */
   on_account?: OnAccount | null;
+  /** 21 Nov 2026 — the period's invoices by the Invoices tabs' stage rule. */
+  invoice_stages?: InvoiceStages | null;
   /** 6 Nov 2026 — the period's bank / TDS split (services/money_split). */
   money?: Partial<Record<MoneyKey | "expected_tds", number>> & { tds_rate_pct?: number;
     /** 20 Nov 2026 — what Total Due is made of (services/cash_month.due_breakdown). */
@@ -399,6 +403,57 @@ export function mappingNotes(rows: { label: string; mapping_changed_on?: string 
     .sort((a, b) => (a.on < b.on ? 1 : a.on > b.on ? -1 : 0));
 }
 
+type StageCell = { count: number; amount: number };
+export type InvoiceStages = {
+  period_label: string; count: number; stages: Record<string, StageCell>;
+  before: { from: string; to: string; count: number; stages: Record<string, StageCell> } | null;
+};
+/** The Invoices tab each stage opens (keys of `crm/lib/invoiceStages`). */
+const STAGE_STRIP: { stage: string; label: string; tab: string; tone: string }[] = [
+  { stage: "paid", label: "Paid", tab: "Paid", tone: "border-emerald-300 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-300" },
+  { stage: "partially_paid", label: "Partially paid", tab: "Partially_Paid", tone: "border-sky-300 text-sky-700 dark:border-sky-500/40 dark:text-sky-300" },
+  { stage: "unpaid", label: "Unpaid", tab: "Unpaid", tone: "border-rose-300 text-rose-700 dark:border-rose-500/40 dark:text-rose-300" },
+  { stage: "pending_einvoice", label: "Pending e-invoice", tab: "Customer_Approved", tone: "border-amber-300 text-amber-700 dark:border-amber-500/40 dark:text-amber-300" },
+  { stage: "awaiting_customer", label: "Awaiting customer", tab: "Awaiting_Customer", tone: "border-subtle text-secondary" },
+];
+
+/** 21 Nov 2026 (CEO: "we paid 139 invoices and the dashboard did not move").
+ *  The Invoices tabs count every invoice since the data start; this tab counts the
+ *  invoices whose WORK month is in the period. One line ties the two together. */
+export function InvoiceStagesStrip({ s }: { s: InvoiceStages | null | undefined }) {
+  if (!s) return null;
+  const b = s.before;
+  return (
+    <div className="rounded-card border border-subtle bg-surface-1 p-3 shadow-raised">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-secondary">
+          {num(s.count)} invoices in {s.period_label}
+        </span>
+        {STAGE_STRIP.map((x) => {
+          const c = s.stages[x.stage] || { count: 0, amount: 0 };
+          if (!c.count && x.stage === "awaiting_customer") return null;
+          return (
+            <CrmLink key={x.stage} to={`invoices?tab=${x.tab}`}
+                     className={`inline-flex items-center gap-1.5 rounded-pill border bg-surface-1 px-2.5 py-1 text-xs hover:shadow-raised ${x.tone}`}
+                     title={`${num(c.count)} invoice(s) of ${s.period_label} · ${inrCompact(c.amount)} before GST`}>
+              <span className="font-semibold">{x.label}</span>
+              <span className="tnum">{num(c.count)}</span>
+              <span className="tnum text-muted">· {inrCompact(c.amount)}</span>
+            </CrmLink>
+          );
+        })}
+      </div>
+      {b && b.count > 0 && (
+        <p className="mt-2 text-xs text-secondary">
+          The Invoices tabs also list <span className="font-semibold text-primary">{num(b.count)} invoice{b.count === 1 ? "" : "s"}</span>{" "}
+          for work from {fmtDateShort(b.from)} to {fmtDateShort(b.to)} ({num(b.stages.paid?.count ?? 0)} paid) — they belong to the
+          period before this one, so paying them moves that period's figures, not these. Pick that period above to see them.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The money in Received Amount that is not on any invoice yet — never counted
  *  as Collected until Finance maps it. */
 function OnAccountPanel({ oa, collectedLink }: { oa: OnAccount | null | undefined; collectedLink: string }) {
@@ -562,16 +617,12 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const totalDue = mo?.total_due ?? h.outstanding;
   const receivedEx = mo?.received_ex ?? null;
   const receivedExPct = receivedEx !== null && h.billed > 0 ? receivedEx / h.billed * 100 : null;
-  const collectionState = highGood(receivedPct, 90, 75);
   const marginState = highGood(m.gross_margin_pct, 30, 15);
   // 8 Nov 2026 (user: "for now Gross margin — we do not track expense"): with people
   // cost switched off (Settings ▸ Organisation ▸ Billing) every cost / margin figure
-  // is hidden; the tile becomes "Ready to bill" and the dial "Overdue share".
+  // is hidden; the tile becomes "Ready to bill".
   const showCost = d.track_people_cost !== false;
   const ready = d.pipeline.approved_uninvoiced;
-  // Overdue ÷ everything still open to date (both from the ageing rule).
-  const overduePct = h.outstanding > 0 ? Math.min(100, (d.ageing.overdue_total / h.outstanding) * 100) : null;
-  const overdueState = lowGood(overduePct, 20, 40);
   // At the FY zoom the target is the FY target; `month_*` is the SELECTED period's
   // figure at month / quarter zoom (the report's naming, kept as-is).
   const isFy = period.kind === "fy";
@@ -581,7 +632,6 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
   const target = scoped ? null : isFy ? t.fy_target : t.month_target;
   const attainment = isFy ? t.fy_attainment_pct : t.month_attainment_pct;
   const gap = target === null ? null : Math.max(0, target - h.billed);
-  const targetMax = Math.max(h.billed, target ?? 0, 1) * 1.1;
   const cash = d.cashflow;
   // Past + current months, plus the months to come that carry a prediction (4 Nov 2026).
   const monthly = moneyRows(d.monthly.filter((r) => !r.future || r.predicted != null));
@@ -649,7 +699,11 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
         <Tile label={`${isFy ? "FY" : "Period"} target`} value={target === null ? "—" : pct(attainment, 0)}
               tone={attainmentState(attainment) === "ok" ? "success" : attainmentState(attainment) === "warn" ? "warning" : "neutral"}
               to={drill("target")} sub={scoped ? "company-wide — clear the customer filter to compare"
-                : target === null ? "no target set — Reports ▸ Revenue ▸ Targets" : `of ${inrCompact(target)}`} />
+                : target === null ? "no target set — Reports ▸ Revenue ▸ Targets"
+                : `of ${inrCompact(target)} · ${gap && gap > 0 ? `${inrCompact(gap)} to go` : "reached"}`}
+              foot={!scoped && target !== null && t.fy_projection != null
+                ? <span className="text-[11px] text-muted" title="Billed to date + the trailing 3-month average × the months left">FY projection {inrCompact(t.fy_projection)}</span>
+                : undefined} />
         <Tile label="DSO" value={c.dso_days === null ? "—" : `${num(c.dso_days)} d`} tone={lowGood(c.dso_days, 45, 60) === "ok" ? "success" : lowGood(c.dso_days, 45, 60) === "warn" ? "warning" : "danger"} to={drill("dso")}
               sub={c.avg_days_to_pay === null ? "no receipts in the period" : `paid ${num(c.avg_days_to_pay)} days after the invoice date on average`} />
         <Tile label="PO cover" value={d.pipeline.po_cover_months === null ? "—" : `${d.pipeline.po_cover_months} mo`} to={drill("po")}
@@ -659,6 +713,9 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
                 title={d.pipeline.cover_basis === "team" ? "PO balance ÷ the monthly billing of everyone deployed today" : "No team on record — PO balance ÷ the last 3 months' invoices"}>
                 {d.pipeline.cover_basis === "team" ? `team bills ${inrCompact(d.pipeline.monthly_burn ?? 0)} / month` : `at ${inrCompact(d.pipeline.avg_monthly_billed ?? 0)} / month billed`}</span> : undefined} />
       </div>
+
+      {/* 21 Nov 2026 — the period's invoices by stage, tied to the Invoices tabs. */}
+      <InvoiceStagesStrip s={d.invoice_stages} />
 
       {/* 0 · Money received but not on any invoice yet (5 Nov 2026) — not in Collected. */}
       {showOnAccount && <OnAccountPanel oa={d.on_account} collectedLink={drill("collected")} />}
@@ -721,56 +778,9 @@ function FinanceTab({ d, period, showOnAccount = false }: { d: FinanceData; peri
           </div>) : undefined} />
       )}
 
-      {/* 2 · Where we stand against target, collections and margin — the dials, right under the trend. */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Panel title={`${period.kind === "fy" ? period.fy_label : period.label} target`} hint="needle = billed so far · flag = target"
-               action={<StateChip state={attainmentState(attainment)}>{pct(attainment, 0)}</StateChip>}>
-          <Speedometer value={h.billed} max={targetMax} marker={target} markerLabel="target" state={attainmentState(attainment)}
-                       label="Revenue target" caption="billed" format={inrCompact} />
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <MiniStat k="Gap" v={gap === null ? "—" : inrCompact(gap)} />
-            <MiniStat k={t.is_current_month ? "Run rate" : "Per month"} v={inrCompact(t.is_current_month ? t.run_rate : h.billed_per_month)} hint="billed ÷ days elapsed × days in period" />
-            {isFy
-              ? <MiniStat k="Projection" v={inrCompact(t.fy_projection)} tone={attainmentState(t.fy_projection_pct)} hint="billed to date + trailing-3-month average × months left" />
-              : <MiniStat k="FY projection" v={inrCompact(t.fy_projection)} tone={attainmentState(t.fy_projection_pct)} />}
-            {isFy
-              ? <MiniStat k="Needed / month" v={inrCompact(t.fy_required_monthly)} />
-              : <MiniStat k="FY attainment" v={pct(t.fy_attainment_pct, 0)} />}
-          </div>
-        </Panel>
-        <Panel title="Collection rate" hint={mo ? "received (bank + TDS) ÷ revenue (Inc Tax) of the period's invoices" : "collected ÷ billed in the period"}
-               action={<StateChip state={collectionState}>{pct(receivedPct, 0)}</StateChip>}>
-          <Speedometer value={receivedPct ?? 0} max={100} marker={90} markerLabel="goal" state={collectionState}
-                       label="Collection rate" caption="received" format={(v) => `${Math.round(v)}%`} />
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <MiniStat k="Received" v={inrCompact(received)} tone="ok" />
-            <MiniStat k="Total due" v={inrCompact(totalDue)} tone={totalDue > 0 ? "warn" : "ok"}
-                      hint={mo ? `Bank ${inrCompact(mo.due_bank ?? 0)} · TDS ${inrCompact(mo.due_tds ?? 0)}` : undefined} />
-          </div>
-        </Panel>
-        {showCost ? (
-          <Panel title="Gross margin" hint="billed − people cost (CTC ÷ 12 × months deployed)" action={<StateChip state={marginState}>{pct(m.gross_margin_pct, 0)}</StateChip>}>
-            <Speedometer value={m.gross_margin_pct ?? 0} max={60} marker={30} markerLabel="goal" state={marginState}
-                         label="Gross margin" caption="margin" format={(v) => `${Math.round(v)}%`} />
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <MiniStat k="People cost" v={inrCompact(m.cost)} />
-              <MiniStat k="Deployed heads" v={num(d.efficiency.deployed_heads)} hint={m.heads_without_ctc ? `${m.heads_without_ctc} without a CTC — cost understated` : undefined} tone={m.heads_without_ctc ? "warn" : undefined} />
-            </div>
-          </Panel>
-        ) : (
-          <Panel title="Overdue share" hint="overdue ÷ everything still open to date — lower is better"
-                 action={<StateChip state={overduePct === null ? "none" : overdueState}>{pct(overduePct, 0)}</StateChip>}>
-            <Speedometer value={overduePct ?? 0} max={100} marker={20} markerLabel="limit" state={overduePct === null ? "none" : overdueState} invert
-                         label="Overdue share" caption="overdue" format={(v) => `${Math.round(v)}%`} />
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <MiniStat k="Overdue" v={inrCompact(d.ageing.overdue_total)} tone={d.ageing.overdue_total > 0 ? "bad" : "ok"} />
-              <MiniStat k="Ready to bill" v={inrCompact(ready?.amount ?? 0)} tone={(ready?.amount ?? 0) > 0 ? "warn" : "ok"}
-                        hint={`${num(ready?.count ?? 0)} approved timesheet(s) not yet invoiced`} />
-            </div>
-          </Panel>
-        )}
-      </div>
-
+      {/* 25 Nov 2026 (user ask): the three dials — period target · collection rate ·
+          gross margin / overdue share — are gone from this tab; the same figures are
+          the Target, Received, Total Due, Overdue and Gross margin / Ready to bill tiles. */}
       {/* 2b · What is coming (4 Nov 2026): predicted revenue, net revenue, TDS. */}
       <PredictedRevenuePanel f={d.forecast} />
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1772,12 +1782,25 @@ export function PeopleTab({ d, period, drill: canDrill = false }: { d: PeopleDat
  * tab alone (the server refuses the others). `canSetTargets` — Finance + Admin / CEO set the revenue targets;
  * Sales only reads them.
  */
-export function CeoDashboard({ tabs: allowed, canSetTargets = true, showOnAccount = false }: {
+type CeoDashboardProps = {
   tabs?: CeoTab[];
   canSetTargets?: boolean;
   /** 5 Nov 2026 (user rule): the "not mapped yet" panel is Finance's work — Finance only, never Admin / CEO. */
   showOnAccount?: boolean;
-} = {}) {
+};
+
+/** 25 Nov 2026 — each Dashboard tab is a sub-tab a role can switch off in Access
+ *  Control ▸ Roles & permissions (Dashboard ▸ sub-tabs). A tick can only HIDE a
+ *  tab here: which tabs a login may open at all is still the server's rule. */
+export function CeoDashboard(props: CeoDashboardProps = {}) {
+  const me = useMeMaybe();
+  const base = props.tabs ? TABS.filter((t) => props.tabs!.includes(t.key)) : TABS;
+  const keys = base.filter((t) => !me || subTabVisible(me.access, me.roles, "dashboard", t.key)).map((t) => t.key);
+  if (!keys.length) return null;
+  return <CeoDashboardInner {...props} tabs={keys} key={keys.join(",")} />;
+}
+
+function CeoDashboardInner({ tabs: allowed, canSetTargets = true, showOnAccount = false }: CeoDashboardProps) {
   const shownTabs = allowed ? TABS.filter((t) => allowed.includes(t.key)) : TABS;
   const single = shownTabs.length === 1;
   const [tab, setTab] = useState<CeoTab>(() => {

@@ -21,11 +21,12 @@ import { crmDelete, crmGet, crmPatch, crmPost, crmPut, crmUpload, qs } from "../
 import { SearchableSelect } from "../components/SearchableSelect";
 import { ScheduleManualRoundModal } from "../components/ScheduleManualRoundModal";
 import { RmgVerdictHero, ScreeningDecisionModal, type ShortlistRoute } from "../components/ScreeningDecisionModal";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "../components/RejectSkills";
 import { DirectToSalesButton, FastTrackButton, type InternalEmployee } from "../components/FastTrackToSales";
 import { ResultsReviewBanner, type NewResult } from "../components/ResultsReviewBanner";
 import { DialogActions } from "../components/dialogKit";
 // ONE "Edit JD & skills" dialog (30 Sep 2026): the requirement page used to keep a
-// stale private copy without the JD-file drop zone — the Screening Desk had it.
+// stale private copy without the JD-file drop zone — the RMG Desk had it.
 import { JdSkillsCard } from "../components/JdSkillsCard";
 import { ApplyLinkCard } from "../components/ApplyLinkCard";
 import { CareersLinkButton } from "../components/CareersLinkModal";
@@ -653,7 +654,7 @@ type ResumeRow = {
   closed_note?: ClosedNote | null;
   /** The bulk upload's opening email and the candidate's answer (1 Oct 2026). */
   opening_mail?: OpeningMail | null;
-  /** Screening Desk parity (7 Oct 2026): the server's reasons a direct / internal
+  /** RMG Desk parity (7 Oct 2026): the server's reasons a direct / internal
    *  submission is unavailable, the employee this candidate IS, and finished
    *  interviews no screener has marked reviewed. */
   direct_to_sales_block?: string | null;
@@ -2857,13 +2858,16 @@ export function ResumesTab({
   /* Decision modal (was window.prompt — can't show field errors, and some
    * browsers let users suppress prompts, silently killing the buttons). */
   const [rmgDecision, setRmgDecision] = useState<{ row: ResumeRow; kind: "sales" | "reject" } | null>(null);
+  const [rejSkills, setRejSkills] = useRejectSkills({
+    profileId: rmgDecision?.kind === "reject" ? rmgDecision.row.profile_id ?? null : null,
+  });
   const [rmgComment, setRmgComment] = useState("");
   const [rmgCommentErr, setRmgCommentErr] = useState("");
   /* "Ask TA to collect the notice period" on Submit to Sales (2 Sep 2026,
      user request) — defaults to ticked when the row has none on record. */
   const [rmgAskNotice, setRmgAskNotice] = useState(true);
   /* Submit to Sales is pre-written from the interviews (28 Sep 2026) — the same
-     note as the Screening Desk and the profile page (`useHandoverNote`). */
+     note as the RMG Desk and the profile page (`useHandoverNote`). */
   const handover = useHandoverNote(rmgDecision?.row.profile_id, rmgDecision?.kind === "sales");
   useEffect(() => {
     if (rmgDecision?.kind === "sales" && handover.note) setRmgComment((c) => (c.trim() ? c : handover.note));
@@ -2886,6 +2890,8 @@ export function ResumesTab({
         : "A rejection reason of at least 5 characters is required");
       return;
     }
+    const skillProblem = isSales ? null : rejectSkillsProblem(rejSkills);
+    if (skillProblem) { toast(skillProblem, "err"); return; }
     setRmgBusyId(rmgDecision.row.id);
     try {
       const res = await crmPost(`/api/candidate-profiles/${rmgDecision.row.profile_id}/status-transition`, {
@@ -2893,7 +2899,8 @@ export function ResumesTab({
         comment: rmgComment.trim(),
         ask_notice_period: isSales && rmgAskNotice,
       });
-      toast(res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected"));
+      const n = isSales ? 0 : await saveRejectSkills(rejSkills);
+      toast((res.message || (isSales ? "Submitted to Sales team" : "Candidate rejected")) + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added` : ""));
       setRmgDecision(null);
       load();
     } catch (e: any) {
@@ -3694,7 +3701,7 @@ export function ResumesTab({
               <>
                 {/* The CV opens from the "Resume" link under the candidate name — the
                     second "View resume" button here was removed (6 Oct 2026, user request). */}
-                {/* Shortlist + route in ONE click, as on the Screening Desk (7 Oct 2026). */}
+                {/* Shortlist + route in ONE click, as on the RMG Desk (7 Oct 2026). */}
                 <button
                   className={FLOW_BTN.ai}
                   onClick={() => { setScreenRow({ row: r, profileId, kind: "shortlist", route: "ai" }); }}
@@ -3718,7 +3725,7 @@ export function ResumesTab({
                 </button>
               </>
             )}
-            {/* Screening Desk parity (7 Oct 2026, user ask): RMG / GM send a strong
+            {/* RMG Desk parity (7 Oct 2026, user ask): RMG / GM send a strong
                 match straight to Sales (or fast-track an internal employee) and
                 mark finished interviews reviewed — without opening the desk. */}
             {canScreen && profileId != null && !r.archived && r.direct_to_sales_block == null && (
@@ -4769,6 +4776,7 @@ export function ResumesTab({
                 <p className="mt-1 text-xs text-muted">Written from the recorded interviews and skill ratings — edit anything before you submit.</p>
               )}
             </Field>
+            {rmgDecision.kind === "reject" && <RejectSkillsField state={rejSkills} onChange={setRejSkills} />}
           </div>
         </Modal>
       )}
@@ -5451,7 +5459,8 @@ export function RequirementDetailPage() {
   /* A Hiring Manager (22 Oct 2026) reviews candidates from Applicants — the
      sourcing workbench (Applied Candidates, Interview History, Suggested) is TA / RMG's. */
   const hmOnly = Boolean(me.hiring_manager_scoped);
-  const showSuggestedTab = !screenerOnly && !hmOnly;
+  /* …but Suggested Candidates is theirs too (24 Nov 2026, user ask). */
+  const showSuggestedTab = !hmOnly;
   const visibleTabKeys = ["details", ...(showPostings ? ["postings"] : []),
     ...((canSeeResumes || screenerOnly) && !hmOnly ? ["resumes", "slots"] : []),
     ...(showApplicantsTab ? ["applicants"] : []),
@@ -5481,7 +5490,7 @@ export function RequirementDetailPage() {
   const [activityKey, setActivityKey] = useState(0); // bump to force activity reload
   // Bumped after a bulk/one-click apply so the Applicants tab re-fetches.
   const [applicantsKey, setApplicantsKey] = useState(0);
-  const canApplyHere = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG"));
+  const canApplyHere = useCanAct("profiles", "create", useHasRole("TA", "Sales", "RMG")) || screensCandidates;
   const [linkedTemplate, setLinkedTemplate] = useState<{
     template_name?: string | null;
     template_job_id?: string | null;

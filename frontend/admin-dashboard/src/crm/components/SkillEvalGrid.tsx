@@ -1,6 +1,6 @@
 /**
  * SkillEvalGrid (28 Sep 2026) — the candidate's Skill Evaluation as a compact,
- * inline editor for the Screening Desk: one row per skill (required · self ·
+ * inline editor for the RMG Desk: one row per skill (required · self ·
  * reviewer, 1–5), saved with the SAME `POST …/skill-evaluation` upsert the
  * profile page's Skill Evaluation tab uses, so the two never disagree.
  *

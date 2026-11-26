@@ -73,7 +73,12 @@ export function usePageTab<T extends string = string>(
   param: string,
   fallback: T,
   allowed?: readonly string[] | ((value: string) => boolean),
+  /** `remember: false` (26 Nov 2026) — arriving without the param always
+   *  opens `fallback` (Employees opens on Working every time); Back / Forward
+   *  still restore the tab from the address. */
+  opts?: { remember?: boolean },
 ): [T, (next: T, opts?: { replace?: boolean }) => void] {
+  const remember = opts?.remember !== false;
   const path = useRef(readCrmPath());
   const memKey = `${TAB_PREFIX}${path.current}#${param}`;
   const ok = useCallback((v: string | null): v is string => {
@@ -85,10 +90,10 @@ export function usePageTab<T extends string = string>(
   const resolve = useCallback((): T => {
     const fromUrl = urlParam(param);
     if (ok(fromUrl)) return fromUrl as T;
-    const remembered = sessionGet(memKey);
+    const remembered = remember ? sessionGet(memKey) : null;
     if (ok(remembered)) return remembered as T;
     return fallback;
-  }, [param, memKey, fallback, ok]);
+  }, [param, memKey, fallback, ok, remember]);
 
   const [tab, setTabState] = useState<T>(resolve);
 

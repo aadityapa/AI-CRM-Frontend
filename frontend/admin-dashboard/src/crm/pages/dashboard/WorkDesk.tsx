@@ -6,7 +6,7 @@
  *   Feedback due · Customer interviews · L1 / L2 interviews · HR interviews ·
  *   Awaiting your call                                 (TA)
  *   Feedback due · Results to review · To screen · Choose route · L1 / L2 to
- *   book · Submit to Sales · … (RMG / GM — the Screening Desk's task board)
+ *   book · Submit to Sales · … (RMG / GM — the RMG Desk's task board)
  *   Feedback due (HR / Sales: their own rounds)
  *   HR Discussion · HR interviews · Pre-Onboarding · Joining soon · Joined recently ·
  *   Exits & notice                                    (HR — Request HR round / Join in place)
@@ -20,7 +20,7 @@
  * Two views of that one answer (28 Sep 2026, user ask: "on the Dashboard just
  * show the buttons; clicking one opens the page where the work is done"):
  *   `WorkDesk`     the Dashboard — tiles only, each a link to the tab's `link`
- *                  (RMG / GM categories → the Screening Desk on that task,
+ *                  (RMG / GM categories → the RMG Desk on that task,
  *                  everything else → My Tasks on that tab).
  *   `MyTasksPage`  the `my-tasks` route — the same tiles as a tab strip, and the
  *                  chosen tab's items with their actions. A feedback item opens
@@ -202,14 +202,14 @@ export function groupBySection<T extends { section?: string | null; employee?: s
   return out;
 }
 
-/** RMG / GM tabs are the Screening Desk's task categories — the server names
+/** RMG / GM tabs are the RMG Desk's task categories — the server names
  *  their icon; the board and this desk share one look. */
 function lookOf(t: DeskTab): { icon: LucideIcon; accent: string } {
   if (TAB_LOOK[t.key]) return TAB_LOOK[t.key];
   const icon = t.icon ? TASK_ICON[t.icon] : undefined;
   return { icon: icon ?? FALLBACK_LOOK.icon, accent: TASK_ACCENT[t.key] ?? FALLBACK_LOOK.accent };
 }
-/** Tabs that belong to the Screening Desk — their presence adds the shortcut. */
+/** Tabs that belong to the RMG Desk — their presence adds the shortcut. */
 const SCREENER_TABS = new Set(["results", "screening", "route", "booking", "decide", "ai_failed", "approvals", "jd", "headcount", "templates"]);
 /** Tabs that are information rather than work — never counted as "waiting on you". */
 const INFO_TABS = new Set(["queues", "upcoming"]);
@@ -296,7 +296,7 @@ export function WorkDesk() {
           <CrmLink to={screener ? "screening-desk" : "my-tasks"} className={FLOW_BTN.primary}
             title="Every pending task, ready to act on">
             {screener ? <ScanSearch size={13} aria-hidden /> : <ListChecks size={13} aria-hidden />}
-            {screener ? "Open Screening Desk" : "Open My Tasks"}
+            {screener ? "Open RMG Desk" : "Open My Tasks"}
           </CrmLink>
           <button type="button" className={ICON_BTN} onClick={retry} aria-label="Refresh" title="Refresh">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden />
@@ -450,7 +450,7 @@ export function MyTasksPage() {
             </div>
             {SCREENER_TABS.has(active.key) || (active.link || "").startsWith("screening-desk") ? (
               <CrmLink to={active.link || "screening-desk"} className={FLOW_BTN.primary}>
-                <ScanSearch size={13} aria-hidden /> Work on these in the Screening Desk
+                <ScanSearch size={13} aria-hidden /> Work on these in the RMG Desk
               </CrmLink>
             ) : null}
           </div>

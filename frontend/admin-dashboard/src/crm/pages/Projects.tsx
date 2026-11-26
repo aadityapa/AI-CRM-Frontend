@@ -25,7 +25,7 @@ import { CreateProjectWizard, EditProjectWizard } from "../components/EditProjec
 import { SectionHeaderBanner, WizardField } from "../components/wizard";
 import { LOCATIONS, RateHistory } from "./ProjectEmployees";
 import { BILLING_UNITS, BILLING_UNIT_REQUIRED } from "../lib/billingUnits";
-import { CloseProjectButton, ProjectClosureBanner } from "../components/ProjectClosure";
+import { ChangeEndDateButton, CloseProjectButton, ProjectClosureBanner } from "../components/ProjectClosure";
 import type { ProjectClosure } from "../components/ProjectClosure";
 import { useChangeEffect, usePageTab, useSessionState } from "../lib/pageState";
 import { WorkMonth } from "../components/WorkMonth";
@@ -153,8 +153,9 @@ const LazyTimesheetImport = lazyRetry(() =>
   import("./Timesheets").then((m) => ({ default: m.TimesheetImportModal })));
 const LazyPurchaseOrders = lazyRetry(() =>
   import("./Finance").then((m) => ({ default: m.PurchaseOrdersPage })));
-const LazyInvoices = lazyRetry(() =>
-  import("./Finance").then((m) => ({ default: m.InvoicesPage })));
+/* Invoices left the hub (26 Nov 2026, user ask): the sidebar's Invoices page is
+   the one place for them. An old `?hub=invoices` link is sent there. */
+const HUB_TABS = ["projects", "employees", "timesheets", "pos"] as const;
 
 /* ================================================================ LIST PAGE */
 
@@ -169,8 +170,11 @@ export function ProjectsListPage() {
   const [opps, setOpps] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [showNew, setShowNew] = useState(false);
-  // "hub", not "tab": the embedded Timesheets / Invoices pages own `tab`.
-  const [hubTab, setHubTab] = usePageTab<string>("hub", "projects");
+  // "hub", not "tab": the embedded Timesheets page owns `tab`.
+  const [hubTab, setHubTab] = usePageTab<string>("hub", "projects", HUB_TABS as readonly string[]);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("hub") === "invoices") crmNavigate("invoices");
+  }, []);
   /* Hub-tab visibility mirrors each embedded page's own rules. */
   const peRole = useHasRole("Sales", "Sales_Head", "HR", "Finance");
   const canPE = useCanAct("project-employees", "view", peRole);
@@ -178,7 +182,6 @@ export function ProjectsListPage() {
   const canTs = useCanAct("timesheets", "view", tsRole);
   const finRole = useHasRole("Finance", "Sales", "Sales_Head");
   const canPos = useCanAct("pos", "view", finRole);
-  const canInv = useCanAct("invoices", "view", finRole);
   // Deep-link create (hub "New …" buttons): ?create=1 opens the dialog once,
   // then strips the flag so refresh / back never reopen it.
   useEffect(() => {
@@ -337,8 +340,6 @@ export function ProjectsListPage() {
           ...(canPE ? [{ key: "employees", label: "Project Employees" }] : []),
           ...(canTs ? [{ key: "timesheets", label: "Timesheets" }] : []),
           ...(canPos ? [{ key: "pos", label: "Purchase Orders" }] : []),
-          ...(canInv ? [{ key: "invoices", label: "Invoices" }] : []),
-          // Money received from customers (7 Sep 2026) — same visibility as Invoices.
         ]}
         active={hubTab}
         onChange={setHubTab}
@@ -369,7 +370,6 @@ export function ProjectsListPage() {
           {hubTab === "employees" && canPE && <LazyProjectEmployees embedded />}
           {hubTab === "timesheets" && canTs && <LazyTimesheets embedded />}
           {hubTab === "pos" && canPos && <LazyPurchaseOrders embedded />}
-          {hubTab === "invoices" && canInv && <LazyInvoices embedded />}
         </React.Suspense>
       ) : (
       <>
@@ -624,6 +624,7 @@ function OverviewTab({
         )}
         <CloseProjectButton projectId={project.id} projectName={project.name} closure={project.closure}
                             onClosed={reload} notify={showToast} />
+        <ChangeEndDateButton projectId={project.id} closure={project.closure} onChanged={reload} notify={showToast} />
         {/* Create PO removed from the project page (user decision, 27 Aug
             2026) — POs are raised from the Purchase Orders tab, where the
             full wizard (addresses, GST, employee) lives. */}
@@ -656,6 +657,7 @@ function OverviewTab({
           onClose={() => setShowEdit(false)}
           onSaved={() => { setShowEdit(false); reload(); }}
           notify={showToast}
+          onDatesChanged={reload}
         />
       )}
       {showPo && (

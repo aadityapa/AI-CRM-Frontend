@@ -6,7 +6,7 @@
 > `F:\AI-Interview-Model-B-V2\CLAUDE.md`, which holds the full version (what the project is, stack, decisions, made,
 > remaining). Do it in the same session, beside the dated note.
 
-**Last updated:** 20 Nov 2026, end (Move to another branch works on a receipt already mapped to invoices — the dialog says the invoices stay mapped and keep their branch; server half in B-V2). Before: 20 Nov 2026, latest (Employees list: "Employment Type" column + filter; New Employee asks Full-Time · Part-Time · Contract / Consultant · Intern). Before: 20 Nov 2026, closing (Invoices list: tick invoices of one customer / press **Map** on a row / "Map money to these N" on a customer group → `MapMoneyDialog` puts cash from Received Amount and TDS from Received TDS on them in one step; the CEO money board reads **Received (Ex. Tax) · Due (Ex. Tax)** beside Revenue (Ex. Tax); server half in B-V2). Before: 20 Nov 2026, latest-final (Admin / CEO delete an employee in one step from the Employees list; the delete dialog says what goes with them; server half in B-V2). Before: 20 Nov 2026, after final (Invoices opens on an **All** tab with a Stage filter + every other filter; **Invoices** in the sidebar right under Projects; `stage` takes a CSV; no migration, restart). Before: 20 Nov 2026, final (Map invoices: searching any invoice number shows it even when it is billed to another branch or customer, with why and a Move receipt & tick / Map anyway button; server half in B-V2). Before: 20 Nov 2026, very last (CEO Finance tab: the cash view shows **Paid this period's invoices · Paid earlier invoices · Still on account** with a line tying it to the work-month Received; Total Due says "₹x received, not mapped · really owed ≈ ₹y" and how much TDS is expected; the cash ÷ billed ratio is gone; the CEO dashboard, drill pages, Revenue report and Financial Reports re-read every minute and at once after a change — `crm/lib/useDataChanged.ts`). Before: 20 Nov 2026, last (invoice step 4 is **Admin / CEO approval** — payment + TDS checklist, Approve &
+**Last updated:** 26 Nov 2026, latest (a failed sign-in answers 401 / 400 / 403 / 409 now — `core.js::apiFetch` does not sign out or reload on a 401 from `/auth/login` / `/auth/register`, so the message stays; `app.js?v=61`; server half in B-V2). Before: 26 Nov 2026, last (the candidate never sees how many questions the interview has: the question strip shows only the questions asked so far, every "Question N of M" became "Question N", the rules page and skill picker name the kinds without counts, live voice is not told the total; `app.js?v=60`; no server change). Before: 26 Nov 2026, Employees round (the list opens on **Working**; the deployment dropdown lists Management / Internal staff / every bench group and **On the bench** leaves them out, with a "looks like management — Review & move" banner, tick-and-move and a Groups button; the employee page: richer header (based at / works at, tenure, deployment), Job details with **Based location** + Work location and no Profile type, Experience Details gone, compact empty states, and an HR-only **Joining Documents** tab — `crm/components/employee/JoiningDocuments.tsx`; server half + migration 0163 in B-V2). Before: 26 Nov 2026, after the bug-fix round (Invoices ▸ Pending work redesigned — Sales / GM / Finance lanes, a progress rail per row, waiting chips with counts, More filters + removable filter chips, Group by customer / project / employee / month, rows per page; **Projects ▸ Invoices tab removed** — the sidebar's Invoices page is the one place, `?hub=invoices` goes there). Before: 26 Nov 2026, bug-fix round (an invoice number exists once: the Generate original invoice and Request a change dialogs check the number while it is typed — "already present in the tool — <invoice> · Open it", Generate / Send disabled — `crm/components/invoice/InvoiceNumberCheck.tsx`; the security / billing fixes are server-side, B-V2). Before: 26 Nov 2026, very last (**Invoices ▸ Pending work** tab, right after All — every timesheet and Proforma not yet a tax invoice, by step, with filters; `crm/components/invoice/PendingWorkPanel.tsx`; server half in B-V2). Before: 26 Nov 2026, latest (an employee-only login: top-bar **Reports = "My AI reports"** (own interviews only, `pages/MyAiReports.tsx`), every other platform page closed; its **Dashboard is about the person** — `crm/pages/dashboard/EmployeeDashboard.tsx`; `lib/employeeLogin.ts`; server half in B-V2). Before: 26 Nov 2026, later (an employee-only login (Employee + Interviewer) gets **Open positions** on every Opportunities route — role + JD + Apply, no customer / budget / commercials; `crm/employeeRoutes.tsx`, `crm/pages/EmployeeOpportunities.tsx`; server half in B-V2). Before: 25 Nov 2026, night (no frontend change: other PCs on the LAN were blocked by Windows Firewall; B-V2 `start_app.bat` now opens port 2020 through `scripts/lan_access.ps1` — see B-V2 `CLAUDE.md`). Before: 25 Nov 2026, evening (the F-V2 `frontend/` folder was deleted on the machine at 16:32 on 25 Nov and restored (admin-dashboard src from a same-day working copy, the rest from git `d53fa6b`); phone-interview runtime rewritten (`js/phone_mode.js`, `app.js?v=59`), stray rules markup removed again, `dist/` rebuilt — see the dated note). Before: 26 Nov 2026 (**My Workspace = the employee's dashboard** — Home · Open positions (name + JD, Apply with the Karnex resume) · My applications · AI interviews (own reports) · Training, beside Daily activity · Tasks · Resume · History; `crm/components/workspace/EmployeePortal.tsx`; server half in B-V2). Before: 25 Nov 2026, very last (Access Control ▸ Users: **Permissions from** is a multi-pick — tick several custom roles, e.g. Employee + Interviewer, `crm/components/access/RolesPickerCell.tsx`; saves through `POST /api/users/{id}/roles`; no server change). Before: 25 Nov 2026, last (Access Control lists **RMG Desk · Careers Applications · E-invoices · Received Amount · Received TDS · Expenses** as tabs and the sidebar follows a configured role's tick; sub-tabs for Dashboard · Bench · My Workspace · Customers ▸ Received TDS · Candidates ▸ Interview readiness; the Admin Finance tab loses its three dials; server half + migration 0161 in B-V2). Before: 25 Nov 2026, latest (Reports: the **Customer Ledger** card is gone — it is the second view of the **Revenue / Customer Ledger** card (`?sub=ledger`; an old `?tab=customer_ledger` link still opens it); the Revenue page lost every chart and dial — tiles, alerts, Invoice tracker and the tables only; UI only). Before: 25 Nov 2026, later (**Bench & Deployed ▸ Insights** — bench cost a day, 30+ days, roll-offs matched to positions, skill gap, Share resume; **Bench ▸ Training** tab + plan page `training/:id` — skills, tasks, AI practice / re-interview scheduled from the plan, before → after, positions to place; bench person page **AI interview · Start training · Share resume**; Interview readiness **Start training**; Talent Pool **Ready to place · Keep up to date · Duplicates** + "Email N about new roles"; Dashboard **Bench today** card; server half + migration 0160 in B-V2). Before: 25 Nov 2026 (**phone interviews per template**: Template ▸ "Devices the candidate may use" switch (`components/interview-template/DeviceSettings.tsx`); the candidate page switches to a phone layout and phone anti-cheating (`js/phone_mode.js`, `app.js?v=59`); Integrity row chip "On a phone"; sidebar / pages say **RMG Desk** instead of Screening Desk; stray duplicate rules markup removed from `index.html`). Before: 24 Nov 2026, latest-last (**Edit project ▸ Project Start Date** replaces the last-working-day step: the current start, a new date with "1 / 3 / 6 months earlier", who moves, the server's preview of the Draft timesheets it opens, Update start date — `crm/components/ProjectStartDate.tsx`; server half in B-V2). Before: 24 Nov 2026, after closing (**Edit project ▸ Project Dates** — the first step of the Edit wizard shows the last working day with **Change last working day** / **Set last working day**; `ProjectClosure.ProjectDatesBody`). Before: 24 Nov 2026, closing ("Tax Invoice (PDF)" / Download PDF save `<Employee>_<number>.pdf` like the Word file — `fileStem` reads the server's `file_stem`; Customers ▸ customer ▸ **Received Amount by branch** — branch cards + receipts grouped by branch, a card narrows the list, `crm/pages/receipts/BranchSummary.tsx`). Before: 24 Nov 2026, final (project page **Change last working day** beside Edit project — a later day brings the team back and opens Draft timesheets; invoice page **Correct amounts** / **Undo correction** for Admin / CEO — `crm/components/invoice/CorrectAmounts.tsx`; server half + migration 0159 in B-V2). Before: 24 Nov 2026, latest (Talent Pool **Cards | List** switch — a comfortable table view of the same people, a row opens the full card; UI only). Before: 24 Nov 2026, last (Revenue page ▸ **Invoice tracker** — Finance's sheet columns, one row per tax invoice, customer groups + totals, Received / Not Received chips, search, Download Excel; `crm/pages/reports/InvoiceTrackerPanel.tsx`; server half in B-V2). Before: 24 Nov 2026, later (Talent Pool search like a job board — "Added in" chips with counts, experience / current CTC / expected CTC ranges, notice, "only people with a mobile", Newest added; cards show mobile (call · copy), notice / LWD and when added; **Skill groups** on the Groups tab; every reject dialog asks the candidate's skillset (`crm/components/RejectSkills.tsx`); **Suggested Candidates** for RMG / GM with interview-with-us chips and four new filters; **Candidates ▸ Interview readiness** tab — `crm/pages/candidates/InterviewReadiness.tsx`; server half in B-V2). Before: 24 Nov 2026 (Bench & Deployed: **Groups** tab, "Move to group" / "Change group" on every card and person page, tick several and move, a purple "look like management or internal staff — Review & move" banner, Groups manager; Talent Pool: **Groups** mode with a compare table against the group's position, "Add to group", "+ Skill", "Check fit & apply" and bulk "Apply N to a position…" for TA **and RMG / GM**; server half + migration 0158 in B-V2). Before: 23 Nov 2026 (sidebar **Bench & Deployed** for RMG / GM / CEO — Bench | Deployed tabs, person page with Overview · History · Tasks · Daily activity · Resume; **My Workspace** for every employee login — daily log, tasks, resume, history; one resume editor with a live preview in the company format and Word / PDF downloads; server half + migration 0157 in B-V2). Before: 21 Nov 2026 (Finance tab: "N invoices in FY … · Paid · Partially paid · Unpaid" strip tied to the Invoices tabs, naming the invoices of the period before; Partially paid tab hint says cash only; server half in B-V2). Before: 20 Nov 2026, end (Move to another branch works on a receipt already mapped to invoices — the dialog says the invoices stay mapped and keep their branch; server half in B-V2). Before: 20 Nov 2026, latest (Employees list: "Employment Type" column + filter; New Employee asks Full-Time · Part-Time · Contract / Consultant · Intern). Before: 20 Nov 2026, closing (Invoices list: tick invoices of one customer / press **Map** on a row / "Map money to these N" on a customer group → `MapMoneyDialog` puts cash from Received Amount and TDS from Received TDS on them in one step; the CEO money board reads **Received (Ex. Tax) · Due (Ex. Tax)** beside Revenue (Ex. Tax); server half in B-V2). Before: 20 Nov 2026, latest-final (Admin / CEO delete an employee in one step from the Employees list; the delete dialog says what goes with them; server half in B-V2). Before: 20 Nov 2026, after final (Invoices opens on an **All** tab with a Stage filter + every other filter; **Invoices** in the sidebar right under Projects; `stage` takes a CSV; no migration, restart). Before: 20 Nov 2026, final (Map invoices: searching any invoice number shows it even when it is billed to another branch or customer, with why and a Move receipt & tick / Map anyway button; server half in B-V2). Before: 20 Nov 2026, very last (CEO Finance tab: the cash view shows **Paid this period's invoices · Paid earlier invoices · Still on account** with a line tying it to the work-month Received; Total Due says "₹x received, not mapped · really owed ≈ ₹y" and how much TDS is expected; the cash ÷ billed ratio is gone; the CEO dashboard, drill pages, Revenue report and Financial Reports re-read every minute and at once after a change — `crm/lib/useDataChanged.ts`). Before: 20 Nov 2026, last (invoice step 4 is **Admin / CEO approval** — payment + TDS checklist, Approve &
 close / Undo; Dashboard tab **Invoice approvals** for Admin / CEO with a ready-count badge; server half + migration 0156
 in B-V2). Before: 20 Nov 2026, latest (**Received TDS** page + customer tab; "Invoices settled" column gone from
 Received Amount; the invoice's Record payment / Record TDS replaced by links; amount per invoice on Add received amount;
@@ -56,7 +56,7 @@ vitest green on the touched files; nothing committed since `f807e80`.
 **Stack:**
 - **Admin dashboard:** `/admin`, React 18 + Vite 5 + TypeScript + Tailwind 3 + recharts. It has its own query-param
   router (`?view=` / `?p=`).
-- **Candidate interview runtime:** `/`, vanilla ES modules in `frontend/js`, cache-busted by `app.js?v=N` (now 58).
+- **Candidate interview runtime:** `/`, vanilla ES modules in `frontend/js`, cache-busted by `app.js?v=N` (now 59).
   MediaPipe is self-hosted under `frontend/vendor`.
 - The backend is FastAPI on the same origin (see B-V2).
 
@@ -4573,3 +4573,436 @@ card.
 `AssignBranchModal` move note no longer says "unmap them first" — a sky note says the invoices it pays stay mapped and keep
 their own branch and the move is on the Activity Log; Edit receipt ▸ Branch says the same. The toast is the server's
 "moved to …" message.
+
+**21 Nov 2026 — Finance tab invoice strip; Partially paid = cash (server half in B-V2 `CLAUDE.md`):**
+`CeoDashboard.InvoiceStagesStrip` under the Finance tiles: "N invoices in FY 2026-27" + Paid · Partially paid · Unpaid ·
+Pending e-invoice · Awaiting customer chips (count · amount before GST), each opening that Invoices tab, and a line naming
+the invoices of the period before (data window) that the Invoices tabs also count. `invoiceStages.ts` hints: Unpaid = no
+cash yet (TDS may be booked), Partially paid = part of the cash received. tsc green.
+
+**23 Nov 2026 — Bench & Deployed, My Workspace, the company resume editor (`crm/components/resume/ResumeEditor.test.ts`
+3; server half + migration 0157 in B-V2 `CLAUDE.md`):** (1) **`crm/pages/BenchDesk.tsx`** — route `bench`
+(`BenchDeskPage`): teal `PageHeader` (on the bench · deployed · bench 30+ days · bench with no log today · resume not
+ready), `StagePills` **Bench | Deployed** (`?tab=`), search (name · Emp ID · skill · designation · project · customer,
+debounced) + skill + days-on-bench + "needs attention" filters (session-kept), person cards (bench-days chip green /
+amber > 30 / red > 60, last or current project + release date, skills, resume bar, open / overdue tasks, today's log,
+"No login"). Route `bench/:id` (`BenchPersonPage`, sections via `?sec=` — added to `CRM_FILTER_KEYS`): Overview (where
+they are today · skills · before Karnex · education · contact + uploaded CV · this week's missed days / overdue tasks),
+History (`HistoryTimeline`: projects with customer, role, release date and rate, and bench periods between them),
+Tasks (`TaskDialog` assign / change incl. status, delete), Daily activity (60 days, weekday gaps flagged), Resume
+(`ResumeEditor`). An amber note tells Admin how to create the login when there is none. Writers =
+`useBenchWriter()` (RMG, the screening approval, or the `bench` Edit grant). (2) **`crm/pages/MyWorkspace.tsx`** —
+route `my-workspace`; `?tab=` today · tasks · resume · history: today's entry (day picker within the server's 7-day
+window, hour picks, what you did, tasks worked on as chips, "Days without an entry" chips that open that day),
+tasks (Start · Mark done · Reopen + progress note), the same `ResumeEditor` on `/api/my-workspace/resume`, own history
+(no rates). An unlinked login sees the server's reason. (3) **`crm/components/resume/ResumeEditor.tsx`** — status bar
+(completeness ring, "File: <name>.docx / .pdf", draft / unsaved chips, Edit ⇄ Preview, Word / PDF download — refused
+while unsaved), seven numbered sections (about you · summary with a character count · skill groups · experience ·
+projects — "never name the customer" · education · certifications), rows reorder / remove, bullets one per line
+(PURE `textToBullets`), a sticky "What changed?" + Save bar, a **live preview** (`ResumePreview`) in the Word layout
+beside the form on xl, change history. PURE `completenessOf` mirrors the server. (4) **`crm/components/bench/
+BenchParts.tsx`** — shared types, `HistoryTimeline`, `TaskCard`, `TaskDialog`, `ActivityList`, PURE `missingDays`,
+`daysText`, `benchTone`, `BenchCard`. (5) Wiring: `nav.ts` "Bench & Deployed" (Armchair; CrmApp shows it on the `bench`
+grant or the screening approval) and "My Workspace" (NotebookPen; never Admin / CEO); `CrmApp.isWorkspaceOnlyLogin`
+→ `pages/DashboardHome.tsx` makes My Workspace the Dashboard of an Employee-only login; `MANAGEABLE_TABS` +
+`TAB_MODULES` gain `bench` / `my-workspace`. ⚠️ Textareas need `!min-h-[…]` (or `rows`) — `inputCls` carries
+`min-h-[40px]`. Rendered in headless Chromium from the real service output (`/tmp/story`). tsc green, eslint clean.
+
+
+**24 Nov 2026 — Bench groups; Talent Pool groups, skill tags, fit check and direct apply (`components/bench/BenchGroups.test.ts`
+2, `pages/talentPool/TalentGroups.test.ts` 2; server half + migration 0158 in B-V2 `CLAUDE.md`):** two screenshot asks.
+(1) **`crm/components/bench/BenchGroups.tsx`** — types `BenchGroup` / `PersonGroup` / `Suggestion` / `MovePerson`,
+`GROUP_COLORS`, `GROUP_LOOK` + `lookOf(color)` (chip · dot · gradient per colour, literal classes; the Talent Pool reuses it),
+PURE `groupEffect`, `suggestionPlan`, `suggestWords`; `GroupChip`; **`MoveToGroupDialog`** (indigo: group cards with members
+and "Leaves the Bench tab" / "Stays on the Bench tab", **New group** inline — name, colour, counts as bench or not — "Put back on
+the bench" when anyone moved is grouped, note with picks; `POST /api/bench/move`, a new group is `POST /api/bench/groups` first);
+**`SuggestionsDialog`** (purple: the server's suggestions per group, tick / untick, one move per group); **`ManageGroupsDialog`**
+(list with members, edit, delete — members back on the bench). `BenchDesk.tsx`: tabs **Bench · Deployed · Groups** (`?tab=`),
+Groups view has a group pill row (session `bench.group`, `group_id` to the server); a header **Groups** button; the suggestions
+banner on the Bench tab; every card is now an `<article>` with the link body and, for a writer (`useBenchWriter`), a footer
+strip — **Select**, "Looks like management / internal staff", **Move to group** / **Change group**; "Select all shown" + a
+sticky bar **Move N to a group** / **Put back / move**; the card shows the group chip, note and who filed it, the avatar takes
+the group's colour when the group leaves the pool. Person page: **Move to group** / **Change group** in the header and a
+"Group: …" line above the sections. `BenchRow` gains `group` / `suggested_group`. (2) **`pages/talentPool/TalentGroups.tsx`** —
+types `TalentGroup` / `GroupPosition` / `MemberRow` / `GroupChipData`, PURE `addGroupSkill`, `applicable`,
+`useCanApplyFromPool()` (TA · RMG · a screener — GM · Admin), `TalentGroupChips`, **`AddToGroupDialog`** (pick a group or make
+one — name, position, skills ★ must / nice, notes, colour; a new group from a search starts with the search's skills),
+**`TagSkillDialog`** (several skills, suggestions from the master list, "already" marked; `POST …/candidates/{id}/skills`),
+**`FitApplyDialog`** (`GET …/matching-positions`: every open position with the ATS score, good fit, matched / missing skills,
+band, budget, already applied; tick, pick the resume version, then the resume library's `MultiApplyDialog`),
+**`ApplyPeopleDialog`** (several people → one position; asks the position when none is given — replaces the old
+`ApplyToPositionDialog` in `TalentPool.tsx`), **`GroupsMode`** (left: the shared groups; right: `GroupPage` — position card
+with Open for sourcing, skills, filter pills All · Available now · Good fit · Not applied yet, and a compare table: candidate
+with availability · CV · note, experience ✓ in band / ✗ outside, notice · CTC now → expected · Over budget, group skills x/y must
++ what is lacking + proven in interview, Fit to the position ring, status on the position, **Fit** and remove; select →
+**Apply N to <position>** (each with their best resume version), **Apply to another position…**, **Remove**; Edit, Find more
+like this (switches to Search with the group's skills), Add people (`AddPeopleDialog`, search by name), Delete; the first group
+opens on arrival). `TalentPool.tsx`: mode **Groups** (session `talent.group`), every candidate card has **Check fit & apply**
+(TA + RMG / GM; "Check fit" for others), **Add to group**, **+ Skill** and its group chips (a chip opens the group); Search mode
+ticks cards → sticky bar **Add N to a group** / **Apply N to a position…**; Match a position offers **Save as a group** beside
+Apply and lets RMG / GM apply. Harness `/tmp/ft/src/__story/story.tsx` (`?page=bench|pool|move|suggest|fit|addgroup`, mocks
+from the real services via `/tmp/story/seed2.py`).
+
+**24 Nov 2026 (later) — job-board Talent Pool, skills on reject, Suggested Candidates for RMG / GM, Interview readiness
+(`crm/pages/candidates/InterviewReadiness.test.ts` 7; server half in B-V2 `CLAUDE.md`):** (1) **`TalentPool.tsx`**:
+`PoolFilters` += `ctc_min`, `cur_ctc_min`, `cur_ctc_max`, `added_days`, `has_phone`; ⚠️ a session value saved before
+today lacks them — `withFilterDefaults` fills the blanks (used on read and on a saved search; `FilterShape` in
+`TalentPoolExtras` carries them optional). The filter panel is always open: `AddedInChips` (Any time · Last 7 … 180 days,
+counts from `/meta.added_counts`), a grid Experience · Location · Notice (+ Serving) · Current CTC · Expected CTC
+(`RangeInputs`) · "Only people with a mobile number"; "More options" keeps untouched / proven / bench employees. Sort
+"Newest added". Cards: `PhoneChip` (tel link + copy; "No mobile"), a notice chip coloured by bucket (`noticeLook`,
+"Serving notice · LWD …"), "Added N d ago by …". Groups tab opens with **`SkillGroups`** (PURE `skillGroups(meta.skills)` —
+skill families by live counts, top 8 skills each, a skill opens Search with it as a must-have). (2) **`crm/components/
+RejectSkills.tsx`** — `useRejectSkills({candidateId|profileId})` (reads the skills on record; via the profile when only a
+profile id is known), `RejectSkillsField` (skills on record + add more with the master list as suggestions),
+`rejectSkillsProblem` (at least one skill when the candidate is known — never blocks on a failed read), `saveRejectSkills`
+(posts each new skill after the reject). Mounted in `TaDecisionModal` (reject), `ScreeningDecisionModal` (Rejected),
+`AiL1DecisionModal` (reject) and the three RMG verdict rejects (Screening Desk `VerdictModal`, Applied Candidates,
+profile banner). (3) **Suggested Candidates**: the opportunity page shows the tab to a screener-only login (RMG / GM) and
+`canApplyHere` includes `useCanApprove("profile.rmg_screening")`; the position page's `showSuggestedTab` is `!hmOnly`
+and its `canApplyHere` adds `screensCandidates`. Rows show "In process elsewhere (N)", "Cleared Technical L2 with us" /
+"AI L1 N% with us", "Technical L1 No Hire · date" and serving notice / LWD; filters Available now · Cleared an interview
+with us · Joins within 30 days (PURE `joinsWithin30`) · Hide recent technical No Hire. (4) **Candidates ▸ Interview
+readiness** — `CandidatesListPage` gets `StagePills` All candidates | Interview readiness (`usePageTab("sub")`), the
+second lazy-loads `InterviewReadiness`: five verdict tiles (filter), search · skill · sort, filters AI score ·
+communication · technical L1 / L2 · customer round · interviewed within · notice · experience · location · expected CTC
+(session `cand.readiness`); a card per person — contact (tel), notice, skills, AI meters (overall · technical ·
+communication, `scoreBand`), technical / customer outcome chips, best technical round + feedback, "Train on" weak skills,
+the verdict with next steps; Open candidate · CV · Matching positions & apply; "Every interview" opens the timeline,
+why, skill ratings and applications. Harness `/tmp/ft/src/__story/story.tsx` (`?page=pool|readiness|reject`,
+`&tab=groups`). tsc green, eslint 0 errors.
+
+**24 Nov 2026 (last) — Invoice tracker on the Revenue page (`crm/pages/reports/InvoiceTrackerPanel.test.ts` 2; server half
+in B-V2 `CLAUDE.md`):** **`InvoiceTrackerPanel`** ({query, tick, onError}) right under the KPI tiles of `RevenueReport.tsx`,
+reading `GET /api/reports/revenue/invoice-tracker` with the page's own query (period · customer · branch · project), re-read
+with the page's tick. A 21-column table in Finance's order (navy sticky header, sticky Resource column, horizontal scroll,
+max 34rem tall): a collapsible customer heading row ("N invoices · ₹ total · N not received"), the invoice rows (Resource →
+the timesheet, "part N", Emp ID; Billing Month + the window when it is not the calendar month; Invoice No. → the invoice;
+Received green / Not Received red chip; Diff red when money is still open), the customer's total row and a navy grand total
+footer. Search (resource · customer · project · invoice no. · month), chips All · Received · Not Received with counts,
+Expand / Collapse all; totals are re-added for what is shown. **Download Excel** = `?format=xlsx` (the same table as a
+sheet); the **Excel pack** opens on the same sheet. PURE `money2` (en-IN, 2 decimals), `days`, `ddmmyyyy`, `filterTracker`,
+`sumRows`.
+
+**24 Nov 2026 (latest) — Talent Pool: Cards | List (`TalentPool.test.ts` now 8; UI only, no server change):** user ask
+with a screenshot — the same candidates in a second, easier-to-read layout. `TalentPool.tsx`: **`ViewSwitch`** (Cards ·
+List, radiogroup) beside the availability chips in Search the pool AND beside the match count in Match a position; the
+choice is per login in `localStorage["crm.talent.view"]` (`usePoolView`, PURE `readPoolView`, try/catch; default cards).
+**`PoolList`** — one table, sticky header, sticky checkbox + Candidate columns, zebra rows, `max-h-[75vh]`, `min-w-[1040px]`
+(scrolls sideways only below that): ☐ (select all on the page, indeterminate) · Candidate (avatar, name, availability chip
+(+ Emp ID), "New", `ContactLine` = mobile with call / copy + email) · Match (`ScoreIndicator sm`, "—" without skills) ·
+Skills (PURE `listSkills`: asked skills by evidence, missing nice-to-haves struck, else their own; 4 + "+N"; domain) ·
+Exp. · location · CTC (now / expected) · Notice (`noticeLook` chip, LWD when serving) · With us (PURE `historyLine`:
+"2 applications · 1 live · 1 closed", latest OPP + stage coloured by outcome, "Added … · active …"; "New to us") ·
+Actions (Fit & apply → `FitApplyDialog`, CV, Add to group, open card). A row click (not on a link / button / input,
+`isOwnDomClick` for the row's portalled dialogs) opens the full `PoolCard` under the row (+ Open all / Close all cards), so
+every card action (+ Skill, Remove from pool, groups) stays one click away. Selection feeds the same sticky bar as the
+cards (Add N to a group · Apply N to a position…). Rendered at 1440 / 1886 px, light + dark, a row opened — no console errors.
+
+**24 Nov 2026 (final) — Change last working day; Correct invoice amounts (`crm/components/invoice/CorrectAmounts.test.ts`
+2; server half + migration 0159 in B-V2 `CLAUDE.md`):** (1) **`ProjectClosure.tsx`** — `ChangeEndDateButton` ("Change
+last working day", beside Edit project on the project's Overview; same right as Close project, shown once the project has
+a last working day) → `ChangeEndDateModal` (emerald dialog kit): the new day with "Extend by +1 / +2 / +3 / +6 months"
+(PURE `endDatePicks`), a live preview from `GET …/end-date-preview` (who moves from → to, "back on project", the months
+that get Draft timesheets, what blocks an earlier day), reason ≥ 10 with picks, what happens next → `PUT …/end-date`.
+(2) **`CorrectAmounts.tsx`** — `CorrectAmountsDialog` (indigo): amount before GST, CGST + SGST / IGST switch (GST follows
+the amount at 18 % until typed; "Work out 18 %"), optional round-off or "type the invoice total" (works the round-off out),
+a Now → After table with the difference, an amber note when more was already received than the new total, reason ≥ 10,
+what happens → `PUT /api/invoices/{id}/amounts`; `UndoAmountsDialog` (`DecisionDialog`) → `…/amounts/undo`;
+`AmountCorrectionNote` ("Amounts corrected by hand by … (was ₹x) — reason"). PURE `toNum`, `gstFor`, `figuresOf`,
+`amountsProblem`, `money` mirror the server. `Finance.tsx` invoice page: the Amounts card shows the note and, when the
+server sends `can_correct_amounts` (Admin / CEO), **Correct amounts** / **Undo correction**; the change history prints
+"Amounts corrected by hand" with each amount from → to (`describeChanges` reads `changes.amounts`).
+
+
+**24 Nov 2026 (closing) — invoice PDFs named after the employee; Received Amount branch-wise on the customer page
+(`crm/pages/receipts/BranchSummary.test.ts` 2, `EInvoiceBand.test.ts` +2 asserts; server half in B-V2 `CLAUDE.md`):**
+(1) `invoice/InvoicePage.fileStem(data, id, einvoice)` returns the server's `file_stem` / `einvoice_file_stem`
+(`InvoiceData` + `mapApiInvoiceToData` carry them) — "Tax Invoice (PDF)", Download PDF, the e-invoice PDF and the Word
+fallbacks in `Finance.tsx` all save `<Employee>_<number>` like the Word file; an older server still falls back to
+`TaxInvoice_<number>`. (2) **Customers ▸ customer ▸ Received Amount** (`CustomerReceiptsPage` with a customer scope and
+no branch): **`crm/pages/receipts/BranchSummary.tsx`** — PURE `branchTotals` (per branch: receipts · received · on
+account · TDS pending · last date; biggest payer first, "No branch on record" last, amber) and `allTotal`; `BranchSummary`
+cards (All branches + one per branch with a share bar; a click narrows the list to that branch — `branch_id`, 0 = no
+branch — a second click lets go); `BranchModeToggle` **By branch / One list** (per browser,
+`localStorage["crm.receipts.customerView"]`, default By branch) and `PickChip` ("Only <branch> ×"). By branch = the
+receipts grouped one section per branch, every section open, in the cards' order. The cards always cover every branch
+(a separate `fetchAllMaster` without the branch, same search / filters). `CustomerGroupedList` gains `defaultOpen` and
+`groupOrder`. Branch page and the sidebar page unchanged. Harness `story.tsx?page=receipts`.
+
+**24 Nov 2026 (after closing) — the last working day inside Edit project (`crm/components/ProjectDates.test.ts` 2; no
+server change):** reported — the date could not be changed from Edit project (the "Change last working day" button sat
+beside it on the Overview and only showed once a last day existed). `EditProjectWizard` edit mode now starts with a
+**Project Dates** step (`EDIT_DATES_SECTION`, key `projectDates`, CalendarClock): one `WizardGroup` with
+**`ProjectClosure.ProjectDatesBody`** — the last working day (or "Open-ended"), a Closed / Last day set / Open-ended chip,
+the server's reason, and **Change last working day** (opens the existing `ChangeEndDateModal`) or **Set last working day**
+(the existing `CloseProjectModal`, which schedules / closes) for `useCanCloseProject()`; others read "Ask Sales Head, RMG
+or HR". The change saves at once with its reason (the other steps still save with "Save changes"); afterwards the wizard
+re-reads `GET /api/projects/{id}` for the closure and calls the new `onDatesChanged` (Projects passes `reload`). PURE
+`datesSummary(closure, today)`. While a dates dialog is open the wizard's Esc does not close the wizard and its Enter
+handler ignores keys from the portalled dialog (`!e.currentTarget.contains(e.target)`). `ProjectWizardInitial` gains
+`end_date` / `closure`. The Overview buttons stay.
+
+**24 Nov 2026 (latest-last) — Edit project ▸ Project Start Date (`crm/components/ProjectStartDate.test.ts` 3; server
+half in B-V2 `CLAUDE.md`):** user ask with a screenshot — remove the "Last working day" card from Edit project and show
+the project's start date instead, editable, with Draft timesheets opening from the changed month. The wizard's first
+edit step is now **Project Start Date** (`EDIT_DATES_SECTION`, always "complete"), rendering
+**`ProjectStartDateBody`** (inline, no dialog): the current start (the team's earliest onboarding) from
+`GET /api/projects/{id}/start-date`; a date input + PURE `startPicks` (1st of the month · 1 / 3 / 6 months earlier) +
+Undo; "Who starts on the new date" checkboxes pre-ticked by the server; a debounced server preview per person (new
+Draft months as green chips, days added, removals, blocks, the data-start note); an optional note; **Update start
+date** (PURE `startProblem` says what is missing) → `PUT …/start-date`, toast = the server's message, then the
+project page reloads (`onDatesChanged`). Writers = `useCanAct("projects","edit", Sales_Head · Finance)`; others read
+it. The form carries `data-wizard-enter-off` so Enter inside it never moves the wizard. `ProjectDatesBody` / the
+end-date dialog are no longer used by the wizard (the project page's Close project / Change last working day buttons
+stay). Harness `story.tsx?page=editproj` mocks `/start-date`.
+
+**25 Nov 2026 — phone interviews per template; "RMG Desk" (`scripts/tests/phone_mode.test.mjs` 4 — node tests 31 pass,
+`components/interview-template/DeviceSettings.test.ts` 2; server half in B-V2 `CLAUDE.md`; `app.js?v=59`):** user ask — some
+candidates have no laptop; RMG decides on the template whether a phone may be used, and the page manages its own phone layout.
+(1) **Template form**: `DeviceSettings` under the anti-cheating checks — "Allow a phone or tablet" switch, the phone controls
+(`PHONE_CONTROLS`) and an amber note (the screen is not recorded; slow code typing when the template has pseudo-code /
+coding questions — counted with `askedByKind`). PURE `devicesFromWeights` / `devicesToWeights` → `weights.devices.allowPhone`.
+(2) **Candidate runtime** — `js/phone_mode.js`: `phoneAllowedForInvite(token, fetchJson)` (the lookup's
+`schedule.devices.allow_phone`; any failure = no), `enablePhoneMode()` (`kx-phone` on html + body), `isPhoneMode()`,
+`startPhoneGuards({report, isPaused, isTyped, getVideo})` / `stopPhoneGuards()` (called by `deactivateInterviewSecurity`):
+reports `phone_interview` once (PURE `phoneDeviceDetails`); **split screen / floating window** (PURE `splitScreenReason` —
+the page ≥ 20 % narrower, or ≥ 40 % shorter while no input / code editor has focus (soft keyboard), held 1.5 s, 20 s
+cooldown, base = biggest portrait size seen, `growBase`) → `split_screen` strike; **sideways** during a spoken question →
+"Turn your phone upright" cover + `orientation_changed` (allowed while a typed panel or a pause is open); the camera
+track muted / ended (a call) → `camera_interrupted`; Wake Lock keeps the screen on. `app.js` STEP-1: a handheld device asks
+the lookup first — allowed → phone mode, else the old "use a laptop" screen; guards start beside `startInterviewProctoring`.
+`interview_security.js`: phone mode never asks for / restores full screen (`requireFullscreenBeforeInterview` resolves,
+`onFullscreenChange` ignored), the warning modal uses `PHONE_WARNING_REASON` (left the app · something covered it · split
+screen), the four new types are known (three silent). `interview_rules.js` `_applyPhoneRules(config.devices)`: the
+stay / device / recording / reopen / consent / keyboard texts speak of the phone (ids `rulesStayRuleText`,
+`rulesDeviceRuleText`, `rulesRecordRuleText`, `rulesReopenText`, `rulesConsentText`). Screen share already passes as "not
+available" where `getDisplayMedia` is missing. **CSS block "Phone interview"** (end of the second `<style>`, only under
+`html.kx-phone`, ≤ 900 px): a grid `cam status / cam stage / q / tr / resp` — 108×144 camera tile top-left, status + an
+88 px AI band beside it, the question full width, Skip | Send side by side in a sticky bottom card, no Fullscreen button;
+rules screen without the stepper. Laptops / PCs never get the class. (3) ⚠️ **Removed stray markup** from `index.html`: three
+v3 rule groups + a footer sat at `<body>` level after `#screenInterviewRules` (visible under every screen, and duplicating the
+ids `rulesProctorRule`, `rulesGazeRule`, `rulesGazeLimit`, `interviewRulesBackBtn`, `interviewRulesContinueBtn`). (4)
+**Integrity**: `IntegrityRow.device` → sky "On a phone" chip on the row. (5) **RMG Desk**: the sidebar entry, page header,
+buttons ("Open RMG Desk"), notices and copy say RMG Desk; route `screening-desk` and the component names are unchanged.
+Rendered at 393×852 (Android UA, fake camera): interview screen and rules page, no page errors.
+
+**25 Nov 2026 (later) — training, bench insights, Talent Pool round 3 (`crm/components/training/TrainingParts.test.ts` 3;
+server half + migration 0160 in B-V2 `CLAUDE.md`):** (1) **`crm/components/training/TrainingParts.tsx`** — types,
+`useTrainingMeta` (one read of `/api/training/meta`), `useTrainingWriter` (RMG · screener · bench Edit grant — a copy of
+`useBenchWriter` so Training ⇄ BenchDesk never import each other), PURE `suggestTemplate` / `addPlanSkill` / `plusDays`,
+`TrainingChip`, **`PlanDialog`** (start / edit: skills with level now → target, picks from their skills / weak skills,
+target date picks, trainer, notes, "one task per skill on My Workspace"), **`TrainingInterviewDialog`** (Practice |
+Re-interview, template suggested by skill overlap, skills ticked, IST time picks, email + send; shows the link + access key
+after), `ClosePlanDialog`. (2) **`crm/pages/Training.tsx`** — `TrainingPlansView` (Bench ▸ Training tab: tiles, status
+pills, plan cards with tasks bar and before / after, success rate by skill / trainer) and `TrainingPlanPage` (route
+`training/:id`; sidebar highlights Bench via `crmNavItemActive`). ⚠️ Panels in stacked columns use `className="!h-auto"`
+(Panel is `h-full`). (3) **`crm/components/bench/BenchInsights.tsx`** — `BenchInsightsView` (Bench ▸ Insights tab),
+`ShareResumeDialog`, `PickBenchPerson`, `BenchSnapshot` (Dashboard card for RMG / GM / Admin / CEO; renders nothing on a
+403). `BenchDesk.tsx`: tabs Insights · Training (list views only fetch for bench / deployed / groups — `LIST_VIEWS`), person
+header **AI interview** (opens the open plan's interview dialog, or starts a plan first), **Start training / Training
+plan**, **Share resume**, training chip. (4) **Interview readiness** cards: training chip + **Start training** (weak skills
+prefilled with their rated level). (5) **`crm/pages/talentPool/TalentPoolMore.tsx`** — `ReadyMode` (one-click Apply per
+fitting position via multi-apply), `ReengageDialog` (also "Email N about new roles" in Search's selection bar),
+`FreshMode` (+ `ConfirmDetailsDialog`, CTC in lakhs), `DupesMode` (+ `MergeDialog`); TalentPool modes Ready to place ·
+Keep up to date · Duplicates. Harness `/tmp/ft/src/__story/story.tsx` (`bench.html?w=plan|list|insights|ready|fresh|dupes|iv`).
+
+**25 Nov 2026 (latest) — Revenue / Customer Ledger; the Revenue page without charts (UI only, no server change):** user
+ask with screenshots. (1) `CrmReports.tsx`: the separate **Customer Ledger** report card is removed; the Revenue card is
+labelled **"Revenue / Customer Ledger"** (just "Revenue" or "Customer Ledger" when the login has only one) and opens with a
+Revenue | Customer Ledger switch (`usePageTab("sub")`, `RevenueView`). `?tab=customer_ledger` maps to the Revenue card's
+ledger view (`wantedTab`); the same role / sub-tab rules decide each view (`showRevenue`, `showLedger`). (2)
+`reports/RevenueReport.tsx` v5: removed the 12-month trend, the three dials (`PeriodTargetCard` · `FyTargetCard` ·
+`CollectionsCard` deleted with `Attainment`, `topRows`, `DIM_OPTIONS`), Revenue by customer, Cash flow, Receivables ageing,
+Billing by dimension, Gross margin by customer, Forecast and the bar charts above the project / employee tables. The page
+is: header + scope → alerts → 8 tiles → Invoice tracker → Customer placements → Revenue by project (table) → Revenue by
+employee (stats + table) → Coming up · Efficiency · Leakage. The server payload and the Excel pack are unchanged (the pack
+still carries every section).
+
+**25 Nov 2026 (last) — every sidebar page in Access Control; the Finance tab without dials (server half + migration
+0161 in B-V2 `CLAUDE.md`; `CeoDashboard.test.tsx` re-pinned):** (1) `lib/rbac.MANAGEABLE_TABS` + `TabPermissionMatrix.
+TAB_MODULES` gain `screening-desk` · `careers-applications` (Recruitment) · `e-invoices` · `received-amounts` ·
+`received-tds` · `expenses` (Projects & Finance); the matrix reads the rest (sub-tabs) from `/api/roles/registry`.
+(2) `CrmApp` sidebar: each of the six is `crmTabVisibleFromMe(me, page, <old rule>)` — a configured role decides by its
+tick, otherwise the old rule (approval · requirements grant · Finance role · invoices); E-invoices also needs Invoices;
+Received Amount / TDS stay off for Admin / CEO (user rule). `ScreeningDesk` opens on the page grant too (decisions still need
+the approval); Received Amount / Received TDS `canEdit` = invoices Edit OR the page at Edit. (3) Sub-tabs: `BenchDesk`
+(`useSubTabs("bench")` filters the view pills + `usePageTab` allow-list), `MyWorkspace` (sections), `CrmCandidates`
+(Interview readiness pill hidden when switched off), `CeoDashboard` → a wrapper filters `TABS` through
+`subTabVisible(me.access, me.roles, "dashboard", key)` (safe outside CrmApp via new `CrmApp.useMeMaybe`) and renders
+`CeoDashboardInner` (`key` = the tab list); nothing left → renders nothing. (4) **Finance tab**: the row of three dials
+(period target · collection rate · gross margin / overdue share) is removed; the Target tile now says "of ₹x · ₹y to go"
+with an "FY projection" foot. Unused locals (collectionState, overduePct/State, targetMax) removed.
+
+
+**25 Nov 2026 (very last) — several custom roles from the Users list (`crm/components/access/RolesPickerCell.test.tsx` 3; no
+server change):** reported with a screenshot — Employee and Interviewer could not be given to one person: the Users tab's
+"Permissions from" was a single `<select>` posting `access-source {kind: role}`, which REPLACES every custom role with the one
+picked. The column is now **`RolesPickerCell`**: a button ("Employee + Interviewer" with a count chip, or "Built-in role (Sales)")
+opening a portalled popover (fixed position, flips up near the bottom, Esc / outside click close): the custom roles as
+checkboxes (search past 6; an inactive role shown only while held), the built-in roles with "change in Edit Roles" (opens
+`EditRolesModal`), Save → `POST /api/users/{id}/roles {roles: <unchanged built-in>, custom_roles: ids}` (the Edit Roles route —
+audited, refuses "no role at all"); a refusal shows inside the popover. PURE `rolesPickerLabel`, `samePicked`,
+`pickerProblem`. `UsersAdminPage` now keeps EVERY custom role in state (the Role filter lists active ones), so saving never
+drops a held inactive role. Admin / CEO rows still read "Full access". The person's permissions are every role's, added up.
+
+**26 Nov 2026 — My Workspace is the employee's dashboard (`crm/components/workspace/EmployeePortal.test.ts` 2; server
+half in B-V2 `CLAUDE.md`):** user ask — nothing about billing, just about the person; every AI interview report in their
+login; every open position with just the name and JD and Apply; the resume they write; anything else useful.
+**`crm/components/workspace/EmployeePortal.tsx`**: `EmployeeHome` (`/api/my-workspace/home`: eight tiles — Today ·
+Open tasks · My resume % · Open positions (fit count) · My applications · AI interviews · Best AI score · Between
+projects / Current project (no rate), each opening its section; "Your next steps" list; "Positions that fit you"; skills on
+record), `OpenPositions` (search title / JD / skills, All · Good fit · Not applied · Applied pills with counts; a card per
+role: fit ring + band chip, skills green when they have them ★ = must, the JD collapsed past 420 characters, "To learn: …",
+**Apply** → `DecisionDialog` (emerald, optional note with picks, the resume % notice) → `POST
+…/opportunities/{id}/apply`; an amber "Finish it first" banner while the resume is under the server's 70 %),
+`MyApplications` (title · applied · plain-words chip `APP_LOOK`), `MyInterviewReports` (cards with ring + three scores,
+"Open my report" → `InterviewReportModal`: score ring, technical / communication / problem solving, summary, What went
+well / What to work on, Skill by skill, Question by question accordion with the answer, what was right / missed and what a
+good answer covers — no hiring recommendation), `MyTraining` (plan cards: skills level now → target, tasks bar, before →
+after, scheduled interview). PURE `filterRoles`, `interviewWords`, `FIT_LOOK`. `MyWorkspace.tsx` sections (`?tab=`): home
+(default) · opportunities · applications · interviews · training · today · tasks · resume · history — each a sub-tab Admin
+can switch off. Rendered at 1400 / 400 px, light + dark, report and apply dialogs open, no console errors.
+
+**25 Nov 2026 (evening) — the `frontend/` folder was deleted and restored (no server change):** `rebuild_all.bat` stopped
+with "Frontend builder not found … frontend\start.bat": the whole `F:\AI-Interview-Model-F-V2\frontend` folder
+(candidate runtime, admin dashboard, `node_modules`, `dist`) disappeared at 16:32 IST (the backend log turned every page
+into 404 from 16:32:02; not caused by a tool run). Restored: `admin-dashboard/src` from a working copy taken at 16:10 the
+same day (every change through the employee portal), everything else from git `d53fa6b` (20 Nov). Re-done on top:
+the stray v3 rules markup removed from `index.html` again; the phone interview runtime rewritten — `js/phone_mode.js`
+(PURE `isLandscape` · `growBase` · `splitScreenReason` · `phoneAllowedForInvite` · `phoneDeviceDetails`;
+`enablePhoneMode` / `isPhoneMode` / `startPhoneGuards` / `stopPhoneGuards`: `phone_interview` once, `split_screen` held
+1.5 s, sideways cover + `orientation_changed`, `camera_interrupted`, Wake Lock), `interview_security.js` (phone types,
+`PHONE_WARNING_REASON`, no full screen in phone mode, guards stopped on deactivate), `interview_rules.js`
+`_applyPhoneRules` (ids `rulesStayRuleTitle/Text`, `rulesDeviceRuleTitle/Text`, `rulesRecordRuleTitle/Text`,
+`rulesReopenText`, `rulesConsentText` added to the v4 markup), `app.js` STEP-1 asks the lookup before the "use a laptop"
+screen and starts the guards beside `startInterviewProctoring`, CSS block "Phone interview" before `</head>`,
+`app.js?v=59`. `dist/` rebuilt (tsc green, vitest 458 / 2 known failures, node tests 31). `node_modules` is gone —
+`rebuild_all.bat` (or `frontend\start.bat`) runs `npm install` first. ⚠️ **Commit both repos** — nothing since 20 Nov
+was committed, which is why a deleted folder cost work.
+
+**26 Nov 2026 (later) — Opportunities for an employee = Open positions (`crm/employeeRoutes.test.ts` 3; server half in B-V2
+`CLAUDE.md`):** screenshot report — an Employee + Interviewer login saw the Sales pipeline, the opportunity page with the
+CTC slab and commercials. `CrmApp.isEmployeeOnlyLogin(me)` (PURE, mirror of the server's `employee_only`: held roles —
+`display_roles`, else `roles` — include Employee and are all Employee / Interviewer). **`crm/employeeRoutes.tsx`** —
+`employeeAware(Normal, kind)` wraps the `opportunities`, `opportunities/:id`, `requirements` and `requirements/:id` routes
+(`routes.ts`): such a login gets the lazy **`pages/EmployeeOpportunitiesPage`** (teal `PageHeader` "Open positions" with My
+applications · My AI interviews · My resume) instead; PURE `employeeFocus(kind, id)` makes an old link open that role.
+**`EmployeePortal.OpenPositions` redesigned** (My Workspace uses it too): cards with a briefcase tile, fit chip, a 3-line JD
+preview (PURE `jdPreview`), skills (green = you have it), "Read the job description" → `RoleDialog` (xl, teal hero: the JD
+as headings / paragraphs / bullets — PURE `jdBlocks` — beside a sticky aside: fit ring, skills, to learn, **Apply with my
+Karnex resume**); `focus` prop (PURE `findFocusRole`, by requirement or opportunity id) opens that role on arrival, or says
+it is no longer open; `resumePercent` optional (falls back to the list's `meta.resume_percent`). The server refuses the deal
+endpoints to such a login as well. dist/ rebuilt.
+
+**26 Nov 2026 (latest) — My AI reports, the employee Dashboard (`crm/pages/dashboard/EmployeeDashboard.test.ts` 3;
+server half in B-V2 `CLAUDE.md`):** three screenshot asks. (1) **`lib/employeeLogin.ts`** — `EMPLOYEE_ONLY_ROLES`, PURE
+`isEmployeeOnlyRoles(roles, display_roles)` (kept out of CrmApp so the shell needn't load the CRM bundle; CrmApp's
+`isEmployeeOnlyLogin` delegates). `App.tsx`: `employeeOnly` from `/api/me` → platform nav = one tab, **"My AI reports"**
+(view key `candidates`), `isViewAllowed` closes every other platform view (dashboard, templates, ATS, AI Costs, Integrity,
+report pages), and the view renders **`pages/MyAiReports.tsx`** (purple header + `EmployeePortal.MyInterviewReports` —
+their own interviews and learning reports). The server refuses the staff report endpoints too. (2) **AI Costs**: the
+server now answers a database sign-in failure with a plain 503 message (no host); the page shows it as before.
+(3) **`crm/pages/dashboard/EmployeeDashboard.tsx`** — `DashboardHome` renders it for `isEmployeeOnlyLogin(me)` (before the
+My-Workspace-only rule): teal → indigo hero (initials, greeting, designation · Emp ID · experience, "On <project> · since"
+/ "Between projects · N days", actions Log today's work · Open positions · My resume % · My AI reports · My interviews
+(Interviewer) · Refresh); **This week's daily log** (Mon–Fri: Logged / Missed / Log today / —, PURE `weekDays`);
+`EmployeeHome` (tiles, next steps, positions that fit, skills); **My tasks** (open, overdue first — PURE `tasksToShow`) |
+**What I logged lately**; and for an Interviewer **Interviews you are taking** (`PanelDashboard`). No "My work today", no
+hiring control tower (the server refuses it). An unlinked login gets the "not ready" notice (+ the panel dashboard).
+
+**26 Nov 2026 (very last) — Invoices ▸ Pending work (`crm/components/invoice/PendingWorkPanel.test.ts` 3; server half
+in B-V2 `CLAUDE.md`):** `lib/invoiceStages.ts` `PENDING_TAB_KEY` "Pending" — the second tab ("Pending work", count =
+every pending row, read once on mount and updated by the panel's `onCount`). `Finance.InvoicesPage`: `pendingTab` /
+`ownTab` (E-invoice + Pending render their own panel; the invoice list, its counts request, the search jump, Map money
+and the Status / More filters stay off on them). **`PendingWorkPanel`**: eight cards (All pending + one per step —
+No timesheet · Not submitted · Rejected · For approval · PI to raise · PI returned · PI with Finance — count, amount,
+"With Sales / GM / Finance"; several at once, PURE `toggleStage`); filters search (debounced 350 ms) · customer → branch
+(incl. "No branch on record") → project · employee · work month · Sales owner · waiting 3 / 7 / 15 / 30+ days · sort
+(waiting longest / newest / work month / employee / amount), Clear N filters, "N shown · ₹ total", Refresh, CSV
+(`authFetch` of `format=csv`); kept per session (`inv.pending`, `inv.pending.page`). Table: employee (avatar, Emp ID) ·
+customer · project link · branch · Sales owner · `WorkMonth` · stage chip + "Next: …" + the reason quoted · hours · days ·
+Proforma link + PO · amount · waiting chip (green < 3, amber < 15, red after — PURE `waitTone`) + since + by · the next-step
+button (PURE `rowAction`: Create timesheet → `timesheets?tab=due`, Open / Fix & resubmit, Review & approve, Raise /
+Reissue Proforma → the timesheet, Generate tax invoice / Open Proforma → the invoice; wording follows `meta.can`).
+Re-reads on `DESK_CHANGED_EVENT` and every 60 s while visible. Rendered light / dark / 420 px from the real service
+output; `dist/` rebuilt (`assets/index-DfjIktr1.js`).
+
+**26 Nov 2026 (bug-fix round) — invoice number checked while typed (`crm/components/invoice/InvoiceNumberCheck.test.ts`
+2; server half + migration 0162 in B-V2 `CLAUDE.md`):** **`InvoiceNumberCheck.tsx`** — PURE `normalizeInvoiceNumber` /
+`invoiceNumberKey` (the server's twins: case, spaces and dash look-alikes ignored), `useInvoiceNumberCheck(number,
+{excludeId, currentNumber})` (debounced 350 ms `GET /api/invoices/number-check`; the invoice's own number is never
+"taken"; a failed read says nothing — the save still checks) and `InvoiceNumberHint` ("Checking…" · green "X is free" ·
+red "X is already present in the tool — Tax invoice … · Open it. Use a different number."). Used by
+`ProformaActions.ConvertProformaModal` (Generate original invoice) and `Finance` Request a change: the button is disabled
+and a submit refused while the number is taken. The server refuses a duplicate with a 409 on every path anyway. Every
+other fix of this round (staff gates on the interview endpoints, candidate routes for employee-only logins, Received TDS,
+timesheet window, Joined savepoint) is server-side — no client change. `dist/` rebuilt (`assets/index-CEKtyqrG.js`).
+
+
+**26 Nov 2026 (after the bug-fix round) — Pending work made friendlier; Projects ▸ Invoices removed
+(`PendingWorkPanel.test.ts` now 4; server half in B-V2 `CLAUDE.md`):** user ask with screenshots. (1)
+`crm/components/invoice/PendingWorkPanel.tsx` rewritten (same route, same exports + new PURE ones): a summary line
+("N pieces of work not billed yet · ₹ in Proformas and approved sheets · N waiting over 30 days" + "How this list
+works" steps); the 7 step cards became **three lanes by whose move it is** (`LANES`: With Sales — No timesheet ·
+Not submitted · Rejected; With the GM — For approval · Proforma to raise · Proforma returned; With Finance — Proforma
+with Finance) joined by arrows — a lane header picks all its steps (`toggleLane`), a step picks itself
+(`toggleStage`); the filter card is search + customer + employee + work month with **More filters** (branch ·
+project · Sales owner, open state in session `inv.pending.more`), a **Waiting** chip row (Any time · 3+ · 15+ · 30+
+days with the server's `wait_buckets` counts), **Group by** (customer · project · employee · work month — sends the
+matching server sort; collapsible group rows with count + ₹, PURE `groupRows`) or Sort, and every filter that is on
+as a removable chip + Clear all. Table: 6 columns — Employee · month (Emp ID, work month chip, period) · Project ·
+customer (truncated, full name on hover, Sales owner) · Where it stands (**five-dot `StepRail`** Timesheet →
+Submitted → Approved → Proforma → Tax invoice, `stepOf`; the stage chip, "<who>'s move", "Sent back —" for
+rejected / returned, the reason quoted) · Work & billing (hours · days or "No hours yet", PI link, PO, amount) ·
+Waiting (`waitText`: "239 days" + "about 8 months", since, `byLabel` "Submitted by / Approved by …") · Next step.
+Header "Showing a–b of N", footer rows per page 25 / 50 / 100 + First / Previous / Next / Last. `PendingFilters`
+gains `groupBy` / `pageSize` (an older session value is filled from `EMPTY_PENDING_FILTERS`). (2)
+`pages/Projects.tsx`: the hub's **Invoices** tab and its lazy `InvoicesPage` are gone (`HUB_TABS` allow-list
+projects · employees · timesheets · pos); an old `?hub=invoices` link navigates to `invoices`. `dist/` rebuilt
+(`assets/index-D0aZBDO_.js`). Harness `/tmp/ft/src/__story/pnd.tsx` (`?group=customer&more=1`).
+
+**26 Nov 2026 (Employees round) — Working by default, bench groups on the list, Joining Documents, a better employee
+page (`crm/components/employee/JoiningDocuments.test.ts` 2, `employeeFields.test.ts` +1; server half + migration 0163 in B-V2
+`CLAUDE.md`):** five screenshot asks. (1) **`lib/pageState.usePageTab(param, fallback, allowed, {remember: false})`** — arriving
+without the param always opens `fallback` (Back / Forward still restore from the address). The Employees list uses it:
+`status` defaults to **Active** ("Working") on every arrival (reverses the 26 Aug "All first"). (2) **Deployment dropdown**
+(`Employees.tsx`, PURE `deploymentChoice`): Bench & deployed · On the bench · Deployed · optgroup "Groups (not on the bench)"
+with every bench group + member count · Everyone in a group (`group:<id>` / `grouped`, URL `?deployment=` read on load).
+`DeploymentCell` shows the group chip (`BenchGroups.GroupChip`) instead of "Bench" for a group that leaves the pool; hero stat
+"in groups (management, internal…)". For a writer: rows are selectable → "Move to a group" (`MoveToGroupDialog`), a purple
+banner on On the bench when the server sends `bench_suggestions` (→ `SuggestionsDialog`), and a **Groups** button
+(`ManageGroupsDialog`). (3) **Employee page**: Profile type removed (header badge, Job details, New Employee form —
+`TypeBadge` deleted); header facts = Designation (+ department) · Reporting manager (+ HR) · **Based at** (+ works at) · Joined
+(+ PURE `tenureText` "4 yrs 2 mos with Karnex") · Deployment (project / customer or On the bench), each with an icon tile;
+`employeeFields`: core `based_location` before `work_location` (with hints); Experience Details removed from More details
+(`ExperienceSection` / `ExperienceModal` deleted; the server keeps the data); Projects / Leave empty states are one line
+(`QuietEmpty`). (4) **`crm/components/employee/JoiningDocuments.tsx`** — `JoiningDocumentsTab` (tab "Joining Documents" after
+Project History, shown when `useHasRole("HR")` — HR, Admin, CEO): progress ring of required documents, "HR only" chip, stat
+chips, the documents still to collect, filter pills All / Still to collect / To verify / Done (PURE `docFilter`); one card per
+group (PURE `groupIcon`, progress bar); each document: state icon + Required / Optional + state chip (`STATE_LOOK`), files as
+chips (open → `FilePreviewPane` in a modal, download through `authFetch`, remove with confirm), **Upload** (several files,
+drag-and-drop onto the row), **Mark verified**, **Not needed** (+ note), **Undo**. `ManageListDialog` (Admin / CEO, "Manage the
+list"): add / edit (group with suggestions, name, hint, required), make optional / required, move up / down, delete (hidden when
+someone already gave it), show again. Harness `src/__story/emp.tsx` (`?p=employees&deployment=bench`, `?p=employees/136`,
+`&tab=documents`). Verified: tsc green, eslint clean, vitest 473 / 2 known failures, rendered 1500 / 420 px with no console
+errors, `dist/` rebuilt (`assets/index-BZe-SVc0.js`).
+
+**26 Nov 2026 (last) — the candidate never sees the interview's total (`app.js?v=60`; no server change):** screenshot
+report — the live-interview strip drew a tile for EVERY question in the template (and "Question 4 of 9"), so the candidate
+knew how long the interview was. User rule: show only what was attempted. `skill_bank.buildStrip` draws tiles only for
+questions 1…current (answered filled, current solid — no "upcoming" tiles); the legend names the kinds seen so far with no
+counts and reads "Question N · <skill>" (before question 1: "Your questions appear here as you answer them"). The typed
+panel header, the `#progressPill` (`candidate.js`) and the resume message (`app.js`) say "Question N" — never "of M".
+`interview_rules.applyRulesConfig`: the Questions tile shows the KINDS ("Spoken, pseudo-code & coding") and the mix chips
+carry no numbers; the skill picker's plan pills name the kinds only; `live_voice._questionPayload` no longer sends
+`total_questions` to the realtime model. The server still sends `total` / `question_map` (the page needs the kinds and
+the dashboard reports keep the counts). Verified: `node --check`, node tests 31 pass, the strip rendered in jsdom (24-question
+plan at question 4 → 4 tiles, "Question 4 · Embedded C").
+
+**26 Nov 2026 (latest) — failed sign-ins keep their message (`app.js?v=61`; server half in B-V2 `CLAUDE.md`):** the server
+now answers a wrong password with **401** (was 200 + `error`). `js/core.js::apiFetch` clears the session and reloads the
+page on a 401; that would have reloaded the login screen and lost "Invalid username or password." when the browser still
+held an old token. A 401 from `/auth/login` or `/auth/register` (`isSignInCall`) is now left alone; every other 401 still
+signs out. `hrAuth.js` needed nothing — `handleJson` already reads `error` whatever the status. Checked in jsdom: failed
+login keeps the token and the message; a 401 from `/next` still clears it.

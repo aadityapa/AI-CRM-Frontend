@@ -285,7 +285,7 @@ export function buildProfileColumns(h: ColumnHelpers): Column<ProfileColumnRow>[
     {
       // Resume ↔ requirement match (25 Sep 2026, user request: visible to
       // everyone). Same ring as the AI score so the two read side by side;
-      // the server scores uploads on arrival and the Screening Desk fills
+      // the server scores uploads on arrival and the RMG Desk fills
       // any gaps, so a dash means "no CV / not scored yet", not zero.
       key: "ats_score",
       label: "ATS score",

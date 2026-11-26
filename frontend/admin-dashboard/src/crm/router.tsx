@@ -18,7 +18,7 @@ import { pushAppHistory } from "../lib/appHistory";
 const CRM_FILTER_KEYS = [
   "project_id", "employee_id", "tab", "q", "pdf", "edit", "task", "focus", "einvoice",
   // page-state params (crm/lib/pageState.ts) — each belongs to one page only
-  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab", "receipt", "entry",
+  "sub", "status", "rtab", "phase", "opp_tab", "hub", "scope", "file", "name", "saved", "ftab", "receipt", "entry", "sec",
   // CEO drill-down + Revenue report period params (27 Oct 2026) — always set by the link.
   "month", "period", "customer_id", "branch_id",
   // 7 Nov 2026 — "How the year unfolded" → Billed: the month clicked, the ticks, the bar.

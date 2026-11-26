@@ -18,5 +18,10 @@ describe("e-invoice sheet helpers", () => {
     expect(canShowEInvoice({ ...base, kind: "Proforma" })).toBe(false);
     expect(fileStem(base, 7, true)).toBe("EInvoice_KRNX_26-27_23");
     expect(fileStem(base, 7)).toBe("TaxInvoice_KRNX_26-27_23");
+    // The server's name wins — the employee, like the Word file (24 Nov 2026).
+    const named = { ...base, file_stem: "Souhan_C_H_KRSW26-27-158-VS",
+      einvoice_file_stem: "EInvoice_Souhan_C_H_KRSW26-27-158-VS" } as InvoiceData;
+    expect(fileStem(named, 7)).toBe("Souhan_C_H_KRSW26-27-158-VS");
+    expect(fileStem(named, 7, true)).toBe("EInvoice_Souhan_C_H_KRSW26-27-158-VS");
   });
 });

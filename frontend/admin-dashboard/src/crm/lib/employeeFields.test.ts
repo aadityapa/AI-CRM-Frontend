@@ -14,7 +14,7 @@ const emp = {
   gender: "Male", blood_group: "B+", date_of_birth: "2002-03-20", date_of_joining: "2026-09-07",
   employee_code: "324", department_id: 3, department_name: "Engineering", designation_id: 9,
   designation_name: "Engineer", reporting_manager_id: 12, reporting_manager_name: "Manjeet Singh",
-  work_location: "Pune", employment_type: "Full_Time", profile_type: "Internal", is_active: true,
+  work_location: "Pune", based_location: "Pune", employment_type: "Full_Time", profile_type: "Internal", is_active: true,
   current_ctc: null, personal_email: "kamatheomkar7@gmail.com", skills: [], pan: null, portal_access: false,
 };
 
@@ -42,6 +42,14 @@ describe("employee profile fields", () => {
     const reloc = EMPLOYEE_CARDS.job.fields.find((f) => f.key === "relocation_applicable")!;
     expect(displayValue({ relocation_applicable: false }, reloc)).toBe("No");
     expect(visibleFields({ relocation_applicable: false }, [reloc])).toHaveLength(1);
+  });
+
+  it("job details carry based + work location and no profile type (26 Nov 2026)", () => {
+    const keys = EMPLOYEE_CARDS.job.fields.map((f) => f.key);
+    expect(keys).not.toContain("profile_type");
+    expect(keys.indexOf("based_location")).toBeGreaterThan(-1);
+    expect(keys.indexOf("based_location")).toBeLessThan(keys.indexOf("work_location"));
+    expect(missingCore({ ...emp, based_location: null }).map((m) => m.field.key)).toEqual(["based_location"]);
   });
 
   it("saves only what changed, typed for the API", () => {

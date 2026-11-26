@@ -37,17 +37,19 @@ const TABS = [
    mirroring the old sidebar entry's role rules + Access Templates. */
 const FINANCIAL_TAB = { key: "financial", label: "Financial Reports" };
 
-/* CEO Revenue (Sep 2026) — Admin/CEO only, no template can widen it; the
-   dashboard "Revenue this month" tile deep-links here via `?tab=revenue`. */
-const REVENUE_TAB = { key: "revenue", label: "Revenue" };
+/* CEO Revenue (Sep 2026) — the dashboard "Revenue this month" tile deep-links
+   here via `?tab=revenue`. The card is built in the page (it also holds the
+   Customer Ledger view). */
 
 /* Invoice Summary (23 Oct 2026) — the month's invoices per customer, ready to
    paste into a mail. Sales · Sales Manager · Sales Head · Finance by role. */
 const INVOICE_SUMMARY_TAB = { key: "invoice_summary", label: "Invoice Summary" };
 
 /* Customer Ledger (20 Nov 2026) — one customer's statement by financial year,
-   month or custom dates. Finance + Admin / CEO by role. */
-const CUSTOMER_LEDGER_TAB = { key: "customer_ledger", label: "Customer Ledger" };
+   month or custom dates. Finance + Admin / CEO by role. 25 Nov 2026: no longer
+   its own card — it is the second view inside Revenue ("Revenue / Customer
+   Ledger"); an old `?tab=customer_ledger` link opens Revenue on the ledger. */
+type RevenueView = "revenue" | "ledger";
 
 /** Presentation for the report picker (icon · one line · accent). Keys match
  *  the tab keys above; purely visual. */
@@ -56,8 +58,7 @@ const TAB_LOOK: Record<string, { icon: LucideIcon; blurb: string; tone: string }
   profiles: { icon: UserSearch, blurb: "Candidates in the pipeline with CTC and hike.", tone: "from-violet-500 to-fuchsia-600" },
   productivity: { icon: TrendingUp, blurb: "Each recruiter's sourcing, pipeline and outcomes in a window.", tone: "from-emerald-500 to-teal-600" },
   financial: { icon: Landmark, blurb: "POs, invoices, payments and TDS in one place.", tone: "from-amber-500 to-orange-600" },
-  revenue: { icon: IndianRupee, blurb: "Billed, collected, margin and cash flow.", tone: "from-rose-500 to-pink-600" },
-  customer_ledger: { icon: BookOpen, blurb: "One customer's statement by FY, month or dates.", tone: "from-indigo-500 to-blue-600" },
+  revenue: { icon: IndianRupee, blurb: "Billed, collected, the invoice tracker and each customer's ledger.", tone: "from-rose-500 to-pink-600" },
   invoice_summary: { icon: ReceiptText, blurb: "This month's invoices per customer — copy and send.", tone: "from-teal-500 to-cyan-600" },
 };
 
@@ -194,16 +195,28 @@ export function CrmReportsPage() {
   // while Financial Reports is open to them (the server gate reads both ticks).
   const ledgerRoleOk = useHasRole("Finance");
   const showLedger = ledgerRoleOk && (sub.allowed("customer_ledger", true) || showFinancial);
+  // One "Revenue / Customer Ledger" card holds both views (25 Nov 2026).
+  const revenueCard = showRevenue || showLedger
+    ? { key: "revenue", label: showRevenue && showLedger ? "Revenue / Customer Ledger" : showRevenue ? "Revenue" : "Customer Ledger" }
+    : null;
   const tabs = [
     ...TABS.filter((t) => sub.allowed(t.key)),
     ...(showFinancial ? [FINANCIAL_TAB] : []),
-    ...(showRevenue ? [REVENUE_TAB] : []),
+    ...(revenueCard ? [revenueCard] : []),
     ...(showInvoiceSummary ? [INVOICE_SUMMARY_TAB] : []),
-    ...(showLedger ? [CUSTOMER_LEDGER_TAB] : []),
   ];
+  // An old `?tab=customer_ledger` link lands on the Revenue card's ledger view.
+  const wantedTab: TabKey = requestedTab === "customer_ledger" ? "revenue" : requestedTab;
   // A deep link to a tab this user cannot see falls back to the first visible tab.
-  const tab: TabKey = tabs.some((t) => t.key === requestedTab)
-    ? requestedTab : ((tabs[0]?.key as TabKey) || "opportunities");
+  const tab: TabKey = tabs.some((t) => t.key === wantedTab)
+    ? wantedTab : ((tabs[0]?.key as TabKey) || "opportunities");
+  const [revView, setRevView] = usePageTab<RevenueView>("sub", "revenue", ["revenue", "ledger"]);
+  const revenueView: RevenueView = !showRevenue ? "ledger" : !showLedger ? "revenue"
+    : requestedTab === "customer_ledger" ? "ledger" : revView;
+  const pickRevenueView = (v: RevenueView) => {
+    if (requestedTab === "customer_ledger") setTab("revenue", { replace: true });
+    setRevView(v);
+  };
   const noReports = tabs.length === 0;
 
   // Per-tab filters (+ customer and a date window shared by both tables, 7 Oct 2026)
@@ -437,12 +450,32 @@ export function CrmReportsPage() {
           No report is switched on for your login. Ask Admin / CEO to tick the reports you need
           in Access Control.
         </div>
-      ) : tab === "customer_ledger" ? (
-        showLedger && <CustomerLedgerTab />
       ) : tab === "invoice_summary" ? (
         showInvoiceSummary && <InvoiceSummaryReport />
       ) : tab === "revenue" ? (
-        showRevenue && <RevenueReport canSetTargets={canSetTargets} />
+        <div className="space-y-4">
+          {showRevenue && showLedger && (
+            <div className="inline-flex items-center gap-1 rounded-control border border-subtle bg-surface-1 p-1 shadow-raised" role="tablist" aria-label="Revenue view">
+              {([
+                { key: "revenue", label: "Revenue", icon: IndianRupee },
+                { key: "ledger", label: "Customer Ledger", icon: BookOpen },
+              ] as const).map((o) => {
+                const on = revenueView === o.key;
+                const Icon = o.icon;
+                return (
+                  <button key={o.key} type="button" role="tab" aria-selected={on} onClick={() => pickRevenueView(o.key)}
+                          className={`inline-flex h-9 items-center gap-2 rounded-control px-4 text-sm font-semibold transition-all duration-micro ${
+                            on ? "bg-gradient-to-r from-rose-500 to-pink-600 text-white shadow-raised" : "text-secondary hover:bg-surface-2 hover:text-primary"}`}>
+                    <Icon size={15} aria-hidden /> {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {revenueView === "ledger"
+            ? <CustomerLedgerTab />
+            : <RevenueReport canSetTargets={canSetTargets} />}
+        </div>
       ) : tab === "productivity" ? (
         <RecruiterProductivity />
       ) : tab === "financial" ? (

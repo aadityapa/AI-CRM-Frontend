@@ -148,6 +148,10 @@ export interface InvoiceData {
   project_name?: string | null;
   customer_id?: number | null;
   customer_name?: string | null;
+  /** Download names from the server (24 Nov 2026): `<Employee>_<number>`,
+      `Proforma_…` / `EInvoice_…` — the same as the Word file. */
+  file_stem?: string | null;
+  einvoice_file_stem?: string | null;
   sac_code?: string | null;
   /** Qty/Rate column labels from the PE billing unit (e.g. "Billed Qty
       (Months)" / "Rate/Month (INR)") — server-resolved so the on-screen view

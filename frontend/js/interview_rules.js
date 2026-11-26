@@ -69,6 +69,37 @@ function _applyProctoringRule(raw) {
     : "";
 }
 
+/**
+ * A phone interview (25 Nov 2026, the template allowed one): the rules speak
+ * of the phone — no full screen, no screen share, no other apps or split
+ * screen, keep it upright. Only when THIS page runs in phone mode.
+ */
+function _applyPhoneRules(devices) {
+  const phone =
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("kx-phone") &&
+    !!(devices && devices.allow_phone);
+  if (!phone) return false;
+  _setText("rulesStayRuleTitle", "Stay in this page, on the whole screen.");
+  _setText(
+    "rulesStayRuleText",
+    "Opening another app, split screen or a floating window, a call or leaving the page each counts as a warning. After 3 warnings, the next one ends the interview and submits what you have answered.",
+  );
+  _setText("rulesDeviceRuleTitle", "Your phone, held upright, with the camera on you.");
+  _setText(
+    "rulesDeviceRuleText",
+    "Prop it up at eye level if you can, in a quiet, well-lit place. Turn on Do Not Disturb so calls and notifications do not interrupt.",
+  );
+  _setText("rulesRecordRuleTitle", "Camera and microphone are recorded.");
+  _setText("rulesRecordRuleText", "A phone cannot share its screen, so only the camera and microphone are recorded. The hiring team reviews the recording.");
+  _setText("rulesReopenText", "On the same phone you continue from where you left off — answers already sent are saved.");
+  _setText(
+    "rulesConsentText",
+    "I have read these rules, and I agree to my camera and microphone being recorded and proctored for this interview.",
+  );
+  return true;
+}
+
 export function applyRulesConfig(config = {}) {
   const timingMode = String(config.timing_mode || "count").toLowerCase();
   const timed = timingMode === "time";
@@ -85,6 +116,7 @@ export function applyRulesConfig(config = {}) {
 
   // Anti-cheating checks the template turned on (13 Nov 2026).
   _applyProctoringRule(config.proctoring);
+  const phone = _applyPhoneRules(config.devices);
 
   // Time
   if (timed && duration) {
@@ -95,23 +127,25 @@ export function applyRulesConfig(config = {}) {
     _setText("rulesDurationHint", estimate ? `Usually about ${formatDuration(estimate * 60)}.` : "Take the time you need for each answer.");
   }
 
-  // Questions
-  if (count) {
-    _setText("rulesQuestions", `${timed ? "Up to " : varies ? "About " : ""}${count}`);
-    _setText(
-      "rulesQuestionsHint",
-      timed ? "The clock may end the interview first." : varies ? "Depends on the skills you choose." : "Plus a short, unscored introduction.",
-    );
-  } else {
-    _setText("rulesQuestions", timed ? "As many as fit" : "—");
-    _setText("rulesQuestionsHint", timed && duration ? `Within ${duration}.` : "");
-  }
+  // Questions — the KINDS only, never how many (26 Nov 2026, user rule: the
+  // candidate does not see the total; the screen shows only what they attempt).
+  void count;
+  void varies;
+  const kinds = [spoken || !typed ? "spoken" : "", pseudo ? "pseudo-code" : "", coding ? "coding" : ""].filter(Boolean);
+  _setText(
+    "rulesQuestions",
+    kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} & ${kinds[kinds.length - 1]}`.replace(/^./, (c) => c.toUpperCase()) : "Spoken",
+  );
+  _setText(
+    "rulesQuestionsHint",
+    timed && duration ? `As many as fit in ${duration}, after a short introduction.` : "After a short, unscored introduction.",
+  );
   const mixEl = document.getElementById("rulesMix");
   if (mixEl) {
     const chips = [];
-    if (spoken) chips.push(`<span class="rv-mix-chip rv-mix-chip--spoken"><b>${spoken}</b> spoken</span>`);
-    if (pseudo) chips.push(`<span class="rv-mix-chip rv-mix-chip--pseudo"><b>${pseudo}</b> pseudo-code</span>`);
-    if (coding) chips.push(`<span class="rv-mix-chip rv-mix-chip--coding"><b>${coding}</b> coding</span>`);
+    if (spoken) chips.push(`<span class="rv-mix-chip rv-mix-chip--spoken">Spoken</span>`);
+    if (pseudo) chips.push(`<span class="rv-mix-chip rv-mix-chip--pseudo">Pseudo-code</span>`);
+    if (coding) chips.push(`<span class="rv-mix-chip rv-mix-chip--coding">Coding</span>`);
     mixEl.innerHTML = chips.join("");
     mixEl.hidden = !(typed && chips.length);
   }
@@ -154,6 +188,14 @@ export function applyRulesConfig(config = {}) {
     );
   } else {
     _setText("rulesKeyboardText", "You answer by speaking, so typing, copy and paste are off. Use the mouse for the buttons.");
+  }
+  if (phone) {
+    _setText(
+      "rulesKeyboardText",
+      typed
+        ? "The phone keyboard works only inside the code box of a coding question; copy and paste stay off. Tap the buttons to answer."
+        : "You answer by speaking — tap Send Response when you finish. Copy and paste are off.",
+    );
   }
 
   // Follow-ups, recruiter, recording

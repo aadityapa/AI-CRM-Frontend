@@ -2,7 +2,7 @@
  * The interview ROUTE decision (26 Sep 2026): once RMG / GM shortlists a
  * candidate, someone has to say HOW they are interviewed — the AI L1, or a
  * human ("manual") L1 that TA books. Applied Candidates and the profile page
- * already offered both; the Screening Desk did not, so a GM who never opens
+ * already offered both; the RMG Desk did not, so a GM who never opens
  * those tabs had no way to send a candidate down either path.
  *
  * ONE component for the choice. Since 28 Sep 2026 (user flow) RMG / GM only
@@ -17,6 +17,7 @@ import { Archive, BellRing, Bot, CalendarCheck2, PauseCircle, PlayCircle, Sparkl
 
 import { crmPost } from "../api";
 import { DecisionDialog, type DecisionSpec } from "./dialogKit";
+import { RejectSkillsField, rejectSkillsProblem, saveRejectSkills, useRejectSkills } from "./RejectSkills";
 import { FLOW_BTN } from "./flowButtons";
 
 export type InterviewRoute = {
@@ -171,18 +172,25 @@ const AI_AFTER_SPEC: Record<AiL1Decision, (aiResult: string | null) => DecisionS
 
 export function AiL1DecisionModal({ profileId, candidateName, context, decision, aiResult, onClose, onDone }:
   RouteDialogProps & { decision: AiL1Decision; aiResult: string | null }) {
+  const isReject = decision === "reject";
+  const [skills, setSkills] = useRejectSkills({ profileId: isReject ? profileId : null });
   return (
     <DecisionDialog
       spec={AI_AFTER_SPEC[decision](aiResult)}
       person={candidateName ? { name: candidateName, meta: context || undefined } : null}
       onClose={onClose}
       onConfirm={async (note) => {
+        const problem = isReject ? rejectSkillsProblem(skills) : null;
+        if (problem) throw new Error(problem);
         const res = await crmPost(`/api/candidate-profiles/${profileId}/ai-l1-decision`, {
           decision, note: note || undefined,
         });
-        onDone(res.message || "Saved");
+        const n = isReject ? await saveRejectSkills(skills) : 0;
+        onDone((res.message || "Saved") + (n ? ` · ${n} skill${n === 1 ? "" : "s"} added` : ""));
       }}
-    />
+    >
+      {isReject ? <RejectSkillsField state={skills} onChange={setSkills} /> : null}
+    </DecisionDialog>
   );
 }
 

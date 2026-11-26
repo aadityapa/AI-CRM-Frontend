@@ -2,8 +2,14 @@
 
 import { lazyRetry } from "../lib/lazyRetry";
 import type { CrmRoute } from "./router";
+import { employeeAware } from "./employeeRoutes";
 
-const CrmDashboardPage = lazyRetry(() => import("./pages/CrmDashboard").then((m) => ({ default: m.CrmDashboardPage })));
+const CrmDashboardPage = lazyRetry(() => import("./pages/DashboardHome").then((m) => ({ default: m.DashboardHome })));
+// Bench & Deployed (RMG / GM / CEO) and My Workspace (every employee) — 23 Nov 2026.
+const BenchDeskPage = lazyRetry(() => import("./pages/BenchDesk").then((m) => ({ default: m.BenchDeskPage })));
+const BenchPersonPage = lazyRetry(() => import("./pages/BenchDesk").then((m) => ({ default: m.BenchPersonPage })));
+const TrainingPlanPage = lazyRetry(() => import("./pages/Training").then((m) => ({ default: m.TrainingPlanPage })));
+const MyWorkspacePage = lazyRetry(() => import("./pages/MyWorkspace").then((m) => ({ default: m.MyWorkspacePage })));
 const CustomersListPage = lazyRetry(() => import("./pages/Customers").then((m) => ({ default: m.CustomersListPage })));
 const CustomerDetailPage = lazyRetry(() => import("./pages/Customers").then((m) => ({ default: m.CustomerDetailPage })));
 const OpportunitiesWorkspace = lazyRetry(() => import("./pages/OpportunitiesWorkspace").then((m) => ({ default: m.OpportunitiesWorkspace })));
@@ -72,10 +78,13 @@ export const CRM_ROUTES: CrmRoute[] = [
   { pattern: "", element: CrmDashboardPage },
   { pattern: "customers", element: CustomersListPage },
   { pattern: "customers/:id", element: CustomerDetailPage },
-  { pattern: "opportunities", element: OpportunitiesWorkspace },
-  { pattern: "opportunities/:id", element: OpportunityDetailPage },
-  { pattern: "requirements", element: RequirementsListRedirect },
-  { pattern: "requirements/:id", element: RequirementDetailPage },
+  // An employee-only login (Employee + Interviewer) gets "Open positions" —
+  // role + JD + Apply — on all four, never the pipeline / deal / position pages
+  // (26 Nov 2026, user report; crm/employeeRoutes.tsx).
+  { pattern: "opportunities", element: employeeAware(OpportunitiesWorkspace, "list") },
+  { pattern: "opportunities/:id", element: employeeAware(OpportunityDetailPage, "opportunity") },
+  { pattern: "requirements", element: employeeAware(RequirementsListRedirect, "list") },
+  { pattern: "requirements/:id", element: employeeAware(RequirementDetailPage, "requirement") },
   { pattern: "candidates", element: CandidatesListPage },
   { pattern: "candidates/:id", element: CandidateDetailPage },
   { pattern: "profiles", element: ProfilesListPage },
@@ -86,6 +95,10 @@ export const CRM_ROUTES: CrmRoute[] = [
   // The panel member's own technical rounds (7 Oct 2026) — the Interviewer
   // role's one page; RMG / TA who take rounds reach it from the sidebar too.
   { pattern: "my-interviews", element: MyInterviewsPage },
+  { pattern: "bench", element: BenchDeskPage },
+  { pattern: "bench/:id", element: BenchPersonPage },
+  { pattern: "training/:id", element: TrainingPlanPage },
+  { pattern: "my-workspace", element: MyWorkspacePage },
   // A CRM file in its own tab (10 Oct 2026) — `?file=/api/crm-files/…&name=`.
   // A bare <a target=_blank> to the file cannot send the bearer token.
   { pattern: "file-view", element: FileViewPage },

@@ -17,7 +17,7 @@
  *   GET …/interview-rounds/options  — the verdict scales + the kinds THIS login
  *                                     may record (the server's own rule)
  *   GET …/ai-interviews             — the AI L1 links (expand into the summary)
- * "Add feedback" / "Edit" open the SAME `FeedbackModal` the Screening Desk uses.
+ * "Add feedback" / "Edit" open the SAME `FeedbackModal` the RMG Desk uses.
  * Oldest first — the candidate's journey.
  */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
@@ -101,7 +101,7 @@ export function InterviewRoundsModal({ profileId, candidateName, onClose, onChan
   candidateName?: string | null;
   onClose: () => void;
   /** Open the feedback dialog for the first round waiting for a verdict as soon
-   *  as the list loads (30 Sep 2026: the Screening Desk's "Record feedback"
+   *  as the list loads (30 Sep 2026: the RMG Desk's "Record feedback"
    *  button records in place — the timeline stays behind for context). */
   feedbackFirst?: boolean;
   /** A verdict was saved (the pop-up has closed) — the caller shows `msg` and

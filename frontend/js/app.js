@@ -53,6 +53,7 @@ import {
   unlockResult,
 } from "./results.js";
 import { detectHandheld, showDesktopRequiredScreen } from "./device_class.js";
+import { enablePhoneMode, phoneAllowedForInvite, startPhoneGuards } from "./phone_mode.js";
 // The 3D background needs three.js from a CDN. It is decoration: on a network
 // that blocks cdn.jsdelivr.net a STATIC import here aborted the whole module
 // graph and the candidate saw a blank page (15 Sep 2026). Load it lazily and
@@ -1090,7 +1091,8 @@ async function proceedWithInviteLogin() {
         // does not look like the interview skipped ahead on its own.
         const total = Number(resume.total) || 0;
         const at = Math.min(Number(resume.current) + 1, total || Number(resume.current) + 1);
-        _setInviteStartupState(`Resuming your interview from question ${at}${total ? ` of ${total}` : ""}…`);
+        // No "of N" — the candidate never sees the total (26 Nov 2026).
+        _setInviteStartupState(`Resuming your interview from question ${at}…`);
         console.info("[STEP-4] Resuming interview", resume);
       } else {
         _setInviteStartupState("Loading first question...");
@@ -1117,6 +1119,14 @@ async function proceedWithInviteLogin() {
         isPaused: () => !!runtimeState.liveHold,
         isTyped: () => isTypedQuestionOpen(),
         totalQuestions: Number(_inviteInterviewConfig.num_q || _inviteInterviewConfig.num_questions) || 0,
+      });
+      // Phone interviews (25 Nov 2026): split screen, sideways, camera, screen awake.
+      // Does nothing on a laptop / PC (phone mode is off there).
+      startPhoneGuards({
+        report: (type, details) => reportSecurityViolation(type, details),
+        isPaused: () => !!runtimeState.liveHold,
+        isTyped: () => isTypedQuestionOpen(),
+        getVideo: () => document.getElementById("proctorCam"),
       });
       setRecordingBadge(true);
       // Whole-session recording (22 Sep 2026). Fire-and-forget on purpose:
@@ -1457,7 +1467,17 @@ async function bootstrapInviteFlow() {
   // Laptop / PC only (12 Oct 2026): a phone or tablet stops here, before the
   // welcome screen asks for anything. The server refuses the same devices.
   const device = detectHandheld();
-  if (device.handheld) {
+  // 25 Nov 2026: a template may allow a phone — then the phone layout instead.
+  const phoneOk = device.handheld
+    ? await phoneAllowedForInvite(inviteTokenFromUrl, async (t) => {
+        const res = await apiFetch(`/candidate/invite/${encodeURIComponent(t)}`);
+        return res.ok ? res.json() : null;
+      })
+    : false;
+  if (device.handheld && phoneOk) {
+    console.info("[STEP-1] Phone interview allowed by the template", device);
+    enablePhoneMode();
+  } else if (device.handheld) {
     console.info("[STEP-1] Handheld device — interview needs a laptop or PC", device);
     for (const id of ["screenStartup", "screenAuth"]) {
       const el = document.getElementById(id);
