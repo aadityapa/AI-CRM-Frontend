@@ -320,7 +320,11 @@ export function ProjectStartDateBody({
                         </p>
                       ) : null}
                       {!p.refusal && !p.create.length && !p.fill.length && !p.remove.length && !p.trim.length && !p.blocked.length ? (
-                        <p className="mt-1 text-xs text-secondary">Only the dates move — every month already has a timesheet.</p>
+                        <p className="mt-1 text-xs text-secondary">
+                          {p.window_note
+                            ? "Only the dates move — no timesheet is opened for the months above. To get them, set Data starts from to the start month first, then press Update start date."
+                            : "Only the dates move — every month already has a timesheet."}
+                        </p>
                       ) : null}
                     </div>
                   ))}
